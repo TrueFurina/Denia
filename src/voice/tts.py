@@ -105,8 +105,10 @@ class TTS:
             self._tts_warmup_enabled = bool(_pro.get('duplex_tts_warmup', True))
             self._tts_cache_max_entries = int(_pro.get('duplex_tts_cache_max_entries', 64) or 64)
             self._tts_cache_max_bytes = int(_pro.get('duplex_tts_cache_max_mb', 8) or 8) * 1024 * 1024
-        except Exception:
-            pass
+        except Exception:  # noqa: BLE001
+            # 【2026-10-17】配置项解析失败会让双工 TTS 的缓存/预取/stale 阈值全部退回默认值，
+            # 用户只感到"变卡、变慢"，日志里一条线索都没有。至少留一条 debug 供排查。
+            logger.debug("双工 TTS 配置解析失败，全部使用默认值", exc_info=True)
         self._ffplay_proc = None
         os.makedirs(WEB_ASSETS_DIR, exist_ok=True)
 
