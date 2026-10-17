@@ -21,6 +21,9 @@ logger = logging.getLogger("src.ui.webapp")
 # 原 webapp.py 17800 / 17799 行的两处状态，仅被本模块函数使用，一并迁入
 _WV2_FOLDER_SEQ = itertools.count(1)
 _WV2_PATCHED = False
+# 【2026-10-17】随 _install_clr_crash_guard 迁入。原来它留在 webapp，
+# 而 global 在本模块解析 → NameError（守卫装不上、进程照旧会无声闪退）。
+_CLR_CRASH_GUARD_INSTALLED = False
 
 __all__ = [
     "_stable_wv2_folder_key", "_sweep_legacy_wv2_folders", "_sweep_wv2_caches",

@@ -60,6 +60,11 @@ from .notify_geom import (  # noqa: E402
     _notify_rects_for_monitor, _notify_set_pos, _notify_show_in, _notify_slide,
 )
 from .ui_state import STATE  # 窗口/运行时共享状态（原模块级全局，2026-10-17 收敛）
+from .api_pet import PetAPI  # 桌宠 API mixin（2026-10-17 拆分）
+from .pet_window import (  # 桌宠 Win32 操作（2026-10-17 拆分）
+    _POINT, _attach_pet_no_taskbar, _pet_find_main_hwnd, _pet_find_hwnd,
+    _pet_apply_topmost, _pet_install_topmost_guard, _pet_set_capture_hidden,
+)
 
 # /local_img 路由的额外白名单目录（2026-10-03 聊天图片）：char_banners 之外，
 # 聊天发图落盘目录（ActivityStore root/images/chat，root 可能被配置自定义）
@@ -214,7 +219,7 @@ _WATCH_STEP_LABELS = (
 
 
 
-class CharacterAPI:
+class CharacterAPI(PetAPI):
     """角色管理 API（供 pywebview 前端调用）。"""
 
     # 【2026-10-05】状态卡"节奏"相关字段的**类级默认值**。
@@ -718,180 +723,17 @@ class CharacterAPI:
                     continue
                 return None
 
-    def pet_show(self) -> dict:
-        """显示桌面桌宠浮窗（透明 / 无边框 / 置顶）。"""
-        if self._pet_win is None:
-            return {"ok": False, "error": "桌宠窗口未初始化"}
-        try:
-            self._pet_win.show()
-            # 刷新位置缓存（拖动时按增量移动，避免每次查询窗口位置）
-            try:
-                self._pet_pos = (int(self._pet_win.x), int(self._pet_win.y))
-            except Exception:  # noqa: BLE001
-                self._pet_pos = None
-            self._pet_visible = True
-            logger.info("桌宠已显示")
-            return {"ok": True, "visible": True}
-        except Exception as e:  # noqa: BLE001
-            logger.warning("显示桌宠失败: %s", e)
-            return {"ok": False, "error": str(e)}
 
-    def pet_hide(self) -> dict:
-        """隐藏桌面桌宠浮窗。"""
-        if self._pet_win is None:
-            return {"ok": False, "error": "桌宠窗口未初始化"}
-        try:
-            self._pet_win.hide()
-            self._pet_visible = False
-            logger.info("桌宠已隐藏")
-            return {"ok": True, "visible": False}
-        except Exception as e:  # noqa: BLE001
-            logger.warning("隐藏桌宠失败: %s", e)
-            return {"ok": False, "error": str(e)}
 
-    def pet_toggle_always_on_top(self) -> dict:
-        """切换桌宠窗口置顶（直接用 pywebview 原生 window.on_top 控 Form.TopMost）。
 
-        为什么不用裸 SetWindowPos + 读 WS_EX_TOPMOST：本窗是 frameless+transparent 的
-        WebView2 窗，WS_EX_TOPMOST 样式读取/设置在该类窗上不稳定（实测出现"窗口已钉但
-        读不到 WS_EX_TOPMOST、取消不掉"）。pywebview 的 on_top 直接操作正确的窗口对象，
-        取消 100% 生效、且 window.on_top 可直读真实状态 → 右键文案与窗口永远一致。
-        钉上时仍起每 1s 保活线程重新 on_top=True，恒盖过音乐软件等其它 TopMost 窗口。
-        """
-        try:
-            STATE.pet_topmost = not STATE.pet_topmost
-            if STATE.pet_topmost:
-                _pet_install_topmost_guard()   # 钉最前：启动每 1s 保活
-            else:
-                STATE.pet_keepalive = False       # 关保活线程
-            _pet_apply_topmost()
-            # 直读 window.on_top 真实状态（不再读 WS_EX_TOPMOST）
-            on_top = STATE.pet_topmost
-            if self._pet_win is not None:
-                try:
-                    on_top = bool(self._pet_win.on_top)
-                except Exception:  # noqa: BLE001
-                    pass
-            logger.info("桌宠置顶: %s (win_on_top=%s)", STATE.pet_topmost, on_top)
-            return {"ok": True, "on_top": on_top}
-        except Exception as e:  # noqa: BLE001
-            logger.warning("切换桌宠置顶失败: %s", e)
-            return {"ok": False, "error": str(e), "on_top": STATE.pet_topmost}
 
-    def pet_is_on_top(self) -> dict:
-        """返回桌宠当前是否真的置顶（直读 window.on_top 真实状态，而非 Python 标志）。"""
-        try:
-            if self._pet_win is not None:
-                return {"ok": True, "on_top": bool(self._pet_win.on_top)}
-        except Exception:  # noqa: BLE001
-            pass
-        return {"ok": True, "on_top": STATE.pet_topmost}
 
-    def pet_set_capture_hidden(self, hidden: bool) -> dict:
-        """切换桌宠对屏幕捕获是否隐身（截图/录屏/共享都抓不到；自己屏上照常可见）。"""
-        try:
-            ok = _pet_set_capture_hidden(bool(hidden))
-            return {"ok": ok, "hidden": STATE.pet_capture_hidden}
-        except Exception as e:  # noqa: BLE001
-            logger.warning("切换桌宠截屏隐身失败: %s", e)
-            return {"ok": False, "error": str(e)}
 
-    def pet_is_capture_hidden(self) -> dict:
-        """返回桌宠是否对屏幕捕获隐身（供右键菜单显示真实状态）。"""
-        return {"ok": True, "hidden": STATE.pet_capture_hidden}
 
-    def pet_toggle(self) -> dict:
-        """切换桌宠显示/隐藏。"""
-        if self._pet_win is None:
-            return {"ok": False, "error": "桌宠窗口未初始化"}
-        try:
-            if self._pet_visible:
-                return self.pet_hide()
-            return self.pet_show()
-        except Exception as e:  # noqa: BLE001
-            return {"ok": False, "error": str(e)}
 
-    def pet_is_visible(self) -> bool:
-        """桌宠窗口当前是否可见。"""
-        return self._pet_visible
 
-    def pet_drag_start(self) -> dict:
-        """桌宠拖动会话开始：用 Win32 物理像素记录窗口基准 + 光标基准。
 
-        前端 mousedown 一次；后续 pet_move 完全在物理像素空间用 GetCursorPos 增量
-        定位，彻底避开 pywebview 逻辑像素(x/y 滞后且不随 SetWindowPos 更新)与
-        SetWindowPos 物理像素之间的 DPI 缩放错位——这正是"按下即瞬移/拖飞"的根因。
-        """
-        if self._pet_win is None:
-            return {"ok": False, "error": "桌宠窗口未初始化"}
-        try:
-            hwnd = _pet_find_hwnd()
-            bx, by = 0, 0
-            if hwnd:
-                r = _wt.RECT()
-                if _u32.GetWindowRect(hwnd, _ct.byref(r)):
-                    bx, by = r.left, r.top
-            cur = _POINT()
-            _u32.GetCursorPos(_ct.byref(cur))
-            self._pet_base = (bx, by)
-            self._pet_cursor0 = (cur.x, cur.y)
-            self._pet_dragging = True
-            return {"ok": True}
-        except Exception as e:  # noqa: BLE001
-            logger.warning("记录桌宠拖动基准失败: %s", e)
-            return {"ok": False, "error": str(e)}
 
-    def pet_drag_end(self) -> dict:
-        """拖动会话结束：复位拖动标志（mouseup 时前端调用）。"""
-        try:
-            self._pet_dragging = False
-        except Exception:  # noqa: BLE001
-            pass
-        return {"ok": True}
-
-    def pet_move(self, dx: float = 0, dy: float = 0) -> dict:
-        """拖动中绝对定位：窗口新位置 = 基准(物理) + 光标物理位移，抓取点零漂移。
-
-        dx/dy 不再使用（由后端用 GetCursorPos 自行计算，保证与基准同处物理像素空间，
-        在 4K/150% 等缩放下也 1:1 跟手、按下不瞬移）。
-        SWP_NOSIZE|NOZORDER|NOACTIVATE 保持尺寸/置顶/不抢焦点——拖动不影响置顶状态。
-        """
-        if self._pet_win is None:
-            return {"ok": False, "error": "桌宠窗口未初始化"}
-        try:
-            if not getattr(self, "_pet_dragging", False) or self._pet_base is None:
-                return {"ok": False, "error": "未进入拖动"}
-            bx, by = self._pet_base
-            cx0, cy0 = self._pet_cursor0
-            cur = _POINT()
-            _u32.GetCursorPos(_ct.byref(cur))
-            nx = bx + (cur.x - cx0)
-            ny = by + (cur.y - cy0)
-            hwnd = _pet_find_hwnd()
-            if hwnd:
-                _u32.SetWindowPos(hwnd, 0, nx, ny, 0, 0, 0x0001 | 0x0004 | 0x0010)
-            return {"ok": True}
-        except Exception as e:  # noqa: BLE001
-            logger.warning("移动桌宠失败: %s", e)
-            return {"ok": False, "error": str(e)}
-
-    def pet_hit_rect(self, rects: list) -> dict:
-        """前端上报角色命中矩形（窗口客户区物理像素矩形列表）→ 窗体层画矩形提供命中。
-
-        结论：TransparencyKey 分层窗口命中只认"窗体自绘非 key 像素"（WebView2
-        内容不计入），因此角色矩形(非品红)画到窗体层——被角色像素覆盖视觉不可见、
-        又提供命中；矩形外品红 key 色系统自动挖空+点击穿透。前端 reportPetBody
-        在模型渲染稳定后一次性用 gl.readPixels 算角色包围盒（固定矩形，覆盖整个
-        人物），此后不再计算上报，避免逐像素抠像的计算负担和晃动时卡黑边。
-        """
-        try:
-            logger.debug("[PET] 命中形状上报: %d 个矩形", len(rects) if rects else 0)
-            native = getattr(self._pet_win, "native", None)
-            if native is not None and hasattr(native, "set_pet_hit_rect"):
-                native.set_pet_hit_rect(rects)
-        except Exception as e:  # noqa: BLE001
-            logger.warning("更新桌宠命中区失败: %s", e)
-        return {"ok": True}
 
     def prevent_window_close(self) -> dict:
         """阻止窗口关闭，改为最小化到托盘。"""
@@ -932,177 +774,7 @@ class CharacterAPI:
             logger.warning("主窗口不存在")
             return {"success": False, "error": "主窗口不存在"}
     
-    def pet_open_main(self) -> dict:
-        """回到主窗口：隐藏桌宠并恢复/聚焦主窗口；主窗口已关闭时自动重建。"""
-        if self._pet_win is not None:
-            try:
-                self._pet_win.hide()
-                self._pet_visible = False
-            except Exception:  # noqa: BLE001
-                pass
 
-        win = self._main_win
-        if win is None or self._main_win_closed:
-            win = self.recreate_main_window()
-        if win is not None:
-            try:
-                # pywebview show() 内部会 Show()+Activate()，即带回前台聚焦
-                win.show()
-                self.main_ui_expected_visible = True   # 窗口守护：恢复显示即重置期望
-                return {"ok": True}
-            except Exception as e:  # noqa: BLE001
-                logger.warning("恢复主窗口失败: %s", e)
-        return {"ok": True, "note": "主窗口不可恢复（可能已关闭）"}
-
-    def pet_interact(self, context: str = "click") -> dict:
-        """桌宠互动：触发AI生成个性化对话和动作。
-        
-        Args:
-            context: 互动上下文，如 "click", "double_click", "drag" 等
-            
-        Returns:
-            {"success": bool, "text": str, "action": str, "expression": str}
-        """
-        if self._dialogue is None:
-            return {"success": False, "error": "对话系统未注入"}
-        if self._bus is None:
-            return {"success": False, "error": "事件总线未注入"}
-        if self._loop is None or not self._loop.is_running():
-            return {"success": False, "error": "主事件循环未运行"}
-        
-        try:
-            # 检查缓存
-            import time
-            now = time.time()
-            cache_key = self._generate_cache_key(context)
-            
-            # 检查是否有有效的缓存
-            cached_response = self._get_cached_response(cache_key, now)
-            if cached_response:
-                # 使用缓存响应，不记录到历史（避免重复）
-                self._add_to_conversation_history(context, cached_response['text'], 
-                                                cached_response['action'], cached_response['expression'])
-                
-                # 发送缓存响应事件到总线
-                async def _publish_cached():
-                    await self._bus.publish(Event(EventType.AI_DECISION, {
-                        "text": cached_response['text'],
-                        "action": cached_response['action'],
-                        "emotion": cached_response['expression'],
-                        "source": "pet_interaction_cached",
-                        "user_activity": f"桌宠{context}互动（缓存）",
-                    }, "webapp"))
-                
-                self._run_coro(_publish_cached())
-                
-                return {
-                    "success": True,
-                    "text": cached_response['text'],
-                    "action": cached_response['action'],
-                    "expression": cached_response['expression'],
-                    "cached": True
-                }
-            
-            # 更新互动时间
-            self._pet_last_interaction = now
-            
-            # 构建包含上下文的提示词
-            prompt = self._build_pet_interaction_prompt_with_context(context)
-            
-            # 异步调用AI生成对话
-            async def _generate_response():
-                # 构建丰富的上下文信息
-                temp_context = {
-                    "type": context,
-                    "character": getattr(self._cfg, 'character', '达妮娅'),
-                    "personality": getattr(self._cfg, 'personality', '慵懒俏皮'),
-                    "time_of_day": self._get_time_of_day(),
-                    "interaction_count": len(self._pet_conversation_history) + 1,
-                    "recent_interactions": self._get_recent_interactions(3),  # 最近3次互动
-                    "user_activity": f"桌宠{context}互动",
-                }
-                
-                # 调用对话系统
-                if hasattr(self._dialogue, 'generate_response'):
-                    response = await self._dialogue.generate_response(
-                        user_message=prompt,
-                        context=temp_context,
-                        mode="pet_interaction"
-                    )
-                    return response
-                else:
-                    # 回退到简单响应
-                    return self._get_fallback_pet_response(context)
-            
-            # 投递到主线程执行
-            response = self._run_coro(_generate_response())
-            
-            if response and isinstance(response, dict):
-                # 解析响应并返回结构化数据
-                text = response.get('text', '')
-                action = response.get('action', '')
-                # 【2026-10-11】generate_response 返回的主键是 `emotion`（`expression` 为兼容
-                #   别名）；此前只读 expression ⇒ 表情会丢成空串（实测泄漏条目 emotion=''）。
-                expression = response.get('expression') or response.get('emotion') or ''
-                # 桌宠气泡同样会上屏 + 被 TTS 念：去动作/场景描写 + 剥 markdown，
-                #   别把「（懒洋洋地翻了个身）」这类旁白念出来；顺带兜一道万一漏进来的 JSON 残骸。
-                if self._dialogue is not None:
-                    try:
-                        text = self._dialogue._strip_markdown(text)
-                        text = self._dialogue._strip_stage_directions(text)
-                    except Exception:  # noqa: BLE001
-                        logger.debug("桌宠文本清理失败（忽略）", exc_info=True)
-                
-                # 缓存响应
-                self._cache_response(cache_key, response, now)
-                
-                # 记录到对话历史
-                self._add_to_conversation_history(context, text, action, expression)
-                
-                # 发送互动事件到总线
-                async def _publish_interaction():
-                    await self._bus.publish(Event(EventType.AI_DECISION, {
-                        "text": text,
-                        "action": action,
-                        "emotion": expression,
-                        "source": "pet_interaction",
-                        "user_activity": f"桌宠{context}互动",
-                    }, "webapp"))
-                
-                self._run_coro(_publish_interaction())
-                
-                return {
-                    "success": True,
-                    "text": text,
-                    "action": action,
-                    "expression": expression,
-                    "cached": False
-                }
-            else:
-                # AI响应失败，使用回退对话
-                fallback = self._get_fallback_pet_response(context)
-                self._cache_response(cache_key, fallback, now)
-                self._add_to_conversation_history(context, fallback['text'], fallback['action'], fallback['expression'])
-                return {
-                    "success": True,
-                    "text": fallback['text'],
-                    "action": fallback['action'],
-                    "expression": fallback['expression'],
-                    "cached": False
-                }
-                
-        except Exception as e:
-            logger.exception("桌宠互动失败")
-            # 失败时使用回退对话
-            fallback = self._get_fallback_pet_response(context)
-            self._add_to_conversation_history(context, fallback['text'], fallback['action'], fallback['expression'])
-            return {
-                "success": True,
-                "text": fallback['text'],
-                "action": fallback['action'],
-                "expression": fallback['expression'],
-                "note": f"AI响应失败，使用回退对话: {str(e)}"
-            }
     
     def _generate_cache_key(self, context: str) -> str:
         """生成缓存键（基于上下文和互动历史）。"""
@@ -1147,51 +819,7 @@ class CharacterAPI:
         for key in expired_keys:
             del self._pet_response_cache[key]
     
-    def clear_pet_cache(self):
-        """清空桌宠响应缓存。"""
-        self._pet_response_cache.clear()
-        logger.info("桌宠响应缓存已清空")
     
-    def _build_pet_interaction_prompt_with_context(self, context: str) -> str:
-        """构建包含上下文的桌宠互动提示词。"""
-        character = getattr(self._cfg, 'character', '达妮娅')
-        personality = getattr(self._cfg, 'personality', '慵懒俏皮')
-        
-        # 基础提示词模板
-        base_prompts = {
-            "click": f"""
-你是{character}，性格{personality}。用户点击了你，你应该做出可爱的反应。
-最近互动：{self._get_recent_interactions_summary()}
-当前时间：{self._get_time_of_day()}
-请返回JSON格式的响应：
-{{
-    "text": "你说的话",
-    "action": "动作名称（如nod, shake, thinking等）",
-    "emotion": "表情名称（如smile, surprise, curious等）"
-}}""",
-            "double_click": f"""
-你是{character}，性格{personality}。用户双击了你，表现出惊喜和喜悦。
-最近互动：{self._get_recent_interactions_summary()}
-当前时间：{self._get_time_of_day()}
-请返回JSON格式的响应：
-{{
-    "text": "惊喜的话",
-    "action": "惊讶动作（如surprised, cheer等）",
-    "emotion": "惊讶表情（如surprise等）"
-}}""",
-            "drag": f"""
-你是{character}，性格{personality}。用户拖动你，你感到有些紧张但又配合，应该表现出轻微摇摆和闭眼的反应。
-最近互动：{self._get_recent_interactions_summary()}
-当前时间：{self._get_time_of_day()}
-请返回JSON格式的响应：
-{{
-    "text": "被拖动时紧张的话",
-    "action": "下半身摇摆（sway）",
-    "emotion": "紧张表情（sleepy）"
-}}"""
-        }
-        
-        return base_prompts.get(context, base_prompts["click"])
     
     def _get_time_of_day(self) -> str:
         """获取时间段描述。"""
@@ -1239,83 +867,7 @@ class CharacterAPI:
         if len(self._pet_conversation_history) > 20:
             self._pet_conversation_history = self._pet_conversation_history[-20:]
     
-    def _build_pet_interaction_prompt(self, context: str) -> str:
-        """构建桌宠互动的提示词。"""
-        character = getattr(self._cfg, 'character', '达妮娅')
-        personality = getattr(self._cfg, 'personality', '慵懒俏皮')
-        
-        prompts = {
-            "click": f"{character}被用户点击了一下，{personality}的性格，应该做出什么反应？请返回JSON格式：{{'text': '对话内容', 'action': '动作名称', 'expression': '表情名称'}}",
-            "double_click": f"{character}被用户双击，表现出惊讶和喜悦，{personality}的性格，应该说什么做什么？请返回JSON格式：{{'text': '惊喜的对话', 'action': '惊讶动作', 'expression': '惊讶表情'}}",
-            "drag": f"{character}被用户拖动，{personality}的性格，应该有什么反应？请返回JSON格式：{{'text': '被拖动的对话', 'action': '轻微摆动', 'expression': '中性表情'}}",
-        }
-        
-        return prompts.get(context, prompts["click"])
     
-    def _get_fallback_pet_response(self, context: str) -> dict:
-        """获取回退的桌宠互动响应（增加多样性）。"""
-        # 根据互动历史选择不同的回应，避免重复
-        recent_texts = [h['text'] for h in self._pet_conversation_history[-3:] if h['context'] == context]
-        
-        # 点击互动的多样化回应
-        click_responses = [
-            {"text": "哎呀，被你戳到了～", "action": "nod", "expression": "smile"},
-            {"text": "嗯？叫我有什么事吗？", "action": "thinking", "expression": "curious"},
-            {"text": "嘿嘿，被你发现啦～", "action": "wink", "expression": "winkL"},
-            {"text": "啊！好痒～", "action": "giggle", "expression": "smile"},
-            {"text": "你在玩我吗？", "action": "pout", "expression": "neutral"},
-            {"text": "戳我干嘛呀～", "action": "head_tilt", "expression": "curious"},
-            {"text": "嘻嘻，被你戳到啦～", "action": "bounce", "expression": "smile"},
-            {"text": "哎呀，别戳了啦～", "action": "shake_head", "expression": "smile"}
-        ]
-        
-        # 双击互动的多样化回应
-        double_click_responses = [
-            {"text": "哇！吓我一跳～", "action": "surprised", "expression": "surprise"},
-            {"text": "呀！你双击我干嘛？", "action": "jump", "expression": "surprise"},
-            {"text": "哇哦！好惊喜～", "action": "cheer", "expression": "smile"},
-            {"text": "啊！好突然～", "action": "blink", "expression": "surprise"},
-            {"text": "嘻嘻，好激动～", "action": "excited", "expression": "smile"},
-            {"text": "哇！你好热情～", "action": "wave", "expression": "smile"}
-        ]
-        
-        # 拖拽互动的多样化回应
-        drag_responses = [
-            {"text": "嘿嘿，你在带我玩吗～", "action": "thinking", "expression": "curious"},
-            {"text": "哇！你在带我飞～", "action": "sway", "expression": "sleepy"},
-            {"text": "好紧张呀～别掉下去～", "action": "sway", "expression": "sleepy"},
-            {"text": "嘻嘻，好刺激～", "action": "excited", "expression": "smile"},
-            {"text": "你要带我去哪里呀～", "action": "sway", "expression": "curious"},
-            {"text": "哇！好高呀～", "action": "sway", "expression": "surprise"}
-        ]
-        
-        # 根据上下文选择响应池
-        response_pools = {
-            "click": click_responses,
-            "double_click": double_click_responses,
-            "drag": drag_responses
-        }
-        
-        pool = response_pools.get(context, click_responses)
-        
-        # 避免重复使用最近的回应
-        available_responses = [r for r in pool if r['text'] not in recent_texts]
-        
-        # 如果没有可用的（避免重复），随机选择
-        if available_responses:
-            import random
-            return random.choice(available_responses)
-        else:
-            return random.choice(pool)
-        
-        # 默认回应（理论上不会执行到这里）
-        default_responses = {
-            "click": {"text": "在呢～有什么事吗？", "action": "nod", "expression": "smile"},
-            "double_click": {"text": "哇哦！", "action": "surprised", "expression": "surprise"},
-            "drag": {"text": "嘿嘿～", "action": "sway", "expression": "curious"}
-        }
-        
-        return default_responses.get(context, default_responses["click"])
     
     # ======== 系统托盘管理 ========
     def enable_tray(self, enabled: bool = True) -> dict:
@@ -3928,33 +3480,7 @@ class CharacterAPI:
         self._overlay_push("ai", text)
         _wv2_broadcast({"type": "chat_push"})
 
-    def _pet_bubble(self, text: str) -> None:
-        """把双工看屏互动文本推入桌宠气泡队列（由桌宠窗轮询取走显示）。
 
-        不在这里直接 evaluate_js 打桌宠窗：pywebview 的 evaluate_js 必须在 GUI 线程
-        调用，而本回调运行在事件总线/双工线程，跨线程 evaluate_js 经实测不可靠、气泡
-        会不弹（见 webapp.py:5279 注释）。改用"桌宠窗主动轮询 window.pywebview.api
-        .pop_pet_bubble"——与点击 pet_interact 是同一条已验证可用的通道，彻底规避
-        跨线程注入与 WebView2 消息事件的坑。
-        """
-        try:
-            self._pet_bubble_q.put(text)
-        except Exception:  # noqa: BLE001
-            pass
-
-    def pop_pet_bubble(self) -> str:
-        """桌宠窗轮询取走待显示的气泡文本（window.pywebview.api 调用）。
-
-        返回队列中最新一条并清空更早积压（避免一次性弹出一堆旧句）；无则空串。
-        由桌宠窗 JS 每 ~250ms 调用一次，线程安全（queue.get_nowait）。
-        """
-        last = ""
-        while True:
-            try:
-                last = self._pet_bubble_q.get_nowait()
-            except Exception:  # noqa: BLE001
-                break
-        return last or ""
 
     def pop_notify_cmd(self) -> list:
         """桌宠页轮询取走通知卡命令（与 pop_pet_bubble 同款已验证 JS→Python 通道）。
@@ -3968,12 +3494,6 @@ class CharacterAPI:
         except Exception:  # noqa: BLE001
             return []
 
-    def pet_bubble_shown(self, text: str = "") -> None:
-        """桌宠窗确认气泡已渲染（调试回执，验证后端→桌宠窗投递链路是否真的到达渲染）。
-
-        由 rig/index.html 的 petShowBubble 在真正露出气泡后调用，仅用于排障日志。
-        """
-        logger.info("[pet_bubble] 已渲染回执: %r", (text or "")[:60])
 
     async def _on_chat_unity_inbound(self, e: Event) -> None:
         """Unity 点击模型触发的对话。"""
@@ -18015,7 +17535,7 @@ def _start_gui_liveness_probe(win) -> None:
 # （日志只会戛然而止、无任何 traceback）——这正是本次"两次闪退"的表现。
 # 装好 ThreadException + UnhandledException 处理器后：异常改为"记录完整栈并吞掉"，
 # 进程不再无声崩掉；若再触发，现场会写进 logs/ 下的 fault / crash 日志，便于精确定位。
-_CLR_CRASH_GUARD_INSTALLED = False
+# （_CLR_CRASH_GUARD_INSTALLED 状态已随 _install_clr_crash_guard 迁到 wv2_env.py）
 
 
 
@@ -18762,12 +18282,15 @@ def create_notify_window(api=None):
 import ctypes as _ct
 from ctypes import wintypes as _wt
 
+# 【2026-10-17】_u32 原本定义在文件末尾，桌宠函数迁到 pet_window 后这里仍需要它
+# 来完成下方的 argtypes/restype 声明（同一进程内 windll.user32 是同一个句柄）。
+_u32 = _ct.windll.user32
+
 
 # —— 关键：声明 user32 调用的 argtypes/restype ——
 # 不声明时 ctypes 默认把参数当 32 位 int 处理；64 位 Windows 的 HWND 是 64 位指针，
 # 会被截断 → SetWindowPos(hwnd, HWND_TOPMOST, …) 静默失败 → 置顶完全无效（普通窗口都能盖住）。
 # 显式声明后 HWND 按 64 位传递，置顶才真正生效。
-_u32 = _ct.windll.user32
 _u32.FindWindowW.restype = _wt.HWND
 _u32.FindWindowW.argtypes = [_wt.LPCWSTR, _wt.LPCWSTR]
 _u32.SetWindowPos.restype = _wt.BOOL
@@ -18779,243 +18302,27 @@ _u32.SetWindowLongW.restype = _wt.LONG
 _u32.SetWindowLongW.argtypes = [_wt.HWND, _ct.c_int, _wt.LONG]
 _u32.GetWindowRect.restype = _wt.BOOL
 _u32.GetWindowRect.argtypes = [_wt.HWND, _ct.POINTER(_wt.RECT)]
-class _POINT(_ct.Structure):
-    _fields_ = [("x", _ct.c_long), ("y", _ct.c_long)]
 _u32.GetCursorPos.restype = _wt.BOOL
 _u32.GetCursorPos.argtypes = [_ct.POINTER(_POINT)]
 _u32.SetWindowDisplayAffinity.restype = _wt.BOOL
 _u32.SetWindowDisplayAffinity.argtypes = [_wt.HWND, _wt.UINT]
 
 
-def _pet_topmost_keepalive():
-    """后台保活：每 1s 重新钉最前（仅当 _PET_TOPMOST=True）。
-
-    直接走 _pet_apply_topmost()：GUI 线程下用 window.on_top（锁定正确窗口），
-    非 GUI 线程下自动回退 SetWindowPos（HWND 声明已修，线程安全）。不放子类、不碰
-    WndProc，仅靠低频保活恒盖过音乐软件等其它 TopMost 窗口（≤1s 间隙人眼不可察）；
-    取消置顶时设 _PET_KEEPALIVE_ON=False 让线程退出即解钉。
-    """
-    while STATE.pet_keepalive:
-        try:
-            if STATE.pet_topmost:
-                _pet_apply_topmost()
-        except Exception:  # noqa: BLE001
-            pass
-        import time as _t
-        _t.sleep(1.0)
 
 
-def _pet_find_hwnd():
-    """按标题定位桌宠窗句柄（_finalize_pet_window 已验证此标题可靠可得句柄）。"""
-    try:
-        return _ct.windll.user32.FindWindowW(None, "达妮娅看板娘")
-    except Exception:
-        return 0
-
-def _pet_apply_topmost():
-    """按 _PET_TOPMOST 把桌宠窗设为最前/普通。
-
-    优先用 pywebview 原生 window.on_top（直接控正确的窗口对象，取消必生效）；
-    窗口对象不可用时回退裸 SetWindowPos（物理像素，HWND 声明已修）。
-    """
-    if STATE.pet_win is not None:
-        try:
-            STATE.pet_win.on_top = STATE.pet_topmost
-            return True
-        except Exception as e:  # noqa: BLE001
-            logger.debug("pywebview on_top 失败，回退 SetWindowPos: %s", e)
-    hwnd = _pet_find_hwnd()
-    if not hwnd:
-        return False
-    ins = -1 if STATE.pet_topmost else -2   # HWND_TOPMOST / HWND_NOTOPMOST
-    ok = _u32.SetWindowPos(
-        hwnd, ins, 0, 0, 0, 0, 0x0001 | 0x0002 | 0x0010)  # NOSIZE|NOMOVE|NOACTIVATE
-    if not ok:
-        logger.warning("桌宠置顶 SetWindowPos 失败 hwnd=%s topmost=%s", hwnd, STATE.pet_topmost)
-    return bool(ok)
 
 
-def _pet_install_topmost_guard():
-    """置顶保活：启动后台线程每 1s 重新 SetWindowPos TOPMOST（仅启动一次；子类方案已弃用）。
-
-    不放子类、不碰 WndProc：避免 WebView2 宿主窗每消息进 Python 回调导致系统卡顿；
-    仅靠低频保活即可恒盖过其它 TopMost 窗口（≤1s 间隙人眼不可察）。取消置顶时由
-    pet_toggle_always_on_top 设 _PET_KEEPALIVE_ON=False 让线程退出，再一次性 NOTOPMOST 解钉。
-    """
-    if STATE.pet_keepalive:
-        return
-    STATE.pet_keepalive = True
-    try:
-        _ka = __import__("threading").Thread(target=_pet_topmost_keepalive, daemon=True)
-        _ka.start()
-        logger.info("桌宠置顶保活线程已启动")
-    except Exception:  # noqa: BLE001
-        STATE.pet_keepalive = False
 
 
-def _pet_set_wda(hwnd, hidden: bool) -> bool:
-    """对单个窗口设置 WDA_EXCLUDEFROMCAPTURE（透过亲和性）。"""
-    aff = 0x00000011 if hidden else 0x00000000  # WDA_EXCLUDEFROMCAPTURE / WDA_NONE
-    ok = _u32.SetWindowDisplayAffinity(hwnd, aff)
-    if not ok:
-        logger.warning("SetWindowDisplayAffinity 失败 hwnd=%s hidden=%s", hwnd, hidden)
-    return bool(ok)
 
 
-def _pet_find_main_hwnd():
-    """定位主窗口句柄（本进程拥有的、非桌宠的可见顶层窗口，取面积最大者）。"""
-    try:
-        import win32gui
-        import win32process
-        import os
-        pid = os.getpid()
-        cand = []
-        # 两步式枚举（2026-09-05 修复）：回调内只做本地、无消息泵的 Win32 调用，
-        # GetWindowText（本质 SendMessage，会泵送调用方消息队列）移到枚举结束后取，
-        # 消除“SendMessage-in-EnumWindows”在快速切换时造成原生栈溢出/卡死的风险。
-        raw: list[tuple] = []
-        def _enum(hwnd, _):
-            if not win32gui.IsWindowVisible(hwnd):
-                return
-            try:
-                _, wp = win32process.GetWindowThreadProcessId(hwnd)
-            except Exception:  # noqa: BLE001
-                return
-            if wp != pid:
-                return
-            try:
-                r = win32gui.GetWindowRect(hwnd)
-                w, h = r[2] - r[0], r[3] - r[1]
-            except Exception:  # noqa: BLE001
-                return
-            if w <= 1 or h <= 1:
-                return
-            raw.append((hwnd, w * h))
-        win32gui.EnumWindows(_enum, None)
-        for hwnd, area in raw:
-            try:
-                t = win32gui.GetWindowText(hwnd)  # 枚举外取标题：避免 SendMessage-in-EnumWindows 重入
-            except Exception:  # noqa: BLE001
-                t = ""
-            if t == "达妮娅看板娘":
-                continue  # 跳过桌宠本身
-            cand.append((area, hwnd))
-        if cand:
-            cand.sort(reverse=True)
-            return cand[0][1]
-    except Exception:  # noqa: BLE001
-        pass
-    return 0
 
 
-def _pet_set_capture_hidden(hidden: bool) -> bool:
-    """对桌宠窗 + 主窗口同时设 WDA_EXCLUDEFROMCAPTURE（双工推流帧/截图都"透过"）。
-
-    效果：你屏幕上照常看到桌宠和软件，但任何屏幕捕获（双工实时推流帧、截图、录屏、
-    屏幕共享/Zoom/Discord/OBS/Teams/Win+Shift+S/游戏栏）都抓不到它们——像直接透过了
-    窗口看到后面的真实画面。这正是"双工推流帧里看不见桌宠和软件、直接透过"的需求。
-    需 Windows 10 2004+。返回是否桌宠窗设置成功。
-    """
-    pet_hwnd = _pet_find_hwnd()
-    main_hwnd = _pet_find_main_hwnd()
-    pet_ok = _pet_set_wda(pet_hwnd, hidden) if pet_hwnd else False
-    main_ok = _pet_set_wda(main_hwnd, hidden) if main_hwnd else False
-    # 【2026-09-04 修】灰涂是否执行改由抓屏调用方按 WDA 实际生效数(applied)决定
-    # （applied>0 帧已真透过→不灰涂；applied==0→灰涂兜底），不再在此覆盖
-    # OWN_WINDOW_WDA（之前把它强制 False 导致灰涂永远跑、透明度被涂成灰块）。
-    STATE.pet_capture_hidden = hidden
-    logger.info("双工/截屏透过: pet=%s(%s) main=%s(%s) hidden=%s",
-                bool(pet_hwnd), pet_ok, bool(main_hwnd), main_ok, hidden)
-    return bool(pet_hwnd)
 
 
-def _finalize_pet_window() -> None:
-    """桌宠窗口收尾（窗口加载完成后调用）：
-    1. 加 WS_EX_TOOLWINDOW：不出现在任务栏/Alt+Tab，像真正的桌面宠物；
-    2. 用物理像素 SetWindowPos 固定到屏幕右下角——绕开 pywebview 把 create_window
-       的 x/y 当逻辑像素再 ×scale 的换算（该换算在 DPI 感知进程下会把窗口推出屏幕，
-       例：4K/150% 逻辑 3396 → 物理 5094 超出 3840）。兜底保证窗口一定在屏幕内。
-    """
-    try:
-        import ctypes
-        from ctypes import wintypes
-        user32 = ctypes.windll.user32
-        hwnd = user32.FindWindowW(None, "达妮娅看板娘")
-        if not hwnd:
-            logger.info("桌宠收尾：未找到窗口句柄")
-            return
-        # 1) 去任务栏
-        GWL_EXSTYLE = -20
-        WS_EX_TOOLWINDOW = 0x00000080
-        style = user32.GetWindowLongW(hwnd, GWL_EXSTYLE)
-        if not style & WS_EX_TOOLWINDOW:
-            user32.SetWindowLongW(hwnd, GWL_EXSTYLE, style | WS_EX_TOOLWINDOW)
-        # 1.5) 【2026-09-04 用户实测仍出现在任务栏预览】三连补强：
-        #   ① 剥掉 WS_EX_APPWINDOW（pywebview 默认带它，与 TOOLWINDOW 同挂时预览仍露出）；
-        #   ② 挂属主窗口（GWL_HWNDPARENT=主窗）——无属主的工具窗口在 Win11 预览分组
-        #      仍可能被列出；挂了属主才算真正的"浮动小窗"；
-        #   ③ WS_EX_NOACTIVATE——点击不抢焦点，纯悬浮。
-        try:
-            GWL_HWNDPARENT = -8
-            WS_EX_APPWINDOW = 0x00000400
-            WS_EX_NOACTIVATE = 0x08000000
-            main_hwnd2 = _pet_find_main_hwnd()
-            if main_hwnd2:
-                user32.SetWindowLongW(hwnd, GWL_HWNDPARENT, main_hwnd2)
-            style2 = user32.GetWindowLongW(hwnd, GWL_EXSTYLE)
-            new2 = (style2 | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE) & ~WS_EX_APPWINDOW
-            if new2 != style2:
-                user32.SetWindowLongW(hwnd, GWL_EXSTYLE, new2)
-            logger.info("桌宠窗属主/NOACTIVATE 已设置（owner=%s）", bool(main_hwnd2))
-        except Exception:  # noqa: BLE001
-            logger.warning("桌宠窗属主/样式补强失败", exc_info=True)
-        # 2) 右下角定位（物理像素；进程已 DPI 感知 → GetSystemMetrics 为物理值）
-        rect = wintypes.RECT()
-        user32.GetWindowRect(hwnd, ctypes.byref(rect))
-        w_phys = rect.right - rect.left
-        h_phys = rect.bottom - rect.top
-        sw = user32.GetSystemMetrics(0)
-        sh = user32.GetSystemMetrics(1)
-        x = max(0, sw - w_phys - 24)
-        y = max(0, sh - h_phys - 24)
-        # NOSIZE|NOZORDER|NOACTIVATE|FRAMECHANGED（FRAMECHANGED 让 TOOLWINDOW 样式生效）
-        user32.SetWindowPos(hwnd, 0, x, y, 0, 0, 0x0001 | 0x0004 | 0x0010 | 0x0020)
-        style = user32.GetWindowLongW(hwnd, GWL_EXSTYLE)
-        logger.info("桌宠窗口已收尾：右下角(物理 %d,%d)，TOOLWINDOW=%s",
-                    x, y, bool(style & WS_EX_TOOLWINDOW))
-        # 3) 置顶（仅当 _PET_TOPMOST 为真才钉最前；默认不置顶 → 不装子类/不保活，
-        #    避免 WebView2 宿主窗每消息都进 Python 子类回调造成卡顿，也避免"默认就置顶"）
-        try:
-            if STATE.pet_topmost:
-                _pet_apply_topmost()
-                _pet_install_topmost_guard()
-        except Exception:  # noqa: BLE001
-            pass
-        # 4) 双工/截屏“透过”：默认【关闭】WDA_EXCLUDEFROMCAPTURE，
-        #    即桌宠窗+主窗口对屏幕捕获【可见】——这样 UU 远程 / ToDesk / 腾讯会议 /
-        #    屏幕共享 / OBS 等抓到的软件区域不再是黑屏，用户远程也能看页面。
-        #    （双工 AI 不“看见自己”的需求改由 own_window.paint_own_windows 灰涂兜底，
-        #     见 _pet_set_capture_hidden 内部 OWN_WINDOW_WDA=False 分支；功能等价。）
-        #    若想隐藏自家窗口做干净推流，桌宠右键菜单「对屏幕捕获隐身」可临时开启。
-        try:
-            _pet_set_capture_hidden(False)
-        except Exception:  # noqa: BLE001
-            logger.debug("桌宠透过亲和性设置失败", exc_info=True)
-    except Exception:  # noqa: BLE001
-        logger.warning("桌宠窗口收尾失败", exc_info=True)
 
 
-def _attach_pet_no_taskbar(win) -> None:
-    """挂载桌宠窗口"去任务栏+右下角定位"：等窗口加载完成（或已加载则立即）应用。"""
-    def _apply(_win=None):
-        _finalize_pet_window()
-    try:
-        if win.events.loaded.is_set():
-            _apply()
-        else:
-            win.events.loaded += _apply
-    except Exception:  # noqa: BLE001
-        _apply()
+
 
 
 def run_webview(debug: bool = False,
