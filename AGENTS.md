@@ -50,7 +50,7 @@
 
 根因：WebView2 用 DirectComposition 硬件合成，宿主窗体一旦分层/裁剪，合成链就断。
 **唯一出路是换渲染宿主**——同一份 rig 页面在 Electron 下已实测真正透出桌面
-（`tools/poc_shell_transparency.py`，`?bare` 模式零改动，js_api 由 `shell/preload.js` 同名 shim 顶替）。
+（`tools/rpc_bridge_smoke.py`，`?bare` 模式零改动，js_api 由 `shell/preload.js` 同名 shim 转发到 RPC）。
 
 ## 第五条 · 本仓库已知环境坑（照抄，别再踩）
 
@@ -60,6 +60,9 @@
 - **别用 `sed -i` 改大文件**：会把 CRLF 洗成 LF（曾把 1787 行的文件从 62992 洗成 61159 字节）。改配置用二进制模式定点替换。
 - **`ELECTRON_RUN_AS_NODE=1`**：本机 shell 常带这个变量，会让 `electron.exe` 退化成 node（`app` 未定义、窗口不起）。启动 Electron 前必须剔除。
 - **stdout 通过管道时 Python 会缓冲**：长脚本一律 `python -u`，否则超时被杀时一个字都留不下。
+- **不要用 stdin 给 Electron 主进程发命令**：Windows 下管道里的 stdin 收不到数据，命令全丢。
+  若用它做"隐藏/显示"对照，两次采样都是显示态 → 会得出"透明"的假阳性（本项目已踩过）。
+  正确做法：壳起一个 TCP 控制端口，命令必须**有回执**才算执行；拿不到回执直接判失败。
 - **读子进程 stdout 不要用裸 `readline()`**：子进程没输出时会无限阻塞，用读线程 + 队列轮询。
 
 ## 第六条 · 交付红线
@@ -69,6 +72,9 @@
   - 加法：包内 HTML 引用的本地资源必须存在（看板娘曾因 rig 目录为空而整个消失）
 - 组装交付目录只走 `python tools/make_dist.py`，不要手工复制文件夹。
 - 不得把 `*.db`、真实 Key、用户录音提交进仓库。
+- **本地 RPC（`src/ui/rpc_server.py`）的三条边界不能拆**：只绑 `127.0.0.1`、每个请求校验随机令牌、
+  只允许公开成员（下划线/dunder 一律拒绝）。任何一条被拿掉都等于给本机任意网页开了后门。
+  改这里必须跑 `src/tests/test_rpc_server.py`，并做一次"关掉令牌校验应当失败"的变异验证。
 
 ## 第七条 · 判断"这个功能到底有没有接线"
 
