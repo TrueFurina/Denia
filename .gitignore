@@ -24,8 +24,6 @@ ort_dml/
 # ---- 敏感配置：含真实 API Key，严禁入库 ----
 # config.release.yaml 是发布模板，可入库；config.yaml 是实配，不入库
 config.yaml
-# config.release.yaml 当前第 1771 行仍含一枚未脱敏的百炼 Key，清掉后再纳入版本控制
-config.release.yaml
 config.local.yaml
 .env
 .env.*
@@ -43,6 +41,7 @@ user_knowledge.yaml
 *.swapbak_*
 
 # ---- 临时/诊断产物 ----
+.workbuddy/
 tools/_*_out*.txt
 tools/_*.jsonl
 tools/_*.txt
