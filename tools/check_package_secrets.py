@@ -15,7 +15,8 @@
     # 1) 检查源码目录里"必然入包"的模板文件（默认行为）
     python tools/check_package_secrets.py
 
-    # 2) 检查一个已经准备好的待打包目录（会同时看包内是否混入隐私/环境目录）
+    # 2) 检查一个已经准备好的待打包目录（会同时看包内是否混入隐私/环境目录，
+    #    并校验包内 HTML 引用的本地资源是否齐全；--no-assets 可跳过后者）
     python tools/check_package_secrets.py --dir dist
 
     # 3) 连 config.yaml（实配，本就不该入包）也当失败处理
@@ -107,6 +108,7 @@ def main() -> int:
     ap = argparse.ArgumentParser(description="打包前凭据硬闸")
     ap.add_argument("--dir", help="检查一个待打包目录（不给则检查当前目录的模板文件）")
     ap.add_argument("--strict", action="store_true", help="把 config.yaml 等实配文件也视为阻断")
+    ap.add_argument("--no-assets", action="store_true", help="跳过包内 HTML 静态资源完整性检查")
     ap.add_argument("--cwd", default=".", help="项目根目录")
     args = ap.parse_args()
 
@@ -118,6 +120,15 @@ def main() -> int:
         b, w = scan_dir(os.path.abspath(args.dir))
         blocking += b
         warnings += w
+        # 「不该带的」查完了，再查「必须带的」：包内 HTML 引用的本地资源是否齐全。
+        # 2026-10-17 的教训：live2d/rig 曾是 gitlink 且无 .gitmodules，重新 clone
+        # 或打包后目录为空，看板娘静默消失，日志里只有一条 404。
+        if not args.no_assets:
+            try:
+                from check_web_assets import scan_dir as scan_html_assets
+                blocking += scan_html_assets(os.path.abspath(args.dir), relative_only=True)
+            except ImportError:
+                warnings.append("找不到 check_web_assets.py，已跳过静态资源完整性检查")
     else:
         # 模板文件：必须全空
         for name in TEMPLATE_FILES:
@@ -146,7 +157,7 @@ def main() -> int:
     if blocking:
         print(f"\n✗ 打包已阻断：{len(blocking)} 项。先把上面的凭据清空/文件移出再重试。", file=sys.stderr)
         return 1
-    print("\n✓ 通过：未发现会被带出包的明文凭据。")
+    print("\n✓ 通过：无明文凭据泄漏，且包内静态资源齐全。")
     return 0
 
 

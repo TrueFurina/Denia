@@ -26,7 +26,7 @@ EXTERNAL = ("http://", "https://", "//", "data:", "blob:", "javascript:", "mailt
 _ATTR = re.compile(r"""(?:src|href)\s*=\s*["']([^"']+)["']""", re.I)
 
 
-def scan(html_path: str, webroot: str | None = None) -> list[str]:
+def scan(html_path: str, webroot: str | None = None, relative_only: bool = False) -> list[str]:
     base = os.path.dirname(os.path.abspath(html_path))
     root = os.path.abspath(webroot) if webroot else base
     try:
@@ -53,12 +53,28 @@ def scan(html_path: str, webroot: str | None = None) -> list[str]:
             continue
         # 以 / 开头 = 站点根相对路径，按 webroot 解析
         if path.startswith("/"):
+            if relative_only:
+                # 打包目录的 webroot 布局未知，根路径一律跳过，避免误报
+                continue
             full = os.path.normpath(os.path.join(root, path.lstrip("/").replace("/", os.sep)))
         else:
             full = os.path.normpath(os.path.join(base, path.replace("/", os.sep)))
         if not os.path.exists(full):
             missing.append(f"{html_path}: 引用了不存在的资源 {u!r}")
     return missing
+
+
+def scan_dir(root: str, relative_only: bool = False) -> list[str]:
+    """扫描整棵目录里的 HTML。供打包闸等外部脚本复用。"""
+    htmls: list[str] = []
+    for r, dirs, names in os.walk(root):
+        dirs[:] = [d for d in dirs if d not in SKIP_DIRS]
+        htmls += [os.path.join(r, n) for n in names
+                  if n.lower().endswith((".html", ".htm")) and not n.startswith("_")]
+    out: list[str] = []
+    for h in htmls:
+        out += scan(h, root, relative_only=relative_only)
+    return out
 
 
 def main(argv: list[str]) -> int:
