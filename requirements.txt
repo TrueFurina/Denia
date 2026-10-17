@@ -30,6 +30,11 @@ vosk>=0.3.45
 ollama>=0.4.0
 edge-tts>=6.1
 pyttsx3>=2.90
+# pywebview 在 Windows 上会带入 pythonnet，这里显式声明以锁定版本；
+# 缺了不影响启动（clr 导入处有 try/except），但 WinForms 心跳探针会退回 JS 轮询
+pythonnet>=3.0
+# 云端实时通话的握手自检用；缺了会跳过 websocket 预检、直接走 SDK
+websocket-client>=1.7
 
 # ===== 可选（装了更好，失败不影响启动）=====
 rapidocr-onnxruntime>=1.3
