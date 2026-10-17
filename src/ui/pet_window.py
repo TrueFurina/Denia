@@ -11,12 +11,37 @@ import ctypes as _ct
 import logging
 import threading
 import time
+from ctypes import wintypes as _wt
 
 from .ui_state import STATE
 
 logger = logging.getLogger("src.ui.webapp")
 
 _u32 = _ct.windll.user32
+
+# 【2026-10-17 修·Win32 置顶从未生效的根因】ctypes 不声明 argtypes 时，
+# 参数按 C int 传递 → `SetWindowPos(hwnd, -1/HWND_TOPMOST, ...)` 里的 -1
+# 变成 32 位的 0xFFFFFFFF，而不是 64 位全 1 的伪句柄 → 调用失败，
+# GetLastError=1400(ERROR_INVALID_WINDOW_HANDLE)。实测本项目的"Win32 置顶"
+# 路径一直失败（只是被 except/返回值吞掉），实际靠 pywebview 的 on_top 兜着，
+# 而 on_top 是跨线程写 WinForms 属性 → 切窗时卡死的隐患。
+# 这里把用到的 user32 函数签名声明齐，句柄类参数统一走 _wt.HWND。
+_u32.SetWindowPos.argtypes = [
+    _wt.HWND, _wt.HWND, _ct.c_int, _ct.c_int, _ct.c_int, _ct.c_int, _ct.c_uint]
+_u32.SetWindowPos.restype = _wt.BOOL
+_u32.FindWindowW.argtypes = [_wt.LPCWSTR, _wt.LPCWSTR]
+_u32.FindWindowW.restype = _wt.HWND
+_u32.GetWindowRect.argtypes = [_wt.HWND, _ct.POINTER(_wt.RECT)]
+_u32.GetWindowRect.restype = _wt.BOOL
+_u32.GetWindowLongW.argtypes = [_wt.HWND, _ct.c_int]
+_u32.GetWindowLongW.restype = _ct.c_long
+_u32.SetWindowLongW.argtypes = [_wt.HWND, _ct.c_int, _ct.c_long]
+_u32.SetWindowLongW.restype = _ct.c_long
+
+
+def _hwnd_arg(v: int):
+    """把 -1/-2 这类伪句柄包成 c_void_p，避免 64 位截断。"""
+    return _wt.HWND(v & 0xFFFFFFFFFFFFFFFF if v < 0 else v)
 
 
 class _POINT(_ct.Structure):
@@ -57,26 +82,30 @@ def _pet_find_hwnd():
 
 
 def _pet_apply_topmost():
-    """按 _PET_TOPMOST 把桌宠窗设为最前/普通。
+    """按 STATE.pet_topmost 把桌宠窗设为最前/普通。
 
-    优先用 pywebview 原生 window.on_top（直接控正确的窗口对象，取消必生效）；
-    窗口对象不可用时回退裸 SetWindowPos（物理像素，HWND 声明已修）。
+    【2026-10-17 修复·切窗卡死】原实现优先 `STATE.pet_win.on_top = ...`。
+    该 setter 最终执行 `form.TopMost = ...`（pywebview winforms.py:1006），
+    而 **WinForms 控件属性不允许跨线程访问**：置顶保活线程每秒调一次，
+    与用户切窗（激活状态变化）叠加时容易卡死在跨线程封送上。
+    现在改成：**永远优先纯 Win32 SetWindowPos**（线程安全、无 COM/WinForms 依赖），
+    只有拿不到 HWND 时才退回 window.on_top。两条路效果等价，后者仅作兜底。
     """
+    hwnd = _pet_find_hwnd()
+    if hwnd:
+        ins = _hwnd_arg(-1 if STATE.pet_topmost else -2)   # HWND_TOPMOST / HWND_NOTOPMOST
+        ok = _u32.SetWindowPos(
+            hwnd, ins, 0, 0, 0, 0, 0x0001 | 0x0002 | 0x0010)  # NOSIZE|NOMOVE|NOACTIVATE
+        if ok:
+            return True
+        logger.warning("桌宠置顶 SetWindowPos 失败 hwnd=%s topmost=%s", hwnd, STATE.pet_topmost)
     if STATE.pet_win is not None:
         try:
             STATE.pet_win.on_top = STATE.pet_topmost
             return True
         except Exception as e:  # noqa: BLE001
-            logger.debug("pywebview on_top 失败，回退 SetWindowPos: %s", e)
-    hwnd = _pet_find_hwnd()
-    if not hwnd:
-        return False
-    ins = -1 if STATE.pet_topmost else -2   # HWND_TOPMOST / HWND_NOTOPMOST
-    ok = _u32.SetWindowPos(
-        hwnd, ins, 0, 0, 0, 0, 0x0001 | 0x0002 | 0x0010)  # NOSIZE|NOMOVE|NOACTIVATE
-    if not ok:
-        logger.warning("桌宠置顶 SetWindowPos 失败 hwnd=%s topmost=%s", hwnd, STATE.pet_topmost)
-    return bool(ok)
+            logger.debug("回退 pywebview on_top 也失败: %s", e)
+    return False
 
 
 def _pet_install_topmost_guard():
