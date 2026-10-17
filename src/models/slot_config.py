@@ -31,7 +31,13 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Any, Optional
+
+# 【2026-10-17 修】_set_duplex 的别名归一分支里用了 logger.info，但本模块从未定义
+# logger —— 用户从引导页「一键配置」传 "bailian"/"aliyun" 等别名时必然 NameError，
+# 表现为一键配置失败、双工槽没配上（拨号才被 no_cloud_duplex 拦住）。
+logger = logging.getLogger(__name__)
 
 # 兼容两种导入上下文：app 里 src 是顶层包（用 ..llm）；单测里 src 在 sys.path（用 llm）。
 try:
