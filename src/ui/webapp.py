@@ -30,20 +30,6 @@ from types import SimpleNamespace
 from typing import Any, Optional
 
 
-def _path_has_non_ascii(p: str) -> bool:
-    """路径是否含非 ASCII 字符（中文/日文/韩文/特殊符号等）。
-
-    C++ 引擎（llama-server / Comni worker）用 fopen 打开模型文件，多字节
-    中文路径在无 manifest 的进程里会乱码 → failed to open GGUF → 引擎起不来、
-    双工模型永远挂不上。任何非 ASCII 都视为不可加载，要求纯英文/数字路径。
-    """
-    if not p:
-        return False
-    try:
-        p.encode("ascii")
-        return False
-    except UnicodeEncodeError:
-        return True
 
 import yaml
 
@@ -54,6 +40,25 @@ from ..companion.call_av_log import log_call_av
 from . import mode_gates as _mode_gates   # 档位×功能 门槛矩阵（单一真相源，勿在别处另写一份）
 
 logger = logging.getLogger(__name__)
+
+
+# ---- 自 webapp.py 抽出的模块（2026-10-17 拆分，逐字迁移、未改逻辑）----
+from .ui_fmt import (  # noqa: E402
+    _fmt_file_ts, _fmt_ts, _img_data_url, _path_has_non_ascii, _status_done_summary,
+)
+from .bailian_key import (  # noqa: E402
+    _collect_bailian_keys, _diffuse_bailian_key, _key_unify_enabled,
+    _looks_like_bailian_key, _unify_bailian_key,
+)
+from .wv2_env import (  # noqa: E402
+    _harden_webview2, _install_clr_crash_guard, _patch_webview2_unique_user_data,
+    _run_coroutine_sync, _safe_js_api, _stable_wv2_folder_key,
+    _sweep_legacy_wv2_folders, _sweep_wv2_caches,
+)
+from .notify_geom import (  # noqa: E402
+    _notify_current_monitor_rect, _notify_geom, _notify_park_out,
+    _notify_rects_for_monitor, _notify_set_pos, _notify_show_in, _notify_slide,
+)
 
 # /local_img 路由的额外白名单目录（2026-10-03 聊天图片）：char_banners 之外，
 # 聊天发图落盘目录（ActivityStore root/images/chat，root 可能被配置自定义）
@@ -155,71 +160,12 @@ class LoadingAPI:
         return self._progress.snapshot()
 
 
-def _img_data_url(path: str) -> str:
-    """本地图片 → base64 data URL（file:// 协议下前端无法直接访问本地文件）。"""
-    import base64
-    if not path or not os.path.exists(path):
-        return ""
-    with open(path, "rb") as f:
-        b64 = base64.b64encode(f.read()).decode("ascii")
-    return f"data:image/png;base64,{b64}"
 
 
-def _fmt_ts(ts: float) -> str:
-    """时间戳 → 'YYYY-MM-DD HH:MM:SS'（本地时区）。"""
-    try:
-        d = time.localtime(float(ts or 0))
-        return time.strftime("%Y-%m-%d %H:%M:%S", d)
-    except Exception:  # noqa: BLE001
-        return "--"
 
 
-def _fmt_file_ts(ts: float) -> str:
-    """时间戳 → 'YYYYMMDD_HHMMSS'（用于文件名，无特殊字符）。"""
-    try:
-        d = time.localtime(float(ts or 0))
-        return time.strftime("%Y%m%d_%H%M%S", d)
-    except Exception:  # noqa: BLE001
-        return "00000000_000000"
 
 
-def _diffuse_bailian_key(node, new_key: str) -> int:
-    """递归把配置树里所有「百炼形态」的 api_key 统一替换为 new_key，返回替换处数。
-
-    【2026-10-04 新增】百炼 Key 形如 `sk-...`（工作空间形态为 `sk-ws-...`）。用户换账号时，
-    旧 Key 会残留在 config.yaml 的**各个角落**（cloud_omni / vision_models.models[*] /
-    text_chat.providers[*] / llm.openai / agent.llm / cascade / voice.clone.cloud /
-    voice_profiles[*]…）。此前引导页只固定扩散三个段、且只对 provider 白名单生效，导致
-    "引导页显示已填 Key、实际双工仍用旧 Key" → 双工静默哑、视觉 403（10-04 实锤：
-    旧 Key 残留 26 处、新 Key 只写入 2 处）。此函数让**一处填、全域生效**。
-
-    保守规则（宁可漏改也不要误伤别人的 Key）：
-      · **凡值是以 `sk-` 开头的字符串就替换**（键名无关）。实测 config 里 key 有两种写法：
-        ① `api_key: sk-...` ② `llm.openai: sk-...` / `cascade: sk-...` / `agent.llm: sk-...`
-        ——键名本身就长得像 key。只按 `api_key` 匹配会漏掉 ②，导致仍指向旧 Key。
-      · **跳过 `sk-api-` 开头者**（MiniMax 等独立服务商的 Key，不属于百炼）。
-    """
-    if not new_key:
-        return 0
-    n = 0
-
-    def _walk(x):
-        nonlocal n
-        if isinstance(x, dict):
-            for k, v in list(x.items()):
-                if isinstance(v, str) and v.strip().startswith("sk-") and v != new_key:
-                    if v.strip().startswith("sk-api-"):
-                        continue          # MiniMax 等独立服务商，不在扩散范围
-                    x[k] = new_key
-                    n += 1
-                else:
-                    _walk(v)
-        elif isinstance(x, list):
-            for v in x:
-                _walk(v)
-
-    _walk(node)
-    return n
 
 
 # ============================================================================
@@ -247,73 +193,12 @@ def _diffuse_bailian_key(node, new_key: str) -> int:
 #      MiniMax 的 sk-api-、ollama 的空 key。
 # ============================================================================
 
-def _key_unify_enabled(raw) -> bool:
-    """读 `key_unify.enabled` 开关；缺省关闭（保持既有行为）。"""
-    try:
-        node = (raw or {}).get("key_unify") or {}
-        if not isinstance(node, dict):
-            return False
-        return bool(node.get("enabled", False))
-    except Exception:  # noqa: BLE001
-        return False
 
 
-def _looks_like_bailian_key(s: str) -> bool:
-    """是否是「百炼形态」的 Key（可参与统一）。
-
-    百炼工作空间 Key 形如 `sk-ws-...`（实测 115~117 位）；普通百炼 Key 形如 `sk-...`。
-    排除：`sk-api-...`（MiniMax 等独立服务商）、非 sk- 开头（智谱 49 位短 key 等）。
-
-    【必须同时卡前缀 + 最小长度】否则 `sk-` / `sk-api` 这种「只有前缀的残缺值」会被
-    判为合法，扩散出去等于把 28 处配置全改成 `sk-` —— 不可逆灾难（2026-10-08 自测抓到）。
-    """
-    if not isinstance(s, str):
-        return False
-    v = s.strip()
-    if not v.startswith("sk-"):
-        return False
-    if v.startswith("sk-api-"):
-        return False
-    # 最小长度：真实百炼 Key 至少 40 位；只有前缀的残缺值一律拒绝
-    if len(v) < 40:
-        return False
-    return True
 
 
-def _collect_bailian_keys(node, _acc=None):
-    """递归收集配置树里所有「百炼形态」的 Key 值（去重，保持首次出现顺序）。"""
-    if _acc is None:
-        _acc = []
-    if isinstance(node, dict):
-        for _k, v in node.items():
-            if isinstance(v, str) and _looks_like_bailian_key(v):
-                if v not in _acc:
-                    _acc.append(v)
-            else:
-                _collect_bailian_keys(v, _acc)
-    elif isinstance(node, list):
-        for v in node:
-            _collect_bailian_keys(v, _acc)
-    return _acc
 
 
-def _unify_bailian_key(raw, new_key: str, source: str = "") -> int:
-    """把配置树里的百炼 Key 统一为 `new_key`；返回替换处数（0 = 未做任何改动）。
-
-    仅当 `key_unify.enabled` 打开且 `new_key` 是合法百炼 Key 时才动手；
-    否则原样返回 0 —— **这是「不改变既有行为」的保证**。
-    """
-    if not _key_unify_enabled(raw):
-        return 0
-    if not _looks_like_bailian_key(new_key):
-        return 0
-    _nk = new_key.strip()
-    _before = _collect_bailian_keys(raw)
-    _n = _diffuse_bailian_key(raw, _nk)
-    if _n:
-        logger.info("key_unify[%s]：百炼 Key 已统一为 %s...（替换 %d 处；统一前存在 %d 种不同 Key）",
-                    source or "-", _nk[:12], _n, len(_before))
-    return _n
 
 
 # 「陪你看视频」进度卡的时间线（2026-10-05）：后端按 stage 顺序补进 meta.steps，
@@ -327,38 +212,6 @@ _WATCH_STEP_LABELS = (
 )
 
 
-def _status_done_summary(meta: dict, fallback: str = "") -> str:
-    """把已完成的状态卡压成一行历史摘要（刷新后仍可读）。
-
-    例：操作卡 → 「✓ 已打开 汽水音乐 · 查看窗口 等 2 项」；观看卡 → 「✓ 看完 4 帧」。
-    """
-    steps = [s for s in (meta.get("steps") or []) if isinstance(s, dict)]
-    # 【2026-10-05】观看卡优先判定（此前放在 steps 分支之后，steps 非空时永远走不到）
-    wk = meta.get("watch") or {}
-    if wk or meta.get("phase") == "watch_done":
-        n = len(steps)
-        return "✓ 视频已看完（%d 步）" % n if n else "✓ 视频已看完"
-    if steps:
-        # 优先用 step.result（工具真实返回，如「已通过开始菜单启动：汽水音乐」），
-        # 其次才是 label/tool —— 避免摘要退化成 "✓ open_app" 这种英文工具名。
-        def _pick(s):
-            r = str(s.get("result") or "").strip()
-            if r:
-                return r
-            lb = str(s.get("label") or "").strip()
-            if lb and not re.fullmatch(r"[A-Za-z0-9_.]+", lb):
-                return lb
-            return ""
-        done_steps = [s for s in steps
-                      if s.get("state") in ("done", "err") and _pick(s)]
-        if done_steps:
-            head = "✓ " + _pick(done_steps[0])
-            if len(done_steps) > 1:
-                head += " 等 %d 项" % len(done_steps)
-            return head
-    if meta.get("error"):
-        return "✗ 操作未完成"
-    return "✓ " + (fallback.replace("⚙️ ", "").strip() or "已完成")
 
 
 class CharacterAPI:
@@ -9362,7 +9215,10 @@ class CharacterAPI:
                         continue
                     if int(d.get("maxOutputChannels", 0) or 0) > 0:
                         _push(i, d.get("name"))
-            return out
+            # 【2026-10-17 修】原为 `return out`，但本函数从未定义 out →
+            # 走 pyaudiowpatch 回退分支必然 NameError，被外层 except 吞掉后返回 []，
+            # 表现为「没有输出设备可选」。这里与 sounddevice 分支保持一致收口。
+            return self._finalize_device_list(rows, "输出") if rows else []
         except Exception:  # noqa: BLE001
             logger.debug("枚举扬声器设备失败", exc_info=True)
             return []
@@ -17796,8 +17652,6 @@ _WEB_START_TOKEN: str = ""
 #
 # 修复方式：整体替换 EdgeChrome.__init__（复制 pywebview 6.2.1 官方实现，
 # 仅改 UserDataFolder + 追加参数），必须在 webview.start() 之前完成。
-_WV2_FOLDER_SEQ = itertools.count(1)
-_WV2_PATCHED = False
 _WV2_CONTROLS: dict = {}  # uid -> WebView2 控件（后端原生推送聊天刷新用）
 
 # 【防卡死·2026-09-03】WebView2 推送专用线程池。
@@ -17829,313 +17683,28 @@ _NOTIFY_UI_STATE = ["hidden"]
 # 契合用户"固定透明窗+HTML动画"诉求，本机自检 op=1 证明透明合成当前正常。
 # 仍保留 NOTIFY_OPAQUE=1 不透明兜底（实心窗、主屏几何滑入，防极端机器透明合成失败）。
 _NOTIFY_OPAQUE = os.environ.get("NOTIFY_OPAQUE", "0") != "0"
-_notify_slide_state = [False]     # 当前窗口所处的展示态 True=已滑入 / False=泊在右缘外
-_notify_slide_lock = threading.Lock()
 
 
-def _notify_geom():
-    """通知窗**物理像素**几何：(sw, sh, scale, w, h, x_in, y_in, x_out)。
-
-    进程已 SetProcessDPIAware → GetSystemMetrics 返回**物理**像素；与桌宠窗"物理钉位"
-    （6463 行）和启动钉位（6202 行）同源。所有返回值均为物理像素，直接喂 SetWindowPos，
-    **不再除以 scale 也不乘 scale**（进程感知下 GetSystemMetrics 已是物理值，除/乘都会错）。
-    窗口尺寸收紧到 400x176 逻辑（刚好包住卡片，与设计稿同宽、无黑边、比例不拉伸）。
-    窗口始终露 2px 在屏内（DWM/Chromium 不判定为不可见 → 合成表面始终存活）。
-    """
-    _u = _ct.windll.user32
-    _g = _ct.windll.gdi32
-    sw = _u.GetSystemMetrics(0)
-    sh = _u.GetSystemMetrics(1)
-    hdc = _g.CreateDCW("DISPLAY", None, None, None)
-    dpi = _g.GetDeviceCaps(hdc, 88) or 96
-    _g.DeleteDC(hdc)
-    scale = max(dpi / 96.0, 1.0)
-    w = int(400 * scale)
-    h = int(176 * scale)
-    x_in = max(0, sw - w - int(24 * scale))
-    y_in = int(24 * scale)
-    x_out = max(0, sw - 2)     # 留 2px 在屏内，保证"可见"不触发渲染挂起
-    return sw, sh, scale, w, h, x_in, y_in, x_out
 
 
-def _notify_set_pos(x: int, y: int, w: int, h: int) -> bool:
-    """把通知窗钉到指定**物理像素**位置（HWND_TOPMOST）。纯 Win32，任意线程可调。
-
-    坐标即物理像素（进程已 DPI 感知，GetSystemMetrics 为物理值，与桌宠窗同款）。
-    窗口刚创建时 FindWindowW 可能暂时找不到（WinForms 控件树未就绪）→ 重试最多 ~1s，
-    避免窗口卡在 pywebview 默认的 (0,0) 左上角（"左上角黑块"回归根因）。
-    """
-    try:
-        hw = None
-        for _ in range(40):
-            hw = _u32.FindWindowW(None, "达妮娅通知")
-            if hw:
-                break
-            time.sleep(0.025)
-        if not hw:
-            return False
-        # 0x0010 = NOACTIVATE：保持 TOPMOST（hw=-1 已置顶）且不偷焦点。
-        _u32.SetWindowPos(hw, -1, int(x), int(y), int(w), int(h), 0x0010)
-        return True
-    except Exception:  # noqa: BLE001
-        return False
 
 
-def _notify_slide(showing: bool) -> None:
-    """不透明模式的弹出/收回动画：窗口在屏内水平滑动（每帧一次 SetWindowPos）。
-
-    关键点：窗口**自始至终都在屏幕内**（最窄时仍露 2px），所以 WebView2 的合成器
-    从不进入"不可见"状态 —— 这是"滑入时必有帧"的保证，与 SW_HIDE/屏外停放那种
-    "先不可见再出现"的做法有本质区别。
-    本函数在后台线程执行（只调 Win32，不碰 WebView2 对象，符合线程铁律）。
-    """
-    with _notify_slide_lock:
-        if _notify_slide_state[0] is showing:
-            return
-        _notify_slide_state[0] = showing
-        try:
-            _, _, _, w, h, x_in, y_in, x_out = _notify_geom()
-            frames = 24                       # ~290ms @ ~35fps，配合缓动更顺滑
-            # 缓动：滑入用 easeOutCubic（到位即稳），滑出用 easeInCubic（加速离场）
-            for i in range(1, frames + 1):
-                t = i / frames
-                if showing:
-                    e = 1 - (1 - t) ** 3
-                    x = x_out + (x_in - x_out) * e
-                else:
-                    e = t ** 3
-                    x = x_in + (x_out - x_in) * e
-                _notify_set_pos(x, y_in, w, h)
-                time.sleep(0.012)
-            _notify_set_pos(x_in if showing else x_out, y_in, w, h)
-            if not showing:
-                # 滑出完成、窗口已在屏外 → 通知前端复位卡片（此时复位不可见，
-                # 避免"先黑再飞"；也保证下次 show 能重新初始化）。
-                try:
-                    from . import mode_notify as _mn
-                    _mn._push_cmd({"type": "reset"})
-                except Exception:  # noqa: BLE001
-                    pass
-            logger.info("[通知浮窗] 模式O 已%s（x=%d）",
-                        "滑入" if showing else "滑出", x_in if showing else x_out)
-        except Exception as _e:  # noqa: BLE001
-            logger.warning("[通知浮窗] 模式O 滑动失败: %s", _e)
 
 
-def _notify_rects_for_monitor(rc):
-    """给定显示器物理矩形 (left,top,right,bottom)，返回该屏上通知窗的
-    (x_in, y_in, w, h, x_out) 物理像素。x_in=右上角可见位，x_out=右缘外只露 2px。
-    """
-    try:
-        _g = _ct.windll.gdi32
-        hdc = _g.CreateDCW("DISPLAY", None, None, None)
-        dpi = _g.GetDeviceCaps(hdc, 88) or 96
-        _g.DeleteDC(hdc)
-    except Exception:  # noqa: BLE001
-        dpi = 96
-    scale = max(dpi / 96.0, 1.0)
-    w = int(400 * scale)
-    h = int(176 * scale)
-    x_in = max(rc[0], rc[2] - w - int(24 * scale))
-    y_in = rc[1] + int(24 * scale)
-    x_out = max(rc[0], rc[2] - 2)   # 右缘外留 2px（仍在屏内 → WebView2 合成器存活）
-    return x_in, y_in, w, h, x_out
 
 
-def _notify_current_monitor_rect():
-    """返回『当前前台窗口所在显示器』物理矩形；取不到则回退主屏。"""
-    try:
-        import win32api
-        fg = win32api.GetForegroundWindow()
-        if fg:
-            hmon = win32api.MonitorFromWindow(fg, 2)   # MONITOR_DEFAULTTONEAREST
-        else:
-            hmon = win32api.MonitorFromPoint((0, 0), 2)
-        if hmon:
-            return win32api.GetMonitorInfo(hmon)["Monitor"]
-    except Exception:  # noqa: BLE001
-        pass
-    return (0, 0, _u32.GetSystemMetrics(0), _u32.GetSystemMetrics(1))
 
 
-def _notify_show_in():
-    """把通知窗泊到『前台所在显示器』右上角可见位（多屏跟到游戏/抖音屏）。
-
-    两种模式都要执行：它是一次性静态停靠（把窗口钉到右上角 x_in），不是逐帧动画，
-    与页面 CSS 卡片滑动不冲突（窗口已在 x_in 时 SetWindowPos 同位是 no-op，无跳变）。
-    ⚠️ 透明模式(T·默认)下窗口创建后 pywebview 会默认停在 (0,0) 左上角（见 _notify_set_pos
-    注释），而 T 模式的滑入/泊出都是 no-op → 若本函数也 no-op，窗口永远卡在左上角、
-    卡片滑进来也在左上角小窗里 → 用户在右上角看不到弹窗（2026-09-05 04:46 实锤：
-    日志自检 rect 恒为 (0,0,600,264)，弹窗"进去没弹"真凶）。故 T 模式也必须 dock 到 x_in。
-    卡片显隐/滑入滑出仍纯靠页面 CSS，窗口位置固定不动（park_out 在 T 模式 no-op），
-    契合用户"固定透明窗 + HTML 动画"的设计。
-    """
-    try:
-        rc = _notify_current_monitor_rect()
-        x_in, y_in, w, h, _ = _notify_rects_for_monitor(rc)
-        _notify_set_pos(x_in, y_in, w, h)
-    except Exception as _e:  # noqa: BLE001
-        logger.warning("[通知浮窗] 泊入可见位失败: %s", _e)
 
 
-def _notify_park_out():
-    """空闲时把通知窗泊回『其当前所在显示器』右缘外（只露 2px），彻底不挡点击。
-
-    透明模式(T·默认)下窗口固定右上角、卡片 CSS 隐藏即完事，本函数直接 no-op
-    （不移动窗口），避免窗口在屏内/屏外来回跳导致"闪一下"的观感。
-    【2026-09-05 定版·用户设计】窗口固定右上角、永不移动（两种模式都 no-op）；
-    空闲透明 + WS_EX_TRANSPARENT 已保证"看不见且不挡点击"，无需泊屏外（泊屏外反而
-    会让 WebView2 节流页面轮询 → show 命令送不到 → 弹窗不显示）。
-    """
-    return
-    try:
-        rc = None
-        try:
-            import win32api
-            hw = _u32.FindWindowW(None, "达妮娅通知")
-            if hw:
-                hmon = win32api.MonitorFromWindow(hw, 2)
-                if hmon:
-                    rc = win32api.GetMonitorInfo(hmon)["Monitor"]
-        except Exception:  # noqa: BLE001
-            rc = None
-        if rc is None:
-            rc = (0, 0, _u32.GetSystemMetrics(0), _u32.GetSystemMetrics(1))
-        _, y_in, w, h, x_out = _notify_rects_for_monitor(rc)
-        _notify_set_pos(x_out, y_in, w, h)
-    except Exception as _e:  # noqa: BLE001
-        logger.warning("[通知浮窗] 泊出右缘失败: %s", _e)
 
 
-def _stable_wv2_folder_key(window, n: int) -> str:
-    """给窗口生成一个「跨启动稳定」的 UserDataFolder 目录名。
-
-    两个约束必须同时满足：
-      · 稳定 —— 同一窗口每次启动都落到同一个目录，WebView2 的 localStorage /
-        IndexedDB 才能持久化（主题色、深浅模式、语速、云端 TTS 配置都存在这儿）。
-      · 独立 —— 不同窗口必须不同目录，否则 WebView2 并发初始化同一个 folder 会
-        E_ABORT(0x80004004) → 白屏（2026-08-24 那个根因，不能回退）。
-
-    老实现用 f"{os.getpid()}_{n}"：独立性有了，但每次启动 PID 都变 → 每次都是
-    全新空目录 → localStorage 次次被清空，表现就是「设置永远保存不了」。
-    改为按窗口标题哈希：标题不同 → 目录不同；标题不变 → 目录跨启动不变。
-    """
-    title = str(getattr(window, "title", "") or "").strip()
-    if title:
-        try:
-            import hashlib as _hashlib
-            return "w_" + _hashlib.md5(title.encode("utf-8")).hexdigest()[:12]
-        except Exception:  # noqa: BLE001
-            pass
-    return f"win_{n}"          # 兜底：没标题就退回序号，同进程内仍然唯一
 
 
-def _sweep_legacy_wv2_folders(root: str, max_age_days: int = 7) -> None:
-    """清理旧版按 PID 命名的 UserDataFolder（形如 12345_1），避免目录无限堆积。
-
-    新代码已改用 w_<md5> 稳定目录，所有「纯数字_数字」旧格式目录都不再被使用，
-    直接全部删除（不再等 7 天），顺带清掉其中可能残留的跨实例共享缓存。
-    稳定目录（w_ 前缀）与正在使用的目录一律不动。
-    """
-    import re as _re
-    import shutil as _shutil
-    try:
-        if not os.path.isdir(root):
-            return
-        for name in os.listdir(root):
-            if not _re.fullmatch(r"\d+_\d+", name):
-                continue
-            p = os.path.join(root, name)
-            try:
-                if os.path.isdir(p):
-                    _shutil.rmtree(p, ignore_errors=True)
-            except Exception:  # noqa: BLE001
-                continue
-    except Exception:  # noqa: BLE001
-        pass
 
 
-def _sweep_wv2_caches(root: str) -> None:
-    """清空 WebView2 磁盘缓存（Cache / Code Cache / GPUCache / Service Worker）。
-
-    软件每次启动都清一次，彻底绕开 WebView2 对 fetch/HTML 的顽固磁盘缓存——
-    实测 HTTP 层 no-store 头对 WebView2 的 fetch 缓存无效，导致前端 JS/HTML
-    改了仍在设备端跑旧逻辑（如知识库页 SPA 切栏一直拉旧版 HTML）。
-    只删缓存子目录，不动 UserDataFolder 下的 localStorage / Cookie，不影响登录态。
-    """
-    import shutil as _shutil
-    try:
-        if not os.path.isdir(root):
-            return
-        cache_subdirs = ("Cache", "Code Cache", "GPUCache", "Service Worker", "JumpListCache")
-        for name in os.listdir(root):
-            d = os.path.join(root, name)
-            if not os.path.isdir(d):
-                continue
-            for sub in cache_subdirs:
-                c = os.path.join(d, sub)
-                if os.path.isdir(c):
-                    _shutil.rmtree(c, ignore_errors=True)
-    except Exception:  # noqa: BLE001
-        pass
 
 
-def _harden_webview2(ctrl, window) -> None:
-    """让窗口表现得像原生桌面控件而非浏览器：
-
-    - 麦克风/摄像头权限自动允许（不再弹 Edge 授权页）；
-    - 关闭右键菜单、开发者工具、浏览器快捷键（Ctrl+U/Ctrl+S/F12 等）；
-    - 拦截 window.open 新窗口（防 360 把弹窗误判为广告）。
-    """
-    try:
-        from Microsoft.Web.WebView2.Core import (
-            CoreWebView2PermissionState,
-            CoreWebView2PermissionKind,
-        )
-        cv2 = ctrl.CoreWebView2
-        if cv2 is None:
-            return
-        st = cv2.Settings
-        for _attr, _val in (
-            ("AreDefaultContextMenusEnabled", False),
-            ("AreDevToolsEnabled", False),
-            ("AreBrowserAcceleratorKeysEnabled", False),
-            ("IsStatusBarEnabled", False),
-            ("IsGeneralAutofillEnabled", False),
-            ("IsPasswordAutosaveEnabled", False),
-        ):
-            try:
-                setattr(st, _attr, _val)
-            except Exception:  # noqa: BLE001
-                pass
-
-        def _on_perm(sender, args):
-            try:
-                if args.PermissionKind in (CoreWebView2PermissionKind.Microphone,
-                                           CoreWebView2PermissionKind.Camera):
-                    args.State = CoreWebView2PermissionState.Allow
-                args.Handled = True
-            except Exception:  # noqa: BLE001
-                pass
-
-        def _on_ctx(sender, args):
-            try:
-                args.Handled = True
-            except Exception:  # noqa: BLE001
-                pass
-
-        def _on_new(sender, args):
-            try:
-                args.Handled = True
-            except Exception:  # noqa: BLE001
-                pass
-
-        cv2.PermissionRequested += _on_perm
-        cv2.ContextMenuRequested += _on_ctx
-        cv2.NewWindowRequested += _on_new
-        logger.info("[WebView2] 窗口 %s 已加固（禁右键/DevTools/快捷键/弹窗，麦克风自动授权）", window.uid)
-    except Exception as e:  # noqa: BLE001
-        logger.warning("[WebView2] 加固失败（不影响功能）: %s", e)
 
 
 def _wv2_broadcast(payload: dict) -> None:
@@ -18450,152 +18019,6 @@ def _start_gui_liveness_probe(win) -> None:
     logger.info("[GUI探针] v3 心跳版已安装（基于 js_api.poll 心跳，零跨线程 evaluate_js）")
 
 
-def _patch_webview2_unique_user_data() -> None:
-    """给每个 pywebview 窗口分配独立的 WebView2 UserDataFolder（幂等）。
-
-    白屏根因（2026-08-24 三窗口探针实锤）：
-    pywebview 的 winforms.init_storage() 只初始化一次全局 cache_dir，
-    所有窗口共用同一个 UserDataFolder。WebView2 对同一 folder 的并发初始化
-    会互相踩（E_ABORT 0x80004004），导致窗口初始化失败 → 白屏/黑屏。
-    这里整体替换 EdgeChrome.__init__：每窗口独立 folder + 非透明窗口
-    追加 --disable-gpu 软件渲染（GPU 被本地模型占满时 WebView2 GPU 进程
-    起不来同样 E_ABORT），实测 3 窗口全部 READY OK。
-    """
-    global _WV2_PATCHED
-    if _WV2_PATCHED:
-        return
-    try:
-        import webview.platforms.edgechromium as _ec
-    except Exception:  # noqa: BLE001 非 edgechromium 后端则跳过
-        _WV2_PATCHED = True
-        return
-
-    _orig_init = _ec.EdgeChrome.__init__
-
-    def _init_with_unique_folder(self, form, window, cache_dir):
-        # 复制 pywebview 6.2.1 EdgeChrome.__init__ 官方实现，仅两处改动：
-        # 1) UserDataFolder 每窗口独立（多窗口共享 folder → E_ABORT 白屏）；
-        # 2) 非透明窗口追加 --disable-gpu（GPU 显存被本地模型占满时 WebView2
-        #    GPU 进程启动失败 → E_ABORT；软件渲染绕开）。
-        import logging as _logging
-        from webview import _state as _wv_state
-        from webview import settings as _wv_settings
-        from webview.util import DEFAULT_HTML as _DEFAULT_HTML
-        from Microsoft.Web.WebView2.WinForms import (
-            CoreWebView2CreationProperties as _Props,
-            WebView2 as _WebView2,
-        )
-
-        self.pywebview_window = window
-        self.webview = _WebView2()
-        props = _Props()
-        n = next(_WV2_FOLDER_SEQ)
-        # 2026-08-24 修正：UserDataFolder 不能用 %TEMP%（沙箱/系统会重定向 Temp，
-        # WebView2 子进程（gpu/network/renderer）无法启动 → 导航开始后永不完成
-        # → 白屏；系统自身 WebView2 用的是 Packages 目录所以正常）。
-        # 改到 %LOCALAPPDATA% 下的 pywebview/wv2/<稳定键>（按窗口标题哈希，跨启动不变），每窗口独立。
-        _base = os.environ.get("LOCALAPPDATA") or os.path.expanduser("~\\AppData\\Local")
-        _wv2_root = os.path.join(_base, "pywebview", "wv2")
-        # 2026-08-30 再修正：目录名由 f"{os.getpid()}_{n}" 改为按窗口标题哈希。
-        # 带 PID 时每次启动都是全新目录 → localStorage 次次被清空 → 设置永远存不住。
-        # 新键既要跨启动稳定（能持久化），又要每窗口独立（否则 E_ABORT 白屏）。
-        folder = os.path.join(_wv2_root, _stable_wv2_folder_key(window, n))
-        _sweep_legacy_wv2_folders(_wv2_root)
-        _sweep_wv2_caches(_wv2_root)  # 启动即清 WebView2 磁盘缓存，绕过顽固 fetch 缓存
-        try:
-            os.makedirs(folder, exist_ok=True)
-        except Exception:  # noqa: BLE001
-            folder = cache_dir
-        props.UserDataFolder = folder
-        self.user_data_folder = props.UserDataFolder
-        props.set_IsInPrivateModeEnabled(_wv_state['private_mode'])
-        # 渲染模式：始终使用 GPU 合成（透明桌宠与主窗均依赖 DirectComposition/GPU）。
-        # 2026-09-04 求证：此前「显存满 → WebView2 GPU 合成器冻结 → 卡死」的假设
-        # 未被实锤，用户远程（UU 远程·屏幕共享禁止观察）看到的黑屏/未响应实为
-        # 远程画面未传回，本地软件一直正常。故撤除「非透明窗改 --disable-gpu 软件渲染」
-        # 的兜底分支，避免无谓掉帧。多窗口 E_ABORT 白屏的真正修复是「每窗口独立
-        # UserDataFolder」（见上方 _patch_webview2_unique_user_data）。
-        # 注意：曾试过 --disk-cache-size=1 禁用磁盘缓存，实测会让 UserDataFolder 行为异常
-        # （主页卡死 + 触发首启引导页重置），已回退。前端缓存统一由 webapp.py 的
-        # 「启动令牌 ?v 重写 + SPA fetch 的 _cb 时间戳」两层机制处理（见 _ensure_web_server / morph_icons.js）。
-        _cache_off = '--disable-features=ElasticOverscroll'
-        props.AdditionalBrowserArguments = _cache_off
-        if _wv_settings['ALLOW_FILE_URLS']:
-            props.AdditionalBrowserArguments += ' --allow-file-access-from-files'
-        if _wv_settings['REMOTE_DEBUGGING_PORT'] is not None:
-            props.AdditionalBrowserArguments += (
-                f' --remote-debugging-port={_wv_settings["REMOTE_DEBUGGING_PORT"]}'
-            )
-        self.webview.CreationProperties = props
-
-        self.form = form
-        form.Controls.Add(self.webview)
-        from threading import Semaphore as _Semaphore
-        self.js_results = {}
-        self.js_result_semaphore = _Semaphore(0)
-        import System.Windows.Forms as _WinForms
-        self.webview.Dock = _WinForms.DockStyle.Fill
-        self.webview.BringToFront()
-        self.webview.CoreWebView2InitializationCompleted += self.on_webview_ready
-        self.webview.NavigationStarting += self.on_navigation_start
-        self.webview.NavigationCompleted += self.on_navigation_completed
-        self.webview.WebMessageReceived += self.on_script_notify
-        from System.Threading.Tasks import TaskScheduler as _TaskScheduler
-        self.syncContextTaskScheduler = _TaskScheduler.FromCurrentSynchronizationContext()
-        from System.Drawing import Color as _Color
-        self.webview.DefaultBackgroundColor = _Color.FromArgb(
-            255,
-            int(window.background_color.lstrip('#')[0:2], 16),
-            int(window.background_color.lstrip('#')[2:4], 16),
-            int(window.background_color.lstrip('#')[4:6], 16),
-        )
-        if window.transparent:
-            self.webview.DefaultBackgroundColor = _Color.Transparent
-
-        self.url = None
-        self.ishtml = False
-        self.html = _DEFAULT_HTML
-        logger.info("[WebView2] 窗口 %s 独立 UserDataFolder=%s 透明=%s args=%s",
-                    window.uid, folder, window.transparent,
-                    props.AdditionalBrowserArguments)
-        # 初始化完成诊断：区分"哪个窗口成功/失败"（pywebview 失败只打 ERROR，
-        # 成功无日志 → 无法判断是加载窗销毁误报还是主窗真失败）
-        _orig_ready = type(self).on_webview_ready
-        def _ready_wrap(sender, args):
-            try:
-                if args.IsSuccess:
-                    logger.info("[WebView2] 窗口 %s READY OK", window.uid)
-                    global _WV2_CONTROLS
-                    _WV2_CONTROLS[window.uid] = self.webview
-                    _harden_webview2(self.webview, window)
-                else:
-                    logger.error("[WebView2] 窗口 %s READY FAILED: %s",
-                                 window.uid, args.InitializationException)
-            except Exception:  # noqa: BLE001
-                pass
-            return _orig_ready(self, sender, args)
-        self.webview.CoreWebView2InitializationCompleted -= self.on_webview_ready
-        self.webview.CoreWebView2InitializationCompleted += _ready_wrap
-        # 导航诊断（临时）：确认页面是否真的导航并渲染成功
-        def _nav_start(sender, e):
-            try:
-                logger.info("[WebView2] 窗口 %s 导航开始: %s", window.uid, getattr(e, 'Uri', '?'))
-            except Exception:  # noqa: BLE001
-                pass
-        def _nav_complete(sender, e):
-            try:
-                ok = getattr(e, 'IsSuccess', None)
-                err = getattr(e, 'WebErrorStatus', None)
-                logger.info("[WebView2] 窗口 %s 导航完成: ok=%s err=%s", window.uid, ok, err)
-            except Exception:  # noqa: BLE001
-                pass
-        self.webview.NavigationStarting += _nav_start
-        self.webview.NavigationCompleted += _nav_complete
-        self.webview.EnsureCoreWebView2Async(None)
-
-    _ec.EdgeChrome.__init__ = _init_with_unique_folder
-    _WV2_PATCHED = True
-    logger.info("[WebView2] 已启用每窗口独立 UserDataFolder（修复多窗口并发初始化 E_ABORT → 白屏）")
 
 
 # 🛡️【2026-09-27 闪退修复】GUI 线程 CLR 异常守卫。
@@ -18608,51 +18031,6 @@ def _patch_webview2_unique_user_data() -> None:
 _CLR_CRASH_GUARD_INSTALLED = False
 
 
-def _install_clr_crash_guard() -> None:
-    global _CLR_CRASH_GUARD_INSTALLED
-    if _CLR_CRASH_GUARD_INSTALLED:
-        return
-    try:
-        import System  # noqa: F401  （触发 pythonnet CLR 引导；失败则降级跳过）
-        from System.Windows.Forms import Application
-        from System import AppDomain
-    except Exception as _e:  # noqa: BLE001
-        logger.warning("[CLR守卫] pythonnet/WinForms 暂不可用，跳过: %s", _e)
-        return
-    try:
-        # 让 UI 线程异常走 CatchException（被 ThreadException 接住），而非直接抛到域级终止。
-        Application.SetUnhandledExceptionMode(
-            Application.UnhandledExceptionMode.CatchException)
-    except Exception:  # noqa: BLE001
-        pass
-
-    def _on_thread_exc(sender, e) -> None:
-        try:
-            logger.error("[CLR守卫] GUI 线程未捕获异常（已吞掉防闪退）: %s", e.Exception)
-        except Exception:  # noqa: BLE001
-            pass
-
-    def _on_domain_exc(sender, e) -> None:
-        try:
-            logger.error("[CLR守卫] 域级未捕获异常（已标记处理防闪退）: %s",
-                         e.ExceptionObject)
-        except Exception:  # noqa: BLE001
-            pass
-        try:
-            e.Handled = True  # 非致命异常：阻止 .NET 终止进程
-        except Exception:  # noqa: BLE001
-            pass
-
-    try:
-        Application.ThreadException += _on_thread_exc
-    except Exception:  # noqa: BLE001
-        pass
-    try:
-        AppDomain.CurrentDomain.UnhandledException += _on_domain_exc
-    except Exception:  # noqa: BLE001
-        pass
-    _CLR_CRASH_GUARD_INSTALLED = True
-    logger.info("[CLR守卫] 已安装（GUI 线程/域级 CLR 异常 → 记录并防闪退）")
 
 
 # 模块导入即尝试安装一次（覆盖 webview.start 之前最早的那批窗口创建）；
@@ -18745,116 +18123,8 @@ def _bailian_inject_loop(win) -> None:
         _BAILIAN_INJECT_TIMER = None
 
 
-def _run_coroutine_sync(coro, timeout: float = 300.0):
-    """在一个**独立线程的全新事件循环**里跑完协程并返回结果。
-
-    【2026-10-02 新增】给 js_api 守卫兜底用。本项目 GUI 进程已有一个常驻事件循环，
-    所以不能在当前线程直接 asyncio.run（会报 "loop already running"），也不能把协程
-    挂在那个循环上（会死等）。故：起独立线程 → 新建 loop → run_until_complete。
-    """
-    import asyncio as _aio
-    import threading as _th
-    _box: dict = {}
-
-    def _worker():
-        loop = _aio.new_event_loop()
-        try:
-            _aio.set_event_loop(loop)
-            _box["r"] = loop.run_until_complete(coro)
-        except Exception as e:  # noqa: BLE001
-            _box["r"] = {"success": False, "error": f"异步接口执行失败：{type(e).__name__}: {e}"}
-        finally:
-            try:
-                loop.close()
-            except Exception:  # noqa: BLE001
-                pass
-
-    t = _th.Thread(target=_worker, name="jsapi-coro", daemon=True)
-    t.start()
-    t.join(timeout=timeout)
-    if t.is_alive():
-        return {"success": False, "error": f"异步接口超时（>{int(timeout)}s）"}
-    return _box.get("r")
 
 
-def _safe_js_api(api, label: str = ""):
-    """js_api 序列化守卫（2026-10-02）：治 pywebview 层静默 TypeError。
-
-    背景：pywebview 对 js_api 返回值做 json.dumps，任何不可序列化对象（如误
-    返回的 bound method）都在序列化层抛 TypeError——前端 Promise 永远挂起、
-    UI 毫无反馈，Python 侧只留一个**不带方法名**的 traceback（实测 01:59 运行
-    时 1 小时内 245 次，完全无法定位是哪个接口）。
-
-    守卫做三件事：
-      1. 返回前本地 json.dumps 试序列化（与 pywebview 同规则）；
-      2. 失败 → 日志直接打出 **方法名**（真凶可见）+ 返回值类型；
-      3. 降级返回错误 dict——前端至少能收到响应，不再静默挂起。
-
-    实现方式：动态派生子类包裹所有公开方法（同步/异步都支持），原对象状态
-    原样搬迁，不影响 pywebview 的方法枚举（类函数仍是 bound method）。
-    """
-    import functools as _ft
-    import inspect as _inspect
-
-    cls = api.__class__
-
-    def _make_guard(fn, name):
-        _where = f"{label or cls.__name__}.{name}"
-
-        def _fail(e):
-            logger.error(
-                "[js_api守卫] %s 返回不可 JSON 序列化（%r）→ 降级错误响应",
-                _where, e)
-            # 把方法名 + 错误类型带进返回值：前端可据此提示，也便于用户直接贴日志定位
-            return {"success": False,
-                    "error": f"接口 {_where} 返回了不可序列化的结果（{e}），详见运行日志"}
-
-        if _inspect.iscoroutinefunction(fn):
-            @_ft.wraps(fn)
-            async def guard(self, *a, **k):
-                result = await fn(self, *a, **k)
-                try:
-                    json.dumps(result)
-                except Exception as e:  # noqa: BLE001
-                    return _fail(e)
-                return result
-        else:
-            @_ft.wraps(fn)
-            def guard(self, *a, **k):
-                result = fn(self, *a, **k)
-                # 【2026-10-02 兜底】若某个"本应同步"的方法意外返回了协程对象（例如误写成
-                # async def），这里就地把它跑完再返回，而不是让协程一路传到前端炸出
-                # 「Object of type coroutine is not JSON serializable」这种天书错误。
-                # 本项目 GUI 已有运行中的事件循环，故用独立线程跑一个全新的 loop。
-                if _inspect.iscoroutine(result):
-                    result = _run_coroutine_sync(result)
-                try:
-                    json.dumps(result)
-                except Exception as e:  # noqa: BLE001
-                    return _fail(e)
-                return result
-        return guard
-
-    attrs = {}
-    for name, fn in _inspect.getmembers(cls, _inspect.isfunction):
-        if name.startswith("_"):
-            continue
-        attrs[name] = _make_guard(fn, name)
-    safe_cls = type(cls.__name__ + "_Safe", (cls,), attrs)
-    inst = object.__new__(safe_cls)
-    # 【2026-10-10 修"agent卡/新消息永不上屏"根因】旧实现 `inst.__dict__.update(api.__dict__)`
-    # 是**浅拷贝**：不可变标量（_chat_seq / _chat_history_loaded / _chat_status_id 等）
-    # 在拷贝瞬间被定格，此后 wrapper 与原对象**各自分叉**——
-    #   · 总线事件（USER_TEXT/AGENT_STATUS/PARTIAL_TEXT）处理在原对象上：seq 0→1→2→3，
-    #     消息 append 进原对象的缓冲；
-    #   · 前端轮询的 get_chat_messages 在 wrapper 上：永远看到拷贝瞬间的旧状态；
-    #   · 今天新加的 _load_chat_history 会**重建 deque 并赋值**（rebinding），把 wrapper
-    #     的 _chat_buffer 与原对象的彻底拆成两个 → 历史能恢复、实时消息全失踪，
-    #     且落盘 id 每次启动都从 1 重来（日志 22:01:03「已恢复 16 条」vs 22:02:00「id=2」实锤）。
-    # 修法：让 wrapper 与原对象**共享同一个 __dict__**（同一命名空间，读写全等）。
-    # guard 方法挂在 safe_cls 类属性上不受影响；pywebview 的方法枚举基于类，亦不受影响。
-    inst.__dict__ = api.__dict__
-    return inst
 
 
 def create_bailian_console_window(api=None) -> Optional["webview.Window"]:  # noqa: F821
