@@ -49,6 +49,8 @@ INSTANCE_FILES = ["config.yaml", "config.local.yaml"]
 
 # 不该出现在待打包目录里的东西
 FORBIDDEN_DIRS = [".venv", "venv", ".git", "__pycache__", "data", "logs", "build", "ort_dml"]
+# 目录名匹配的最大深度：只抓包根附近，避免把内置运行时里的同名目录误判
+MAX_FORBIDDEN_DEPTH = 2
 FORBIDDEN_FILES = ["call_records.json", "user_knowledge.yaml", "memory.json", "memory_profile.jsonl"]
 
 
@@ -83,13 +85,20 @@ def scan_config(path: str) -> list[tuple[int, str]]:
 
 
 def scan_dir(root: str) -> tuple[list[str], list[str]]:
-    """检查待打包目录：返回 (阻断项, 告警项)。"""
+    """检查待打包目录：返回 (阻断项, 告警项)。
+
+    目录名匹配只看到深度 MAX_FORBIDDEN_DEPTH 以内：真正的隐私风险是包根下的
+    `data/`、`logs/`、`.venv/`；而随包附带的 Python 运行时里天然存在
+    `python/Lib/venv`、`pip/_internal/operations/build` 这类同名目录，
+    按全树匹配会把正常交付包误判为不合格（2026-10-17 实测撞到）。
+    """
     blocking: list[str] = []
     warnings: list[str] = []
     for dirpath, dirnames, filenames in os.walk(root):
         rel_dir = os.path.relpath(dirpath, root)
+        depth = 0 if rel_dir == "." else rel_dir.count(os.sep) + 1
         for d in list(dirnames):
-            if d in FORBIDDEN_DIRS:
+            if d in FORBIDDEN_DIRS and depth < MAX_FORBIDDEN_DEPTH:
                 blocking.append(f"包内混入目录：{os.path.join(rel_dir, d)}")
                 dirnames.remove(d)  # 不再深入
         for f in filenames:
