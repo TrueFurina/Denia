@@ -39,6 +39,7 @@
 | `6d75b24` | 00:52 | feat | 换壳 PoC：同一 rig 页面在 Electron 下真透明 | 角落与真背景逐点相等、中心不同 |
 | `cac2760` | 00:53 | chore | 锁定 Electron 依赖版本 | — |
 | `4792f40` | 01:20 | feat | 换壳 1/2 步：CharacterAPI 暴露本地 RPC + 壳侧 shim | 19 方法两通道一致；端到端五项全通过 |
+| `6801aee` | 02:10 | feat | 换壳 3 步：桌宠窗改由 Electron 壳承载（主窗口仍 pywebview） | 壳桌宠冒烟 11 项连续三次通过 |
 
 ---
 
@@ -428,11 +429,52 @@ PROBE {"hasBridge":true,"psdType":"function","title":"看板娘[OK]","psdLen":41
 
 ---
 
+## `6801aee` 桌宠窗换壳（2026-10-18 02:10）
+
+按"只切桌宠窗"实施。核心约束是**不能改调用方**：`api_pet.py` 里到处是
+`self._pet_win.show() / .hide() / .on_top / .x / .y`，所以 `src/ui/pet_shell.py`
+用**鸭子类型**冒充 pywebview Window，只实现真正被用到的那几个成员；
+`native` 返回 None，让 `pet_hit_rect` 里的 `hasattr` 安全跳过。
+
+`run_webview` 里两条路径二选一，**任何一步不满足就回退 pywebview**——
+这个回退有专门测试（`test_pet_shell_fallback.py`），否则没装 `node_modules`
+的机器上用户会连人都看不到。
+
+### 迁移中踩到的三个坑
+
+1. **页面会改写 `document.title`**。所有 Win32 能力（拖动、置顶、截屏隐身）都靠
+   `FindWindowW(None, "达妮娅看板娘")` 定位窗口，而 rig 页面会把运行状态
+   （`看板娘[BARE]/[OK]`）写进标题。实测 `_pet_find_hwnd()` 直接返回 None，
+   置顶/拖动全部静默失效。修法：壳里拦 `page-title-updated` 并固定标题。
+2. **Electron 的 userData 目录单实例限制**：残留一个实例时，新进程**无输出地 rc=-1 退出**，
+   看起来像"启动失败但没有任何报错"。生产用固定 profile，测试必须传独立目录。
+3. **`--url` 开关名会让 Electron 立刻退出**（rc=-1）。页面地址改走握手文件的 `web_base`。
+
+顺带一条判断口径：**置顶不要信 Electron 的 `isAlwaysOnTop()`**——实测那个窗口上
+`setAlwaysOnTop(true)` 之后它仍回报 0。改为读写 Win32 `WS_EX_TOPMOST`，并用
+`SetWindowPos` 兜底（`argtypes` 已声明，避免 `-1` 被截断成 `0xFFFFFFFF` 那个老坑）。
+
+### 验证
+
+`tools/pet_shell_smoke.py` 11 项，连续三次全通过：
+
+```
+页面渲染就绪（title='看板娘[OK]'）   页面侧调用结果：'LEN:4187477'
+设为置顶后读回 True / 取消后读回 False   move 生效（200,160）
+与背景一致像素 76.2%；接近 #F0F0F0 像素 0.1%
+```
+
+透明判定这轮改了两次口径，两次都是被假象骗：
+- **角落采样会撞到角色本体**（实测左下角差值 195，那是头发不是底色）→ 改整区域逐像素统计；
+- **`#F0F0F0` 单看颜色会误伤**（浅色桌面本身就是 240）→ 只在"与背景差得远"时才算失败。
+
+---
+
 ## 待办（需要你决策）
 
 | 项 | 现状 | 需决定什么 |
 |---|---|---|
-| **桌宠白底（换壳）** | ✅ 已确认 Electron 可行，第 1、2 步（RPC + shim）已落地并端到端验证 | 下一步是第 3 步：把桌宠窗真正切到壳上（要动 `run_webview` 的启动分支），动手前确认是否同时迁主窗口 |
+| **桌宠白底（换壳）** | ✅ 第 1~3 步已完成：RPC + 壳侧 shim + 桌宠窗改由 Electron 承载（`--pet-shell`），主窗口仍在 pywebview | 是否把 `--pet-shell` 设为默认开启；以及第 4 步（主窗迁移 + electron-builder 打包）什么时候做 |
 | **tkinter 两功能不可用** | 内置运行时无 `Lib/tkinter`、无 `_tkinter.pyd`、无 `tcl/`，OCR 校准与对话悬浮层在任何机器上都返回"不可用"（代码优雅降级，不崩） | 补 tcl/tk（+10MB，版本须严格匹配）／改 WebView2 浮层／隐藏入口 |
 | **交付物依赖安装** | `tools/make_dist.py` 已能产出干净目录（65.3MB），但内置运行时只有 pip，必须再执行 `dist/python/python.exe -m pip install -r requirements.txt`（或走「安装环境.exe」）才能启动 | 这段安装是留在安装器里，还是做成 `make_dist.py --install-deps` 一步到位 |
 | **打包方式** | 目前是"便携目录"，`dist/` 已在 `.gitignore` 内 | 若迁 Electron，则整体转为 electron-builder + NSIS |
