@@ -26,8 +26,11 @@ import hashlib
 from pathlib import Path
 
 # ----------------------------- 配置（必须由用户显式提供，不写死任何免费第三方） -----------------------------
-DANIYA_REF = os.getenv("DANIYA_REF_WAV", r"H:\daniya_ref.wav")
-CACHE_DIR = Path(os.getenv("DANIYA_TTS_CACHE", r"G:/ai对话/11/deliverables/tts_cache"))
+# 路径默认值一律相对仓库根，不写死任何本机盘符：项目曾位于 G:\ai对话\11，
+# 搬家到 D:\Denia 后旧默认值让 import 直接 FileNotFoundError（G:\ 不存在）。
+_ROOT = Path(__file__).resolve().parents[2]
+DANIYA_REF = os.getenv("DANIYA_REF_WAV") or str(_ROOT / "assets" / "voices" / "daniya_ref.wav")
+CACHE_DIR = Path(os.getenv("DANIYA_TTS_CACHE") or (_ROOT / "deliverables" / "tts_cache"))
 # 以下两个端点**必须**由你自己的环境变量显式提供；默认留空，绝不写死免费第三方服务。
 HF_SPACE = os.getenv("DANIYA_HF_SPACE", "").strip()        # 你自己的 CosyVoice2 Space（需代理）
 MODESCOPE_MODEL = os.getenv("DANIYA_MS_MODEL", "").strip()  # 你自己的 ModelScope 模型
@@ -38,7 +41,17 @@ if PROXY:
     os.environ["HTTPS_PROXY"] = PROXY
     os.environ["HTTP_PROXY"] = PROXY
 
-CACHE_DIR.mkdir(parents=True, exist_ok=True)
+def _ensure_cache_dir() -> Path:
+    """惰性创建缓存目录。
+
+    原实现在 import 阶段就 mkdir，导致「只要盘符不可用，连 import 都失败」——
+    一个可选的 TTS 辅助模块不该有能力在导入时炸掉调用方。
+    """
+    try:
+        CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    except OSError as e:  # noqa: BLE001  目录不可写时降级为不缓存，调用方仍能合成
+        print(f"[TTS] 缓存目录不可用（{CACHE_DIR}）：{e}，本次不写缓存")
+    return CACHE_DIR
 
 
 def _configured() -> str:
@@ -63,7 +76,11 @@ def synthesize(text: str, use_cache: bool = True) -> bytes | None:
             return cp.read_bytes()
     wav = _try_hf(text) or _try_modelscope(text)
     if wav and use_cache:
-        _cache_path(text).write_bytes(wav)
+        try:
+            _ensure_cache_dir()
+            _cache_path(text).write_bytes(wav)
+        except OSError as e:  # noqa: BLE001  缓存失败不影响本次结果
+            print(f"[TTS] 写缓存失败：{e}")
     return wav
 
 
@@ -125,7 +142,7 @@ if __name__ == "__main__":
     sample = "达娅在吗？我刚打完一把游戏，想跟你说说话。"
     out = synthesize(sample)
     if out:
-        dst = Path(r"G:/ai对话/11/deliverables/daniya_cloud_sample.wav")
+        dst = _ensure_cache_dir().parent / "daniya_cloud_sample.wav"
         dst.write_bytes(out)
         print(f"✅ 已生成达娅云端样片: {dst} ({len(out)} bytes)")
     else:
