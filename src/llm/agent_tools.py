@@ -1663,19 +1663,67 @@ def _fetch_web(url: str) -> str:
 # --------------------------------------------------------------------------
 # 命令行：白名单闸
 # --------------------------------------------------------------------------
+# 【2026-10-17 安全修复】旧实现有两个缺口，叠加后可用一行分号绕过白名单：
+#   1) `if allow and head not in ...` —— 白名单漏配时 allow 为空，条件短路 ⇒ 全放行；
+#   2) 只校验第一个词，整串交给 shell=True ⇒ `git status; del /s /q ...` 首词是 git，照样执行。
+# 现在改为 fail-closed：白名单为空即拒绝；含有 shell 元字符即拒绝；argv 解析后校验
+# 可执行文件名，并以 shell=False 执行（Windows 内建命令单独走 cmd /d /c，且已禁元字符）。
+_SHELL_META_RE = re.compile(r"[;&|`$\n\r<>%^!()]")
+
+# cmd.exe 内建命令（没有对应 exe，shell=False 直接执行会 FileNotFoundError）
+_CMD_BUILTINS = {
+    "assoc", "cd", "chdir", "cls", "copy", "date", "del", "dir", "echo", "erase",
+    "ftype", "md", "mkdir", "more", "move", "path", "pause", "rd", "ren", "rename",
+    "rmdir", "set", "sort", "time", "title", "type", "ver", "vol",
+}
+
+
+def _split_argv(command: str) -> list[str]:
+    """按 Windows 习惯切分（保留反斜杠），并去掉 token 两端成对引号。"""
+    import shlex
+
+    argv = shlex.split(command, posix=False)
+    out: list[str] = []
+    for tok in argv:
+        if len(tok) >= 2 and tok[0] == tok[-1] and tok[0] in "\"'":
+            tok = tok[1:-1]
+        out.append(tok)
+    return out
+
+
 def _run_command(command: str, ctx: dict) -> str:
     if not command:
         return "未提供命令"
     if not ctx.get("allow_cmd"):
         return "run_command 未启用（config.yaml agent.allow_command=false）。"
-    allow = ctx.get("allow_cmds") or []
-    head = command.strip().split()[0].lower() if command.strip() else ""
-    if allow and head not in [a.lower() for a in allow]:
-        return f"命令 {head!r} 不在白名单（agent.allow_commands），已拒绝执行。"
+    allow = [str(a).lower() for a in (ctx.get("allow_cmds") or []) if str(a).strip()]
+    # fail-closed：白名单为空不许"默认全开"
+    if not allow:
+        return "命令白名单为空（agent.allow_commands 未配置），已拒绝执行。"
+    # 只接受单条命令：串联 / 管道 / 重定向 / 变量展开 / 转义 一律拒绝
+    if _SHELL_META_RE.search(command):
+        return "命令包含串联、管道、重定向或变量展开字符，已拒绝执行。"
     try:
-        proc = subprocess.run(command, shell=True, capture_output=True, text=True, timeout=30)
+        argv = _split_argv(command)
+    except Exception as e:  # noqa: BLE001  shlex 对不配对的引号会抛 ValueError
+        return f"命令解析失败：{e}"
+    if not argv:
+        return "未提供命令"
+    exe = os.path.basename(argv[0]).lower()
+    if exe not in allow:
+        return f"命令 {exe!r} 不在白名单（agent.allow_commands），已拒绝执行。"
+    run_argv = ["cmd.exe", "/d", "/c", command] if exe in _CMD_BUILTINS else argv
+    try:
+        proc = subprocess.run(
+            run_argv, shell=False, capture_output=True, text=True,
+            timeout=float(ctx.get("cmd_timeout") or 30),
+            encoding="utf-8", errors="replace",
+        )
         out = (proc.stdout or "") + (proc.stderr or "")
+        logger.debug("run_command 已执行：%s（exit=%s）", exe, proc.returncode)
         return f"[exit {proc.returncode}]\n{out[:1500]}"
+    except subprocess.TimeoutExpired:
+        return f"命令执行超时（>{ctx.get('cmd_timeout') or 30}s），已终止。"
     except Exception as e:  # noqa: BLE001
         return f"命令执行失败：{e}"
 
