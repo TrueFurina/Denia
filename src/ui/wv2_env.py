@@ -12,6 +12,7 @@ import itertools
 import json
 import logging
 import os
+import sys
 import threading
 
 from .ui_state import STATE
@@ -313,23 +314,38 @@ def _patch_webview2_unique_user_data() -> None:
     logger.info("[WebView2] 已启用每窗口独立 UserDataFolder（修复多窗口并发初始化 E_ABORT → 白屏）")
 
 
-def _install_clr_crash_guard() -> None:
+def _install_clr_crash_guard(force_load: bool = False) -> None:
+    """挂接 .NET 未捕获异常处理器，避免 GUI 线程异常直接终止进程。
+
+    force_load=False 时，若 CLR 尚未加载就直接返回 —— 纯逻辑场景（测试、离线脚本）
+    不该为了装守卫而平白拉起整个 .NET 运行时。GUI 建窗前传 force_load=True。
+
+    【2026-10-17 修复】原实现只 `import System`，但 pythonnet 3.x 下必须先
+    `import clr` 再 `AddReference`，否则恒定 ModuleNotFoundError: No module
+    named 'System' —— 守卫从未安装成功（日志里一条 warning 就跳过了）。
+    另外 UnhandledExceptionMode 是 System.Windows.Forms 下的类，不是
+    Application 的属性，旧写法 AttributeError 后被 except 吞掉。
+    """
     global _CLR_CRASH_GUARD_INSTALLED
     if _CLR_CRASH_GUARD_INSTALLED:
         return
+    if not force_load and "clr" not in sys.modules:
+        logger.debug("[CLR守卫] CLR 尚未加载，跳过（GUI 建窗前会再调用一次）")
+        return
     try:
-        import System  # noqa: F401  （触发 pythonnet CLR 引导；失败则降级跳过）
+        import clr
+        clr.AddReference("System.Windows.Forms")  # 与 pywebview 的加载方式一致
         from System.Windows.Forms import Application
         from System import AppDomain
     except Exception as _e:  # noqa: BLE001
-        logger.warning("[CLR守卫] pythonnet/WinForms 暂不可用，跳过: %s", _e)
+        logger.warning("[CLR守卫] pythonnet/WinForms 不可用，跳过: %s", _e)
         return
     try:
-        # 让 UI 线程异常走 CatchException（被 ThreadException 接住），而非直接抛到域级终止。
-        Application.SetUnhandledExceptionMode(
-            Application.UnhandledExceptionMode.CatchException)
-    except Exception:  # noqa: BLE001
-        pass
+        from System.Windows.Forms import UnhandledExceptionMode
+        # 必须在任何窗口创建之前设置，否则抛异常
+        Application.SetUnhandledExceptionMode(UnhandledExceptionMode.CatchException)
+    except Exception as _e:  # noqa: BLE001
+        logger.debug("[CLR守卫] 设置异常模式失败（不影响后续挂接）: %s", _e)
 
     def _on_thread_exc(sender, e) -> None:
         try:
