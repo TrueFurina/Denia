@@ -1,0 +1,53 @@
+# ============================================================
+# 达妮娅 AI 桌面伴侣 · 版本控制排除规则
+# 原则：Runtime / 构建产物 / 含真实密钥的配置 / 用户隐私数据 一律不入库
+# ============================================================
+
+# ---- 运行环境（体积大、可重建）----
+.venv/
+python/
+venv/
+__pycache__/
+*.py[cod]
+*.pyd
+*.pyo
+*$py.class
+
+# ---- 构建产物 ----
+*.exe
+*.msi
+build/
+dist/
+*.spec
+ort_dml/
+
+# ---- 敏感配置：含真实 API Key，严禁入库 ----
+# config.release.yaml 是发布模板，可入库；config.yaml 是实配，不入库
+config.yaml
+# config.release.yaml 当前第 1771 行仍含一枚未脱敏的百炼 Key，清掉后再纳入版本控制
+config.release.yaml
+config.local.yaml
+.env
+.env.*
+secrets*.yaml
+*.key
+*.pem
+
+# ---- 用户隐私数据 ----
+data/
+call_records.json
+logs/
+*.log
+src/ui/web/assets/chat_audio/
+user_knowledge.yaml
+*.swapbak_*
+
+# ---- 临时/诊断产物 ----
+tools/_*_out*.txt
+tools/_*.jsonl
+tools/_*.txt
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+*.tmp
+*.bak

@@ -1,0 +1,451 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>切换提醒</title>
+<style>
+/* ============================================================
+   模式切换通知浮窗（WebView2 版）
+   —— 与 ui_redesign_mode_notify.html 设计稿 1:1 对齐
+   —— 全部内联，不依赖外部 CSS（独立窗口加载）
+   ============================================================ */
+*{box-sizing:border-box;margin:0;padding:0}
+html, body {
+  width:100%; height:100%; overflow:hidden;
+  /* 【模式 T · 默认】窗口透明：卡片悬浮在桌面上，视觉等同设计稿。
+     窗口常显在屏内右上角，空闲时卡片 opacity:0 → 肉眼完全看不见。 */
+  background:transparent;
+  font-family:"Microsoft YaHei UI","PingFang SC",system-ui,sans-serif;
+}
+/* 【模式 O · 兜底】窗口不透明（?mode=opaque）：卡片铺满窗口、直角、淡入 */
+body.opaque { background:#0D1018; }
+
+/* —— 浮窗容器 —— */
+.stage {
+  position:fixed; inset:0;
+  display:flex; justify-content:center; align-items:flex-start;
+  padding-top:14px;
+}
+body.opaque .stage { padding:0; }
+
+/* ============ 卡片本体 ============ */
+.card {
+  position:relative; width:400px;
+  background:#0D1018; border-radius:18px;
+  padding:16px; overflow:hidden;
+  /*
+   * 阴影说明：透明窗口 + DWM 合成下，大范围 box-shadow 会被渲染成灰白色硬块，
+   * 故只保留一层紧贴的微投影（与设计稿相比阴影略弱，这是透明窗的物理限制）。
+   */
+  box-shadow:0 2px 6px rgba(0,0,0,.45);
+  opacity:0;
+  /* 滑入起点：卡片在窗口右缘之外（窗口贴屏幕右边缘 → 视觉上就是"从屏幕外滑入"） */
+  transform:translateX(120%);
+  transition:opacity .42s linear, transform .45s cubic-bezier(.3,.05,.25,1);
+  will-change:transform, opacity;
+}
+.card.visible { opacity:1; transform:none; }
+.card.dismissing { opacity:0; }
+
+/* 模式 O：窗口尺寸已=卡片尺寸（400x176 逻辑），卡片铺满窗口 → 无黑边、不拉伸、
+   比例等同设计稿。圆角在卡片上自绘，窗口底同色(#0D1018) → 圆角观感保留。
+   窗口自身靠 Win32 从右缘外滑入，故卡片不需要 translateX 位移动画。 */
+body.opaque .card {
+  width:100%; height:100%; border-radius:18px;
+  box-shadow:none;
+  transform:none;
+  opacity:1;   /* 不透明模式：卡片常显，整窗滑动即"内容滑动"，杜绝黑底先到、UI 后显 */
+  /* 不透明模式：窗口整体滑动 = 唯一动画，禁掉卡片自身的 opacity/transform 过渡，
+     否则会与窗口滑动叠加成"原地淡入淡出"，且滑出时卡片先黑、黑窗再飞出。 */
+  transition:none;
+}
+body.opaque .card.visible { transform:none; }
+
+/* 透明模式(T·默认)：卡片常显，纯位移滑入/滑出（不淡入淡出），契合"从屏外划入"诉求 */
+body:not(.opaque) .card { opacity:1; }
+
+/* 顶部受光微晕 */
+.card::before{
+  content:""; position:absolute; inset:2px 2px auto 2px; height:46px;
+  border-radius:16px 16px 200px 200px;
+  background:linear-gradient(180deg, var(--hue-13, rgba(45,212,255,.10)), transparent);
+  pointer-events:none; z-index:0;
+}
+
+/* 左侧渐变脊 */
+.card::after{
+  content:""; position:absolute; left:2px; top:16px; bottom:16px; width:5px;
+  border-radius:3px;
+  background:linear-gradient(180deg, var(--hue, #2DD4FF), var(--hue2, #A06BFF));
+  pointer-events:none; z-index:0;
+}
+
+.card>*{position:relative;z-index:1}
+
+.row{display:flex;align-items:flex-start;gap:14px}
+
+/* 徽章 */
+.badge{
+  flex:0 0 42px; width:42px; height:42px; border-radius:50%;
+  background:var(--hue, #2DD4FF); display:grid; place-items:center; margin-top:4px;
+  box-shadow:0 2px 8px rgba(0,0,0,.3);
+}
+.badge i{
+  width:36px; height:36px; border-radius:50%;
+  background:color-mix(in srgb, var(--hue, #2DD4FF) 18%, #0D1018);
+  display:grid; place-items:center;
+}
+.badge svg{width:20px; height:20px; display:block}
+
+.col{flex:1; min-width:0}
+.kicker{
+  font-size:11px; font-weight:700; color:var(--hue, #2DD4FF);
+  letter-spacing:.06em; margin-bottom:5px;
+}
+.title{font-size:16px; font-weight:700; color:#E9EDF6; margin-bottom:6px}
+.body{font-size:12.5px; color:#AEB7C9; margin-bottom:10px; line-height:1.6}
+
+.pill{
+  position:absolute; top:18px; right:22px; z-index:2;
+  font-size:11px; font-weight:700; color:var(--hue, #2DD4FF);
+  padding:5px 12px; border-radius:999px;
+  background:var(--pillbg, #0E2F3F); border:1px solid var(--hue, #2DD4FF);
+  white-space:nowrap;
+}
+
+.status{font-size:12px; font-weight:700; color:var(--hue, #2DD4FF); margin-bottom:7px}
+.bar{
+  height:7px; border-radius:4px; background:#1B2230; overflow:hidden;
+}
+.bar>i{
+  display:block; height:100%; border-radius:4px;
+  background:linear-gradient(90deg, var(--hue, #2DD4FF), var(--hue2, #A06BFF));
+  width:0%;
+  transition:width .35s ease-out;
+}
+
+/* ====== 四种场景变体 ====== */
+.v-game { --hue:#FFB84D; --hue2:#A06BFF; --pillbg:#3A2A10; --hue-13:rgba(255,184,77,.10) }
+.v-back { --hue:#2DD4FF; --hue2:#A06BFF; --pillbg:#0E2F3F; --hue-13:rgba(45,212,255,.10) }
+.v-focus{ --hue:#A06BFF; --hue2:#2DD4FF; --pillbg:#231A3A; --hue-13:rgba(160,107,255,.10) }
+.v-ok   { --hue:#36D399; --hue2:#2DD4FF; --pillbg:#0E2E24; --hue-13:rgba(54,211,153,.10) }
+
+/* error 覆盖 */
+.v-error .status,
+.card.error .status { color:#E5484D !important }
+.v-error .bar>i,
+.card.error .bar>i {
+  background:linear-gradient(90deg,#E5484D,#FFB84D) !important;
+  width:100% !important;
+}
+
+/* 呼吸动画（indeterminate 进度） */
+@keyframes breathe {
+  0%,100% { width:12% }
+  50% { width:17% }
+}
+.bar.breathing > i {
+  animation:breathe 2.2s ease-in-out infinite;
+}
+</style>
+</head>
+<body>
+<div class="stage">
+<div class="card v-back" id="card">
+  <div class="pill" id="pill">本机模式</div>
+  <div class="row">
+    <div class="badge"><i id="badgeIcon"></i></div>
+    <div class="col">
+      <div class="kicker" id="kicker">回到本机陪你</div>
+      <div class="title" id="title">我回到本机陪你了</div>
+      <div class="body" id="body"></div>
+      <div class="status" id="status">正在连上…</div>
+      <div class="bar" id="barWrap"><i id="barFill"></i></div>
+    </div>
+  </div>
+</div>
+</div>
+
+<script>
+// ============================================================
+// 通知浮窗前端控制器
+// —— 由 Python 后端经 evaluate_js / pywebview.api 调用
+// ============================================================
+const ICONS = {
+  game: '<svg viewBox="0 0 24 24" fill="none"><rect x="3" y="9" width="18" height="8" rx="4" fill="#FFB84D"/><path d="M7.2 13h2.4M8.4 11.8v2.4" stroke="#0D1018" stroke-width="1.8" stroke-linecap="round"/><circle cx="15.4" cy="12.1" r="1.05" fill="#0D1018"/><circle cx="17.6" cy="14" r="1.05" fill="#0D1018"/></svg>',
+  home: '<svg viewBox="0 0 24 24" fill="none"><path d="M12 4L4 11h15z" fill="#2DD4FF"/><rect x="6.5" y="10.5" width="11" height="9" rx="1" fill="#2DD4FF"/><rect x="10.5" y="14" width="3" height="5.5" rx=".8" fill="#0D1018"/></svg>',
+  spark: '<svg viewBox="0 0 24 24" fill="none"><path d="M12 3l1.5 4.5L18 9l-4.5 1.5L12 15l-1.5-4.5L6 9l4.5-1.5z" fill="#A06BFF"/><path d="M17.5 14l.7 2 2 .7-2 .7-.7 2-.7-2-2-.7 2-.7z" fill="#2DD4FF"/></svg>',
+  check: '<svg viewBox="0 0 24 24" fill="none"><path d="M5.5 12.5l4 4L18.5 7.5" stroke="#36D399" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round"/></svg>'
+};
+
+const card = document.getElementById('card');
+const el = {
+  pill: document.getElementById('pill'),
+  badgeIcon: document.getElementById('badgeIcon'),
+  kicker: document.getElementById('kicker'),
+  title: document.getElementById('title'),
+  body: document.getElementById('body'),
+  status: document.getElementById('status'),
+  barWrap: document.getElementById('barWrap'),
+  barFill: document.getElementById('barFill')
+};
+
+let _dismissCb = null;
+let _cardShowing = false;   // 卡片当前是否已在显示（用于判断是"首次滑入"还是"就地换内容"）
+let _curTimeout = 8000;     // 当前 show 携带的页面端自动收起兜底时长（ms）
+
+// 双模（2026-09-04 23:20）：?mode=opaque = 不透明兜底模式（窗口不透明、卡片铺满、
+// 由窗口位置滑动完成"滑入/滑出"）；默认 = 透明模式（卡片自身从屏幕外滑入）。
+const OPAQUE = /[?&]mode=opaque/.test(location.search);
+if (OPAQUE) document.body.classList.add('opaque');
+const _HIDDEN_TRANSFORM = OPAQUE ? 'none' : 'translateX(120%)';
+
+// 状态回报：页面经 HTTP 告知后端"卡片当前应展开还是收起"，
+// GUI 心跳据此驱动模式 O 的窗口滑动（透明模式下该回报无副作用）。
+function reportState(s) {
+  try { fetch('/notify_state?state=' + s, { cache: 'no-store' }); } catch (e) {}
+}
+
+// 卡片真实渲染状态回报：把 className + 计算 opacity 打到后端（/notify_report，行 5233 记录）。
+// 用于"命令已送达但看不见"时精确定位：op=0=卡片没显出来；op=1+visible=卡片已画但窗口不可见。
+function reportCard() {
+  try {
+    var c = document.getElementById('card');
+    var st = c ? (c.className + '|op=' + getComputedStyle(c).opacity) : 'no-card';
+    fetch('/notify_report?state=' + encodeURIComponent(st), { cache: 'no-store' });
+  } catch (e) {}
+}
+
+// ---- 公开 API（Python 经 evaluate_js 调用）----
+window.NotifyAPI = {
+  /**
+   * 显示通知卡片。
+   * @param {string} title - 标题
+   * @param {string} body - 正文
+   * @param {string} scene - 场景: "game"|"back"|"focus"|"ok"
+   * @param {object} labels - { kicker, pill } 可选覆盖
+   */
+  show(title, body, scene, labels, timeoutMs) {
+    _curTimeout = Number(timeoutMs) || 8000;
+    // 2026-09-05：卡片已在显示时（快速切换软件/游戏连发 show），不再整段重置
+    // 动画重播滑入——那样会「滑入→又滑入」抽搐闪动。改为就地换文案+场景配色并
+    // 续命页面端计时，视觉上卡片只平滑换内容、不抖动。
+    if (_cardShowing) {
+      this.updateContent(title, body, scene, labels);
+      this._armAutoHide();
+      return;
+    }
+    // 首次显示：可靠重置动画——先关过渡、硬复位到屏外、强制 reflow、再恢复过渡。
+    card.style.transition = 'none';
+    card.className = 'card';
+    card.style.transform = _HIDDEN_TRANSFORM;
+    void card.offsetWidth;
+    card.style.transition = '';
+
+    const s = (scene || 'back').toLowerCase();
+    card.classList.add('v-' + s);
+
+    const l = labels || {};
+    el.kicker.textContent = l.kicker || _sceneDefaults(s).kicker;
+    el.pill.textContent = l.pill || _sceneDefaults(s).pill;
+    el.title.textContent = title || '';
+    el.body.textContent = body || '';
+    el.status.textContent = '正在切换…';
+    el.status.style.color = '';
+    card.classList.remove('error');
+    el.barFill.style.width = '0%';
+    el.barWrap.classList.add('breathing');
+    el.badgeIcon.innerHTML = ICONS[_sceneDefaults(s).icon] || ICONS.spark;
+
+    // 直接同步加 visible（不依赖 requestAnimationFrame——若 WebView2 认为窗口
+    // 被遮挡/不产帧，rAF 回调永不触发，卡片会永远停在隐藏态）。起始态已通过
+    // offsetWidth 强制 reflow 提交，此刻加 visible 过渡照常播放。
+    card.classList.add('visible');
+    _cardShowing = true;
+    this._armAutoHide();
+    reportState('show');
+    reportCard();
+  },
+
+  /** 就地更新卡片文案+场景（不重播滑入动画，供已显示状态下连续 show 复用）。 */
+  updateContent(title, body, scene, labels) {
+    const s = (scene || 'back').toLowerCase();
+    card.classList.remove('v-game', 'v-back', 'v-focus', 'v-ok', 'v-error');
+    card.classList.add('v-' + s);
+    const l = labels || {};
+    el.kicker.textContent = l.kicker || _sceneDefaults(s).kicker;
+    el.pill.textContent = l.pill || _sceneDefaults(s).pill;
+    el.title.textContent = title || '';
+    el.body.textContent = body || '';
+    el.badgeIcon.innerHTML = ICONS[_sceneDefaults(s).icon] || ICONS.spark;
+    // 保留状态条（正在连/已连）不重置，避免进度条回跳。
+  },
+
+  /** 续命页面端自动收起计时（透明模式用；不透明模式由后端驱动窗口滑动）。 */
+  _armAutoHide() {
+    if (window.__autoHide) clearTimeout(window.__autoHide);
+    if (!OPAQUE) {
+      window.__autoHide = setTimeout(function () { NotifyAPI.dismiss(); }, _curTimeout);
+    }
+  },
+
+  /**
+   * 更新底部状态条。
+   * @param {string} status - 状态文本
+   * @param {number} progress - 0..1 进度
+   * @param {boolean} connected - 是否已连接
+   * @param {string|null} error - 错误文本（非 null 则翻红）
+   */
+  update(status, progress, connected, error) {
+    if (error) {
+      el.status.textContent = error;
+      el.status.style.color = '#E5484D';
+      card.classList.add('error');
+      el.barWrap.classList.remove('breathing');
+      el.barFill.style.width = '100%';
+      return;
+    }
+    if (connected) {
+      el.status.textContent = status || '连上啦，开始陪你';
+      el.status.style.color = '';  // 回到场景色
+      card.classList.remove('error');
+      el.barWrap.classList.remove('breathing');
+      el.barFill.style.width = '100%';
+      // 进度完成 → 报告 complete（Python 心跳检测到后立即滑出窗口）
+      reportState('complete');
+      // 透明模式：JS 2.2s 后自动收起卡片（窗口常显，CSS 隐藏即完事）
+      // 不透明模式：Python 心跳收到 complete 后驱动窗口滑出（这里设的 timeout
+      //   仅作极端兜底——正常路径已被 heartbeat ~1s 内截获并滑出）
+      if (window.__autoHide) clearTimeout(window.__autoHide);
+      // 2026-09-05：移除"连接完成 2.2s 后前端自收起"——它绕过后端 _MIN_VISIBLE_S
+      // （5s 最短展示）的保护，导致游戏锁等"连得快"的通知只亮 ~2.2s 就像闪一下。
+      // 收起完全交给后端：_arm_dismiss(3s 结算 → 5s 最短) 经 /notify_poll 推 dismiss 命令，
+      // handleCmd('dismiss') 再走 NotifyAPI.dismiss()。前端只在 show 时留 cmd.timeout 兜底。
+      return;
+    }
+    // 加载中 / 有进度
+    el.status.textContent = status || '正在连上…';
+    el.status.style.color = '';
+    card.classList.remove('error');
+    if (progress !== null && progress !== undefined) {
+      el.barWrap.classList.remove('breathing');
+      const pct = Math.max(0, Math.min(1, Number(progress))) * 100;
+      el.barFill.style.width = pct.toFixed(1) + '%';
+    }
+    // indeterminate: 保持 breathing
+  },
+
+  /**
+   * 隐藏通知（滑出后回调）。
+   * @param {function} cb - 动画结束后的回调（Python 侧销毁窗口）
+   */
+  dismiss(cb) {
+    _dismissCb = cb || null;
+    if (OPAQUE) {
+      // 不透明模式：窗口由后端驱动滑出，卡片内容须保持可见直到整窗滑出屏外，
+      // 再由后端滑出完成后推 'reset' 复位——避免「先变黑、再黑窗飞出去」的割裂观感。
+      reportState('hidden');
+      reportCard();
+      return;
+    }
+    card.classList.remove('visible');
+    card.classList.add('dismissing');
+    reportState('hidden');
+    reportCard();
+    // 等 CSS 过渡结束后调用回调
+    setTimeout(() => {
+      _cardShowing = false;
+      if (_dismissCb) { _dismissCb(); _dismissCb = null; }
+    }, 500);
+  },
+
+  /** 立即隐藏（无动画，用于被新通知替代） */
+  hideNow() {
+    card.className = 'card';
+    el.barFill.style.width = '0%';
+    el.barWrap.classList.add('breathing');
+  }
+};
+
+function _sceneDefaults(s) {
+  return {
+    game:  { kicker:'让路给游戏', pill:'省显卡模式', icon:'game' },
+    back:  { kicker:'回到本机陪你', pill:'本机模式', icon:'home' },
+    focus: { kicker:'专属陪伴', pill:'换个陪法', icon:'spark' },
+    ok:    { kicker:'准备好了', pill:'开始陪你', icon:'check' }
+  }[s] || { kicker:'', pill:'陪伴中', icon:'spark' };
+}
+
+// 初始状态：隐藏
+el.barWrap.classList.add('breathing');
+
+// ============================================================
+// HTTP 命令通道（2026-09-04 17:20 实锤：通知窗的 pywebview 桥不通——
+//   window.pywebview.api 从未可用，poll/report 从未到达 Python；主窗桥正常、
+//   唯通知窗异常，原因在定制版 pywebview 对该窗的桥注入）。改走 HTTP：
+//   本页每 150ms fetch('/notify_poll') 取走全部积压命令渲染——同源、无桥、
+//   无 COM、100% 可靠。Python 心跳另经 ExecuteScriptAsync 注入 __notifyFlush
+//   作兜底触发（fetch 结果异步处理，不阻塞 GUI 线程）。
+// ============================================================
+(function startPoll() {
+  var flushing = false;
+  function flush() {
+    if (flushing) return;
+    flushing = true;
+    fetch('/notify_poll', { cache: 'no-store' })
+      .then(function (r) { return r.ok ? r.json() : []; })
+      .then(function (cmds) {
+        if (Array.isArray(cmds)) {
+          for (var i = 0; i < cmds.length; i++) {
+            if (cmds[i] && cmds[i].type) handleCmd(cmds[i]);
+          }
+        }
+      })
+      .catch(function () {})
+      .then(function () { flushing = false; });
+  }
+  // 兜底入口：webapp 心跳经 ExecuteScriptAsync 注入触发（不等回执）
+  window.__notifyFlush = flush;
+  // 诊断回报：走 HTTP（桥不通时照样能回报卡片状态）
+  window.__notifyDiag = function () {
+    try {
+      var c = document.getElementById('card');
+      var st = c ? (c.className + '|op=' + getComputedStyle(c).opacity) : 'no-card';
+      fetch('/notify_report?state=' + encodeURIComponent(st), { cache: 'no-store' });
+    } catch (e) {}
+  };
+
+  setInterval(flush, 150);
+  flush();
+
+  function handleCmd(cmd) {
+    switch (cmd.type) {
+      case 'show':
+        // 就地更新 vs 重新滑入，由 NotifyAPI.show 内部按是否已在显示决定；
+        // 页面端自动收起计时也在 show 内统一续命（_armAutoHide）。
+        NotifyAPI.show(cmd.title, cmd.body, cmd.scene, cmd.labels || {},
+                      Number(cmd.timeout) || 8000);
+        break;
+      case 'update':
+        NotifyAPI.update(cmd.status, cmd.progress, cmd.connected, cmd.error);
+        break;
+      case 'dismiss':
+        if (window.__autoHide) { clearTimeout(window.__autoHide); window.__autoHide = null; }
+        NotifyAPI.dismiss();
+        break;
+      case 'reset':
+        // 不透明模式：后端滑出完成、窗口已在屏外时复位卡片（不可见，避免黑窗残留）。
+        card.className = 'card';
+        _cardShowing = false;
+        if (window.__autoHide) { clearTimeout(window.__autoHide); window.__autoHide = null; }
+        if (_dismissCb) { _dismissCb(); _dismissCb = null; }
+        break;
+      default:
+        break;
+    }
+  }
+})();
+</script>
+</body>
+</html>

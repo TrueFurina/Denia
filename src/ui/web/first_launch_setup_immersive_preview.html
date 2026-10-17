@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>引导页重设计预览 · 沉浸极光</title>
+<link rel="stylesheet" href="redesign/design_tokens.css?v=20261007g" />
+<link rel="stylesheet" href="redesign/pages.css" />
+<style>
+  /* ===== 沉浸极光场（前后景辉光 + 缓慢漂移） ===== */
+  body{ display:block; padding:48px 20px; position:relative; min-height:100vh; }
+  body::before{
+    content:""; position:fixed; inset:-25%; z-index:0; pointer-events:none;
+    background:
+      radial-gradient(38% 40% at 20% 24%, color-mix(in srgb, var(--accent-1) 24%, transparent), transparent 60%),
+      radial-gradient(44% 46% at 82% 76%, color-mix(in srgb, var(--accent-2) 28%, transparent), transparent 62%),
+      radial-gradient(30% 32% at 58% 10%, color-mix(in srgb, var(--accent-2) 14%, transparent), transparent 60%);
+    filter: blur(46px); animation: drift 24s var(--ease) infinite alternate;
+  }
+  @keyframes drift{ 0%{transform:translate3d(-2%,-1%,0) scale(1);} 100%{transform:translate3d(3%,2%,0) scale(1.08);} }
+
+  /* ===== 玻璃面板 ===== */
+  .ob{ position:relative; z-index:1; max-width:780px; margin:0 auto;
+    background: color-mix(in srgb, var(--bg-2) 68%, transparent);
+    -webkit-backdrop-filter: blur(28px) saturate(140%); backdrop-filter: blur(28px) saturate(140%);
+    border:1px solid var(--line-2); border-radius:var(--r-xl);
+    box-shadow: 0 44px 130px rgba(0,0,0,.55), inset 0 1px 0 rgba(255,255,255,.06);
+    padding:38px 40px; }
+  .ob + .ob{ margin-top:26px; }
+
+  .ob-step{ display:flex; align-items:center; gap:12px; margin-bottom:22px; }
+  .ob-step .no{ font-family:var(--font-mono); font-size:11px; letter-spacing:.2em; color:var(--accent-1); }
+  .ob-step .bar{ flex:1; height:3px; background:var(--line); border-radius:3px; }
+  .ob-step .bar.on{ background:var(--accent-grad); box-shadow:0 0 12px color-mix(in srgb,var(--accent-1) 55%, transparent); }
+  .ob-step .lab{ font-size:12px; color:var(--ink-3); }
+
+  .ob h1{ font-size:var(--fs-2xl); font-weight:600; letter-spacing:.01em; margin:0 0 8px;
+    background: linear-gradient(118deg, var(--ink) 30%, color-mix(in srgb, var(--accent-1) 85%, var(--ink)));
+    -webkit-background-clip:text; background-clip:text; color:transparent; }
+  .ob .sub{ font-size:var(--fs-sm); color:var(--ink-2); margin:0 0 22px; line-height:1.65; }
+
+  /* 显卡分段器 */
+  .vram-row{ display:flex; align-items:center; gap:14px; flex-wrap:wrap; margin-bottom:22px; }
+  .vram-row > span{ font-size:var(--fs-sm); color:var(--ink-2); }
+  .rec{ font-size:11px; color:var(--accent-1); background:var(--accent-soft-1);
+    border:1px solid var(--line-strong); border-radius:99px; padding:4px 12px;
+    box-shadow:0 0 16px color-mix(in srgb, var(--accent-1) 22%, transparent); }
+
+  /* 模式卡：玻璃 + 极光辉光 */
+  .mode-grid{ display:grid; grid-template-columns:repeat(auto-fill,minmax(168px,1fr)); gap:14px; }
+  .eng-card{ background: color-mix(in srgb, var(--surface) 78%, transparent);
+    -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px);
+    border:1px solid var(--line); border-radius:var(--r-lg);
+    padding:16px 16px; transition: transform var(--dur-2), border-color var(--dur-2), box-shadow var(--dur-2), background var(--dur-2); }
+  .eng-card:hover{ transform:translateY(-4px); border-color:var(--line-strong); box-shadow:0 16px 44px rgba(0,0,0,.4); }
+  .eng-card.on{ border-color:var(--accent-1);
+    background: color-mix(in srgb, var(--accent-soft-1) 55%, transparent);
+    box-shadow: 0 0 0 1px var(--accent-1), 0 20px 54px color-mix(in srgb, var(--accent-1) 26%, transparent); }
+  .eng-card .ek{ width:42px; height:42px; border-radius:12px; display:grid; place-items:center;
+    font-family:var(--font-mono); font-size:13px; color:var(--accent-1); background:var(--bg-2);
+    border:1px solid var(--line); box-shadow:0 0 18px color-mix(in srgb, var(--accent-1) 28%, transparent); }
+  .eng-card.on .ek{ background:var(--accent-soft-1); box-shadow:0 0 22px color-mix(in srgb, var(--accent-1) 42%, transparent); }
+  .eng-card .en{ font-weight:600; color:var(--ink); font-size:15px; display:flex; align-items:center; gap:8px; }
+  .eng-card .ed{ font-size:12px; color:var(--ink-3); line-height:1.55; margin-top:4px; }
+  .eng-card .req{ font-family:var(--font-mono); font-size:9px; letter-spacing:.08em; color:var(--ink-3);
+    border:1px solid var(--line); border-radius:6px; padding:2px 6px; margin-top:8px; align-self:flex-start; }
+  .badge.on{ color:var(--accent-1); background:var(--accent-soft-1);
+    box-shadow:0 0 14px color-mix(in srgb, var(--accent-1) 22%, transparent); }
+
+  .foot{ display:flex; align-items:center; justify-content:space-between; gap:12px; margin-top:26px; }
+  .foot .skip{ font-size:var(--fs-sm); color:var(--ink-3); cursor:pointer; transition:color var(--dur-1); }
+  .foot .skip:hover{ color:var(--ink-2); }
+  .btn.primary{ box-shadow:0 12px 34px color-mix(in srgb, var(--accent-1) 32%, transparent); }
+  .btn.primary:hover{ box-shadow:0 16px 44px color-mix(in srgb, var(--accent-1) 42%, transparent); }
+</style>
+</head>
+<body>
+
+  <section class="ob">
+    <div class="ob-step">
+      <span class="no">01</span><span class="bar on"></span><span class="no" style="color:var(--ink-3)">02</span>
+      <span class="lab">选择陪伴模式</span>
+    </div>
+    <h1>欢迎，先选一种和达妮娅相处的方式</h1>
+    <p class="sub">随时能在设置里改。显卡越好，她能陪你做的事越多。</p>
+
+    <div class="vram-row">
+      <span>你的显卡</span>
+      <div class="seg">
+        <button class="on" type="button">16GB</button>
+        <button type="button">12GB</button>
+        <button type="button">8GB</button>
+        <button type="button">核显</button>
+      </div>
+      <span class="rec">为你推荐：全感知伙伴</span>
+    </div>
+
+    <div class="mode-grid">
+      <div class="eng-card">
+        <div class="ek">聊</div>
+        <div class="en">纯聊天</div>
+        <div class="ed">只文字对话，最省资源</div>
+      </div>
+      <div class="eng-card">
+        <div class="ek">看</div>
+        <div class="en">聊天 + 看得见</div>
+        <div class="ed">能看你的屏幕，帮你操作</div>
+      </div>
+      <div class="eng-card on">
+        <div class="ek">全</div>
+        <div class="en">全感知伙伴 <span class="badge on">推荐</span></div>
+        <div class="ed">看屏幕 + 听环境，像伙伴在身边</div>
+        <span class="req">需 12GB+ 独显</span>
+      </div>
+      <div class="eng-card">
+        <div class="ek">自</div>
+        <div class="en">自定义配置</div>
+        <div class="ed">高级玩家自己调参数</div>
+      </div>
+    </div>
+
+    <div class="foot">
+      <span class="skip">跳过引导 ›</span>
+      <button class="btn primary" type="button">下一步：声音设置 →</button>
+    </div>
+  </section>
+
+  <section class="ob">
+    <div class="ob-step">
+      <span class="no" style="color:var(--ink-3)">01</span><span class="bar on"></span><span class="no">02</span>
+      <span class="lab">配置达妮娅的声音</span>
+    </div>
+    <h1>给达妮娅配个声音（可跳过）</h1>
+    <p class="sub">先用最省资源的方案，之后随时能在语音设置里换。</p>
+
+    <div class="group">
+      <div class="gt">声音渠道</div>
+      <div class="vlist">
+        <div class="vcard on">
+          <div class="vk">–</div>
+          <div class="vmeta"><div class="vn">先不配置</div><div class="vd">最省资源，后续在设置里一键开启</div></div>
+          <span class="act">已选</span>
+        </div>
+        <div class="vcard">
+          <div class="vk">Mi</div>
+          <div class="vmeta"><div class="vn">小米 MiMo</div><div class="vd">免费 · 本机克隆你的声音</div></div>
+          <span class="act">选择</span>
+        </div>
+        <div class="vcard">
+          <div class="vk">百</div>
+          <div class="vmeta"><div class="vn">阿里云百炼</div><div class="vd">免费额度 · 云端音色</div></div>
+          <span class="act">选择</span>
+        </div>
+      </div>
+      <div class="form">
+        <label>API Key <input type="text" placeholder="选了 MiMo / 百炼 后在此粘贴" /></label>
+        <label>录音文件 <input type="text" placeholder="拖动或粘贴录音路径" /></label>
+      </div>
+    </div>
+
+    <div class="foot">
+      <span class="skip">跳过，稍后再说 ›</span>
+      <button class="btn primary" type="button">完成，进入达妮娅 →</button>
+    </div>
+  </section>
+
+  <script>
+    (function () {
+      try {
+        var p = window.parent && window.parent.document && window.parent.document.documentElement;
+        if (!p) return;
+        var root = document.documentElement;
+        var t = p.getAttribute('data-theme'); var a = p.getAttribute('data-accent');
+        if (t) root.setAttribute('data-theme', t); else root.removeAttribute('data-theme');
+        if (a) root.setAttribute('data-accent', a); else root.removeAttribute('data-accent');
+      } catch (e) {}
+    })();
+  </script>
+
+</body>
+</html>

@@ -1,0 +1,445 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>桌面伴侣 · 主页 v6</title>
+<link rel="stylesheet" href="/redesign/design_tokens.css?v=20261013e" />
+<link rel="stylesheet" href="/redesign/ui_shared.css?v=20261013e" />
+  <link rel="stylesheet" href="/redesign/home.css?v=4" />
+  <link rel="stylesheet" href="/redesign/pages.css?v=6" />
+
+  <style>
+    .composer .field .attach-btn{display:inline-flex;align-items:center;justify-content:center;width:38px;height:38px;border:none;background:transparent;color:var(--ink-2);cursor:pointer;border-radius:10px;transition:background .15s,color .15s;flex:0 0 auto;}
+    .composer .field .attach-btn:hover{background:var(--surface-2);color:var(--ink-1);}
+    .composer .field .attach-btn svg{width:20px;height:20px;}
+    .img-prev{display:none;gap:6px;flex-wrap:wrap;padding:6px 10px 0;}
+    .img-prev:not([hidden]){display:flex;}
+    .img-prev .ip{position:relative;width:42px;height:42px;border-radius:8px;overflow:hidden;border:1px solid var(--line);background:var(--surface-2);}
+    .img-prev .ip img{width:100%;height:100%;object-fit:cover;display:block;}
+    .img-prev .ip .x{position:absolute;top:-3px;right:-3px;width:18px;height:18px;line-height:18px;text-align:center;border-radius:50%;background:var(--bad,#e5484d);color:#fff;font-size:13px;cursor:pointer;}
+  </style>
+</head>
+<body>
+  <div class="app" id="app">
+
+    <!-- 侧边栏 -->
+      <aside class="side">
+    <div class="brand"><div class="wm">达妮娅</div><div class="wmsub">DESKTOP COMPANION</div></div>
+    <div class="grp">
+      <div class="gt">日常</div>
+      <a class="nav on" href="/index.html"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>对话</a>
+      <a class="nav" href="/redesign/ui_redesign_daily.html"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M4 4h16v16H4z"/><path d="M8 9h8M8 13h5"/></svg>日报周报</a>
+    </div>
+    <div class="grp">
+      <div class="gt">伴侣</div>
+      <a class="nav" href="/redesign/ui_redesign_characters.html"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/></svg>角色</a>
+    </div>
+    <div class="grp">
+      <div class="gt">系统</div>
+      <a class="nav" href="/redesign/ui_redesign_settings.html"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/></svg>设置</a>
+      <a class="nav" href="/redesign/ui_redesign_software_profiles.html"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>软件档案</a>
+      <a class="nav" href="/redesign/lib.html"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M5 4h11a2 2 0 0 1 2 2v14H7a2 2 0 0 1-2-2z M4 9h11 M4 13h11"/></svg>知识库</a>
+      <a class="nav" href="/redesign/ui_redesign_developer.html"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M4 6h16M7 12h10M10 18h4"/></svg>开发者</a>
+    </div>
+    <div class="spacer"></div>
+  </aside>
+
+    <!-- 主对话 -->
+    <section class="main">
+      <header class="top">
+        <div>
+          <div class="who">对话</div>
+          <div class="sub">SESSION · 文本模式 / LOCAL_OMNI</div>
+        </div>
+        <div class="right">
+          <span class="modechip"><i data-icon="message-square"></i> 文本输入</span>
+        </div>
+      </header>
+
+      <div class="stage-scroll" id="scroll">
+        <div class="daychip">TODAY · 22:30</div>
+
+        <div class="row">
+          <div class="av"><span class="ph-av" aria-hidden="true"><i><svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="8.2" r="3.7"/><path d="M12 13.7c-4.15 0-7.5 2.34-7.5 5.23 0 .63.53 1.14 1.18 1.14h12.64c.65 0 1.18-.51 1.18-1.14 0-2.89-3.35-5.23-7.5-5.23z"/></svg></i></span></div>
+          <div class="stack">
+            <div class="meta"><span class="nm">达妮娅</span><span class="mtag">屏幕</span><span class="tm">14:02</span></div>
+            <div class="bub">你刚打开了剪辑软件，是在折腾新视频吗？需要我帮你记一下思路吗？</div>
+          </div>
+        </div>
+
+        <div class="row me">
+          <img class="av me" id="meAvatar" alt="我" src="data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'><rect width='64' height='64' rx='14' fill='%23AEB7C9'/><circle cx='32' cy='25' r='11' fill='%23fff'/><path d='M12 56c0-12 9-18 20-18s20 6 20 18' fill='%23fff'/></svg>" onerror="this.outerHTML='<div class=\'av me\'>我</div>'">
+          <div class="stack">
+            <div class="meta"><span class="nm">我</span><span class="tm">14:02</span></div>
+            <div class="bub">对，剪昨天拍的 vlog，卡在转场这块。</div>
+          </div>
+        </div>
+
+        <div class="row">
+          <div class="av"><span class="ph-av" aria-hidden="true"><i><svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="8.2" r="3.7"/><path d="M12 13.7c-4.15 0-7.5 2.34-7.5 5.23 0 .63.53 1.14 1.18 1.14h12.64c.65 0 1.18-.51 1.18-1.14 0-2.89-3.35-5.23-7.5-5.23z"/></svg></i></span></div>
+          <div class="stack">
+            <div class="meta"><span class="nm">达妮娅</span><span class="mtag v">感知</span><span class="tm">14:03</span></div>
+            <div class="bub">我看了下时间线，第 3 段和第 4 段节奏断得很明显——试试在中间加一个 0.4s 的闪白，会顺很多。要我把它写进今日日报的「创作笔记」吗？</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="composer">
+        <div class="chat-switch-bar" id="chatSwitchBar">
+          <span class="csb-bar"><i></i></span>
+          <span class="csb-txt" id="chatSwitchTxt">正在连接聊天模型…</span>
+        </div>
+        <div class="field">
+          <button class="attach-btn" id="attachBtn" type="button" title="发送图片（点一下选图）" aria-label="发送图片">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
+          </button>
+          <input type="file" id="imgInput" accept="image/*" multiple hidden>
+          <button class="model-pill" id="modelPill" type="button" title="切换聊天模型（点一下换模型）">
+            <span class="mp-ic"><i data-icon="cpu"></i></span><span class="mp-name" id="modelPillName">模型</span><span class="mp-caret"><i data-icon="chevron-down"></i></span>
+          </button>
+          <textarea id="input" rows="1" placeholder="和达妮娅说点什么…"></textarea>
+          <button class="send" id="send" type="button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M22 2 11 13M22 2l-7 20-4-9-9-4 20-7z"/></svg></button>
+        </div>
+        <div class="img-prev" id="imgPrev" hidden></div>
+        <div class="model-panel" id="modelPanel" hidden></div>
+        <div class="chat-lock" id="chatLock" aria-hidden="true">
+          <svg class="cl-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg>
+          <span>所有聊天连接暂不可用，输入框已锁定（恢复后自动解锁）</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- 右侧舞台 -->
+    <aside class="stage">
+      <div class="panel">
+        <div class="grid"></div>
+        <span class="tick tl"></span><span class="tick tr"></span><span class="tick bl"></span><span class="tick br"></span>
+        <div class="placeholder">
+          <div class="ring">LIVE2D</div>
+          <div class="hint">当前模型</div>
+        </div>
+      </div>
+
+      <div class="nameplate">
+        <div>
+          <div class="nm">达妮娅</div>
+          <div class="st">● ONLINE</div>
+        </div>
+        <div class="readouts">
+          <span class="ro">记忆 <b id="memRo">—</b></span>
+        </div>
+      </div>
+
+      <!-- 消耗面板（缩小 Live2D 后新增） -->
+      <div class="card">
+        <div class="ct">本会话消耗</div>
+        <div class="crow"><span>额度消耗</span><b id="tok">0</b></div>
+        <div class="crow"><span>TTS 合成字数</span><b id="tts">0<em>字</em></b></div>
+        <div class="crow"><span>对话轮次</span><b id="rnd">0</b></div>
+      </div>
+
+      <div class="card status">
+        <div class="ct">运行状态</div>
+
+        <button class="modebtn" id="modeBtn" title="切换聊天模式（自动 / 云端双工 / 本地双工）" type="button">
+          <div class="mb-left">
+            <span class="mb-k">引擎模式</span>
+            <span class="mb-sub" id="modeBtnSub">自动 · 系统选择</span>
+          </div>
+          <span class="chev">›</span>
+        </button>
+
+        <!-- 对话引擎弹窗由 app_backend.js?v=20261015f 动态创建于 body（居中遮罩，仿 WorkBuddy），
+             不再内联在 .stage，避免 SPA 切栏重跑聊天页脚本导致错位 / 重复绑定。 -->
+
+        <div class="erow"><span>当前运行方式</span><b id="runModeVal">—</b></div>
+
+        <div class="srow">
+          <span>视觉感知</span>
+          <b id="visVal" class="badge on" title="开启后快照与双工读取屏幕">读取中</b>
+        </div>
+
+        <div class="srow">
+          <span>记忆库</span>
+          <b id="memVal" title="已存储的记忆条目数（实时统计，不是字数）">—</b>
+        </div>
+      </div>
+    </aside>
+  </div>
+
+  <script src="/redesign/gsap.min.js?v=2"></script>
+<script type="module" src="/redesign/morph_icons.js?v=2"></script>
+  <script src="/redesign/app_backend.js?v=20261015f"></script>
+<script src="/redesign/theme_manager.js?v=20261013d"></script>
+  <script>
+    const $ = (s) => document.querySelector(s);
+    const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+    /* 主题色 / 深浅模式由 app_backend.js?v=20261015f 的 window.Theme 统一处理（首屏前执行，并会清理自定义色残留的内联变量），此处不再重复实现。 */
+
+    /* 防御：本地双工满载时 WebView 的 rAF 可能被饿死，gsap.from(opacity:0) 一旦
+       卡在透明态不跑完，消息/桌宠整片不可见（只剩原生 textarea 占位文字）。
+       用绕过 gsap 的兜底定时器，强制清掉关键元素的透明/位移内联样式，保证内容
+       一定可见——即使动画真的 stall 也兜底。 */
+    function safeReveal(sel){
+      setTimeout(() => {
+        try { document.querySelectorAll(sel).forEach(el => { el.style.opacity = ''; el.style.transform = ''; }); } catch (_) {}
+      }, 900);
+    }
+    if (window.gsap && !reduce && !window.__SPA_NAV) {
+      /* 入场只做位移、且只针对对话区 .row（聊天页自身内容）。
+         绝不用 opacity:0 隐藏关键内容——本地双工满载时 WebView 的 rAF 可能被饿死，
+         from(opacity:0) 会卡在透明态导致整片不可见。位移即使动画没跑完也只是偏移。
+         桌宠的实时更新见 app_backend.js?v=20261015f 的 startPetLive（整页只跑一次）。 */
+      gsap.from('.row', { y: 16, duration: .5, stagger: .08, ease: 'power3.out', delay: .14 });
+    }
+    safeReveal('.row, .panel, .nameplate, .card');
+
+    /* ---- 发送（接入真实后端） ----
+       聊天刷新 / 输入框锁状态轮询已迁至 app_backend.js?v=20261015f 的 startChatLive()（外壳层、
+       整页只跑一次、永不死），并挂成 window.pollChat / window.pollChatLock，使后端
+       chat_push 广播即时刷新双工。此处聊天页只负责「发消息」：乐观渲染 + 调后端，
+       渲染与轮询交给常驻外壳，彻底消除"打字后轮询定时器死 → 双工不上屏 + 残留锁"。 */
+    const input = $('#input'), scroll = $('#scroll');
+    var pendingImages = [];   // 待发送图片（dataURL 压缩后）
+    /* 降级乐观渲染：即使 startChatLive() 未加载（语法错误/缓存/时序），用户消息也能立刻上屏 */
+    function optimistRender(text){
+      var sc = document.getElementById('scroll');
+      if (!sc) return;
+      var row = document.createElement('div');
+      row.className = 'row me';
+      row.setAttribute('data-msg-id', 'me-' + Date.now());
+      row.innerHTML = '<div class="av me">我</div><div class="stack"><div class="meta"><span class="nm">我</span><span class="tm">刚刚</span></div><div class="bub"></div></div>';
+      row.querySelector('.bub').textContent = text || '';
+      sc.appendChild(row);
+      sc.scrollTop = sc.scrollHeight;
+    }
+    function send(){
+      try {
+        var v = input.value.trim(); if (!v && !pendingImages.length) return;
+        var btn = $('#send');
+        var r = document.createElement('span'); r.className = 'ripple';
+        var rect = btn.getBoundingClientRect();
+        r.style.left = (event?.clientX - rect.left) + 'px'; r.style.top = (event?.clientY - rect.top) + 'px';
+        r.style.width = r.style.height = '20px'; btn.appendChild(r); setTimeout(() => r.remove(), 600);
+        /* 优先用 startChatLive 的 upsertRow（有去重），降级用内联乐观渲染 */
+        var _sendImgs = pendingImages.slice();
+        if (window.__chat && window.__chat.upsertRow) {
+          var _optRow = window.__chat.upsertRow({ id: 'me-' + Date.now(), role: 'user', text: v, char_name: '我' });
+          if (_optRow && _sendImgs.length && window.__chat.attachOptimisticImages) window.__chat.attachOptimisticImages(_optRow, _sendImgs);
+        } else {
+          optimistRender(v);
+        }
+        /* 【2026-10-08 思考中占位】发消息立即显示"思考中…"，消除模型首 token 前那段空白 */
+        if (window.__chat && window.__chat.showThinking) window.__chat.showThinking();
+        input.value = ''; input.style.height = 'auto'; if (scroll) scroll.scrollTop = scroll.scrollHeight;
+        Backend.sendChat(v, _sendImgs.length ? _sendImgs : undefined).then(function(res){
+          if (!res || !res.success){
+            if (window.__chat && window.__chat.removeThinking) window.__chat.removeThinking();
+            Backend.toast((res && res.error ? '发送失败：' + res.error : '后端未连接，消息未送达'), 'err');
+            return;
+          }
+          if (window.__chat && window.__chat.showChatSwitch) window.__chat.showChatSwitch();
+        }).catch(function(err){
+          if (window.__chat && window.__chat.removeThinking) window.__chat.removeThinking();
+          Backend.toast('发送异常：' + (err && err.message || err), 'err');
+        });
+        pendingImages = []; renderImgPrev();
+      } catch(e) {
+        console.error('[send] 异常:', e);
+        Backend.toast('发送失败，请重试', 'err');
+      }
+    }
+    $('#send').addEventListener('click', send);
+    input.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } });
+    input.addEventListener('input', () => { input.style.height = 'auto'; input.style.height = Math.min(input.scrollHeight, 120) + 'px'; });
+
+    /* ---- 图片发送（2026-10-08 接入，治"发图重复图片"）----
+       复用 app_backend.js 的 attachOptimisticImages（乐观 dataURL 行）+ upsertRow 去重，
+       后端 send_chat 接收 images 走视觉模型。compressImage 压到 ~700KB 内避免大图超时。 */
+    var IMG_MAX_EDGE = 1600, IMG_TARGET_BYTES = 700 * 1024;
+    function compressImage(file, cb){
+      try {
+        var fr = new FileReader();
+        fr.onload = function(){
+          var src = String(fr.result || '');
+          if (!src || src.indexOf('data:image') !== 0){ cb(src); return; }
+          var img = new Image();
+          img.onload = function(){
+            try {
+              var w = img.naturalWidth || img.width, h = img.naturalHeight || img.height;
+              if (!w || !h){ cb(src); return; }
+              var scale = Math.min(1, IMG_MAX_EDGE / Math.max(w, h));
+              var cw = Math.max(1, Math.round(w * scale)), ch = Math.max(1, Math.round(h * scale));
+              var cv = document.createElement('canvas'); cv.width = cw; cv.height = ch;
+              var g = cv.getContext('2d');
+              if (!g){ cb(src); return; }
+              g.drawImage(img, 0, 0, cw, ch);
+              var out = '';
+              try { out = cv.toDataURL('image/png'); } catch(e){ out = ''; }
+              if (out && out.length > IMG_TARGET_BYTES){
+                var q = 0.88;
+                while (q > 0.42){ out = cv.toDataURL('image/jpeg', q); if (out && out.length <= IMG_TARGET_BYTES) break; q -= 0.12; }
+              }
+              cb(out || src);
+            } catch(e){ cb(src); }
+          };
+          img.onerror = function(){ cb(src); };
+          img.src = src;
+        };
+        fr.onerror = function(){ cb(''); };
+        fr.readAsDataURL(file);
+      } catch(e){ cb(''); }
+    }
+    function renderImgPrev(){
+      var box = document.getElementById('imgPrev');
+      if (!box) return;
+      box.innerHTML = '';
+      if (!pendingImages.length){ box.hidden = true; return; }
+      box.hidden = false;
+      pendingImages.forEach(function(src, i){
+        var w = document.createElement('div'); w.className = 'ip';
+        var im = document.createElement('img'); im.src = src;
+        var x = document.createElement('span'); x.className = 'x'; x.textContent = '×';
+        x.onclick = function(){ pendingImages.splice(i, 1); renderImgPrev(); };
+        w.appendChild(im); w.appendChild(x); box.appendChild(w);
+      });
+    }
+    var _attachBtn = document.getElementById('attachBtn');
+    var _imgInput = document.getElementById('imgInput');
+    if (_attachBtn && _imgInput){
+      _attachBtn.addEventListener('click', function(){ _imgInput.click(); });
+      _imgInput.addEventListener('change', function(e){
+        var files = e.target.files || [];
+        if (!files.length) return;
+        var pending = files.length;
+        var done = function(){ if (--pending === 0) renderImgPrev(); };
+        Array.prototype.forEach.call(files, function(f){
+          compressImage(f, function(d){ if (d) pendingImages.push(d); done(); });
+        });
+        _imgInput.value = '';
+      });
+    }
+    /* 粘贴图片直接进待发送队列 */
+    input.addEventListener('paste', function(e){
+      var items = (e.clipboardData && e.clipboardData.items) || [];
+      var got = false;
+      Array.prototype.forEach.call(items, function(it){
+        if (it.kind === 'file' && it.type && it.type.indexOf('image') === 0){
+          var f = it.getAsFile();
+          if (f){ compressImage(f, function(d){ if (d) pendingImages.push(d); renderImgPrev(); }); got = true; }
+        }
+      });
+      if (got) e.preventDefault();
+    });
+
+    /* ---- 聊天模型切换器（输入框旁的"推理模型"快捷切换） ----
+       拉 getTextChatStatus（已配置端口 + 当前 manual）与 getChatModelPresets（百炼免费模型名单），
+       渲染两栏：①已配置端口（任意厂商，点=设为 manual）②百炼免费模型（点=改该端口 model 并热切 manual）。
+       另含"自定义模型名"输入框，可填任意模型（不锁死）。 */
+    const modelPill = $('#modelPill'), modelPanel = $('#modelPanel'), modelPillName = $('#modelPillName');
+    function escM(s){ return String(s == null ? '' : s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+    function _msStatus(){ return Backend.getTextChatStatus().catch(()=>({})); }
+    function _msPresets(){ return Backend.getChatModelPresets().catch(()=>({bailian_provider_ids:[], bailian_free:[]})); }
+    function buildModelPanel(status, presets){
+      const sel = (status && status.selectable) || [];
+      const manual = (status && status.manual_provider) || '';
+      const bailianIds = (presets && presets.bailian_provider_ids) || [];
+      const free = (presets && presets.bailian_free) || [];
+      let h = '';
+      h += '<div class="mp-custom"><input id="mpCustomInput" type="text" placeholder="自定义模型名（如 qwen3.8-max）"><button data-action="custom" id="mpCustomBtn" type="button">应用</button></div>';
+      h += '<div class="mp-sec"><div class="mp-sec-t">已配置端口（点=固定用它）</div>';
+      sel.forEach(p => {
+        const on = (p.id === manual) ? ' on' : '';
+        h += '<div class="mp-item'+on+'" data-action="provider" data-id="'+escM(p.id)+'"><span class="mp-i-name">'+escM(p.name)+'</span><span class="mp-i-model">'+escM(p.model)+'</span>'+(on?'<span class="mp-check">'+DIcon.svg('check')+'</span>':'')+'</div>';
+      });
+      h += '</div>';
+      if (bailianIds.length && free.length){
+        const actP = (manual && bailianIds.indexOf(manual) >= 0) ? manual : bailianIds[0];
+        const actProv = sel.find(p => p.id === actP) || {};
+        h += '<div class="mp-sec"><div class="mp-sec-t">百炼免费模型（可随时切换）</div>';
+        free.forEach(m => {
+          const on = (actProv.model === m.id) ? ' on' : '';
+          h += '<div class="mp-item'+on+'" data-action="bailian" data-id="'+escM(actP)+'" data-model="'+escM(m.id)+'"><span class="mp-i-name">'+escM(m.name)+'</span>'+(on?'<span class="mp-check">'+DIcon.svg('check')+'</span>':'')+'</div>';
+        });
+        h += '</div>';
+      }
+      modelPanel.innerHTML = h;
+    }
+    function refreshModelSwitch(){
+      if (!modelPill) return;
+      Promise.all([_msStatus(), _msPresets()]).then(([st, pr]) => {
+        const sel = (st && st.selectable) || [];
+        const manual = (st && st.manual_provider) || '';
+        if (st && st.mode === 'manual' && manual){
+          const p = sel.find(x => x.id === manual);
+          /* ⚠️ 此前显示 p.name（端口的"展示名"）。那个 name 是人工填的、不会随
+             setChatProviderModel 一起改 → 换过模型后名字长期停留在旧值，表现为
+             「聊天页显示 Qwen3.8-Flash、设置页显示 qwen3.7-flash」的矛盾（用户实测）。
+             现在以 model 为真相源，name 只在 model 缺失时兜底 —— 与设置页同源。 */
+          modelPillName.textContent = (p && p.model) ? p.model : ((p && p.name) || st.manual_name || '手动');
+          if (p && p.model) modelPill.title = p.name || '';
+        } else {
+          modelPillName.textContent = '自动';
+        }
+        buildModelPanel(st, pr);
+      }).catch(()=>{});
+    }
+    function openModelPanel(){ if(!modelPanel) return; refreshModelSwitch(); modelPanel.hidden = false; modelPill.classList.add('open'); }
+    function closeModelPanel(){ if(!modelPanel) return; modelPanel.hidden = true; modelPill.classList.remove('open'); }
+    function toggleModelPanel(){ if(!modelPanel) return; modelPanel.hidden ? openModelPanel() : closeModelPanel(); }
+    if (modelPill) modelPill.addEventListener('click', (e) => { e.stopPropagation(); toggleModelPanel(); });
+    if (modelPanel){
+      modelPanel.addEventListener('click', (e) => {
+        const item = e.target.closest('[data-action]'); if (!item) return;
+        const action = item.getAttribute('data-action');
+        if (action === 'provider'){
+          Backend.setTextChatMode('manual', item.getAttribute('data-id')).then(r => {
+            if (r && r.success){ Backend.toast('已固定端口：' + (r.manual_name || r.manual_provider)); refreshModelSwitch(); }
+            else Backend.toast('切换失败：' + ((r && r.error) || '未知'), 'err');
+          });
+          closeModelPanel();
+        } else if (action === 'bailian'){
+          const pid = item.getAttribute('data-id'), model = item.getAttribute('data-model');
+          Backend.setChatProviderModel(pid, model).then(r => {
+            if (r && r.success){ Backend.toast('已切换模型：' + model); refreshModelSwitch(); }
+            else Backend.toast('切换失败：' + ((r && r.error) || '未知'), 'err');
+          });
+          closeModelPanel();
+        } else if (action === 'custom'){
+          const inp = document.getElementById('mpCustomInput'); const v = (inp && inp.value || '').trim();
+          if (!v){ Backend.toast('请输入模型名', 'err'); return; }
+          Backend.getTextChatStatus().then(st => {
+            const sel = (st && st.selectable) || [];
+            const manual = (st && st.manual_provider) || '';
+            const actP = (manual && sel.some(p => p.id === manual)) ? manual : (sel[0] && sel[0].id || '');
+            if (!actP){ Backend.toast('没有可用的聊天连接', 'err'); return; }
+            Backend.setChatProviderModel(actP, v).then(r => {
+              if (r && r.success){ Backend.toast('已应用自定义模型：' + v); refreshModelSwitch(); }
+              else Backend.toast('应用失败：' + ((r && r.error) || '未知'), 'err');
+            });
+          });
+          closeModelPanel();
+        }
+      });
+    }
+    if (!window.__modelSwitchDocBound){
+      window.__modelSwitchDocBound = true;
+      document.addEventListener('click', (e) => {
+        const p = document.getElementById('modelPanel'), b = document.getElementById('modelPill');
+        if (!p || p.hidden) return;
+        if (b && b.contains(e.target)) return;
+        if (p.contains(e.target)) return;
+        p.hidden = true; if (b) b.classList.remove('open');
+      });
+    }
+    refreshModelSwitch();
+
+    /* 运行模式 / 视觉感知 / 桌宠消耗 / 弹窗：已迁至 app_backend.py 的 startPetLive()
+       整页加载只跑一次，绑定到常驻的 .stage 与 #modeModal（SPA 只换 .main，这些元素不重载），
+       因此任意栏目下桌宠都实时刷新、且不会因切栏反复重跑脚本而变形 / 重复绑定。 */
+  </script>
+  <script>window.addEventListener('load', () => { requestAnimationFrame(() => window.dispatchEvent(new Event('resize'))); });</script>
+</body>
+</html>

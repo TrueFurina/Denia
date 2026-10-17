@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<title>probe</title>
+<style>
+  body{margin:0;font:14px/1.7 ui-monospace,Consolas,monospace;background:#111;color:#eee}
+  #o{padding:20px;white-space:pre}
+  iframe{position:absolute;left:-99999px;width:1600px;height:900px;border:0}
+</style>
+</head>
+<body>
+<pre id="o">measuring…</pre>
+<iframe id="f" src="/mood_demo.html"></iframe>
+<script>
+setTimeout(function(){
+  var d = document.getElementById('f').contentDocument;
+  var SEL = [
+    ['#left','左板块'],['#leftHead','  左·表头'],['#scroll','  左·滚动区'],
+    ['#right','右板块'],['#live','  右·立绘'],['#who','  右·名字行'],
+    ['#moodWrap','  右·心情块'],['#moodTitle','    心情标题'],['#moodChip','    心情chip'],
+    ['#moodCard','    心情说明'],['#meta','    阶段/原型'],['#progress','    关系进展'],
+    ['#swRow','  右·开关行'],['#rows','  右·节奏频次'],
+    ['#focusRing','  右·辉光框']
+  ];
+  var out = [];
+  SEL.forEach(function(p){
+    var e = d.querySelector(p[0]);
+    if(!e){ out.push(p[1] + '  ✗缺失'); return; }
+    var r = e.getBoundingClientRect();
+    out.push(
+      p[1].padEnd(14) +
+      'x=' + String(Math.round(r.left)).padStart(4) +
+      '  y=' + String(Math.round(r.top)).padStart(4) +
+      '  w=' + String(Math.round(r.width)).padStart(4) +
+      '  h=' + String(Math.round(r.height)).padStart(4) +
+      '  right=' + String(Math.round(r.right)).padStart(4) +
+      '  bottom=' + String(Math.round(r.bottom)).padStart(4)
+    );
+  });
+  /* 对齐检查：右栏内各块的左缘是否一致 */
+  var lefts = ['#live','#who','#moodWrap','#swRow','#rows'].map(function(s){
+    var e=d.querySelector(s); return e?Math.round(e.getBoundingClientRect().left):null;
+  });
+  out.push('');
+  out.push('右栏各块左缘: ' + JSON.stringify(lefts) + (new Set(lefts).size===1 ? '  ✓ 对齐' : '  ✗ 不齐'));
+  document.getElementById('o').textContent = out.join('\n');
+}, 2800);
+</script>
+</body>
+</html>

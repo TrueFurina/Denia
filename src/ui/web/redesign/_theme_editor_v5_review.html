@@ -1,0 +1,257 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>主题编辑器 v5 · 评审标注副本（基于软件真身，请勿改真代码）</title>
+<!-- 以下 5 个样式表与软件内完全一致，保证本副本外观 = 真实编辑器 -->
+<link rel="stylesheet" href="design_tokens.css?v=20261007g" />
+<link rel="stylesheet" href="ui_shared.css?v=20261006c" />
+<link rel="stylesheet" href="home.css?v=20261005h" />
+<link rel="stylesheet" href="pages.css?v=20261005h" />
+<link rel="stylesheet" href="_theme_editor_v5.css?v=20" />
+
+<!-- ===================== 评审标注样式（仅本副本有效） ===================== -->
+<style>
+  /* 本副本为「评审用标注层」，不依赖任何后端脚本；只保留真实 CSS 让外观与软件一致。
+     颜色约定：橙=计划修改/增强现有区域  绿=建议新增图片区  紫=建议新增功能模块 */
+  .anno-legend{
+    position:fixed; top:10px; right:10px; z-index:2147484000;
+    background:#fff; border:1px solid #d8d8e0; border-radius:12px;
+    box-shadow:0 6px 24px rgba(20,20,40,.18); padding:10px 12px; width:230px;
+    font:12px/1.5 -apple-system,"Segoe UI",Roboto,"PingFang SC","Microsoft YaHei",sans-serif; color:#222;
+  }
+  .anno-legend h4{margin:0 0 6px;font-size:12px;color:#444}
+  .anno-legend .row{display:flex;align-items:center;gap:8px;margin:3px 0}
+  .anno-legend .sw{width:14px;height:14px;border-radius:4px;flex:0 0 auto;border:2px solid}
+  .sw.orange{border-color:#E8830C;background:#FFF3E3}
+  .sw.green{border-color:#1D9E4E;background:#E7F7EE}
+  .sw.purple{border-color:#7F3FD8;background:#F3EBFD}
+
+  /* 区域旗标：贴在真实区域角落的小标签 */
+  .flag{position:absolute; z-index:2147483990; pointer-events:none;
+    font:11px/1.35 -apple-system,"Segoe UI",Roboto,"PingFang SC","Microsoft YaHei",sans-serif;
+    border-radius:8px; padding:5px 8px; max-width:260px; color:#222;
+    box-shadow:0 3px 10px rgba(20,20,40,.18);}
+  .flag b{display:block;font-size:11px;margin-bottom:1px}
+  .flag.orange{background:#FFF3E3;border:1.5px solid #E8830C}
+  .flag.green{background:#E7F7EE;border:1.5px solid #1D9E4E}
+  .flag.purple{background:#F3EBFD;border:1.5px solid #7F3FD8}
+  .flag .num{display:inline-block;width:16px;height:16px;line-height:16px;text-align:center;
+    border-radius:50%;color:#fff;font-size:10px;margin-right:4px;vertical-align:middle}
+  .flag.orange .num{background:#E8830C}
+  .flag.green .num{background:#1D9E4E}
+  .flag.purple .num{background:#7F3FD8}
+
+  /* 让真实区域成为旗标锚点 */
+  #tv5Bar{position:relative}
+  #tv5Lib .tv5-sec{position:relative}
+  #tv5Rail{position:relative}
+  #tv5Stage{position:relative}
+  #tv5Prev .tv5-scenes{position:relative}
+
+  /* 预览区贴纸落点示意层（覆盖在真实预览之上，半透明，仅标注） */
+  .sticker-zones{position:absolute; inset:0; z-index:2147483980; pointer-events:none;}
+  .sticker-zones .z{position:absolute; border:2px dashed #1D9E4E; border-radius:10px;
+    background:rgba(29,158,78,.08); color:#0c7a3a; font:11px/1.2 sans-serif;
+    padding:3px 6px; display:flex; align-items:flex-start;}
+  .sticker-zones .z b{font-weight:700}
+  .z.a1{left:10px;bottom:10px;width:150px}      /* 侧栏底部 */
+  .z.a2{right:14px;top:64px;width:120px}        /* 气泡角标 */
+  .z.a3{left:50%;transform:translateX(-50%);bottom:54px;width:160px} /* 输入栏上方 */
+  .z.a4{right:16px;bottom:90px;width:130px}     /* 舞台角落 */
+  .stage-empty{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
+    color:#9aa;font:13px sans-serif;background:repeating-linear-gradient(45deg,#f6f6fa,#f6f6fa 12px,#eef 12px,#eef 24px)}
+
+  /* 评审清单（固定左下，可折叠） */
+  .review-panel{position:fixed;left:10px;bottom:10px;z-index:2147484000;width:340px;
+    background:#fff;border:1px solid #d8d8e0;border-radius:12px;box-shadow:0 6px 24px rgba(20,20,40,.18);
+    font:12px/1.5 -apple-system,"Segoe UI",Roboto,"PingFang SC","Microsoft YaHei",sans-serif;color:#222}
+  .review-panel summary{cursor:pointer;padding:9px 12px;font-weight:700;color:#333;border-bottom:1px solid #eee}
+  .review-panel .body{padding:8px 12px 12px;max-height:46vh;overflow:auto}
+  .review-panel h5{margin:10px 0 4px;font-size:12px;color:#555}
+  .review-panel ol{margin:0;padding-left:18px}
+  .review-panel li{margin:3px 0}
+  .review-panel .tag{display:inline-block;font-size:10px;padding:1px 6px;border-radius:6px;margin-right:4px;color:#fff}
+  .tag.orange{background:#E8830C}.tag.green{background:#1D9E4E}.tag.purple{background:#7F3FD8}
+  .review-panel .note{color:#888;margin:6px 0 0}
+
+  /* 静态填充：让副本区域看起来和软件里一样有内容（无后端时使用） */
+  .fill-chip{display:inline-flex;flex-direction:column;justify-content:center;align-items:center;
+    min-width:78px;height:64px;margin:0 8px 8px 0;border-radius:14px;border:1.5px solid #d8d8e0;
+    background:#fff;color:#444;font:12px/1.3 sans-serif;padding:4px 8px;text-align:center}
+  .fill-chip.on{border-color:#378ADD;background:#EAF2FC;color:#1d5fa8}
+  .fill-chip b{font-size:13px}
+  .fill-chip em{font-style:normal;font-size:10px;color:#999}
+  .fill-card{display:inline-block;width:64px;height:48px;border-radius:10px;margin:0 6px 6px 0;
+    border:1px solid #e0e0e8;vertical-align:middle}
+  .fill-pill{display:inline-block;padding:4px 10px;border-radius:20px;background:#eef0f6;color:#555;font-size:12px}
+  .fill-swatch{display:inline-block;width:22px;height:22px;border-radius:50%;margin:0 4px 4px 0;border:1px solid #ddd}
+</style>
+</head>
+<body>
+<div id="tv5">
+
+  <!-- 顶栏：左「返回」· 中标题与状态 · 右三个动作 -->
+  <header id="tv5Bar">
+    <button class="tv5-btn tv5-back" id="tv5Back" title="返回 · 直接离开编辑器，不强制保存" type="button">← 返回</button>
+    <div class="tv5-title" id="tv5Name" title="点一下可以改这套主题的名字">主题 · <b>我的主题</b></div>
+    <span class="tv5-state" id="tv5State">读取中</span>
+    <div class="tv5-sp"></div>
+    <button class="tv5-btn" id="tv5Undo" disabled type="button">撤销</button>
+    <button class="tv5-btn" id="tv5Reset" type="button">全部清空</button>
+    <button class="tv5-btn primary" id="tv5Done" type="button">完成</button>
+
+    <!-- 🟠 旗标①：顶栏增强 -->
+    <div class="flag orange" style="right:10px;top:46px">
+      <span class="num">①</span><b>顶栏增强（修改）</b>
+      在「完成」左侧新增 <b>导出 JSON</b> / <b>导入 JSON</b> 两个按钮，支持主题包分享与备份。撤销/重做已存在，无需重做。
+    </div>
+  </header>
+
+  <div id="tv5Body">
+
+    <!-- 左：主题库 -->
+    <aside id="tv5Lib">
+      <section class="tv5-sec">
+        <h3><span class="tv5-step">1</span> 应用到角色</h3>
+        <div class="tv5-chars" id="tv5Bind"><span class="fill-pill">未选择角色</span></div>
+        <p class="tv5-note" id="tv5BindNote">未绑定</p>
+      </section>
+
+      <section class="tv5-sec">
+        <h3><span class="tv5-step">2</span> 快速配色</h3>
+        <div class="tv5-cards" id="tv5Presets">
+          <span class="fill-card" style="background:linear-gradient(135deg,#F6DDE6,#BFA7D6)"></span>
+          <span class="fill-card" style="background:linear-gradient(160deg,#0E1A2B,#2B2A6B)"></span>
+          <span class="fill-card" style="background:linear-gradient(135deg,#F2F5F8,#C6D2DC)"></span>
+          <span class="fill-card" style="background:linear-gradient(135deg,#E7F0E4,#9FC3A6)"></span>
+        </div>
+        <div class="tv5-sws">
+          <span class="tv5-rail-t">AI 配色 · 看图取</span>
+          <div class="tv5-sw-row" id="tv5Sw">
+            <span class="fill-swatch" style="background:#D9738F"></span>
+            <span class="fill-swatch" style="background:#8B83B0"></span>
+            <span class="fill-swatch" style="background:#3AA7E0"></span>
+          </div>
+          <p class="tv5-geonote" id="tv5Geo"></p>
+        </div>
+        <p class="tv5-note" id="tv5PresetNote">只换配色，不动你的图。点一下整套换上。</p>
+      </section>
+
+      <section class="tv5-sec">
+        <h3><span class="tv5-step">3</span> 我的主题</h3>
+        <div class="tv5-cards" id="tv5Mine"><span class="fill-pill">从零攒一套</span></div>
+        <p class="tv5-note" id="tv5MineNote">从零攒一套：点下面的部位 → 预览会自动放大到那一块 → 就地添加图片</p>
+        <p class="tv5-note tv5-note-hero" id="tv5ColorNote">导入图片后，会自动按你的图算出一份配套的主题色</p>
+
+        <!-- 🟣 旗标②：高级选项面板（新增功能） -->
+        <div class="flag purple" style="left:10px;top:8px">
+          <span class="num">②</span><b>高级选项面板（新增功能·可折叠）</b>
+          在此段底部加一个「高级 ▾」折叠区，统一暴露：背景模糊度 / 圆角 / 不透明度 / 填充模式(cover·contain·repeat) / 推近时长 / 过渡曲线 / 取色强度 / 主色锁定 / 缺失图占位策略 / 暗亮分别定制。默认折叠，避免吓到普通用户（符合「分层不隐藏」铁律）。
+        </div>
+
+        <!-- 🟢 旗标③：贴纸库（新增图片区） -->
+        <div class="flag green" style="right:10px;bottom:8px">
+          <span class="num">③</span><b>贴纸库（新增图片区）</b>
+          新增一个图片上传/选择区：内置表情包 + 用户上传 PNG/动图。每个贴纸独立控制 位置·缩放·透明度·是否随主题切换。纯本地档应隐藏需联网的云端贴纸包（沿用 mode_gates）。
+        </div>
+      </section>
+    </aside>
+
+    <!-- 中：近 1:1 大预览 -->
+    <main id="tv5Prev">
+      <div class="tv5-prevbar">
+        <span class="tv5-scenes">
+          <button class="tv5-scene on" data-page="chat" type="button">对话页</button>
+          <button class="tv5-scene" data-page="chars" type="button">角色页</button>
+
+          <!-- 🟠 旗标⑥：场景标签扩展 -->
+          <span class="flag orange" style="right:-6px;top:34px;max-width:240px">
+            <span class="num">⑥</span><b>场景标签扩展（修改）</b>
+            当前仅「对话页 / 角色页」。每页壁纸上线后，这里扩展为<b>全部子页</b>（日报周报 / 记忆库 / 设置 / 知识库 / 开发者 / 软件档案），切页即切该页壁纸预览。
+          </span>
+        </span>
+        <button class="tv5-btn tv5-global" id="tv5Global" type="button">← 回到全局</button>
+        <span class="tv5-prevhint" id="tv5PrevHint">点下方任一项，预览会自动放大到那一块</span>
+      </div>
+      <div id="tv5Stage">
+        <div id="tv5FrameHost">
+          <iframe id="tv5Frame" class="tv5-frame fg" data-page="chat" title="预览" scrolling="no"></iframe>
+          <iframe id="tv5FrameB" class="tv5-frame bg" data-page="chars" title="预览·角色页" scrolling="no"></iframe>
+          <div id="tv5Hot"></div>
+        </div>
+        <div id="tv5Dim"></div>
+        <div id="tv5Act"></div>
+
+        <!-- 预览区背景占位（无后端时显示，证明这里是预览） -->
+        <div class="stage-empty">预览区 · 真实对话页 / 角色页在此渲染</div>
+
+        <!-- 🟢 旗标⑤：贴纸落点示意层（覆盖在预览之上，仅标注，不拦截点击） -->
+        <div class="sticker-zones">
+          <div class="z a1"><b>A1</b>&nbsp;侧栏底部贴纸落点</div>
+          <div class="z a2"><b>A2</b>&nbsp;对话气泡角标</div>
+          <div class="z a3"><b>A3</b>&nbsp;输入栏上方贴纸条</div>
+          <div class="z a4"><b>A4</b>&nbsp;Live2D 舞台角落</div>
+        </div>
+        <div class="flag green" style="left:10px;top:8px;max-width:220px">
+          <span class="num">⑤</span><b>贴纸落点（新增图片区）</b>
+          贴纸可插入以上 4 个区域（A1–A4）：气泡角标 / 输入栏上方 / 状态栏徽标 / 舞台角落 / 角色卡角标。每处独立控位置·缩放·透明度。
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <!-- 底：部位轨 -->
+  <footer id="tv5Rail">
+    <div class="tv5-slots" id="tv5Slots">
+      <!-- 静态填充：与软件内一致 = 全局视图 + 4 图位 -->
+      <div class="fill-chip on"><b>全局视图</b><em>看整页效果</em></div>
+      <div class="fill-chip"><b>背景</b><em>整个窗口背景</em></div>
+      <div class="fill-chip"><b>立绘</b><em>右侧 Live2D 舞台</em></div>
+      <div class="fill-chip"><b>头像</b><em>侧栏/气泡/卡头像</em></div>
+      <div class="fill-chip"><b>角色卡背景</b><em>整张角色卡底图</em></div>
+    </div>
+
+    <!-- 🟠 旗标④：部位轨增强 = 每页壁纸模式（修改/新增） -->
+    <div class="flag orange" style="left:10px;top:-78px;max-width:300px">
+      <span class="num">④</span><b>每页独立壁纸（修改/新增·核心）</b>
+      在部位轨左侧新增一个「<b>页面壁纸</b>」模式切换（与「图位」正交：图位=角色内容，页面壁纸=页面背景）。进入后列出<b>全部子页</b>，每页一行：缩略图 + 选壁纸 + 该页填充模式 + 动态壁纸(mp4)开关。数据层 t_pick(page) + --tm-wall-* 已就绪，<b>只差 UI 入口</b>。
+    </div>
+  </footer>
+</div>
+<div id="tv5Tip" role="status" aria-live="polite"></div>
+
+<!-- ===================== 评审清单（可折叠） ===================== -->
+<details class="review-panel" open>
+  <summary>📋 评审标注对照（点击展开/收起）</summary>
+  <div class="body">
+    <h5>一、标注旗标（对应副本内彩色标签）</h5>
+    <ol>
+      <li><span class="tag orange">修改</span><b>① 顶栏</b>：新增「导出/导入 JSON」。</li>
+      <li><span class="tag purple">新增</span><b>② 高级选项面板</b>：模糊/圆角/不透明度/填充模式/过渡/取色强度/主色锁定/缺失图占位/暗亮分别定制，默认折叠。</li>
+      <li><span class="tag green">新增图</span><b>③ 贴纸库</b>：内置表情包 + 上传区，每贴独立控位置/缩放/透明度/随主题。</li>
+      <li><span class="tag orange">修改</span><b>④ 部位轨</b>：新增「页面壁纸」模式，每页独立壁纸（含 mp4 动态壁纸）。</li>
+      <li><span class="tag green">新增图</span><b>⑤ 贴纸落点 A1–A4</b>：气泡角标/输入栏上方/状态栏/舞台角落。</li>
+      <li><span class="tag orange">修改</span><b>⑥ 场景标签</b>：从 2 页扩展到全部子页，配合每页壁纸。</li>
+    </ol>
+
+    <h5>二、我补充的其它可行升级（供取舍）</h5>
+    <ol start="7">
+      <li><span class="tag purple">新增</span>情景自动切换：按时间(白天亮/夜间暗)或档位自动换主题。</li>
+      <li><span class="tag purple">新增</span>AI 配图建议：按角色性格推荐壁纸色调与贴纸风格。</li>
+      <li><span class="tag purple">新增</span>主题模板市场 + 一键应用 + 分享码。</li>
+      <li><span class="tag purple">新增</span>撤销/重做已存在 → 升级为「版本历史快照」。</li>
+      <li><span class="tag purple">新增</span>局部主题：只改某区域不影响全局。</li>
+      <li><span class="tag purple">新增</span>无障碍：高对比模式、动态壁纸省电自动暂停、取色器从任意图取色。</li>
+      <li><span class="tag purple">新增</span>多屏分别适配：不同显示器不同壁纸。</li>
+    </ol>
+
+    <p class="note">说明：本文件是 <b>_theme_editor_v5.html 的副本</b>，仅用于评审。橙=修改现有区域，绿=建议新增图片区，紫=建议新增功能。真实代码改动需落到 _theme_editor_v5.html / .js / .css。预览区在无后端时显示占位格，真实环境会渲染对话页/角色页，贴纸落点(绿框)覆盖其上。</p>
+  </div>
+</details>
+
+<!-- 注：已移除 gsap / theme_backend_bridge / _theme_editor_v5.js 三个依赖后端的脚本，
+     仅保留真实 CSS，使本副本外观与软件内编辑器一致，但静态可评审、不依赖运行时。 -->
+</body>
+</html>

@@ -1,0 +1,2289 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>桌面伴侣 · 主页 v6</title>
+<link rel="stylesheet" href="/redesign/design_tokens.css?v=2" />
+<link rel="stylesheet" href="/redesign/ui_shared.css?v=3" />
+  <link rel="stylesheet" href="/redesign/home.css?v=4" />
+  <link rel="stylesheet" href="/redesign/pages.css?v=6" />
+  <!-- 本地图标库（Lucide ISC + css.gg MIT，离线内置，不依赖 CDN）：提供 window.DIcon -->
+  <script src="/assets/icons.js?v=2"></script>
+  <script src="/assets/companion.js?v=1"></script>
+
+  <style>
+    /* 语音模式按钮（模式1轻量语音：浏览器麦克风 → sherpa → /chat → TTS 念回） */
+    .mic-btn{ width:38px;height:38px;border:none;border-radius:12px;background:var(--surface-2);
+      color:var(--ink-2);cursor:pointer;font-size:18px;display:flex;align-items:center;justify-content:center;
+      flex:0 0 auto;transition:background .2s,transform .15s,box-shadow .2s; }
+    .mic-btn:hover{ background:var(--surface-3); }
+    .mic-btn.on{ background:var(--accent-grad); color:var(--on-accent);
+      box-shadow:0 0 0 3px color-mix(in srgb, var(--accent-1) 25%, transparent); }
+    .mic-btn.rec{ animation:micPulse 1.1s ease-in-out infinite; }
+    @keyframes micPulse{ 0%,100%{ box-shadow:0 0 0 0 rgba(255,90,90,.55);} 50%{ box-shadow:0 0 0 9px rgba(255,90,90,0);} }
+    .field{ align-items:center; }
+    /* 【2026-09-29 排版修复】中文输入框的 min-content 只有 1 个字宽（CJK 可逐字断行），
+       行内按钮/药丸一多，flex 挤压时输入框会塌成 1 个字（"和…"）。两条保底：
+       ① 输入框永远保留可读宽度，宁可让可收缩的药丸先让位；
+       ② 模型药丸固定宽度（132px），icon+名称+caret 在内、长名 ellipsis，进主页/切模型都不忽窄忽宽（覆盖 pages.css 弹性约束）。
+       另加作用域内的 [hidden] 权威规则，防止任何显式 display 把 hidden 元素顶出来
+       （此前 .call-btn 的 display:inline-flex 就这样把 hidden 的视频/屏幕按钮显示了出来）。 */
+    .field textarea{ min-width:160px; }
+    .field .model-pill{ flex:0 0 132px; }
+    .field [hidden]{ display:none !important; }
+    .voice-hint{ position:fixed;left:50%;bottom:98px;transform:translateX(-50%);
+      background:rgba(20,24,34,.92);color:#dfe7f3;padding:8px 14px;border-radius:20px;font-size:13px;
+      opacity:0;transition:opacity .25s;pointer-events:none;z-index:9998; }
+    .voice-hint.show{ opacity:1; }
+  </style>
+  <style>
+    /* 桌面化：去掉页面文本选中/长按菜单/拖拽，让 UI 像原生控件而非浏览器 */
+    *{ -webkit-user-select:none; user-select:none; -webkit-touch-callout:none; -webkit-tap-highlight-color:transparent; }
+    input, textarea, [contenteditable="true"]{ -webkit-user-select:text; user-select:text; }
+    ::selection{ background:rgba(124,92,255,.25); }
+    img, canvas, svg, video{ -webkit-user-drag:none; user-drag:none; }
+    body{ -webkit-user-drag:none; }
+  </style>
+</head>
+<body>
+<script>
+  /* 桌面化：屏蔽浏览器右键菜单/拖拽（WebView2 原生层也已关，这里双保险） */
+  document.addEventListener('contextmenu', function(e){ e.preventDefault(); });
+  document.addEventListener('dragstart', function(e){ e.preventDefault(); });
+  /* WebView2 原生推送通道：后端一有聊天更新就即时刷新（不再等轮询） */
+  (function(){
+    if (window.__wv2Bound) return; window.__wv2Bound = true;
+    var wv = window.chrome && window.chrome.webview;
+    if (wv && wv.addEventListener) {
+      wv.addEventListener('message', function(ev){
+        try {
+          var d = ev.data;
+          if (d && d.type === 'chat_push' && typeof window.pollChat === 'function') window.pollChat();
+          // 电脑操作代理逐步确认：后端要动鼠标/键盘/命令前弹确认框，用户允许/拒绝后回执
+          if (d && d.type === 'agent_confirm' && typeof window.showAgentConfirm === 'function') {
+            window.showAgentConfirm(d.desc || '执行一个电脑操作', function(ok){
+              try {
+                if (window.Backend && typeof window.Backend.resolveAgentConfirm === 'function')
+                  window.Backend.resolveAgentConfirm(d.key, ok);
+              } catch(e){}
+            });
+          }
+        } catch(e){}
+      });
+    }
+  })();
+</script>
+  <div class="app" id="app">
+
+    <!-- 侧边栏 -->
+      <aside class="side">
+    <div class="brand"><div class="wm">达妮娅</div><div class="wmsub">DESKTOP COMPANION</div></div>
+    <div class="grp">
+      <div class="gt">日常</div>
+      <a class="nav on" href="/index.html"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>对话</a>
+      <a class="nav" href="/redesign/ui_redesign_daily.html"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M4 4h16v16H4z"/><path d="M8 9h8M8 13h5"/></svg>日报周报</a>
+    </div>
+    <div class="grp">
+      <div class="gt">伴侣</div>
+      <a class="nav" href="/redesign/ui_redesign_characters.html"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/></svg>角色</a>
+      <a class="nav" href="/redesign/ui_redesign_memory.html"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M5 4h12a2 2 0 0 1 2 2v14H7a2 2 0 0 1-2-2z"/></svg>记忆库</a>
+    </div>
+    <div class="grp">
+      <div class="gt">系统</div>
+      <a class="nav" href="/redesign/ui_redesign_settings.html"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/></svg>设置</a>
+      <a class="nav" href="/redesign/ui_redesign_software_profiles.html"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>软件档案</a>
+      <a class="nav" href="/redesign/lib.html"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M5 4h11a2 2 0 0 1 2 2v14H7a2 2 0 0 1-2-2z M4 9h11 M4 13h11"/></svg>知识库</a>
+      <a class="nav" href="/redesign/ui_redesign_developer.html"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M4 6h16M7 12h10M10 18h4"/></svg>开发者</a>
+    </div>
+    <div class="grp">
+      <button type="button" class="btn" id="shellReloadUi" onclick="location.replace('/index.html')" style="width:100%;font-size:12px;padding:6px 10px">重载界面（刷新到最新版）</button>
+    </div>
+    <div class="spacer"></div>
+  </aside>
+
+    <!-- 主对话 -->
+    <section class="main">
+      <header class="top">
+        <div>
+          <div class="who">对话</div>
+          <div class="sub">SESSION · 文本模式 / LOCAL_OMNI</div>
+        </div>
+        <div class="right">
+        <button class="ctl mic" id="micToggle" title="麦克风监听：开=收音，关=释放麦克风设备">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3a3 3 0 0 1 3 3v5l3 3H6l3-3V6a3 3 0 0 1 3-3z M4 4l16 16"/></svg>
+        </button>
+        <button class="ctl" id="contToggle" title="持续语音：开=免唤醒随时说，关=需唤醒词">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5h16v10H9.5L5 19V15H4z M4 4l16 16"/></svg>
+        </button>
+        <button class="ctl" id="clearChat" title="清空对话">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M9 7V5h6v2M6 7l1 13h10l1-13"/></svg>
+        </button>
+        <button class="ctl" id="focusToggle" title="专注模式：隐藏左右栏，放大对话区">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg>
+        </button>
+        <span class="modechip"><i data-icon="message-square" data-icon-size="13"></i> 文本输入</span>
+      </div>
+      </header>
+
+      <div class="stage-scroll" id="scroll">
+        <div class="empty" id="chatEmpty"><div class="empty-tip">达妮娅在等你，说点什么吧～</div></div>
+      </div>
+
+      <div class="composer">
+          <div class="field">
+            <button class="mic-btn" id="micBtn" title="语音模式：开启后达妮娅会一直听你说话，随时开口可打断她"><i data-icon="mic" data-icon-size="19"></i></button>
+            <button class="call-btn" id="callVoice" title="语音通话（半双工·云端API）"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M6.6 10.8a15 15 0 0 0 6.6 6.6l2.2-2.2a1 1 0 0 1 1-.24 11 11 0 0 0 3.5.56 1 1 0 0 1 1 1V20a1 1 0 0 1-1 1A17 17 0 0 1 3 4a1 1 0 0 1 1-1h3.5a1 1 0 0 1 1 1 11 11 0 0 0 .56 3.5 1 1 0 0 1-.24 1z"/></svg></button>
+            <!-- 2026-09-29 按用户要求移除视频/屏幕共享通话入口（只保留语音电话）。
+                 这两个按钮此前还有个真 bug：.call-btn{display:inline-flex} 作为作者样式
+                 压过了 UA 对 [hidden] 的 display:none → 标记里写了 hidden 也照样显示，
+                 再加模型药丸占宽，把 CJK 输入框（min-content 仅 1 字宽）挤成 1 个字。 -->
+            <button class="model-pill" id="modelPill" type="button" title="切换推理模型（文本 / 视觉，点一下换）">
+              <span class="mp-ic"><i data-icon="cpu" data-icon-size="13"></i></span><span class="mp-name" id="modelPillName">模型</span><span class="mp-auto" id="modelPillAuto" hidden>自动</span><span class="mp-caret"><i data-icon="chevron-down" data-icon-size="11"></i></span>
+            </button>
+            <textarea id="input" rows="1" placeholder="和达妮娅说点什么…"></textarea>
+          <button class="send" id="send"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M22 2 11 13M22 2l-7 20-4-9-9-4 20-7z"/></svg></button>
+          <div class="model-panel" id="modelPanel" hidden></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 右侧舞台 -->
+    <aside class="stage">
+      <div class="panel">
+        <div class="grid"></div>
+        <span class="tick tl"></span><span class="tick tr"></span><span class="tick bl"></span><span class="tick br"></span>
+        <iframe id="live2dRigFrame" class="live2d-frame" src="live2d/rig/index.html?v=2" title="达娜娅"></iframe>
+      </div>
+
+      <div class="nameplate">
+        <div>
+          <div class="nm">达妮娅</div>
+          <div class="st">● ONLINE</div>
+        </div>
+        <div class="readouts">
+          <span class="ro">记忆 <b>1.2k</b></span>
+        </div>
+      </div>
+
+      <!-- 消耗面板（缩小 Live2D 后新增） -->
+      <div class="card">
+        <div class="ct">本会话消耗</div>
+        <div class="crow"><span>Token 消耗</span><b id="tok">0</b></div>
+        <div class="crow"><span>TTS 合成字数</span><b id="tts">0<em>字</em></b></div>
+        <div class="crow"><span>对话轮次</span><b id="rnd">0</b></div>
+      </div>
+
+      <div class="card status">
+        <div class="ct">运行状态</div>
+
+        <button class="modebtn" id="modeBtn" title="切换对话引擎（自动 / 云端双工 / 本地双工）">
+          <div class="mb-left">
+            <span class="mb-k">引擎模式</span>
+            <span class="mb-sub" id="modeBtnSub">点击更改运行引擎</span>
+          </div>
+          <span class="chev">›</span>
+        </button>
+
+        <div class="erow"><span>当前运行方式</span><b id="runModeVal">—</b></div>
+
+        <div class="srow">
+          <span>视觉感知</span>
+          <b id="visVal" class="badge on" title="开启后快照与双工读取屏幕">读取中</b>
+        </div>
+
+        <div class="srow">
+          <span>记忆库</span>
+          <b id="memVal" title="已存储的记忆条目数（约 1,240 条），不是字数">1,240 <em>条</em></b>
+        </div>
+      </div>
+    </aside>
+  </div>
+
+  <script src="/redesign/gsap.min.js?v=20260903b"></script>
+<script type="module" src="/redesign/morph_icons.js?v=20260903b"></script>
+  <script src="/redesign/app_backend.js?v=20261005f"></script>
+  <script src="/redesign/spa.js?v=20260903c"></script>
+  <script src="live2d/live2d.js"></script>
+
+  
+<script>
+    const $ = (s) => document.querySelector(s);
+    const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    function setL2DSpeaking(on){ try { if (window.Live2DCompanion) window.Live2DCompanion.setSpeaking(!!on); } catch(e){} }
+
+    /* 主题色 / 深浅模式由 app_backend.js 的 window.Theme 统一处理：
+       它在各页内联脚本之前执行，且会清掉自定义色残留的内联变量（旧版各页各自
+       实现的 applyAccent 没清理，导致用过一次自定义后预设色全失效）。此处不再重复实现。 */
+
+    /* ============================================================
+       聊天页初始化封装为可重入的 initChatPage()：首次整页载入、SPA 每次
+       切回对话页都调用一次，解决「切栏回来聊天记录消失」。旧 chatTimer 在
+       末尾 clearInterval，避免每切一次栏就多一个 setInterval 往已移除的
+       旧 DOM 写（timer 泄漏 + 重复网络轮询）。
+       ============================================================ */
+    window.initChatPage = function(){
+      const EMOTION_LABEL = { smile:'微笑', happy:'开心', sad:'难过', angry:'生气', surprise:'惊讶', curious:'好奇', thinking:'思索', shy:'害羞', love:'喜欢', sleepy:'困' };
+      function audioBarHtml(url){ return '<div class="msg-audio" data-url="'+esc(url)+'"><button class="audio-play" type="button" title="语音回放">'+DIcon.svg('play')+'</button><div class="audio-track"><div class="audio-fill"></div></div><span class="audio-time">语音</span></div>'; }
+    /* ---- 消耗统计 ---- */
+    const state = { tok: 0, tts: 0, rnd: 0 };
+    const countTokens = (t) => Math.max(1, Math.ceil([...t].length / 1.6));
+    const countTts = (t) => [...t].length;
+    function recalcSeed(){
+      document.querySelectorAll('.row:not(.me) .bub').forEach(b => {
+        const t = b.textContent; state.tok += countTokens(t); state.tts += countTts(t);
+      });
+      state.rnd = document.querySelectorAll('.row.me').length;
+      render();
+    }
+    function render(){
+      $('#tok').textContent = state.tok.toLocaleString();
+      $('#tts').innerHTML = state.tts + '<em>字</em>';
+      $('#rnd').textContent = state.rnd;
+    }
+
+    /* 入场只做位移、绝不用 opacity:0 隐藏关键内容——本地双工满载时 WebView 的 rAF
+       会被 GPU 饿死，from(opacity:0) 卡在透明态不跑完 → 整片不可见（只剩原生 textarea
+       占位文字），造成「切设置再切回就变形/卡死」。位移即使动画没跑完也只是偏移。 */
+    if (window.gsap && !reduce) {
+      gsap.from('.panel, .nameplate, .card', { y: 14, duration: .5, stagger: .07, ease: 'power3.out', delay: .05 });
+      gsap.from('.row', { y: 16, duration: .5, stagger: .08, ease: 'power3.out', delay: .14 });
+    }
+
+    /* ---- 发送（接入真实后端） ----
+       聊天轮询（pollChat / 锁状态）已迁至 app_backend.js 的 startChatLive()（外壳层、
+       整页只跑一次、永不死），并挂成 window.pollChat / window.pollChatLock。
+       此处 initChatPage 只负责：发送(乐观渲染+调后端)、语音模式、情绪标签、L2D 口型。
+       渲染优先用 startChatLive 的 window.__chat.upsertRow（有 DOM 级去重），降级用内联。 */
+    const input = $('#input'), scroll = $('#scroll');
+    const rendered = new Map();
+    function avHtml(side, who){
+      return '<div class="av' + (side === 'me' ? ' me' : '') + '">' + who + '</div>';
+    }
+    function upsertRow(m){
+      const _e = document.getElementById('chatEmpty'); if (_e) _e.remove();
+      let row = rendered.get(m.id);
+      /* 用户消息去重：打字时前端乐观插入 id='me-<ts>' 的气泡，但 800ms 后 pollChat
+         从后端拉回的是自增数字 id 的真实消息——两者 id 不同会导致同一句「我」被
+         渲染成两行。这里对 role=user 的新消息，若与某条乐观(me-*)消息文本一致，
+         复用乐观 DOM 并把其 id「转正」为真实 id，消除重复气泡。切栏重入时 me-* 不在
+         buffer，自然只剩真实消息，这条去重让「不切栏」也保持干净。 */
+      if (!row && m.role === 'user') {
+        const tx = (m.text || '').trim();
+        for (const [k, r] of rendered) {
+          if (k.indexOf('me-') === 0 && (r.dataset.text || '').trim() === tx) {
+            row = r; rendered.delete(k); break;
+          }
+        }
+      }
+      const who = m.role === 'user' ? '我' : (m.char_name || '达妮娅');
+      if (!row){
+        row = document.createElement('div');
+        row.className = 'row' + (m.role === 'user' ? ' me' : '');
+        row.innerHTML = avHtml(m.role === 'user' ? 'me' : 'ai', who) +
+          '<div class="stack"><div class="meta"><span class="nm">' + who + '</span><span class="tm">刚刚</span></div><div class="bub"></div></div>';
+        scroll.appendChild(row);
+        rendered.set(m.id, row);
+        row.setAttribute('data-msg-id', m.id);
+        row.dataset.text = m.text || '';
+        if (window.gsap && !reduce) gsap.from(row, { y: 14, duration: .45, ease: 'power3.out' });
+      }
+      const bub = row.querySelector('.bub');
+      bub.textContent = m.text || '';
+      // 语音存档回放条（m.audio 晚于文本到达，非流式时补插，避免重复）
+      if (!m.streaming && m.audio && !bub.querySelector('.msg-audio')) {
+        bub.insertAdjacentHTML('beforeend', audioBarHtml(m.audio));
+      }
+      // 情绪标签（AI 回复旁的 LLM 决策心情）
+      const meta = row.querySelector('.meta');
+      if (meta && m.emotion && m.emotion !== 'neutral') {
+        let moodEl = meta.querySelector('.msg-mood');
+        const label = EMOTION_LABEL[m.emotion] || m.emotion;
+        if (!moodEl) {
+          moodEl = document.createElement('span');
+          moodEl.className = 'msg-mood';
+          meta.appendChild(moodEl);
+        }
+        if (moodEl.textContent !== label) moodEl.textContent = label;
+      }
+      scroll.scrollTop = scroll.scrollHeight;
+      return row;
+    }
+    let chatTimer = null;
+    const _chatSpoken = new Set();   // 已触发过口型/计费的 AI 消息 id（避免 800ms 轮询重复触发）
+    function pollChat(){
+      // 渲染已统一收口到 app_backend.js 的 startChatLive()（window.__chat.upsertRow，
+      // 自带 me-* 乐观气泡去重 + DOM 级 data-msg-id 去重，单条消息只渲染一次）。
+      // 此处若再用内联 upsertRow 自建 Map 渲染，会与 window.__chat 各画一遍 → 同一条
+      // 「我」的消息被渲染成两行、且两次追加时机不同造成顺序错乱。故这里只转发渲染 +
+      // 做副作用（L2D 口型 / token 计费 / 语音模式自动念回），不再自己建 DOM。
+      Backend.getChat().then(r => {
+        if (!r || !r.success) return;
+        const active = r.active_name || '达妮娅';
+        (r.messages || []).forEach(m => {
+          if (window.__chat && window.__chat.upsertRow) {
+            window.__chat.upsertRow(Object.assign({}, m, { char_name: m.char_name || active }));
+          } else {
+            upsertRow(Object.assign({}, m, { char_name: m.char_name || active }));
+          }
+          if (m.role !== 'user' && !_chatSpoken.has(m.id)) {
+            _chatSpoken.add(m.id);
+            state.tok += countTokens(m.text || ''); state.tts += countTts(m.text || ''); render();
+            setL2DSpeaking(true); clearTimeout(window.__l2dT); window.__l2dT = setTimeout(function(){ setL2DSpeaking(false); }, Math.min(9000, 1600 + (m.text||'').length * 60));
+            // 语音模式：AI 回复带音频则自动念出来（念完由 onended 触发下一轮聆听）
+            if (window.__voice && window.__voice.on && m.audio && window.__voicePlay) window.__voicePlay(m.audio);
+          }
+        });
+      });
+    }
+    function send(){
+      try {
+        var v = input.value.trim(); if (!v) return;
+        var btn = $('#send');
+        var r = document.createElement('span'); r.className = 'ripple';
+        var rect = btn.getBoundingClientRect();
+        r.style.left = (event?.clientX - rect.left) + 'px'; r.style.top = (event?.clientY - rect.top) + 'px';
+        r.style.width = r.style.height = '20px'; btn.appendChild(r); setTimeout(() => r.remove(), 600);
+      /* 乐观渲染：优先用 startChatLive 的 upsertRow（有 DOM 级去重），降级用内联 */
+      if (window.__chat && window.__chat.upsertRow) {
+        window.__chat.upsertRow({ id: 'me-' + Date.now(), role: 'user', text: v, char_name: '我' });
+      } else {
+        upsertRow({ id: 'me-' + Date.now(), role: 'user', text: v, char_name: '我' });
+      }
+      state.rnd++; render();
+      input.value = ''; input.style.height = 'auto'; scroll.scrollTop = scroll.scrollHeight;
+      setL2DSpeaking(true); clearTimeout(window.__l2dT); window.__l2dT = setTimeout(function(){ setL2DSpeaking(false); }, 1200);
+      Backend.sendChat(v).then(function(res){
+        if (!res || !res.success) {
+          Backend.toast((res && res.error ? '发送失败：' + res.error : '后端未连接，消息未送达'), 'err');
+        } else {
+          /* 显示"正在连接聊天模型"进度条（startChatLive 提供的话） */
+          if (window.__chat && window.__chat.showChatSwitch) window.__chat.showChatSwitch();
+          if (typeof pollChat === 'function') pollChat();  // 加速可见性
+        }
+      }).catch(function(err){
+        Backend.toast('发送异常：' + (err && err.message || err), 'err');
+      });
+      } catch(sendErr) {
+        console.error('[send] 异常:', sendErr);
+        Backend.toast('发送失败，请重试', 'err');
+      }
+    }  // end send()
+    $('#send').addEventListener('click', send);
+    input.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } });
+    input.addEventListener('input', () => { input.style.height = 'auto'; input.style.height = Math.min(input.scrollHeight, 120) + 'px'; });
+      /* 轮询已迁至 app_backend.js startChatLive()（外壳常驻、永不死），
+         此处不再设 setInterval，避免双重轮询导致重复消息。 */
+      // if (window.__chatTimer) clearInterval(window.__chatTimer);
+      // window.__chatTimer = setInterval(pollChat, 600);
+      // window.pollChat = pollChat;  // 由 startChatLive() 统一暴露
+      /* 立即拉一次填充已有消息（startChatLive 的 pollChat 也会拉，幂等） */
+      pollChat();
+    };
+    window.initChatPage();
+
+    /* ---- 聊天框旁的「推理模型」快捷切换器（文本 + 视觉） ----
+       点输入框左侧的模型药丸打开面板：①文本推理模型（已配置端口 / 百炼免费模型 / 自定义）
+       ②视觉推理模型（看屏用，点=热切换）。之前只做在 SPA 子页 ui_redesign_main.html（要点导航才进），
+       而默认对话页是 index.html 自己的 .main 输入框，所以这里补一份到默认页，用户才看得到。 */
+    (function initChatModelSwitch(){
+      if (window.__chatModelSwitchBound) return;
+      window.__chatModelSwitchBound = true;
+      const modelPill = document.getElementById('modelPill');
+      const modelPanel = document.getElementById('modelPanel');
+      const modelPillName = document.getElementById('modelPillName');
+      if (!modelPill || !modelPanel) return;
+      const escM = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+      const _msStatus  = () => (typeof Backend.getTextChatStatus === 'function' ? Backend.getTextChatStatus() : Promise.resolve({})).catch(() => ({}));
+      const _msPresets = () => (typeof Backend.getChatModelPresets === 'function' ? Backend.getChatModelPresets() : Promise.resolve({})).catch(() => ({ bailian_provider_ids: [], bailian_free: [] }));
+      const _msVision  = () => (typeof Backend.getVision === 'function' ? Backend.getVision() : Promise.resolve({})).catch(() => ({}));
+      function buildModelPanel(st, pr, vis){
+        const sel = (st && st.selectable) || [];
+        const manual = (st && st.manual_provider) || '';
+        // auto 模式下高亮“实际会用到的”端口（last_used 或首个），让下拉与气泡一致
+        const onId = (st && st.mode === 'manual' && manual) ? manual
+                    : ((st && st.mode !== 'manual') ? ((st.last_used) || (sel[0] && sel[0].id) || '') : '');
+        const bailianIds = (pr && pr.bailian_provider_ids) || [];
+        const free = (pr && pr.bailian_free) || [];
+        const vActive = (vis && vis.active) || '';
+        const vModels = (vis && vis.models) || [];
+        let h = '';
+        h += '<div class="mp-sec"><div class="mp-sec-t">文本推理模型（聊天 / 工具调用）</div>';
+        h += '<div class="mp-custom"><input id="mpCustomInput" type="text" placeholder="自定义模型名（如 qwen3.8-max）"><button data-action="custom" id="mpCustomBtn">应用</button></div>';
+        sel.forEach(p => {
+          const on = (p.id === onId) ? ' on' : '';
+          h += '<div class="mp-item'+on+'" data-action="provider" data-id="'+escM(p.id)+'"><span class="mp-i-name">'+escM(p.name)+'</span><span class="mp-i-model">'+escM(p.model)+'</span>'+(on?'<span class="mp-check">'+DIcon.svg('check')+'</span>':'')+'</div>';
+        });
+        h += '</div>';   // 关闭「文本推理模型」区块
+        if (bailianIds.length && free.length){
+          const actP = (manual && bailianIds.indexOf(manual) >= 0) ? manual : bailianIds[0];
+          const actProv = sel.find(p => p.id === actP) || {};
+          h += '<div class="mp-sec"><div class="mp-sec-t">百炼免费模型（额度用完随时换）</div>';
+          free.forEach(m => {
+            const on = (actProv.model === m.id) ? ' on' : '';
+            h += '<div class="mp-item'+on+'" data-action="bailian" data-id="'+escM(actP)+'" data-model="'+escM(m.id)+'"><span class="mp-i-name">'+escM(m.name)+'</span>'+(on?'<span class="mp-check">'+DIcon.svg('check')+'</span>':'')+'</div>';
+          });
+          h += '</div>';
+        }
+        if (vModels.length){
+          h += '<div class="mp-sec"><div class="mp-sec-t">视觉推理模型（看屏用）</div>';
+          vModels.forEach(v => {
+            const on = (v.id === vActive) ? ' on' : '';
+            const dead = (v.vision_available === false) ? ' <em style="color:var(--ink-3);font-style:normal;font-size:11px">· 不可用</em>' : '';
+            h += '<div class="mp-item'+on+'" data-action="vision" data-id="'+escM(v.id)+'"><span class="mp-i-name">'+escM(v.name)+dead+'</span><span class="mp-i-model">'+escM(v.provider)+'</span>'+(on?'<span class="mp-check">'+DIcon.svg('check')+'</span>':'')+'</div>';
+          });
+          h += '</div>';
+        }
+        modelPanel.innerHTML = h;
+      }
+      function refreshModelSwitch(){
+        Promise.all([_msStatus(), _msPresets(), _msVision()]).then(([st, pr, vis]) => {
+          const sel = (st && st.selectable) || [];
+          const manual = (st && st.manual_provider) || '';
+          if (st && st.mode === 'manual' && manual){
+            const p = sel.find(x => x.id === manual);
+            modelPillName.textContent = p ? p.name : (st.manual_name || '手动');
+            modelPillAuto.hidden = true;
+          } else {
+            // auto：实时显示“实际会用到的”端口名，而不是笼统的“自动”
+            const used = (st && st.last_used) || '';
+            const active = sel.find(x => x.id === used) || sel[0] || null;
+            modelPillName.textContent = active ? active.name : '自动';
+            modelPillAuto.hidden = false;
+          }
+          buildModelPanel(st, pr, vis);
+        }).catch(() => {});
+      }
+      function openModelPanel(){ refreshModelSwitch(); modelPanel.hidden = false; modelPill.classList.add('open'); }
+      function closeModelPanel(){ modelPanel.hidden = true; modelPill.classList.remove('open'); }
+      modelPill.addEventListener('click', (e) => { e.stopPropagation(); modelPanel.hidden ? openModelPanel() : closeModelPanel(); });
+      modelPanel.addEventListener('click', (e) => {
+        const item = e.target.closest('[data-action]'); if (!item) return;
+        const action = item.getAttribute('data-action');
+        if (action === 'provider'){
+          Backend.setTextChatMode('manual', item.getAttribute('data-id')).then(r => {
+            if (r && r.success){ Backend.toast('已固定端口：' + (r.manual_name || r.manual_provider)); refreshModelSwitch(); }
+            else Backend.toast('切换失败：' + ((r && r.error) || '未知'), 'err');
+          });
+          closeModelPanel();
+        } else if (action === 'bailian'){
+          const pid = item.getAttribute('data-id'), model = item.getAttribute('data-model');
+          Backend.setChatProviderModel(pid, model).then(r => {
+            if (r && r.success){ Backend.toast('已切换模型：' + model); refreshModelSwitch(); }
+            else Backend.toast('切换失败：' + ((r && r.error) || '未知'), 'err');
+          });
+          closeModelPanel();
+        } else if (action === 'vision'){
+          const vid = item.getAttribute('data-id');
+          Backend.switchVisionModel(vid).then(r => {
+            if (r && r.success){ Backend.toast('已切换视觉模型：' + vid); refreshModelSwitch(); }
+            else Backend.toast('视觉切换失败：' + ((r && r.error) || '未知'), 'err');
+          });
+          closeModelPanel();
+        } else if (action === 'custom'){
+          const inp = document.getElementById('mpCustomInput'); const v = (inp && inp.value || '').trim();
+          if (!v){ Backend.toast('请输入模型名', 'err'); return; }
+          _msStatus().then(st => {
+            const sel = (st && st.selectable) || [];
+            const manual = (st && st.manual_provider) || '';
+            const actP = (manual && sel.some(p => p.id === manual)) ? manual : (sel[0] && sel[0].id || '');
+            if (!actP){ Backend.toast('没有可用的聊天端口', 'err'); return; }
+            Backend.setChatProviderModel(actP, v).then(r => {
+              if (r && r.success){ Backend.toast('已应用自定义模型：' + v); refreshModelSwitch(); }
+              else Backend.toast('应用失败：' + ((r && r.error) || '未知'), 'err');
+            });
+          });
+          closeModelPanel();
+        }
+      });
+      if (!window.__modelSwitchDocBound){
+        window.__modelSwitchDocBound = true;
+        document.addEventListener('click', (e) => {
+          const p = document.getElementById('modelPanel'), b = document.getElementById('modelPill');
+          if (!p || p.hidden) return;
+          if (b && b.contains(e.target)) return;
+          if (p.contains(e.target)) return;
+          p.hidden = true; if (b) b.classList.remove('open');
+        });
+      }
+      refreshModelSwitch();
+      // 引擎暖机期间 selectable/last_used 可能尚未就绪 → 延迟补刷，避免气泡一直显示“自动”
+      setTimeout(refreshModelSwitch, 1200);
+      setTimeout(refreshModelSwitch, 3500);
+    })();
+
+    /* ============ 语音模式（模式1轻量语音：浏览器麦克风 → sherpa → /chat → TTS 念回） ============
+       连续听循环：开启后麦克风常开，VAD 静音自动断句 → 转写 → 驱动 /chat → TTS 自动念回；
+       念回期间用户开口（真声 RMS 超阈值）即 barge-in 打断 TTS，进入下一轮。不另建链路，
+       完全复用打字聊天的 LLM/TTS/历史。状态挂 window.__voice，跨 SPA 切栏重入；麦克风在
+       离开聊天页（morph-ready 且无 micBtn）时释放。 */
+    if (!window.__voiceInited) {
+      window.__voiceInited = true;
+      const V = (window.__voice = { on:false, stream:null, ctx:null, node:null, pcm:[], start:0, spoke:false, silentMs:0, aiSpeaking:false });
+      const BASE_SR = 16000, BARGE_RMS = 0.02, SPEAK_RMS = 0.012, SIL_MS = 1100, MAX_MS = 20000;
+      function b64FromBytes(bytes){ let bin=''; const ch=0x8000; for (let i=0;i<bytes.length;i+=ch) bin += String.fromCharCode.apply(null, bytes.subarray(i,i+ch)); return btoa(bin); }
+      function voiceHint(msg){ let h=document.getElementById('voiceHint'); if(!h){ h=document.createElement('div'); h.id='voiceHint'; h.className='voice-hint'; document.body.appendChild(h);} h.textContent=msg; h.classList.add('show'); clearTimeout(h._t); h._t=setTimeout(()=>h.classList.remove('show'),1400); }
+      window.__voicePlay = function(url){
+        if (!url) return;
+        if (!window.__voicePlayer) window.__voicePlayer = new Audio();
+        const p = window.__voicePlayer;
+        try { p.pause(); } catch(e){}
+        p.src = url; V.aiSpeaking = true;
+        p.play().catch(function(){ V.aiSpeaking=false; });
+        p.onended = function(){ V.aiSpeaking = false; if (V.on) startListen(); };
+        var bars = document.querySelectorAll('.msg-audio[data-url="'+url+'"] .audio-play');
+        bars.forEach(function(b){ b.innerHTML = DIcon.svg('pause'); });
+      };
+      function stopListen(){
+        if (V.node){ try{ V.node.disconnect(); }catch(e){} V.node.onaudioprocess=null; V.node=null; }
+        if (V.ctx){ V.ctx.close().catch(function(){}); V.ctx=null; }
+        if (V.stream){ V.stream.getTracks().forEach(function(t){ t.stop(); }); V.stream=null; }
+        var mb=document.getElementById('micBtn'); if (mb) mb.classList.remove('rec');
+      }
+      async function startListen(){
+        if (!V.on || V.stream) return;
+        try {
+          V.stream = await navigator.mediaDevices.getUserMedia({audio:{sampleRate:BASE_SR, channelCount:1, echoCancellation:true, noiseSuppression:false, autoGainControl:false}});
+          V.ctx = new (window.AudioContext||window.webkitAudioContext)({sampleRate:BASE_SR});
+          var src = V.ctx.createMediaStreamSource(V.stream);
+          var buf = 4096;
+          V.node = V.ctx.createScriptProcessor(buf,1,1);
+          V.pcm=[]; V.start=Date.now(); V.spoke=false; V.silentMs=0;
+          var mb=document.getElementById('micBtn'); if (mb){ mb.classList.add('on'); mb.classList.add('rec'); }
+          V.node.onaudioprocess = function(e){
+            var ch = e.inputBuffer.getChannelData(0);
+            var i16 = new Int16Array(ch.length); var sum=0;
+            for (var i=0;i<ch.length;i++){ var s=Math.max(-1,Math.min(1,ch[i]||0)); i16[i]= s<0? s*0x8000 : s*0x7fff; sum += ch[i]*ch[i]; }
+            var rms = Math.sqrt(sum/ch.length);
+            V.pcm.push(i16);
+            if (V.aiSpeaking && rms > BARGE_RMS){ try{ window.__voicePlayer && window.__voicePlayer.pause(); }catch(e2){} V.aiSpeaking=false; V.spoke=true; V.silentMs=0; V.start=Date.now(); }
+            if (rms > SPEAK_RMS){ V.spoke=true; V.silentMs=0; } else if (V.spoke){ V.silentMs += (buf/BASE_SR)*1000; }
+            var dur = Date.now()-V.start;
+            if ((V.spoke && V.silentMs > SIL_MS) || dur > MAX_MS) sendUtterance();
+          };
+          src.connect(V.node); V.node.connect(V.ctx.destination);
+          voiceHint('我在听，说吧～');
+        } catch(err){
+          V.on=false; var mb2=document.getElementById('micBtn'); if (mb2) mb2.classList.remove('on');
+          Backend.toast('无法访问麦克风：'+(err&&err.message||err), 'err');
+        }
+      }
+      function sendUtterance(){
+        if (!V.pcm.length){ stopListen(); if (V.on) startListen(); return; }
+        var total = V.pcm.reduce(function(a,b){return a+b.length;},0);
+        var merged = new Int16Array(total); var off=0;
+        for (var k=0;k<V.pcm.length;k++){ merged.set(V.pcm[k], off); off+=V.pcm[k].length; }
+        V.pcm=[]; stopListen();
+        var bytes = new Uint8Array(merged.buffer);
+        var b64 = b64FromBytes(bytes);
+        Backend.transcribeAndChat(b64, 'pcm').then(function(r){
+          if (r && r.success && r.text){ /* 文字消息随后经 pollChat 出现 */ }
+          else if (r && r.success && r.empty){ voiceHint('没听清，再说一次'); }
+          else if (r && !r.success){ Backend.toast('语音识别失败：'+(r.error||''), 'err'); }
+          if (V.on && !V.aiSpeaking) startListen();
+        }).catch(function(){ if (V.on && !V.aiSpeaking) startListen(); });
+      }
+      function setVoice(on){
+        V.on = on;
+        var mb=document.getElementById('micBtn'); if (mb) mb.classList.toggle('on', on);
+        if (on){ Backend.toast('语音模式已开启：达妮娅会一直听你说，随时开口可打断她'); startListen(); }
+        else { stopListen(); voiceHint('语音模式已关闭'); }
+      }
+      document.addEventListener('click', function(e){
+        var b = e.target.closest && e.target.closest('#micBtn');
+        if (b) setVoice(!V.on);
+      });
+      document.addEventListener('morph-ready', function(){
+        if (V.on && document.getElementById('micBtn') && !V.stream) startListen();
+        else if (V.on && !document.getElementById('micBtn')) stopListen();
+      });
+    }
+
+    /* ---- 麦克风 / 持续语音 / 清空（接入真实后端 + morphicons 形变动效） ---- */
+    const micBtn = $('#micToggle'), contBtn = $('#contToggle'), clearBtn = $('#clearChat');
+    function popIcon(btn){
+      if (!window.gsap || reduce) return;
+      const svg = btn && btn.querySelector('svg');
+      if (svg) gsap.fromTo(svg, { scale: 0.68 }, { scale: 1, duration: 0.45, ease: 'back.out(2.6)' });
+    }
+    function morphIcon(btn, name){
+      const p = btn && btn.querySelector('path');
+      if (p && window.Morph) window.Morph.to(p, name);
+      popIcon(btn);
+    }
+    function syncVoiceToggles(d){
+      if (!d || !d.success) return;
+      if (micBtn){
+        const on = !!d.listening; micBtn.classList.toggle('on', on);
+        morphIcon(micBtn, on ? 'mic' : 'micOff');
+      }
+      if (contBtn){
+        const on = !!d.continuous; contBtn.classList.toggle('on', on);
+        morphIcon(contBtn, on ? 'cont' : 'contOff');
+      }
+    }
+    Backend.getVoice().then(syncVoiceToggles);
+    if (micBtn) micBtn.addEventListener('click', function() {
+      const on = !micBtn.classList.contains('on'); micBtn.classList.toggle('on', on);
+      morphIcon(micBtn, on ? 'mic' : 'micOff');
+      Backend.setMicListening(on).then(function(r){ if (!r || !r.success) Backend.toast('麦克风设置失败（后端未连接）', 'err'); });
+    });
+    if (contBtn) contBtn.addEventListener('click', function() {
+      const on = !contBtn.classList.contains('on'); contBtn.classList.toggle('on', on);
+      morphIcon(contBtn, on ? 'cont' : 'contOff');
+      Backend.setContinuousVoice(on).then(function(r){ if (!r || !r.success) Backend.toast('持续语音设置失败（后端未连接）', 'err'); });
+    });
+    if (clearBtn) clearBtn.addEventListener('click', function() {
+      morphIcon(clearBtn, 'check');
+      setTimeout(function(){ if (clearBtn.querySelector('path') && window.Morph) window.Morph.to(clearBtn.querySelector('path'), 'trash'); }, 750);
+      Backend.clearChat().then(function(r) {
+        if (r && r.success){ rendered.clear(); scroll.innerHTML = '<div class="empty" id="chatEmpty"><div class="empty-tip">达妮娅在等你，说点什么吧～</div></div>'; state.tok = 0; state.tts = 0; state.rnd = 0; render(); Backend.toast('对话已清空'); }
+        else Backend.toast('清空失败（后端未连接）', 'err');
+      });
+    });
+
+    /* ---- 运行模式：当前运行方式概览 + 视觉感知（接入真实后端） ---- */
+    const ENGINE_TXT = { cloud: '云端双工', local: '本地全双工', off: '纯文本聊天', auto: '自动（按档位）' };
+    function applyStatus(d){
+      if (!d) return;
+      const eng = d.engine || 'cloud';
+      const rm = $('#runModeVal');
+      if (rm) rm.textContent = ENGINE_TXT[eng] || eng;
+      const subEl = document.querySelector('.top .sub');
+      if (subEl) subEl.textContent = 'SESSION · ' + (ENGINE_TXT[eng] || eng);
+    }
+    async function refreshStatus(){
+      const [dup, vis, rt] = await Promise.all([Backend.getDuplex(), Backend.getVisionSettings(), Backend.getStatus()]);
+      applyStatus(dup && dup.success ? dup : null);
+      const vel = $('#visVal');
+      const on = !!(vis && vis.success && vis.enabled);
+      if (vel){
+        vel.textContent = on ? (vis.active ? '读取中' : '已开启') : '已关闭';
+        vel.className = 'badge ' + (on ? 'on' : 'off');
+        vel.title = on ? '开启后快照与双工读取屏幕' : '视觉感知已关闭';
+      }
+    }
+    refreshStatus();
+    window.addEventListener('focus', refreshStatus);
+
+    /* 引擎模式：弹窗由 app_backend.js 的 startPetLive 接管（WorkBuddy 式居中弹窗）。
+       注意：此处不可再绑定 location.href 跳设置页——否则整页跳转会冲掉弹窗、
+       用户永远只看到「跳设置」。 */
+
+    /* ---- 工具：HTML 转义 / 音频回放 / 情绪标签 ---- */
+    function esc(s){ return String(s==null?'':s).replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m])); }
+    let chatAudio = null;
+    document.addEventListener('click', function(e){
+      const btn = e.target.closest && e.target.closest('.audio-play');
+      if (!btn) return;
+      const bar = btn.closest('.msg-audio'); if (!bar) return;
+      const url = bar.getAttribute('data-url');
+      if (!chatAudio) chatAudio = new Audio();
+      if (chatAudio.src === url && !chatAudio.paused){ chatAudio.pause(); btn.innerHTML = DIcon.svg('play'); return; }
+      chatAudio.src = url; chatAudio.play().catch(function(){}); btn.innerHTML = DIcon.svg('pause');
+      chatAudio.onended = function(){ btn.innerHTML = DIcon.svg('play'); };
+      chatAudio.ontimeupdate = function(){ const fill = bar.querySelector('.audio-fill'); if (fill && chatAudio.duration) fill.style.width = (chatAudio.currentTime / chatAudio.duration * 100) + '%'; };
+    });
+
+    /* 记忆库已移至「伴侣 → 记忆库」独立栏目（ui_redesign_memory.html） */
+
+    /* ---- 专注模式：左右栏线性挪出画面，对话区同步铺满（按钮平滑平移，不瞬移） ---- */
+    const focusBtn = $('#focusToggle');
+    const appEl = $('#app');
+    const sideEl = document.querySelector('.side');
+    const stageEl = document.querySelector('.stage');
+    const FOCUS_DUR = 0.22;                            // 左右栏滑出与内容扩展共用一条节奏（0.42 偏慢，已调快）
+    let curS = sideEl ? sideEl.offsetWidth : 236;      // 当前侧栏轨道宽度（支持动画中途反向续接）
+    let curT = stageEl ? stageEl.offsetWidth : 0;      // 当前舞台轨道宽度
+    let focusTween = null, focusOn = false;
+    const hasStage = () => !!stageEl && getComputedStyle(stageEl).display !== 'none';
+
+    function applyFocus(on){
+      focusOn = on;
+      document.body.classList.toggle('focus', on);
+      if (focusBtn){ focusBtn.classList.toggle('on', on); morphIcon(focusBtn, on ? 'collapse' : 'expand'); }
+      /* 降级：没有 gsap / 系统开启「减少动态效果」→ 沿用原来的直接隐藏 */
+      if (!window.gsap || reduce){
+        document.body.classList.toggle('focus-static', on);
+        return;
+      }
+      if (focusTween) focusTween.kill();
+      const fullS = sideEl ? sideEl.offsetWidth : 236;
+      const fullT = hasStage() ? stageEl.offsetWidth : 0;
+      const st = { s: curS, t: curT };
+      /* 钉住两栏盒宽：轨道收缩时整块滑出画外，而不是被压扁 */
+      if (sideEl) sideEl.style.width = fullS + 'px';
+      if (hasStage()) stageEl.style.width = fullT + 'px';
+      focusTween = gsap.to(st, {
+        s: on ? 0 : fullS,
+        t: on ? 0 : fullT,
+        duration: FOCUS_DUR,
+        ease: 'none',                                  // 纯线性：一点点挪到画面外
+        onUpdate(){
+          curS = st.s; curT = st.t;
+          if (appEl){
+            appEl.style.setProperty('--side-w', st.s + 'px');
+            appEl.style.setProperty('--stage-w', st.t + 'px');
+          }
+          /* 左栏：右边缘始终贴着轨道右边缘一起向左挪出画外（st.s - fullS = 轨道缩掉的量）。
+             右舞台：轨道起点随收缩右移，会被自然推出画外，无需额外位移。 */
+          if (sideEl){
+            sideEl.style.transform = 'translateX(' + (st.s - fullS) + 'px)';
+            sideEl.style.opacity = fullS ? (st.s / fullS) : 1;
+          }
+          if (hasStage()) stageEl.style.opacity = fullT ? (st.t / fullT) : 1;
+        },
+        onComplete(){
+          if (on) return;                              // 收起态保留内联值，展开态清理干净
+          if (appEl){ appEl.style.removeProperty('--side-w'); appEl.style.removeProperty('--stage-w'); }
+          if (sideEl){ sideEl.style.width = ''; sideEl.style.transform = ''; sideEl.style.opacity = ''; }
+          if (stageEl){ stageEl.style.width = ''; stageEl.style.opacity = ''; }
+          curS = fullS; curT = fullT;
+        }
+      });
+    }
+
+    /* 窗口尺寸变化后按新的真实宽度复位（窄屏侧栏会收窄），专注中不动 */
+    window.addEventListener('resize', () => {
+      if (focusOn || focusTween) return;
+      curS = sideEl ? sideEl.offsetWidth : 236;
+      curT = hasStage() ? stageEl.offsetWidth : 0;
+    });
+
+    if (focusBtn) focusBtn.addEventListener('click', () => applyFocus(!focusOn));
+
+    /* 最小化到托盘：关闭整个窗口即自动进入托盘，无需按钮 */
+
+    recalcSeed();
+  
+    if (window.pywebview && window.pywebview.api) { refreshStatus(); } else { window.addEventListener('pywebviewready', function(){ refreshStatus(); if (!chatTimer) chatTimer = setInterval(pollChat, 800); }, { once: true }); }
+</script>
+  <script>window.addEventListener('load', () => { requestAnimationFrame(() => window.dispatchEvent(new Event('resize'))); });</script>
+
+  <!-- ===================== 通话浮层：语音(微信风) / 视频(微信风·单向) / 屏幕共享(QQ风) ===================== -->
+  <style>
+    .call-overlay{position:fixed;inset:0;z-index:9000;display:flex;align-items:center;justify-content:center;
+      background:radial-gradient(125% 120% at 50% 0%,#1c1933 0%,#0b0b15 62%);color:#fff;
+      font-family:var(--font-sans);-webkit-user-select:none;user-select:none}
+    .call-overlay[hidden]{display:none}
+    .call-view{width:100%;height:100%;position:relative;display:flex;flex-direction:column;
+      align-items:center;justify-content:center;gap:16px;padding:26px;box-sizing:border-box}
+    .call-view[hidden]{display:none!important}
+    .call-view:not(.active){display:none!important}
+    .cv-avatar{width:104px;height:104px;border-radius:50%;display:flex;align-items:center;justify-content:center;
+      font-size:40px;font-weight:600;color:#fff;
+      background:linear-gradient(135deg,#8b6cff,#5b7cfa);box-shadow:0 0 0 8px rgba(139,108,255,.16),0 18px 50px rgba(91,124,250,.32)}
+    .cv-avatar img, .cd-avatar img, .cv-watch-av img, .cs-uav img{ width:100%; height:100%; object-fit:cover; border-radius:inherit; display:block; }
+    .cv-timer{font-size:13px;opacity:.72;font-variant-numeric:tabular-nums;letter-spacing:1.5px}
+    .cv-sub{font-size:12.5px;opacity:.6;max-width:76%;text-align:center;min-height:18px;line-height:1.5}
+    .cv-ctrls{display:flex;gap:28px;margin-top:10px}
+    /* morphicons / Material 风通话图标：统一填充态，按下(.on)=红色禁用态 */
+    .cc-ico{width:24px;height:24px;fill:currentColor;stroke:none;display:block}
+    .cc-btn.on{background:rgba(255,69,69,.16);color:#ff5a5a;border-color:rgba(255,90,90,.55)}
+    .cc-btn.on .cc-ico{color:#ff5a5a}
+    .cc-btn.on .cc-lbl{color:#ff5a5a}
+    .cc-btn{width:58px;height:58px;border-radius:50%;border:1px solid rgba(255,255,255,.26);
+      background:rgba(255,255,255,.12);color:#fff;display:flex;flex-direction:column;align-items:center;justify-content:center;
+      cursor:pointer;transition:background .15s,transform .1s}
+    .cc-btn:hover{background:rgba(255,255,255,.2)}
+    .cc-btn:active{transform:scale(.94)}
+    .cc-btn svg{width:24px;height:24px}
+    .cc-btn .cc-lbl{font-size:10px;margin-top:3px;opacity:.82}
+    .cc-btn.on{background:rgba(124,92,255,.42);border-color:rgba(124,92,255,.7)}
+    .cc-hang{background:#E24B4A;border:none}
+    .cc-hang:hover{background:#f05656}
+    .cc-hang svg{stroke:#fff}
+    .cv-vstatus{position:absolute;left:18px;top:18px;font-size:12.5px;background:rgba(0,0,0,.42);
+      padding:5px 11px;border-radius:9px;backdrop-filter:blur(3px);max-width:60%;text-align:center;z-index:4}
+    .cv-vstatus.q{opacity:.7}
+    .call-btn{display:inline-flex;align-items:center;justify-content:center;width:38px;height:38px;border-radius:50%;
+      border:1px solid var(--line);background:var(--surface);color:var(--ink);
+      cursor:pointer;transition:background .15s,transform .1s}
+    .call-btn:hover{background:var(--surface-2)}
+    .call-btn:active{transform:scale(.94)}
+    .call-btn svg{width:20px;height:20px}
+    /* 档位锁死：进 UI 前变灰禁用（点击只弹右上角提醒，不进拨号浮层） */
+    .call-btn.locked{opacity:.38;filter:grayscale(1);cursor:not-allowed;background:var(--surface-2)}
+    .call-btn.locked:hover{background:var(--surface-2)}
+    .call-btn.locked:active{transform:none}
+
+    /* ---------- 语音通话（微信风） ---------- */
+    .call-voice .cv-wx-top{position:absolute;top:56px;left:0;right:0;text-align:center}
+    .call-voice .cv-wx-name{display:block;font-size:23px;font-weight:600;letter-spacing:.5px}
+    .call-voice .cv-wx-state{display:block;font-size:13px;opacity:.72;margin-top:7px}
+    .call-voice .cv-waves{display:flex;gap:5px;align-items:flex-end;height:34px;margin-top:20px;justify-content:center}
+    .call-voice .cv-waves i{width:5px;height:9px;border-radius:3px;background:rgba(255,255,255,.45);
+      animation:cvWave 1s ease-in-out infinite}
+    .call-voice .cv-waves i:nth-child(2){animation-delay:.15s}
+    .call-voice .cv-waves i:nth-child(3){animation-delay:.3s}
+    .call-voice .cv-waves i:nth-child(4){animation-delay:.45s}
+    .call-voice .cv-waves i:nth-child(5){animation-delay:.6s}
+    .call-voice.speaking .cv-waves i{background:#9b8cff;animation-duration:.6s}
+    @keyframes cvWave{0%,100%{height:9px}50%{height:24px}}
+    .call-voice .cv-ctrls{position:absolute;bottom:62px}
+
+    /* ---------- 视频通话（微信风·单向：你看得自己，达妮娅看得见你） ---------- */
+    .call-video .cv-self{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;background:#000;transform:scaleX(-1)}
+    .call-video .cv-topbar{position:absolute;top:18px;left:18px;z-index:4;display:flex;align-items:center;gap:8px;
+      font-size:13px;background:rgba(0,0,0,.4);padding:6px 12px;border-radius:10px;backdrop-filter:blur(4px)}
+    .call-video .cv-dot{width:8px;height:8px;border-radius:50%;background:#36D399;flex:none}
+    .cv-watcher{position:absolute;right:16px;top:16px;z-index:4;display:flex;align-items:center;gap:8px;
+      background:rgba(0,0,0,.42);padding:7px 12px 7px 7px;border-radius:999px;backdrop-filter:blur(4px);
+      border:1px solid rgba(124,92,255,.42)}
+    .cv-watch-av{width:30px;height:30px;border-radius:50%;display:flex;align-items:center;justify-content:center;
+      font-size:14px;font-weight:600;color:#fff;background:linear-gradient(135deg,#8b6cff,#5b7cfa);flex:none}
+    .cv-watcher b{font-size:12.5px;font-weight:600;display:block;line-height:1.2}
+    .cv-watcher span{display:block;font-size:10.5px;opacity:.72;line-height:1.2}
+    .call-video .cv-ctrls-v{position:absolute;bottom:34px;left:50%;transform:translateX(-50%)}
+
+    /* ---------- 屏幕共享（QQ风） ---------- */
+    .call-screen .cs-self{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;background:#05060c}
+    .call-screen .cs-topbar{position:absolute;top:18px;left:18px;z-index:4;display:flex;align-items:center;gap:10px;
+      background:rgba(0,0,0,.5);padding:8px 14px;border-radius:10px;backdrop-filter:blur(4px)}
+    .call-screen .cs-live{font-size:13px;color:#ff7a7a;font-weight:600;display:flex;align-items:center;gap:7px}
+    .call-screen .cs-live::before{content:"";width:9px;height:9px;border-radius:50%;background:#ff4d4f;animation:csBlink 1.1s infinite}
+    @keyframes csBlink{0%,100%{opacity:1}50%{opacity:.3}}
+    .cs-userchip{position:absolute;left:18px;bottom:100px;z-index:4;display:flex;align-items:center;gap:9px;
+      background:rgba(0,0,0,.5);padding:8px 13px;border-radius:12px;backdrop-filter:blur(4px)}
+    .cs-uav{width:34px;height:34px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:14px;
+      font-weight:600;color:#0c0c16;background:#ffd166;flex:none}
+    .cs-userchip span{font-size:12.5px;line-height:1.2}
+    .cs-watcher{position:absolute;right:16px;top:16px;z-index:4;display:flex;align-items:center;gap:8px;
+      background:rgba(0,0,0,.5);padding:7px 12px 7px 7px;border-radius:999px;backdrop-filter:blur(4px);
+      border:1px solid rgba(124,92,255,.42)}
+    .call-screen .cv-ctrls.cs-ctrls{position:absolute;bottom:20px;left:50%;transform:translateX(-50%);z-index:10;
+      padding:10px 18px;border-radius:16px;background:rgba(0,0,0,.45);backdrop-filter:blur(8px)}
+    .cs-fallback{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px;
+      background:#05060c;color:#cdd0e0;z-index:2}
+    .cs-fallback svg{width:62px;height:62px;color:#3a3f5a}
+    .cs-fallback p{font-size:13px;opacity:.72;margin:0}
+
+    /* ---------- 设备菜单（悬停麦克风/免提按钮展开：切换麦克风·扬声器设备） ---------- */
+    /* fixed 定位、挂 body 上，三个通话视图共用一份；位置由 JS 按按钮矩形算。 */
+    .cc-menu{position:fixed;z-index:99998;min-width:230px;max-width:320px;max-height:250px;overflow:auto;
+      background:rgba(18,20,30,.97);border:1px solid rgba(124,92,255,.42);border-radius:14px;
+      padding:7px;box-shadow:0 18px 44px rgba(0,0,0,.55);backdrop-filter:blur(10px);
+      opacity:0;pointer-events:none;transform:translateY(8px);
+      transition:opacity .16s ease,transform .16s ease}
+    .cc-menu.open{opacity:1;pointer-events:auto;transform:translateY(0)}
+    .cc-menu .ccm-hd{font-size:11px;opacity:.6;padding:6px 9px 7px;letter-spacing:.4px}
+    .cc-menu .ccm-it{display:flex;align-items:center;gap:9px;width:100%;text-align:left;box-sizing:border-box;
+      padding:8px 9px;border:0;border-radius:9px;background:transparent;color:#e8edf6;font-size:12.5px;
+      cursor:pointer;line-height:1.25;font-family:inherit;transition:background .12s linear}
+    .cc-menu .ccm-it:hover{background:rgba(255,255,255,.1)}
+    .cc-menu .ccm-it .ccm-dot{width:7px;height:7px;border-radius:50%;background:#3a3f5a;flex:none}
+    .cc-menu .ccm-it.on .ccm-dot{background:#36D399;box-shadow:0 0 0 3px rgba(54,211,153,.18)}
+    .cc-menu .ccm-it .ccm-tx{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+    .cc-menu .ccm-hint{font-size:10.5px;opacity:.45;padding:7px 9px 3px;line-height:1.35}
+
+    /* ---------- 拨号/振铃态（微信风：模拟真实呼叫建立过程） ---------- */
+    .call-dialing{position:absolute;inset:0;z-index:8;display:flex;flex-direction:column;
+      align-items:center;justify-content:center;background:radial-gradient(125% 120% at 50% 0%,#1c1933 0%,#0b0b15 62%)}
+    .call-dialing[hidden]{display:none}
+    .cd-avatar{width:100px;height:100px;border-radius:50%;display:flex;align-items:center;justify-content:center;
+      font-size:38px;font-weight:600;color:#fff;
+      background:linear-gradient(135deg,#8b6cff,#5b7cfa);box-shadow:0 0 0 8px rgba(139,108,255,.16),0 18px 50px rgba(91,124,250,.32);
+      animation:cdPulse 1.6s ease-in-out infinite}
+    @keyframes cdPulse{0%,100%{transform:scale(1);box-shadow:0 0 0 8px rgba(139,108,255,.16),0 18px 50px rgba(91,124,250,.32)}
+      50%{transform:scale(1.06);box-shadow:0 0 0 14px rgba(139,108,255,.08),0 24px 60px rgba(91,124,250,.42)}}
+    .cd-name{font-size:22px;font-weight:600;margin-top:20px;letter-spacing:.5px}
+    .cd-state{font-size:13px;opacity:.72;margin-top:6px}
+    .cd-rings{display:flex;gap:6px;margin-top:28px;align-items:center}
+    .cd-rings i{width:4px;height:16px;border-radius:2px;background:rgba(255,255,255,.45);
+      animation:cdRing .9s ease-in-out infinite}
+    .cd-rings i:nth-child(2){animation-delay:.15s}
+    .cd-rings i:nth-child(3){animation-delay:.3s}
+    .cd-rings i:nth-child(4){animation-delay:.45s}
+    @keyframes cdRing{0%,100%{height:6px;opacity:.45}50%{height:20px;opacity:.9}}
+    .cd-tip{position:absolute;bottom:80px;font-size:12px;opacity:.5}
+
+    /* ---------- 麦克风律动条（真实电平，确认「我说的话有没有被采到」） ---------- */
+    /* 数据来自后端采集回调算出的平滑 RMS，不是装饰动画：静了就真的静。 */
+    .cv-mic{display:flex;flex-direction:column;align-items:center;gap:7px;
+      width:min(330px,74vw);margin:0 auto}
+    .cvm-bars{display:flex;align-items:flex-end;gap:3px;width:100%;height:36px;
+      padding:0 2px;box-sizing:border-box}
+    .cvm-bars i{flex:1;height:10%;min-width:2px;border-radius:2px;
+      background:rgba(255,255,255,.13);
+      transition:height .07s linear,background .15s linear}
+    .cvm-bars i.on{background:linear-gradient(180deg,#7ee0b0,#3ddc97)}
+    .cvm-bars i.hot{background:linear-gradient(180deg,#ffd479,#ff9f43)}
+    .cvm-bars i.peak{background:linear-gradient(180deg,#ff9a9a,#ff5f6d)}
+    .cvm-bars i.dim{background:rgba(255,255,255,.07)}
+    .cv-mic.muted .cvm-bars{opacity:.45}
+    .cvm-state{font-size:11.5px;opacity:.6;letter-spacing:.3px;text-align:center;
+      transition:opacity .2s linear,color .2s linear}
+    .cv-mic.live .cvm-state{opacity:.95;color:#7ee0b0}
+    .cv-mic.muted .cvm-state{color:#ff9a9a;opacity:.8}
+
+    /* ---------- 屏幕共享加载态 ---------- */
+    .cs-loading{position:absolute;inset:0;z-index:6;display:flex;flex-direction:column;
+      align-items:center;justify-content:center;gap:14px;background:rgba(5,6,12,.85);backdrop-filter:blur(6px)}
+    .cs-loading[hidden]{display:none}
+    .cs-loading svg{width:48px;height:48px;color:#8b6cff;animation:csSpin 1s linear infinite}
+    @keyframes csSpin{to{transform:rotate(360deg)}}
+    .cs-loading p{font-size:13px;color:#cdd0e0;margin:0;opacity:.85}
+    .cs-loading .cs-sub{font-size:11.5px;opacity:.55}
+  </style>
+
+  <div class="call-overlay" id="callOverlay" hidden>
+    <!-- 拨号/振铃态（覆盖在所有视图之上，接通后隐藏） -->
+    <div class="call-dialing" id="callDialing" hidden>
+      <div class="cd-avatar">达</div>
+      <div class="cd-name" id="cdName">达妮娅</div>
+      <div class="cd-state" id="cdState">正在呼叫…</div>
+      <div class="cd-rings"><i></i><i></i><i></i><i></i></div>
+      <div class="cd-tip" id="cdTip">正在建立双工连接…</div>
+    </div>
+
+    <!-- 语音通话视图（微信风：达妮娅 头像居中 + 声波 + 计时） -->
+    <div class="call-view call-voice" id="callVoiceView" hidden>
+      <div class="cv-wx-top">
+        <span class="cv-wx-name">达妮娅</span>
+        <span class="cv-wx-state" id="cvStatus">正在接通…</span>
+      </div>
+      <div class="cv-avatar">达</div>
+      <div class="cv-waves"><i></i><i></i><i></i><i></i><i></i></div>
+      <div class="cv-timer" id="cvTimer">00:00</div>
+      <div class="cv-sub" id="cvSub"></div>
+      <div class="cv-mic">
+        <div class="cvm-bars"></div>
+        <div class="cvm-state">麦克风待机</div>
+      </div>
+      <div class="cv-ctrls">
+        <button class="cc-btn" id="cvMute" title="关闭麦克风"><svg class="cc-ico" viewBox="0 0 24 24"><path d=""/></svg><span class="cc-lbl">麦克风</span></button>
+        <button class="cc-btn cc-hang" id="cvEnd" title="挂断"><svg class="cc-ico" viewBox="0 0 24 24"><path d=""/></svg><span class="cc-lbl">挂断</span></button>
+        <button class="cc-btn" id="cvSpk" title="关闭达妮娅的声音"><svg class="cc-ico" viewBox="0 0 24 24"><path d=""/></svg><span class="cc-lbl">免提</span></button>
+      </div>
+    </div>
+    <!-- 视频通话视图（微信风·单向：你看得见自己，达妮娅 看得见你） -->
+    <div class="call-view call-video" id="callVideoView" hidden>
+      <video class="cv-self" id="cvSelfVideo" autoplay muted playsinline></video>
+      <div class="cv-topbar"><span class="cv-dot"></span><span id="cvvStatus">视频通话中</span><span class="cv-timer" id="cvvTimer">00:00</span></div>
+      <div class="cv-watcher">
+        <div class="cv-watch-av">达</div>
+        <div><b>达妮娅 正在看着你</b><span>你看得见自己，她看得到你的画面</span></div>
+      </div>
+      <div class="cv-mic">
+        <div class="cvm-bars"></div>
+        <div class="cvm-state">麦克风待机</div>
+      </div>
+      <div class="cv-ctrls cv-ctrls-v">
+        <button class="cc-btn" id="cvvMute" title="关闭麦克风"><svg class="cc-ico" viewBox="0 0 24 24"><path d=""/></svg><span class="cc-lbl">麦克风</span></button>
+        <button class="cc-btn cc-hang" id="cvvEnd" title="挂断"><svg class="cc-ico" viewBox="0 0 24 24"><path d=""/></svg><span class="cc-lbl">挂断</span></button>
+        <button class="cc-btn" id="cvvCam" title="关闭摄像头"><svg class="cc-ico" viewBox="0 0 24 24"><path d=""/></svg><span class="cc-lbl">摄像头</span></button>
+        <button class="cc-btn" id="cvvScreen" title="屏幕共享"><svg class="cc-ico" viewBox="0 0 24 24"><path d=""/></svg><span class="cc-lbl">共享屏幕</span></button>
+        <button class="cc-btn" id="cvvSpk" title="关闭达妮娅的声音"><svg class="cc-ico" viewBox="0 0 24 24"><path d=""/></svg><span class="cc-lbl">免提</span></button>
+      </div>
+    </div>
+    <!-- 屏幕共享视图（QQ风：你的屏幕为主 + 用户头像 + 达妮娅在看） -->
+    <div class="call-view call-screen" id="callScreenView" hidden>
+      <video class="cs-self" id="csScreenVideo" autoplay muted playsinline></video>
+      <!-- 屏幕共享加载态（getDisplayMedia 授权/启动期间显示） -->
+      <div class="cs-loading" id="csLoading" hidden>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="14" height="10" rx="1.5"/><path d="M16 9l6-3v10l-6-3"/><path d="M5 19h6"/></svg>
+        <p id="csLoadingMsg">正在建立屏幕共享连接…</p>
+        <p class="cs-sub" id="csLoadingSub">达妮娅正在连上你的屏幕</p>
+      </div>
+      <div class="cs-fallback" id="csFallback" hidden>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="14" height="10" rx="1.5"/><path d="M16 9l6-3v10l-6-3"/><path d="M5 19h6"/></svg>
+        <p>屏幕共享进行中 · 达妮娅 正在看你的屏幕<br>（前端预览需授权屏幕录制，不影响她看屏）</p>
+      </div>
+      <div class="cs-topbar"><span class="cs-live">正在共享屏幕</span><span class="cv-timer" id="csTimer">00:00</span></div>
+      <div class="cs-userchip"><div class="cs-uav">我</div><span>你正在共享屏幕</span></div>
+      <div class="cs-watcher">
+        <div class="cv-watch-av">达</div>
+        <div><b>达妮娅 正在看你的屏幕</b><span>一边看画面一边和你对话</span></div>
+      </div>
+      <div class="cv-mic">
+        <div class="cvm-bars"></div>
+        <div class="cvm-state">麦克风待机</div>
+      </div>
+      <div class="cv-ctrls cs-ctrls">
+        <button class="cc-btn" id="csStop" title="停止共享"><svg class="cc-ico" viewBox="0 0 24 24"><path d=""/></svg><span class="cc-lbl">停止共享</span></button>
+        <button class="cc-btn cc-hang" id="csEnd" title="挂断"><svg class="cc-ico" viewBox="0 0 24 24"><path d=""/></svg><span class="cc-lbl">挂断</span></button>
+        <button class="cc-btn" id="csMute" title="关闭麦克风"><svg class="cc-ico" viewBox="0 0 24 24"><path d=""/></svg><span class="cc-lbl">麦克风</span></button>
+        <button class="cc-btn" id="csSpk" title="关闭达妮娅的声音"><svg class="cc-ico" viewBox="0 0 24 24"><path d=""/></svg><span class="cc-lbl">免提</span></button>
+      </div>
+
+    <style>
+    .call-simplex{display:flex;flex-direction:column;height:100%;background:#0f1115;color:#e8eaed;
+      font-family:-apple-system,"PingFang SC","Microsoft YaHei",sans-serif;}
+    .sx-top{display:flex;align-items:center;gap:10px;padding:14px 16px;border-bottom:1px solid #2a2f3a;}
+    .sx-av{width:38px;height:38px;border-radius:50%;background:linear-gradient(135deg,#7F77DD,#1D9E75);
+      display:grid;place-items:center;font-weight:600;color:#fff;font-size:16px;}
+    .sx-name{font-size:15px;font-weight:600;display:flex;flex-direction:column;line-height:1.3;}
+    .sx-name b{font-weight:400;font-size:11px;color:#9aa3b2;}
+    .sx-end{margin-left:auto;font-size:12px;color:#9aa3b2;background:none;border:1px solid #2a2f3a;
+      border-radius:8px;padding:5px 12px;cursor:pointer;}
+    .sx-status{padding:8px 16px;font-size:12px;color:#9aa3b2;border-bottom:1px solid #2a2f3a;}
+    .sx-status.err{color:#E24B4A;} .sx-status.ok{color:#1D9E75;}
+    .sx-log{flex:1;overflow-y:auto;padding:16px;display:flex;flex-direction:column;gap:12px;}
+    .sx-row{display:flex;gap:8px;align-items:flex-end;}
+    .sx-row.me{flex-direction:row-reverse;}
+    .sx-bub{max-width:78%;padding:9px 13px;border-radius:14px;line-height:1.5;font-size:14px;white-space:pre-wrap;word-break:break-word;}
+    .sx-row.me .sx-bub{background:#7F77DD;color:#fff;border-bottom-right-radius:4px;}
+    .sx-row.her .sx-bub{background:#1f232c;border-bottom-left-radius:4px;}
+    .sx-meta{font-size:10px;color:#9aa3b2;margin-top:3px;}
+    .sx-lat{display:flex;gap:10px;padding:8px 16px;font-size:11px;color:#9aa3b2;border-top:1px solid #2a2f3a;flex-wrap:wrap;}
+    .sx-lat b{color:#e8eaed;font-weight:600;}
+    .sx-ring{width:64px;height:64px;border-radius:50%;margin:14px auto 4px;display:grid;place-items:center;
+      font-size:12px;color:#0f1115;font-weight:600;transition:.2s;}
+    .sx-ring.listen{background:#1D9E75;animation:sxBreath 1.6s infinite;}
+    .sx-ring.think{background:#E2B04A;}
+    .sx-ring.speak{background:#7F77DD;animation:sxBreath 1.2s infinite;}
+    @keyframes sxBreath{0%{box-shadow:0 0 0 0 rgba(29,158,117,.45);}70%{box-shadow:0 0 0 14px rgba(29,158,117,0);}100%{box-shadow:0 0 0 0 rgba(29,158,117,0);}}
+    .sx-hint{font-size:11px;color:#9aa3b2;padding:0 16px 14px;text-align:center;}
+    </style>
+    <!-- 单工轮询通话视图（内置，不跳浏览器；后端连 127.0.0.1:9871） -->
+    <div class="call-view call-simplex" id="simplexView" hidden>
+      <div class="sx-top">
+        <span class="sx-av">妮</span>
+        <div class="sx-name">达妮娅<b id="sxMode">流畅语音 · 云端百炼</b></div>
+        <button class="sx-end" id="sxEnd">结束</button>
+      </div>
+      <div class="sx-status" id="sxStatus">正在连接单工服务…</div>
+      <div class="sx-log" id="sxLog"></div>
+      <div class="sx-lat">
+        <span>ASR <b id="sxAsr">–</b></span>
+        <span>LLM <b id="sxLlm">–</b></span>
+        <span>TTS <b id="sxTts">–</b></span>
+        <span>端到端 <b id="sxTot">–</b></span>
+        <span id="sxStream"></span>
+      </div>
+        <div class="sx-ring listen" id="sxRing"><span id="sxRingTxt">聆听中</span></div>
+      <div class="sx-hint" id="sxHint">麦克风常开 · 说完停顿自动发送 · 说话可打断达妮娅</div>
+    </div>
+
+    </div>
+
+    <script>
+  /* 通话浮层：语音(微信风) / 视频(微信风·单向) / 屏幕共享(QQ风)。
+     拨号→振铃等待(1.2-2.5s模拟真实建立)→接通→注入提示词；
+     挂断→通知后端结束双工→恢复桌宠待命。前端只负责 UI、计时与屏幕预览。 */
+  (function(){
+    const $ = (id) => document.getElementById(id);
+    const overlay=$('callOverlay'), voiceView=$('callVoiceView'), videoView=$('callVideoView'), screenView=$('callScreenView'), simplexView=$('simplexView');
+    const dialingView=$('callDialing');
+    const cvStatus=$('cvStatus'), cvTimer=$('cvTimer'), cvSub=$('cvSub');
+    const cvvStatus=$('cvvStatus'), cvSelf=$('cvSelfVideo'), cvvTimer=$('cvvTimer');
+    const csScreenVideo=$('csScreenVideo'), csTimer=$('csTimer'), csLoading=$('csLoading');
+    const cdName=$('cdName'), cdState=$('cdState'), cdTip=$('cdTip');
+    let timer=null, secs=0, camStream=null, screenStream=null, mode=null,
+        callMicMuted=false, callAiOff=false, callCamOff=false, replyTick=null,
+        currentType='duplex', currentMedia=null, screenShare=false, activeTimer=cvTimer,
+        callLocked=false;
+    const sleep=(ms)=>new Promise(r=>setTimeout(r,ms));
+    const fmt=(s)=>{const m=Math.floor(s/60),x=s%60;return String(m).padStart(2,'0')+':'+String(x).padStart(2,'0');};
+
+    /* ---- 视图切换：严格隔离，一次只显示一个视图（hidden + active 双保险） ---- */
+    function showView(which){
+      closeDevMenu();          // 切视图时收起设备菜单（否则会浮在别的视图上）
+      // 先全部隐藏 + 移除 active
+      voiceView.hidden=true; voiceView.classList.remove('active');
+      videoView.hidden=true; videoView.classList.remove('active');
+      screenView.hidden=true; screenView.classList.remove('active');
+      dialingView.hidden=true; dialingView.classList.remove('active');
+      simplexView.hidden=true; simplexView.classList.remove('active');
+      // 再显示目标
+      const map={dialing:dialingView,voice:voiceView,video:videoView,screen:screenView,simplex:simplexView};
+      const target=map[which];
+      if(target){ target.hidden=false; target.classList.add('active'); }
+    }
+
+    function startTimer(){secs=0;if(activeTimer)activeTimer.textContent='00:00';timer=setInterval(()=>{secs++;if(activeTimer)activeTimer.textContent=fmt(secs);},1000);}
+    function stopTimer(){if(timer){clearInterval(timer);timer=null;}}
+    function toggleVoice(on){const mb=$('micBtn');if(mb){if(on&&!mb.classList.contains('on'))mb.click();else if(!on&&mb.classList.contains('on'))mb.click();}}
+    function setStatus(el,q,txt){if(el){el.textContent=txt;el.classList.toggle('q',!!q);}}
+    function bindReply(){
+      if(replyTick)return;
+      replyTick=setInterval(()=>{
+        if(overlay.hidden)return;
+        const rows=document.querySelectorAll('#scroll .row.ai .bub');
+        if(rows&&rows.length){const t=(rows[rows.length-1].textContent||'').trim();
+          if(t){
+            if(cvSub)cvSub.textContent=t;
+            if(currentMedia==='voice'){ voiceView.classList.add('speaking');
+              clearTimeout(bindReply._spk); bindReply._spk=setTimeout(()=>voiceView.classList.remove('speaking'),2600); }
+          }
+        }
+      },900);
+    }
+    /* ---- 麦克风律动条：真实电平（确认「我说的话有没有被采到」）---- */
+    // 数据来自后端采集回调算出的平滑 RMS（local_omni_duplex.get_mic_level），只在通话中轮询。
+    // 刻意为"如实反映"：静音/未采集/完全没声都照实显示，绝不画假律动误导判断。
+    const MIC_BARS = 28;
+    let micTick = null, micBars = [], micStates = [], micBoxes = [];
+    function initMicMeter(){
+      const boxes = document.querySelectorAll('.cv-mic');
+      micBoxes = Array.prototype.slice.call(boxes);
+      micBars = []; micStates = [];
+      micBoxes.forEach(function(box){
+        const holder = box.querySelector('.cvm-bars');
+        const st = box.querySelector('.cvm-state');
+        if(holder){
+          holder.innerHTML = '';
+          const arr = [];
+          for(let i = 0; i < MIC_BARS; i++){
+            const b = document.createElement('i');
+            b.style.height = '10%';
+            holder.appendChild(b);
+            arr.push(b);
+          }
+          micBars.push(arr);
+        } else micBars.push([]);
+        micStates.push(st);
+      });
+    }
+    function paintMicMeter(level, rms, voice, muted, active){
+      const N = MIC_BARS;
+      const lit = (active && !muted) ? Math.max(0, Math.min(N, Math.round(level * N))) : 0;
+      micBars.forEach(function(arr){
+        for(let i = 0; i < arr.length; i++){
+          const b = arr[i];
+          if(i < lit){
+            const ratio = (i + 1) / N;
+            b.style.height = (16 + 78 * ratio).toFixed(1) + '%';
+            b.className = ratio > 0.86 ? 'peak' : (ratio > 0.62 ? 'hot' : 'on');
+          } else {
+            b.style.height = '10%';
+            b.className = muted ? 'dim' : '';
+          }
+        }
+      });
+      let txt = '', live = false;
+      const r = (typeof rms === 'number') ? rms.toFixed(3) : '0.000';
+      if(muted) txt = '麦克风已关闭 · 达妮娅听不到你';
+      else if(!active) txt = '未在采集音频 · 检查麦克风设备';
+      else if(voice){ txt = '收到你的声音（rms ' + r + '）'; live = true; }
+      else if(level > 0.02) txt = '有输入…（rms ' + r + '）';
+      else txt = '没听到声音 · 说句话试试（rms ' + r + '）';
+      micStates.forEach(function(st){ if(st) st.textContent = txt; });
+      micBoxes.forEach(function(box){
+        box.classList.toggle('live', live);
+        box.classList.toggle('muted', !!muted);
+      });
+    }
+    function startMicMeter(){
+      if(micTick) return;
+      initMicMeter();
+      const pull = async function(){
+        try{
+          if(!window.Backend || !Backend.getCallMicLevel) return;
+          const d = await Backend.getCallMicLevel();
+          if(!d) return;
+          paintMicMeter(Number(d.level || 0), Number(d.rms || 0),
+                        !!d.voice, !!d.muted, !!d.active);
+        }catch(e){}
+      };
+      pull();
+      micTick = setInterval(pull, 90);
+    }
+    function stopMicMeter(){
+      if(micTick){ clearInterval(micTick); micTick = null; }
+      paintMicMeter(0, 0, false, false, false);
+    }
+
+    function stopAllMedia(){
+      if(camStream){camStream.getTracks().forEach(t=>t.stop());camStream=null;}
+      if(screenStream){screenStream.getTracks().forEach(t=>t.stop());screenStream=null;}
+      if(cvSelf)cvSelf.srcObject=null;
+      if(csScreenVideo)csScreenVideo.srcObject=null;
+      toggleVoice(false);
+      if(replyTick){clearInterval(replyTick);replyTick=null;}
+    }
+
+    /* ---- 拨号：振铃动画 → 等后端重连+注入 → 接通切视图 ---- */
+    // 【2026-09-17 重入保护】连点不再叠加发起：旧行为每点一次发一次 start_duplex_call，
+    // 每次失败各写一条假通话记录（连点 3 次 → 3 条 call_end duration_s=0.0）。
+    let dialingInFlight=false;
+    /* 【2026-09-18 拨号可观测性】前端拨号链路的不可丢失留痕。
+       为什么需要：此前"点了通话没反应"时，后端 run log / call_av.jsonl / call_av.log
+       三处可以同时**一条痕迹都没有**——因为留痕全靠桥 Backend.logCallAv，一旦桥方法
+       缺失或调用时机早于桥就绪，异常被 try/catch 静默吞掉，事后完全无法归因。
+       双通道：①桥 Backend.logCallAv ②直连 window.pywebview.api.log_call_av ③console。
+       有了它，"点击有没有到达"永远是可知的。 */
+    function dcLog(ev, extra){
+      var payload = Object.assign({event:ev, source:'frontend'}, extra||{});
+      try{
+        if(window.Backend && Backend.logCallAv){ Backend.logCallAv(payload); return; }
+      }catch(e){}
+      try{
+        if(window.pywebview && window.pywebview.api && window.pywebview.api.log_call_av){
+          window.pywebview.api.log_call_av(payload); return;
+        }
+      }catch(e){}
+      try{ if(window.console && console.info) console.info('[dial]', ev, payload); }catch(e){}
+    }
+    async function startDuplex(media, engine){
+      if(dialingInFlight){ dcLog('call_click_ignored',{media:media,reason:'dialing_in_flight'});
+        if(window.Backend&&Backend.toast)Backend.toast('正在拨号中，请稍候…'); return; }
+      dialingInFlight=true;
+      try{ await _startDuplex(media, engine); }
+      finally{ dialingInFlight=false; }
+    }
+    async function applyCallAvatar(){
+      const els = document.querySelectorAll('#callOverlay .cv-avatar, #callOverlay .cd-avatar, #callOverlay .cv-watch-av, #callOverlay .cs-uav');
+      if(!els.length) return;
+      let img=null;
+      try{
+        if(window.Backend && Backend.getCharacters){
+          const r = await Backend.getCharacters();
+          if(r && r.success && r.characters){
+            const active = (r.characters.find(function(c){ return c.id===r.active_id; })) || r.characters[0];
+            if(active){
+              const t = active.model_3d && active.model_3d.thumbnail;
+              if(t) img = t;
+              else if(active.banner) img = '/local_img?path=' + encodeURIComponent(active.banner);
+            }
+          }
+        }
+      }catch(e){ img=null; }
+      if(img){ els.forEach(function(el){ el.innerHTML = '<img src="'+img+'" alt="">'; }); }
+    }
+    async function _startDuplex(media, engine){
+      dcLog('call_intent',{media:media});
+      const isScreen = (media === 'screen');
+      currentMedia = media;                       // 'voice' | 'video' | 'screen'
+      mode = isScreen ? 'video' : media;          // 后端 call_mode：屏幕共享复用 video 引擎档位
+      screenShare = isScreen;
+      const sb=$('cvvScreen'); if(sb)sb.classList.remove('on');
+
+      // 1. 显示浮层 + 拨号振铃态（等待界面）
+      overlay.hidden=false;
+      showView('dialing');
+      applyCallAvatar();
+      const dialStart=Date.now();
+
+      const mediaLabel = isScreen ? '屏幕共享' : (media==='video' ? '视频' : '语音');
+      if(cdName)cdName.textContent='达妮娅';
+      if(cdState)cdState.textContent='正在呼叫…';
+      if(cdTip)cdTip.textContent='正在建立'+mediaLabel+'双工连接…';
+
+      // 预先打开摄像头（仅视频模式；屏幕共享看的是屏幕，不抢摄像头）
+      if(media==='video'){
+        try{ camStream=await navigator.mediaDevices.getUserMedia({video:{facingMode:'user'}});
+          if(cvSelf)cvSelf.srcObject=camStream; }catch(e){}
+      }
+
+      // 2. 发起后端双工连接（异步：内部重连会话 + 注入对应提示词，不阻塞前端）
+      //    【2026-09-17】桥接偶发未就绪（app_backend 的 call() 会返回 offline:true）
+      //    时不再"一次失败就判死"——那只会留一句"拉起失败"、后端毫无痕迹、事后无法归因。
+      //    瞬时性错误自动重试 3 次；硬失败（档位拦/异常）立刻停并把真实原因显示出来。
+      let started=null;
+      for(let attempt=1; attempt<=3; attempt++){
+        try{
+          if(window.Backend&&Backend.startDuplexCall){
+            // 屏幕共享：复用 video 引擎档位，但 screen_share=true → 后端视觉源=screen、真重连
+            const payload = isScreen ? {media:'video', screen_share:true} : {media:media};
+            if(engine) payload.engine = engine;
+            started = await Backend.startDuplexCall(payload);
+          } else {
+            started={success:false, offline:true, error_code:'bridge_missing',
+                     error:'后端未暴露 startDuplexCall'};
+          }
+        }catch(e){ started={success:false, error:String(e)}; }
+        dcLog('call_start_result',{media:media, attempt:attempt,
+              success:!!(started&&started.success),
+              offline:!!(started&&started.offline),
+              error_code:(started&&started.error_code)||'',
+              error:String((started&&started.error)||'').slice(0,200)});
+        const transient = !!(started && (started.offline || started.error_code==='bridge_missing'
+                            || /backend_unavailable|not ready/i.test(String(started.error||''))));
+        if(!transient || attempt>=3) break;
+        if(cdTip)cdTip.textContent='正在唤醒后端…（重试 '+attempt+'/3）';
+        await sleep(1200);
+        if(overlay.hidden) return;
+      }
+
+      // 3. 拨号真值等待：持续轮询后端直到"本次通话的真实新连接"建立成功才"拨通"。
+      //    不连接成功之前，始终停在拨号等待界面；绝不用假随机时长。
+      //    前端双重门控：(A) 后端 ready=true  AND (B) session_epoch > call_start_epoch（防脏 ready）。
+      const CALL_TIMEOUT_MS=90000, CALL_POLL_MS=350, MIN_DIAL_MS=2500;
+      let connected=false, failMsg='', startEpoch=0;
+      if(started&&started.success){
+        // 记录拨打起点的会话纪元（后端 start_duplex_call 返回前已捕获）
+        try{ const initSt=await Backend.getCallStatus(); if(initSt)startEpoch=initSt.session_epoch||0; }catch(e){}
+
+        if(window.Backend&&Backend.getCallStatus){
+          const t0=Date.now();
+          let sawReadyFalse=false;   // 【关键】必须先见过 ready=false，再见到 ready=true 才算真翻转
+          while(Date.now()-t0<CALL_TIMEOUT_MS){
+            if(overlay.hidden) return;                 // 拨号中途被挂断
+            await sleep(CALL_POLL_MS);
+            let st=null;
+            try{ st=await Backend.getCallStatus(); }catch(e){ st=null; }
+            if(st){
+              // 【2026-09-17 修复·纪元竞态】旧代码在 startDuplexCall 返回**之后**才把
+              // 当时的 session_epoch 当起点，而本地 Comni 首次 prepared 常在同一秒就到
+              // （日志 03:12:15 拨号 → 03:12:15 prepared）→ 起点已是新纪元，
+              // `session_epoch > startEpoch` 恒假 → 拨号页永远等不到接通、空等到 90s
+              // 超时判失败；右上角浮窗却照常报"连上啦"，两处口径分裂。
+              // 改用后端权威起点 call_start_epoch（重连**之前**捕获，已随状态返回）。
+              const baseEp = (st.call_start_epoch!==undefined && st.call_start_epoch!==null)
+                             ? (st.call_start_epoch||0) : startEpoch;
+              // 前端 epoch 门控：即使后端 ready=true，纪元没变说明是旧会话的脏标记
+              const epochOk = ((st.session_epoch||0) > baseEp);
+              if(st.ready && epochOk){
+                // 还必须见过之前的 ready=false（证明这是真实翻转，不是启动时残留的 true）
+                if(sawReadyFalse || (Date.now()-t0 > 2000)){
+                  connected=true; break;
+                }
+              }
+              if(!st.ready) sawReadyFalse=true;         // 见过 false → 后续 true 是真翻转
+              // 兜底：会话已建（纪元已翻）但"模型就绪"的 prepared 迟迟不来时，
+              // 不让用户干等满 90s —— 40s 后按已接通处理（实测模型载入约 20s）。
+              if(epochOk && !st.ready && (Date.now()-t0>40000)){ connected=true; break; }
+              if(st.error_msg){ connected=false; failMsg=st.error_msg; break; }
+              if(st.status&&cdTip)cdTip.textContent=st.status;   // 显示真实进展（重连/下发提示词…）
+            }
+          }
+          if(!connected&&!failMsg){
+            // 超时兜底：再取一次，刚就绪也算接通，否则判失败
+            try{ const st=await Backend.getCallStatus();
+              if(st&&st.ready&&((st.session_epoch||0)>startEpoch))connected=true;
+              else failMsg='连接超时'; }catch(e){ failMsg='连接超时'; }
+          }
+        } else {
+          // 老后端无 getCallStatus：退化等一会儿（不可靠，但避免卡死）
+          await sleep(2500); connected=true;
+        }
+      }
+      // 可感知振铃：即便真实重连极快（模型已常驻显存），也至少保留 MIN_DIAL_MS 振铃，
+      // 避免"一拨就跳通"的突兀；真实等待仍由 getCallStatus.ready + epoch 门控。
+      if(connected){
+        // 在通话浮层内部明确显示「已接通」确认（不再依赖被 z-index:9000 浮层遮挡、
+        // 且 ~1s 就收起的右上角 mode_notify 弹窗），让用户看清达妮娅真连上了再进通话页。
+        if(cdState)cdState.textContent='连上啦，开始陪你';
+        if(cdTip)cdTip.textContent='达妮娅已接住，正在进入通话…';
+        const waitMore = Math.max(MIN_DIAL_MS, 1200) - (Date.now()-dialStart);
+        if(waitMore>0) await sleep(waitMore);
+      }
+
+      // 4. 结果分支
+      if(!(started&&started.success)){
+        const why=(started&&(started.error||started.error_code))||'';
+        if(cdState)cdState.textContent='连接失败';
+        if(cdTip)cdTip.textContent = why
+          ? ('拉起失败：'+why)
+          : '双工未开启或拉起失败，请到设置中开启后再拨打';
+        dcLog('call_start_failed',{media:media, reason:why,
+              offline:!!(started&&started.offline)});
+        try{ if(window.Backend&&Backend.toast)Backend.toast('拨号失败：'+(why||'达妮娅没连上'),'err'); }catch(e){}
+        // 后端没被拉起 → 不调挂断（调了会写一条 duration_s=0 的假通话记录）
+        try{ await sleep(2200); }finally{ closeCallOverlay(); }
+        return;
+      }
+      if(!connected){
+        dcLog('call_connect_timeout',{media:media, reason:failMsg||'timeout'});
+        if(cdState)cdState.textContent='连接失败';
+        if(cdTip)cdTip.textContent=(failMsg?('没连上：'+failMsg+'，我再试一次…'):'连接超时，请稍后再拨');
+        try{ if(window.Backend&&Backend.toast)Backend.toast('拨号失败：达妮娅没连上'); }catch(e){}
+        await sleep(2200); endCall(); return;
+      }
+
+      // 5. 接通：切到对应通话视图（此时后端双工已真连上）
+      activeTimer = media==='voice' ? cvTimer : media==='video' ? cvvTimer : csTimer;
+
+      if(media==='voice'){
+        showView('voice');
+        setStatus(cvStatus,false,'语音通话中');
+      } else if(media==='video'){
+        showView('video');
+        setStatus(cvvStatus,false,'视频通话中');
+      } else if(isScreen){
+        // 屏幕共享：后端已连上 + 提示词注入成功（看屏）。进入共享视图前先等录屏授权。
+        showView('screen');
+        if(csTimer)csTimer.textContent=fmt(secs);
+        if(csLoading){csLoading.hidden=false;
+          const m=$('csLoadingMsg'); if(m)m.textContent='正在建立屏幕共享连接…';
+          const s=$('csLoadingSub'); if(s)s.textContent='达妮娅正在连上你的屏幕';}
+        if($('csFallback'))$('csFallback').hidden=true;
+        await ensureScreenStream();        // 授权录屏（失败也继续：达妮娅已在看屏）
+        if(csLoading)csLoading.hidden=true;
+        setStatus(cvvStatus,false,'视频通话中 · 屏幕共享');
+      }
+
+      // 容量信息
+      let capTxt='';
+      try{
+        const cap=await Backend.getCapacity();
+        if(cap){
+          if(cap.local_omni_active) capTxt='本地双工·零云占用';
+          else if(cap.reachable){ const used=(cap.total_workers||0)-(cap.idle_workers||0);
+            capTxt='云端占用 '+used+'/'+cap.total_workers; if(cap.is_full)capTxt+=' · 端口已满'; }
+          else capTxt='云端不可达';
+        }
+      }catch(e){}
+
+      startTimer(); bindReply(); startMicMeter();
+      dcLog('call_connected',{media:media, engine:(started&&started.engine)||'',
+                              epoch:(window.__lastCallEpoch||0)});
+      if(window.Backend&&Backend.toast)Backend.toast('已接通（'+(capTxt||(started&&started.engine==='realtime'?'云端双工':'本地双工'))+'）');
+    }
+    /* ---- 档位门控：进通话 UI 之前就按档位锁死按钮 ---- */
+    // 通话需双工能力（本地双工 / 云端双工）；纯聊天、聊天+看得见（本地快照）无 → 锁死。
+    // 锁死后按钮变灰，点击只弹右上角提醒、绝不进入拨号浮层（避免"弹了提醒却进界面退不出"）。
+    async function applyCallTierGate(){
+      const cv=$('callVoice'), vd=$('callVideo'), sc=$('callScreen');
+      if(!cv && !vd && !sc) return;
+      let st=null;
+      try{ if(window.Backend&&Backend.getTierCallStatus) st=await Backend.getTierCallStatus(); }catch(e){ st=null; }
+      // 预览/后端未就绪：不锁（避免破坏预览模式）
+      if(!st||!st.success){
+        callLocked=false;
+        [cv,vd,sc].forEach(function(b){ if(b){ b.classList.remove('locked'); if(b.dataset.title){ b.title=b.dataset.title; b.dataset.title=''; } } });
+        return;
+      }
+      callLocked = !st.can_call;
+      const reason = st.reason || '双工通话需双工能力，请升级档位';
+      [cv,vd,sc].forEach(function(b){
+        if(!b) return;
+        if(callLocked){ b.dataset.title=b.title; b.title=reason; b.classList.add('locked'); }
+        else { b.classList.remove('locked'); if(b.dataset.title){ b.title=b.dataset.title; b.dataset.title=''; } }
+      });
+    }
+    /* 【2026-09-18 通话桥自愈】实测：窗口里的 Backend 可能取不到 startDuplexCall
+       —— 即 WebView2 加载的是被缓存住的旧版 app_backend.js（磁盘上版本是好的，
+       沙箱实跑导出 140 个方法、index.html 用到的 25 个零缺失）。此时点通话只会弹
+       「后端未暴露 startDuplexCall」，用户完全无法通话。
+       这里在点击时兜底：发现关键方法缺失，就带 nocache 时间戳重新拉一次桥再继续。 */
+    function ensureCallBridge(done){
+      if(window.Backend && Backend.startDuplexCall){ done(); return; }
+      dcLog('call_bridge_missing',{has_backend:!!window.Backend, action:'reload'});
+      var s=document.createElement('script');
+      s.src='/redesign/app_backend.js?nocache='+Date.now();
+      s.onload=function(){
+        dcLog('call_bridge_reloaded',{ok:!!(window.Backend&&Backend.startDuplexCall)});
+        done();
+      };
+      s.onerror=function(){ dcLog('call_bridge_reload_failed',{}); done(); };
+      (document.head||document.documentElement).appendChild(s);
+    }
+    function onCallButton(media){
+      // 入口第一行就留痕：区分「点击压根没到达」与「到达但被拦/被吞」。
+      dcLog('call_click',{media:media, locked:!!callLocked,
+                          has_bridge:!!(window.Backend&&Backend.startDuplexCall)});
+      if(callLocked){
+        dcLog('call_click_blocked',{media:media,reason:'tier_locked'});
+        try{ if(window.Backend&&Backend.notifyTierCallBlocked) Backend.notifyTierCallBlocked(); }
+        catch(e){ if(window.Backend&&Backend.toast) Backend.toast('你当前档位不支持通话，请到设置升级档位','err'); }
+        return;
+      }
+      // 模式选择：优先弹窗（单工轮询 vs 双工）；弹窗脚本未加载则退回原双工直接拨号
+      if(window.showCallModeModal){ window.showCallModeModal(media); }
+      else { ensureCallBridge(function(){ startDuplex(media); }); }
+    }
+
+    // 暴露给模式选择弹窗（call_mode_modal.js）调用：经通话桥自愈后再发起双工拨号。
+    // 这些通话函数本在 IIFE 内非全局，弹窗脚本取不到，故显式挂到 window。
+    window.startDuplexBridged = function (media, engine) {
+      try { ensureCallBridge(function () { startDuplex(media, engine); }); }
+      catch (e) { startDuplex(media, engine); }
+    };
+
+    /* ---- 挂断：结束通话 → 后端恢复待命 → 全部清理 ---- */
+    async function endCall(){
+      try{ if(window.Backend&&Backend.logCallAv)Backend.logCallAv({event:'call_end_intent', source:'frontend'}); }catch(e){}
+      // 通知后端结束通话（双保险：先 camelCase 走 window.Backend，缺则直连
+      // window.pywebview.api.end_duplex_call 的 snake_case 原名，确保挂断一定清通话锁）。
+      try{
+        if(window.Backend&&Backend.endDuplexCall) await Backend.endDuplexCall({});
+        else if(window.pywebview&&window.pywebview.api&&window.pywebview.api.end_duplex_call)
+          await window.pywebview.api.end_duplex_call({});
+      }catch(e){}
+      screenShare=false;
+      // 复位通话控制态（下次进入是干净态）：清前端标记 + 恢复后端麦/AI声音/摄像头
+      callMicMuted=false; callAiOff=false; callCamOff=false;
+      try{
+        if(window.Backend&&Backend.setCallMic)Backend.setCallMic({muted:false});
+        if(window.Backend&&Backend.setCallAiAudio)Backend.setCallAiAudio({enabled:true});
+        if(window.Backend&&Backend.setCallCamera)Backend.setCallCamera({enabled:true});
+      }catch(e){}
+      initCallIcons();
+      closeCallOverlay();
+      if(window.Backend)Backend.toast('已挂断，达妮娅回到陪伴模式接着陪你～');
+    }
+
+    /* 只关前端通话界面、**不通知后端**。用于「后端压根没被拉起」的失败路径：
+       旧代码在那条分支也调 endCall() → 后端 end_duplex_call 照样写一条
+       call_restored + call_end(duration_s=0.0)，把通话历史污染成"打过一通 0 秒电话"，
+       反过来把排查带偏（2026-09-17 复盘的 05:28:55 ×3 就是这么来的）。 */
+    function closeCallOverlay(){
+      closeDevMenu();
+      try{
+        const sb=$('cvvScreen'); if(sb)sb.classList.remove('on');
+        if(screenStream){screenStream.getTracks().forEach(t=>t.stop());screenStream=null;}
+        if(csScreenVideo)csScreenVideo.srcObject=null;
+        if(csLoading)csLoading.hidden=true;
+      }catch(e){}
+      stopTimer(); stopAllMedia(); stopMicMeter();
+      overlay.hidden=true;
+      showView(null);
+      mode=null; currentMedia=null;
+    }
+
+    /* ============ 设备菜单：悬停（按住约 0.6s）麦克风/免提按钮 → 展开设备列表 ============
+       交互（2026-09-17 按用户要求）：
+         · 单击 麦克风按钮 = 原语义：关/开麦克风
+         · 单击 免提按钮   = 原语义：关/开达妮娅的声音
+         · 悬停 麦克风按钮 ≈0.6s → 按钮上方展开【麦克风设备】列表，点选即热切换
+         · 悬停 免提按钮   ≈0.6s → 按钮上方展开【扬声器设备】列表，点选即热切换
+       菜单挂在 body 上（fixed 定位，位置按按钮矩形算），三个通话视图共用一份 DOM；
+       鼠标移进菜单不关、移出后延迟 260ms 关；点按钮自身（菜单开着时）只收菜单不切静音。 */
+    let devMenu=null, devMenuKind=null, devMenuBtn=null, devHoverTimer=null, devCloseTimer=null;
+    const DEV_HOVER_MS=620;
+
+    function ensureDevMenu(){
+      if(devMenu) return devMenu;
+      devMenu=document.createElement('div');
+      devMenu.className='cc-menu';
+      devMenu.id='ccDevMenu';
+      document.body.appendChild(devMenu);
+      devMenu.addEventListener('mouseenter',function(){
+        if(devCloseTimer){clearTimeout(devCloseTimer);devCloseTimer=null;}
+      });
+      devMenu.addEventListener('mouseleave',function(){ scheduleDevMenuClose(); });
+      return devMenu;
+    }
+    function positionDevMenu(btn){
+      if(!devMenu||!btn) return;
+      const r=btn.getBoundingClientRect();
+      const mw=devMenu.offsetWidth||248, mh=devMenu.offsetHeight||130;
+      let left=Math.round(r.left+r.width/2-mw/2);
+      left=Math.max(10,Math.min(left,(window.innerWidth||1280)-mw-10));
+      let top=Math.round(r.top-mh-12);
+      if(top<10) top=Math.round(r.bottom+12);        // 上方放不下就翻到下方
+      devMenu.style.left=left+'px';
+      devMenu.style.top=top+'px';
+    }
+    function closeDevMenu(){
+      if(devCloseTimer){clearTimeout(devCloseTimer);devCloseTimer=null;}
+      if(devHoverTimer){clearTimeout(devHoverTimer);devHoverTimer=null;}
+      if(devMenu) devMenu.classList.remove('open');
+      devMenuBtn=null;
+    }
+    function scheduleDevMenuClose(){
+      if(devCloseTimer) clearTimeout(devCloseTimer);
+      devCloseTimer=setTimeout(function(){
+        devCloseTimer=null;
+        if(devMenu) devMenu.classList.remove('open');
+        devMenuBtn=null;
+      },260);
+    }
+    function devMenuOpenFor(btn){
+      return !!(devMenu&&devMenu.classList.contains('open')&&devMenuBtn===btn);
+    }
+    /* 单击前的闸门：菜单正开着 → 只收起菜单，不触发静音切换 */
+    function devClickGuard(btn){
+      if(devMenuOpenFor(btn)){ closeDevMenu(); return true; }
+      return false;
+    }
+    async function openDevMenu(btn, kind){
+      const m=ensureDevMenu();
+      devMenuBtn=btn; devMenuKind=kind;
+      m.innerHTML='<div class="ccm-hd">正在读取设备…</div>';
+      m.classList.add('open');
+      positionDevMenu(btn);
+      let d=null;
+      try{ if(window.Backend&&Backend.listAudioDevices) d=await Backend.listAudioDevices(); }catch(e){ d=null; }
+      if(overlay.hidden){ closeDevMenu(); return; }
+      if(!d||!d.success){
+        m.innerHTML='<div class="ccm-hd">设备列表读取失败</div><div class="ccm-hint">'
+                    +((d&&d.error)||'后端未就绪，稍后再试')+'</div>';
+        positionDevMenu(btn); return;
+      }
+      renderDevMenu(m, kind, d);
+      positionDevMenu(btn);
+    }
+    function renderDevMenu(m, kind, d){
+      const isMic=(kind==='mic');
+      const list=(isMic?d.mic_devices:d.speaker_devices)||[];
+      const cur=String((isMic?d.mic_current:d.speaker_current)||'default');
+      const esc=function(s){return String(s==null?'':s)
+        .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');};
+      const item=function(label,val,on){
+        return '<button class="ccm-it'+(on?' on':'')+'" data-dev="'+esc(val)+'">'
+               +'<i class="ccm-dot"></i><span class="ccm-tx">'+esc(label)+'</span></button>';
+      };
+      let html='<div class="ccm-hd">'+(isMic?'麦克风设备':'扬声器设备')+'</div>';
+      html+=item('系统默认','default',(cur==='default'||!cur));
+      list.forEach(function(it){
+        const name=(it&&(it.name||it.id))||('设备 '+((it&&it.index)||''));
+        html+=item(name, (it&&it.id)||name, (cur===((it&&it.id)||name))||String((it&&it.index))===cur);
+      });
+      html+='<div class="ccm-hint">'+(isMic?'换麦克风：达妮娅立刻改用这个输入'
+                                         :'换扬声器：达妮娅的声音从这台设备出来')+'</div>';
+      m.innerHTML=html;
+      m.querySelectorAll('.ccm-it').forEach(function(el){
+        el.addEventListener('click',async function(){
+          const dev=el.getAttribute('data-dev')||'default';
+          el.style.opacity='.6';
+          let r=null;
+          try{ if(window.Backend&&Backend.setCallAudioDevice) r=await Backend.setCallAudioDevice({kind:kind,device:dev}); }catch(e){ r=null; }
+          if(r&&r.success){
+            if(window.Backend)Backend.toast((isMic?'已切换麦克风：':'已切换扬声器：')+dev);
+            closeDevMenu();
+          }else{
+            el.style.opacity='1';
+            if(window.Backend)Backend.toast('切换失败：'+((r&&r.error)||'未知错误'),'err');
+          }
+        });
+      });
+    }
+    function attachDevHover(btn, kind){
+      if(!btn) return;
+      btn.addEventListener('mouseenter',function(){
+        if(devHoverTimer) clearTimeout(devHoverTimer);
+        devHoverTimer=setTimeout(function(){ devHoverTimer=null; openDevMenu(btn, kind); }, DEV_HOVER_MS);
+      });
+      btn.addEventListener('mouseleave',function(){
+        if(devHoverTimer){ clearTimeout(devHoverTimer); devHoverTimer=null; }
+        scheduleDevMenuClose();
+      });
+    }
+
+    /* ---- 通话控制图标（morphicons / Material 风，统一填充态）---- */
+    const ICONS = {
+      mic:   'M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3zm5-3c0 2.76-2.24 5-5 5s-5-2.24-5-5H5c0 3.53 2.61 6.43 6 6.92V21h2v-3.08c3.39-.49 6-3.39 6-6.92h-2z',
+      micOff:'M19 11h-1.7c0 .74-.16 1.43-.43 2.05l1.23 1.23c.56-.98.9-2.09.9-3.28zm-4.02.17c0-.06.02-.11.02-.17V5c0-1.66-1.34-3-3-3S9 3.34 9 5v.18l5.98 5.99zM4.27 3L3 4.27 6.01 7.28V11c0 1.66 1.33 3 2.99 3 .22 0 .44-.03.65-.08l1.66 1.66c-.71.33-1.5.52-2.31.52-2.76 0-5.3-2.1-5.3-5.1H5c0 3.41 2.72 6.23 6 6.72V21h2v-3.28c.91-.13 1.77-.45 2.54-.9L19.73 21 21 19.73 4.27 3z',
+      cam:   'M17 10.5V7a1 1 0 0 0-1-1H4a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-3.5l4 4v-11l-4 4z',
+      camOff:'M21 6.5l-4 4V7a1 1 0 0 0-1-1H9.82L21 17.18V6.5zM3.27 2L2 3.27 4.73 6H4a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h12c.2 0 .39-.06.54-.16L19.73 21 21 19.73 3.27 2z',
+      vol:   'M3 9v6h4l5 5V4L7 9H3zm13.5 3a4.5 4.5 0 0 0-2.5-4.03v8.05A4.5 4.5 0 0 0 16.5 12zM14 3.23v2.06a7 7 0 0 1 0 13.42v2.06a9 9 0 0 0 0-17.54z',
+      volOff:'M16.5 12c0-1.77-1.02-3.29-2.5-4.03v2.21l2.45 2.45c.03-.2.05-.41.05-.63zm2.5 0c0 .94-.2 1.82-.54 2.64l1.51 1.51A8.8 8.8 0 0 0 21 12c0-4.28-2.99-7.86-7-8.77v2.06c2.89.86 5 3.54 5 6.71zM4.27 3L3 4.27 7.73 9H3v6h4l5 5v-6.73l4.25 4.25c-.67.52-1.42.93-2.25 1.18v2.06a8.99 8.99 0 0 0 3.69-1.81L19.73 21 21 19.73l-9-9L4.27 3zM12 4L9.91 6.09 12 8.18V4z',
+      end:   'M12 9c-1.6 0-3.15.25-4.6.72v3.1c0 .39-.23.74-.56.9-.98.49-1.87 1.12-2.66 1.85-.18.18-.43.28-.7.28-.28 0-.53-.11-.71-.29L.29 13.08a.99.99 0 0 1-.29-.7c0-.28.11-.53.29-.71C3.34 8.78 7.46 7 12 7s8.66 1.78 11.71 4.67c.18.18.29.43.29.71 0 .28-.11.53-.29.71l-2.48 2.48c-.18.18-.43.29-.71.29-.27 0-.52-.11-.7-.28a11.27 11.27 0 0 0-2.66-1.85.998.998 0 0 1-.56-.9v-3.1C15.15 9.25 13.6 9 12 9z',
+      share: 'M20 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm0 14H4V6h16v12zM12 10c-1.1 0-2 .9-2 2v2H8v2h4v-4c0-1.1-.9-2-2-2zm6 3.5c0-.83-.67-1.5-1.5-1.5s-1.5.67-1.5 1.5.67 1.5 1.5 1.5 1.5-.67 1.5-1.5zm-7 0c0-.83-.67-1.5-1.5-1.5S7 12.67 7 13.5 7.67 15 8.5 15 10 14.33 10 13.5z',
+      shareStop:'M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z'
+    };
+    function setCallBtn(btn, icoKey, label){
+      if(!btn) return;
+      const p = btn.querySelector('.cc-ico path'); if(p) p.setAttribute('d', ICONS[icoKey]||'');
+      const l = btn.querySelector('.cc-lbl'); if(l) l.textContent = label;
+    }
+    function initCallIcons(){
+      setCallBtn($('cvMute'),'mic','麦克风'); setCallBtn($('cvSpk'),'vol','免提');
+      setCallBtn($('cvvMute'),'mic','麦克风'); setCallBtn($('cvvCam'),'cam','摄像头'); setCallBtn($('cvvSpk'),'vol','免提');
+      setCallBtn($('csMute'),'mic','麦克风'); setCallBtn($('csSpk'),'vol','免提');
+      setCallBtn($('cvEnd'),'end','挂断'); setCallBtn($('cvvEnd'),'end','挂断'); setCallBtn($('csEnd'),'end','挂断');
+      setCallBtn($('cvvScreen'),'share','共享屏幕'); setCallBtn($('csStop'),'shareStop','停止共享');
+    }
+    /* 禁音 = 关闭麦克风：调后端让 omni 采集线程静音（前端不采音频，必须后端静音才真生效） */
+    async function toggleMute(btn){
+      callMicMuted=!callMicMuted;
+      try{ if(window.Backend&&Backend.setCallMic) await Backend.setCallMic({muted:callMicMuted}); }catch(e){}
+      try{ if(window.Backend&&Backend.logCallAv)Backend.logCallAv({event:'mic_toggle', muted:callMicMuted, source:'frontend'}); }catch(e){}
+      if(btn){ btn.classList.toggle('on',callMicMuted);
+        setCallBtn(btn, callMicMuted?'micOff':'mic', callMicMuted?'已静音':'麦克风'); }
+      if(window.Backend)Backend.toast(callMicMuted?'麦克风已关闭（达妮娅听不到你）':'麦克风已开启');
+    }
+    /* 免提 = 关闭 AI 出声音：达妮娅闭嘴只听不说 */
+    async function toggleAiAudio(btn){
+      callAiOff=!callAiOff;
+      try{ if(window.Backend&&Backend.setCallAiAudio) await Backend.setCallAiAudio({enabled:!callAiOff}); }catch(e){}
+      try{ if(window.Backend&&Backend.logCallAv)Backend.logCallAv({event:'ai_audio_toggle', off:callAiOff, source:'frontend'}); }catch(e){}
+      if(btn){ btn.classList.toggle('on',callAiOff);
+        setCallBtn(btn, callAiOff?'volOff':'vol', callAiOff?'已静音':'免提'); }
+      if(window.Backend)Backend.toast(callAiOff?'达妮娅已静音（只听不说）':'已开启达妮娅声音');
+    }
+    /* 关闭/开启摄像头：停前端预览轨 + 后端不推相机帧（达妮娅看不到你） */
+    async function toggleCamera(btn){
+      callCamOff=!callCamOff;
+      try{ if(window.Backend&&Backend.setCallCamera) await Backend.setCallCamera({enabled:!callCamOff}); }catch(e){}
+      try{ if(window.Backend&&Backend.logCallAv)Backend.logCallAv({event:'camera_toggle', off:callCamOff, source:'frontend'}); }catch(e){}
+      if(camStream){ const v=camStream.getVideoTracks(); if(v.length) v[0].enabled=!callCamOff; }
+      if(btn){ btn.classList.toggle('on',callCamOff);
+        setCallBtn(btn, callCamOff?'camOff':'cam', callCamOff?'已关闭':'摄像头'); }
+      if(window.Backend)Backend.toast(callCamOff?'摄像头已关闭（达妮娅看不到你）':'摄像头已开启');
+    }
+
+    /* ---- 等待后端双工会话"真正重连"成功（用于通话内热切换，避免假连接）---- */
+    // 基准 prevEpoch 为切换前会话纪元；等待 session_epoch 严格大于它且 ready=True，
+    // 即本次切换触发的 reprepare/重建会话确实完成。prevEpoch<=0 退化为"先见 ready=false 再见 ready=true"。
+    async function waitDuplexReadySince(prevEpoch, opts){
+      opts=opts||{};
+      const TIMEOUT=opts.timeout||30000, POLL=300;
+      let sawDrop = prevEpoch>0 ? false : null;
+      const t0=Date.now();
+      while(Date.now()-t0<TIMEOUT){
+        if(overlay.hidden) return {ok:false, cancelled:true};
+        let st=null;
+        try{ st=await Backend.getCallStatus(); }catch(e){ st=null; }
+        if(st){
+          if(st.error_msg) return {ok:false, error:st.error_msg};
+          if(opts.onStatus&&st.status) opts.onStatus(st.status);
+          if(prevEpoch>0){
+            if(st.ready && st.session_epoch>prevEpoch) return {ok:true};
+          } else {
+            if(!st.ready) sawDrop=true;
+            if(sawDrop && st.ready) return {ok:true};
+          }
+        }
+        await sleep(POLL);
+      }
+      return {ok:false, error:'连接超时'};
+    }
+
+    /* 授权屏幕录制并绑到预览；授权失败不算失败（达妮娅已在看屏，仅前端无预览） */
+    async function ensureScreenStream(){
+      try{
+        const m=$('csLoadingMsg'); if(m)m.textContent='正在启动屏幕共享…';
+        const s=$('csLoadingSub'); if(s)s.textContent='请允许屏幕录制权限';
+        screenStream=await navigator.mediaDevices.getDisplayMedia({video:true});
+        if(csScreenVideo)csScreenVideo.srcObject=screenStream;
+        if($('csFallback'))$('csFallback').hidden=true;
+        try{ if(window.Backend&&Backend.logCallAv)Backend.logCallAv({event:'screen_stream', result:'granted', tracks:screenStream.getTracks().length}); }catch(e){}
+        // 用户从浏览器原生「停止共享」退出时同步前端状态（否则画面冻住、状态错乱）
+        const vtrack=screenStream.getVideoTracks()[0];
+        if(vtrack) vtrack.onended=()=>{ try{ if(window.Backend&&Backend.logCallAv)Backend.logCallAv({event:'track_ended', kind:'screen'}); }catch(e){} if(screenShare) toggleScreenShare(); };
+      }catch(e){
+        const fb=$('csFallback'); if(fb)fb.hidden=false;
+        try{ if(window.Backend&&Backend.logCallAv)Backend.logCallAv({event:'screen_stream', result:'denied', error:(e&&e.message)||String(e)}); }catch(_){}
+        if(window.Backend)Backend.toast('已在共享屏幕（前端预览需授权，达妮娅已在看屏）');
+      }
+    }
+
+    /* ---- 屏幕共享：视频/屏幕共享通话内热切换，等后端真实重连 + 录屏授权后切视图 ---- */
+    async function toggleScreenShare(){
+      if(overlay.hidden || (currentMedia!=='video' && currentMedia!=='screen')){
+        if(window.Backend)Backend.toast('屏幕共享仅通话中可用'); return;
+      }
+      const next=!screenShare;
+      // 切换前记录当前会话纪元，作为"本次重连是否完成"的判定基准
+      let prevEpoch=0;
+      try{ const st=await Backend.getCallStatus(); if(st)prevEpoch=st.session_epoch||0; }catch(e){}
+      // 调用后端热切换（内部 reprepare/重建会话 → 真·重连，看屏/看人随之切换）
+      let ok=false;
+      try{ if(window.Backend&&Backend.setCallScreenShare){ const r=await Backend.setCallScreenShare({screen_share:next}); ok=!!(r&&r.success);
+        if(!ok&&window.Backend)Backend.toast(r&&r.error?('屏幕共享失败：'+r.error):'屏幕共享失败','err'); } }catch(e){}
+      if(!ok){ try{ if(window.Backend&&Backend.logCallAv)Backend.logCallAv({event:'screen_share', state: next?'on':'off', result:'backend_failed'}); }catch(e){} return; }
+      screenShare=next;
+      const sb=$('cvvScreen'); if(sb)sb.classList.toggle('on',next);
+      if(next){
+        // 进入共享视图前：先显示等待 UI，等后端双工真连上（看屏）再显示实时画面
+        showView('screen');
+        activeTimer=csTimer; if(csTimer)csTimer.textContent=fmt(secs);
+        if(csLoading){csLoading.hidden=false;
+          const m=$('csLoadingMsg'); if(m)m.textContent='正在建立屏幕共享连接…';
+          const s=$('csLoadingSub'); if(s)s.textContent='达妮娅正在连上你的屏幕';}
+        if($('csFallback'))$('csFallback').hidden=true;
+        const r=await waitDuplexReadySince(prevEpoch,{
+          onStatus:(t)=>{ const m=$('csLoadingMsg'); if(m&&t)m.textContent=t; }
+        });
+        if(overlay.hidden) return;            // 等待期间被挂断
+        if(!r.ok){
+          // 失败：回退视频视图，关共享
+          screenShare=false; if(sb)sb.classList.remove('on');
+          if(csLoading)csLoading.hidden=true;
+          showView('video'); activeTimer=cvvTimer; if(cvvTimer)cvvTimer.textContent=fmt(secs);
+          setStatus(cvvStatus,false,'视频通话中');
+          try{ if(window.Backend&&Backend.logCallAv)Backend.logCallAv({event:'screen_share', state:'on', result:'wait_failed', error:r.error||''}); }catch(e){}
+          if(window.Backend)Backend.toast('屏幕共享连不上：'+(r.error||'请重试'),'err');
+          return;
+        }
+        await ensureScreenStream();           // 授权录屏（失败也继续）
+        if(csLoading)csLoading.hidden=true;
+        setStatus(cvvStatus,false,'视频通话中 · 屏幕共享');
+        if(window.Backend)Backend.toast('已开启屏幕共享：达妮娅正在看你的屏幕');
+        try{ if(window.Backend&&Backend.logCallAv)Backend.logCallAv({event:'screen_share', state:'on', result:'ok'}); }catch(e){}
+      } else {
+        // 关共享：先停旧屏幕流，停留在共享视图的加载态，等后端真重连回摄像头态再切视频
+        if(screenStream){screenStream.getTracks().forEach(t=>t.stop());screenStream=null;}
+        if(csScreenVideo)csScreenVideo.srcObject=null;
+        showView('screen');
+        if($('csFallback'))$('csFallback').hidden=true;
+        if(csLoading){csLoading.hidden=false;
+          const m=$('csLoadingMsg'); if(m)m.textContent='正在切回视频通话…';
+          const s=$('csLoadingSub'); if(s)s.textContent='达妮娅正在切回看着你';}
+        const r=await waitDuplexReadySince(prevEpoch,{});
+        if(overlay.hidden) return;
+        // 切回视频视图（确保有摄像头预览，但尊重用户之前「关闭摄像头」的选择）
+        if(!camStream && !callCamOff){ try{ camStream=await navigator.mediaDevices.getUserMedia({video:{facingMode:'user'}});
+          if(cvSelf)cvSelf.srcObject=camStream; }catch(e){} }
+        if(csLoading)csLoading.hidden=true;
+        showView('video'); activeTimer=cvvTimer; if(cvvTimer)cvvTimer.textContent=fmt(secs);
+        setStatus(cvvStatus,false,'视频通话中');
+        if(!r.ok){
+          if(window.Backend)Backend.toast('切回视频略慢：'+(r.error||'请稍候'),'err');
+          return;
+        }
+        if(window.Backend)Backend.toast('已停止屏幕共享');
+        try{ if(window.Backend&&Backend.logCallAv)Backend.logCallAv({event:'screen_share', state:'off', result:'ok'}); }catch(e){}
+      }
+    }
+
+    const cv=document.getElementById('callVoice'), vd=document.getElementById('callVideo'), sc=document.getElementById('callScreen');
+    if(cv)cv.addEventListener('click',()=>onCallButton('voice'));
+    if(vd)vd.addEventListener('click',()=>onCallButton('video'));
+    if(sc)sc.addEventListener('click',()=>onCallButton('screen'));
+    // 进 UI 前按档位锁死通话按钮（无双工能力→变灰；点锁按钮只弹右上角提醒）
+    applyCallTierGate();
+    const scrBtn=$('cvvScreen'); if(scrBtn)scrBtn.addEventListener('click',toggleScreenShare);
+    ['cvEnd','cvvEnd','csEnd'].forEach(id=>{const b=$(id);if(b)b.addEventListener('click',endCall);});
+    // 麦克风：单击=关/开麦克风；悬停 ≈0.6s 展开【麦克风设备】菜单
+    // 免提  ：单击=关/开达妮娅声音；悬停 ≈0.6s 展开【扬声器设备】菜单
+    [$('cvMute'),$('cvvMute'),$('csMute')].filter(Boolean).forEach(function(b){
+      attachDevHover(b,'mic');
+      b.addEventListener('click',()=>{ if(devClickGuard(b)) return; toggleMute(b); });
+      b.title='单击关闭麦克风 · 悬停切换麦克风设备';
+    });
+    [$('cvSpk'),$('cvvSpk'),$('csSpk')].filter(Boolean).forEach(function(b){
+      attachDevHover(b,'speaker');
+      b.addEventListener('click',()=>{ if(devClickGuard(b)) return; toggleAiAudio(b); });
+      b.title='单击关闭达妮娅的声音 · 悬停切换扬声器设备';
+    });
+    // 点空白处 / 改窗口大小 → 收菜单（按钮自身交给 devClickGuard 处理，避免"点按钮先被收掉再切静音"）
+    document.addEventListener('click',function(ev){
+      if(!devMenu||!devMenu.classList.contains('open')) return;
+      if(devMenu.contains(ev.target)) return;
+      if(devMenuBtn&&devMenuBtn.contains(ev.target)) return;
+      closeDevMenu();
+    },true);
+    window.addEventListener('resize',function(){ closeDevMenu(); });
+    const camBtn=$('cvvCam'); if(camBtn)camBtn.addEventListener('click',()=>toggleCamera(camBtn));
+    // 翻转摄像头已移除（电脑单摄无意义），改由 cvvCam 控制开关摄像头
+    const csStop=$('csStop'); if(csStop)csStop.addEventListener('click',toggleScreenShare);
+    initCallIcons();
+
+    /* ============ 单工轮询内置视图（常开麦克风 + VAD 自动 + 流式 + 打断） ============ */
+    const SIMPLEX_BASE = "http://127.0.0.1:9871";
+    const sxStatus=$('sxStatus'), sxLog=$('sxLog'), sxEnd=$('sxEnd'), sxHint=$('sxHint');
+    const sxRing=$('sxRing'), sxRingTxt=$('sxRingTxt');
+    const sxAsr=$('sxAsr'), sxLlm=$('sxLlm'), sxTts=$('sxTts'), sxTot=$('sxTot'), sxStream=$('sxStream');
+    let sxMicStream=null, sxCtx=null, sxProc=null, sxSink=null;
+    let sxBuff=[], sxRecording=false, sxState='idle', sxHealthTries=0, sxAbort=null;
+    let sxNextStart=0, sxSources=[], sxSpeakStart=0;
+    let sxHasVoice=false, sxSilenceMs=0, sxHerBubble=null;
+
+    /* allowHtml：仅用于"我们自己拼的图标 + 固定文案"这类可信内容；
+       带后端 error 的分支一律走 textContent，避免把远程文本当 HTML 注入。 */
+    function sxSetStatus(msg, cls, allowHtml){ if(sxStatus){ if(allowHtml) sxStatus.innerHTML=msg; else sxStatus.textContent=msg; sxStatus.className='sx-status'+(cls?(' '+cls):''); } }
+    function sxSetRing(state, txt){ if(sxRing){ sxRing.className='sx-ring '+state; } if(sxRingTxt){ sxRingTxt.textContent=txt; } }
+    function sxScroll(){ if(sxLog) sxLog.scrollTop = sxLog.scrollHeight; }
+    function sxAddBubble(side, text, meta){
+      if(!sxLog) return;
+      const row=document.createElement('div'); row.className='sx-row '+(side==='me'?'me':'her');
+      const col=document.createElement('div'); col.style.cssText='display:flex;flex-direction:column;';
+      const b=document.createElement('div'); b.className='sx-bub'; b.textContent=text;
+      const m=document.createElement('div'); m.className='sx-meta'; m.textContent=meta||'';
+      col.appendChild(b); col.appendChild(m); row.appendChild(col); sxLog.appendChild(row); sxScroll();
+      if(side==='her'){ sxHerBubble=b; } else { sxHerBubble=null; }
+    }
+    function sxUpdateHer(text){ if(sxHerBubble){ sxHerBubble.textContent=text; sxScroll(); } }
+    function sxUpdateLatency(d){
+      if(sxAsr) sxAsr.textContent=(d.asr_ms||0)+'ms';
+      if(sxLlm) sxLlm.textContent=(d.llm_ms||0)+'ms';
+      if(sxTts) sxTts.textContent=(d.tts_ms||0)+'ms';
+      if(sxTot) sxTot.textContent=(d.total_ms||0)+'ms';
+      if(sxStream) sxStream.textContent = d.tts_used_stream ? '流式WS' : '整句';
+    }
+    async function sxCheckHealth(){
+      try{
+        const r = await fetch(SIMPLEX_BASE + '/api/health', {cache:'no-store'}); const d = await r.json();
+        if(d && d.ok){
+          sxHealthTries = 0;
+          // 用矢量图标代替 emoji（在各平台字形差异大、彩色表情伤整体质感）
+          const warnIc = (window.DIcon && DIcon.svg) ? DIcon.svg('triangle-alert', {size:13}) : '';
+          const tts = d.tts_ok ? '百炼已配置' : warnIc + ' 百炼未配置(请到设置加阿里云百炼音色档)';
+          const llm = d.llm_ok ? 'LLM 已配置' : warnIc + ' LLM 未配置';
+          sxSetStatus('就绪 · '+tts+' · '+llm, d.tts_ok ? 'ok' : 'err', true);
+        } else { sxSetStatus('服务异常：'+((d&&d.error)||''), 'err'); }
+      }catch(e){
+        if(sxHealthTries >= 3){
+          sxSetStatus('单工服务未启动：请运行 tools\\launch_simplex.bat，或在设置中检查', 'err');
+          return;
+        }
+        sxHealthTries++;
+        sxSetStatus('单工服务未启动，正在自动拉起（'+sxHealthTries+'/3）…', 'err');
+        try{
+          if(window.Backend && window.Backend.startSimplexServer){
+            const res = await window.Backend.startSimplexServer();
+            if(res && res.need_manual){ sxSetStatus('未找到启动器：请运行 tools\\launch_simplex.bat 后再试', 'err'); return; }
+          }
+        }catch(_){}
+        setTimeout(sxCheckHealth, 2000);
+      }
+    }
+    function sxResample(input, fromRate, toRate){
+      if(fromRate===toRate) return input;
+      const ratio=fromRate/toRate, outLen=Math.floor(input.length/ratio), out=new Float32Array(outLen);
+      for(let i=0;i<outLen;i++){ const pos=i*ratio, i0=Math.floor(pos), i1=Math.min(i0+1,input.length-1), frac=pos-i0;
+        out[i]=input[i0]*(1-frac)+input[i1]*frac; }
+      return out;
+    }
+    function sxEncodePCM(f32){
+      const n=f32.length, buf=new ArrayBuffer(n*2), view=new DataView(buf);
+      for(let i=0;i<n;i++){ let v=Math.max(-1,Math.min(1,f32[i])); view.setInt16(i*2, v<0?v*0x8000:v*0x7FFF, true); }
+      return buf;
+    }
+    function sxBase64(ab){
+      const bytes=new Uint8Array(ab); let bin=''; const chunk=0x8000;
+      for(let i=0;i<bytes.length;i+=chunk) bin+=String.fromCharCode.apply(null, bytes.subarray(i,i+chunk));
+      return btoa(bin);
+    }
+    function sxPcm24ToBuffer(b64){
+      const bin=atob(b64); const bytes=new Uint8Array(bin.length);
+      for(let i=0;i<bin.length;i++) bytes[i]=bin.charCodeAt(i);
+      const n=bytes.length/2; const f=new Float32Array(n); const dv=new DataView(bytes.buffer);
+      for(let i=0;i<n;i++) f[i]=dv.getInt16(i*2,true)/32768;
+      const ctx=sxCtx; const buf=ctx.createBuffer(1, n, 24000); buf.copyToChannel(f,0);
+      return buf;
+    }
+    function sxPlayBuffer(buf){
+      const ctx=sxCtx; const src=ctx.createBufferSource(); src.buffer=buf; src.connect(ctx.destination);
+      const startAt=Math.max(sxNextStart, ctx.currentTime+0.02);
+      src.start(startAt); sxNextStart=startAt + buf.duration; sxSources.push(src);
+      src.onended=()=>{ const i=sxSources.indexOf(src); if(i>=0) sxSources.splice(i,1);
+        if(sxSources.length===0 && sxState==='speak'){ sxState='listening'; sxSetRing('listen','聆听中'); sxSetStatus('就绪','ok'); } };
+    }
+    function sxStopPlayback(){
+      sxSources.forEach(s=>{ try{ s.stop(); }catch(e){} });
+      sxSources=[]; if(sxCtx) sxNextStart=sxCtx.currentTime;
+    }
+    function sxStartMic(){
+      if(sxRecording) return;
+      navigator.mediaDevices.getUserMedia({audio:{echoCancellation:true,noiseSuppression:false,autoGainControl:false}})
+        .then(stream=>{
+          sxMicStream=stream;
+          sxCtx=new (window.AudioContext||window.webkitAudioContext)();
+          if(sxCtx.state==='suspended') sxCtx.resume();
+          const src=sxCtx.createMediaStreamSource(stream);
+          sxProc=sxCtx.createScriptProcessor(4096,1,1);
+          sxSink=sxCtx.createGain(); sxSink.gain.value=0;
+          sxProc.onaudioprocess=(e)=>{
+            const ch=e.inputBuffer.getChannelData(0);
+            let sum=0; for(let i=0;i<ch.length;i++) sum+=ch[i]*ch[i];
+            const rms=Math.sqrt(sum/ch.length);
+            for(let i=0;i<ch.length;i++) sxBuff.push(ch[i]);
+            sxVad(rms);
+          };
+          src.connect(sxProc); sxProc.connect(sxSink); sxSink.connect(sxCtx.destination);
+          sxRecording=true; sxState='listening'; sxSetRing('listen','聆听中');
+        })
+        .catch(err=>{ sxSetStatus('麦克风权限失败：'+err.message, 'err'); });
+    }
+    function sxVad(rms){
+      if(sxState==='listening'){
+        if(rms>0.012){ sxHasVoice=true; sxSilenceMs=0; sxSetRing('listen','聆听中…'); }
+        else if(sxHasVoice){
+          sxSilenceMs += (4096/((sxCtx&&sxCtx.sampleRate)||44100))*1000;
+          if(sxSilenceMs>700) sxSendTurn();
+        }
+        if(sxHasVoice && sxBuff.length/((sxCtx&&sxCtx.sampleRate)||44100) > 18) sxSendTurn();
+      } else if(sxState==='speak'){
+        if(sxSources.length>0 && (sxSpeakStart? (performance.now()-sxSpeakStart)>350 : true)){
+          if(rms>0.02) sxBargeIn();
+        }
+      }
+    }
+    function sxSendTurn(){
+      if(sxState!=='listening' || !sxHasVoice) return;
+      const durSec = sxBuff.length/((sxCtx&&sxCtx.sampleRate)||44100);
+      if(durSec < 0.4){ sxHasVoice=false; sxSilenceMs=0; sxBuff=[]; return; }
+      sxState='think'; sxSetRing('think','思考中');
+      const pcm16=sxEncodePCM(sxResample(sxBuff, (sxCtx&&sxCtx.sampleRate)||44100, 16000));
+      sxBuff=[]; sxHasVoice=false; sxSilenceMs=0;
+      sxStreamTurn(sxBase64(pcm16));
+    }
+    async function sxStreamTurn(b64){
+      sxStopPlayback();
+      try{
+        const ctrl=new AbortController(); sxAbort=ctrl;
+        const r=await fetch(SIMPLEX_BASE+'/api/turn', {method:'POST', headers:{'Content-Type':'application/json'},
+          body: JSON.stringify({pcm:b64}), signal:ctrl.signal});
+        if(!r.ok){ sxSetStatus('请求失败：HTTP '+r.status,'err'); sxState='listening'; sxSetRing('listen','聆听中'); return; }
+        const reader=r.body.getReader(); const dec=new TextDecoder(); let buf=''; let herText=''; let curLat={};
+        sxState='think';
+        while(true){
+          const {value,done}=await reader.read(); if(done) break;
+          buf += dec.decode(value,{stream:true});
+          let idx;
+          while((idx=buf.indexOf('\n\n'))>=0){
+            const raw=buf.slice(0,idx); buf=buf.slice(idx+2);
+            if(!raw.startsWith('data:')) continue;
+            let ev; try{ ev=JSON.parse(raw.slice(5).trim()); }catch(e){ continue; }
+            if(ev.type==='asr'){ sxAddBubble('me', ev.text||'(空)', (ev.asr_ms||0)+'ms'); curLat.asr_ms=ev.asr_ms; }
+            else if(ev.type==='llm'){ herText += ev.text||''; if(!sxHerBubble) sxAddBubble('her', herText, '生成中…'); else sxUpdateHer(herText); }
+            else if(ev.type==='audio'){ if(sxState!=='speak'){ sxState='speak'; sxSetRing('speak','说话中'); } if(!sxSpeakStart) sxSpeakStart=performance.now(); sxPlayBuffer(sxPcm24ToBuffer(ev.data)); }
+            else if(ev.type==='done'){ sxUpdateLatency(Object.assign(curLat,ev)); sxHerBubble=null; }
+            else if(ev.type==='empty'){ if(ev.reason==='asr_empty') sxSetStatus('没听清，再说一次',''); }
+            else if(ev.type==='error'){ sxSetStatus('出错：'+(ev.error||''),'err'); }
+          }
+        }
+      }catch(e){
+        if(e.name!=='AbortError') sxSetStatus('请求失败：'+e.message,'err');
+      }finally{
+        sxAbort=null;
+        if(sxSources.length>0){ /* 仍在播放，等 onended 切回 listening */ }
+        else if(sxState!=='speak'){ sxState='listening'; sxSetRing('listen','聆听中'); }
+        sxBuff=[]; sxHasVoice=false; sxSilenceMs=0;
+      }
+    }
+    function sxBargeIn(){
+      if(sxAbort){ try{ sxAbort.abort(); }catch(e){} sxAbort=null; }
+      try{ fetch(SIMPLEX_BASE+'/api/turn_cancel', {method:'POST'}).catch(()=>{}); }catch(e){}
+      sxStopPlayback(); sxSpeakStart=0;
+      sxState='listening'; sxSetRing('listen','聆听中'); sxSetStatus('已打断','ok');
+    }
+    function enterSimplex(){
+      overlay.hidden=false; showView('simplex');
+      if(sxLog) sxLog.innerHTML='';
+      sxSetStatus('正在连接单工服务…','');
+      sxHerBubble=null; sxSources=[]; sxBuff=[]; sxSpeakStart=0; sxHasVoice=false; sxSilenceMs=0;
+      sxCheckHealth(); sxStartMic();
+    }
+    function exitSimplex(){
+      if(sxAbort){ try{ sxAbort.abort(); }catch(e){} }
+      try{ fetch(SIMPLEX_BASE+'/api/turn_cancel',{method:'POST'}).catch(()=>{}); }catch(e){}
+      sxStopPlayback();
+      try{ if(sxRecording){ sxRecording=false; if(sxProc) sxProc.disconnect(); if(sxSink) sxSink.disconnect(); if(sxCtx) sxCtx.close(); if(sxMicStream) sxMicStream.getTracks().forEach(t=>t.stop()); } }catch(e){}
+      closeCallOverlay();
+    }
+    window.enterSimplexView = enterSimplex;
+    if(sxEnd) sxEnd.addEventListener('click', exitSimplex);
+
+    document.addEventListener('morph-ready',function(){});
+  })();
+  </script>
+  <!-- ===================== 首启引导浮层（approach A：首启全屏 overlay，UI 后续打磨） ===================== -->
+  <style>
+    .ob-overlay{position:fixed;inset:0;z-index:10000;background:#f6f7fb;display:flex;flex-direction:column}
+    .ob-overlay[hidden]{display:none}
+    .ob-frame{width:100%;height:100%;border:0;flex:1}
+    .ob-frame[hidden]{display:none}
+    .ob-boot{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:18px;background:#f6f7fb}
+    .ob-boot .spin{width:42px;height:42px;border-radius:50%;border:3px solid #e6e8ef;border-top-color:#5b7cfa;animation:obspin .9s linear infinite}
+    .ob-boot .tip{color:#6b7280;font-size:14px;letter-spacing:.5px}
+    @keyframes obspin{to{transform:rotate(360deg)}}
+    .ob-skip{position:fixed;top:14px;right:16px;z-index:10001;padding:7px 14px;border:1px solid #e6e8ef;
+      background:#fff;color:#6b7280;border-radius:999px;font-size:13px;cursor:pointer;box-shadow:0 4px 16px rgba(0,0,0,.06)}
+    .ob-skip:hover{color:#1f2430}
+  </style>
+  <!-- 默认即盖住主页面（无 hidden），避免"先露主页再弹导览"的闪烁；仅非首启判定后才关闭 -->
+  <div id="onboardingOverlay" class="ob-overlay">
+    <button id="obSkip" class="ob-skip" title="跳过引导">跳过引导 ›</button>
+    <div id="onboardingBoot" class="ob-boot">
+      <div class="spin"></div>
+      <div class="tip">达妮娅正在准备…</div>
+    </div>
+    <iframe id="onboardingFrame" class="ob-frame" title="达妮娅 · 初次见面" hidden></iframe>
+  </div>
+  <script>
+  (function(){
+    var ov = document.getElementById('onboardingOverlay');
+    var frame = document.getElementById('onboardingFrame');
+    var skip = document.getElementById('obSkip');
+    // 【修复 2026-09-25】引导浮层原本嵌在 #callOverlay（通话浮层，默认 display:none）内部，
+    // 父级一隐藏，本浮层即便 hidden=false / opacity=1，实际渲染尺寸仍是 0x0 → 用户看不到引导页。
+    // 这里在脚本执行时把它提升为 <body> 直属；浮层是 position:fixed，脱离文档流后定位不受影响，
+    // z-index 10000 仍保证盖住主页。
+    try{ if(ov && ov.parentNode && ov.parentNode !== document.body){ document.body.appendChild(ov); } }catch(e){}
+    if(!ov || !frame) return;
+    // 真实运行时后端 API 挂在 window.pywebview.api（is_first_run→isFirstRun、
+    // save_first_run_config→saveFirstRunConfig）；redesign 原型另挂 window.Backend。
+    // 二选一，优先真实运行时，避免老用户因“Backend 未定义”被错误丢进首启引导页。
+    var api = window.Backend || (window.pywebview && window.pywebview.api) || null;
+    console.log('[onboarding] 启动：Backend?', !!window.Backend, ' pywebview?', !!window.pywebview, ' api?', !!api);
+
+    function finishHide(){
+      if(finishHide._done) return; finishHide._done = true;  // 幂等：超时兜底与正常收尾只生效一次
+      try{ window.removeEventListener('message', onMsg); }catch(e){}
+      try{ ov.style.transition='opacity .3s'; ov.style.opacity='0'; }catch(e){}
+      setTimeout(function(){ try{ ov.hidden=true; ov.remove(); }catch(e){ if(ov) ov.hidden=true; } }, 320);
+    }
+    function readTts(){
+      try{ var raw = localStorage.getItem('daniya_tts'); return raw ? JSON.parse(raw) : null; }catch(e){ return null; }
+    }
+    function dismiss(data){
+      var apiNow = window.Backend || (window.pywebview && window.pywebview.api) || null;  // 实时重读，页面加载时 api 可能尚未注入
+      _sessMark();  // 引导完成/跳过：本会话已看过，后续整页刷新不再弹引导
+      if(!apiNow){ finishHide(); return; }   // 预览模式无后端：直接关，不持久化
+      var saveFn = apiNow.saveFirstRunConfig || apiNow.save_first_run_config;  // 兼容 redesign/真实运行时命名
+      // 转发引导页回传的完整 payload（mode / tts / features / llm / quant），
+      // 让纯聊天 Key、量化档等一并落盘（之前只转 mode/tts/features，丢了 llm/quant）。
+      var payload = {
+        mode: (data && data.mode) || '',
+        tts: (data && data.tts) ? data.tts : readTts(),
+        features: (data && data.features) || null
+      };
+      if(data && data.llm) payload.llm = data.llm;
+      if(data && data.role) payload.role = data.role;   // 2026-09-25：引导页自建角色随完成落库（此前被丢弃）
+      if(data && data.quant) payload.quant = data.quant;
+      if(data && data.voice) payload.voice = data.voice;
+      if(data && data.mic) payload.mic = data.mic;
+      if(data && data.model_dir) payload.model_dir = data.model_dir;
+      if(data && data.skip) payload.skip = data.skip;
+      (saveFn ? saveFn(payload) : Promise.resolve())
+        .then(function(){
+          // 暖机放后台、绝不等它：后端 warmLocalModel 内部已改为守护线程加载，
+          // 这里即便它慢也不阻塞"收尾隐藏引导浮层"（避免引导页黑屏卡死）。
+          try{
+            var api2 = window.Backend || (window.pywebview && window.pywebview.api) || null;
+            if(api2 && api2.warmLocalModel){ var _w = api2.warmLocalModel(); if(_w && _w.catch) _w.catch(function(){}); }
+          }catch(e){}
+        })
+        .then(finishHide).catch(finishHide);
+      // 安全兜底：无论 saveFirstRunConfig / 暖机 是否卡住，5s 后强制收尾，
+      // 绝不卡在引导页黑屏（2026-09-29 黑屏修复）。
+      setTimeout(finishHide, 5000);
+    }
+    function onMsg(e){
+      if(e.source !== frame.contentWindow) return;
+      var d = e.data;
+      if(!d || d.type !== 'onboarding-done') return;
+      dismiss(d);
+    }
+    window.addEventListener('message', onMsg);
+    if(skip) skip.addEventListener('click', function(){
+      var yn = window.confirm('跳过引导：达妮娅会按最保守的「纯聊天 + 系统音色」配置（进主页后随时可在设置里改）。确定跳过？');
+      if(yn) dismiss({mode:'', skip:true});
+    });
+
+    function showBoot(){
+      var b = document.getElementById('onboardingBoot');
+      if(b) b.style.display='flex';
+      frame.hidden = true;
+      ov.hidden = false; ov.style.opacity = '1';
+    }
+    function showGuide(){
+      var b = document.getElementById('onboardingBoot');
+      if(b) b.style.display='none';
+      if(!frame.getAttribute('src')) frame.src = 'first_launch_setup.html?v=' + Date.now();
+      frame.hidden = false;
+      ov.hidden = false; ov.style.opacity = '1';
+    }
+    function hide(){
+      try{ ov.style.transition='opacity .3s'; ov.style.opacity='0'; }catch(e){}
+      setTimeout(function(){ try{ ov.hidden=true; ov.remove(); }catch(e){ if(ov) ov.hidden=true; } }, 320);
+    }
+
+    // 浮层判定（2026-09-04 重设计·安全优先）：
+    // 此前"默认盖住主页等后端判定"的设计，一旦后端判定慢/失败就卡死整个软件
+    // （实测：老用户被 showGuide 兜底后浮层 op=1 长期盖住主页 → "进不去/卡死"）。
+    // 现改为：浮层默认隐藏（不盖主页），只有后端明确判定"真首启"才显示引导；
+    // 老用户 / 后端不可用 / 调用失败 → 一律直接进主页，绝不卡加载占位。
+    var _settled = false;
+    // 已 onboarding 过、直接进主页时也要暖机（否则只有首次引导才会自动加载本地模型）。
+    // 后端自行判断是否需要（非本地双工/模型未就绪/正在玩游戏 → 跳过），这里无条件调即可。
+    function warmOnHome(){
+      try{
+        var a = window.Backend || (window.pywebview && window.pywebview.api) || null;
+        if(a && a.warmLocalModel) a.warmLocalModel();
+      }catch(e){}
+    }
+    // 会话级闸门：每个浏览器会话（≈一次软件启动）只弹一次引导。
+    // 调试需求：force_first_run=true 让 is_first_run 在每次整页加载都返回“首启”，
+    // 若不加此闸门，点“重载界面”/整页刷新会把用户重新弹回引导页（已进主页仍被弹）。
+    // 规则：本次会话首次加载（sessionStorage 空）→ 弹引导；用户完成/跳过 → 置位标记；
+    // 之后同会话内的整页刷新一律直接进主页，不再弹。新启动=新会话 → 标记清空 → 再弹。
+    var SESSION_KEY = 'onboarding_seen_v1';
+    function _sessSeen(){ try { return sessionStorage.getItem(SESSION_KEY) === '1'; } catch(e){ return false; } }
+    function _sessMark(){ try { sessionStorage.setItem(SESSION_KEY, '1'); } catch(e){} }
+
+    function decide(r){
+      _settled = true;
+      var ok = !!(r && r.success);
+      var first = !!(r && r.success && r.first_run);
+      console.log('[onboarding] is_first_run =>', JSON.stringify(r), 'success=', ok, 'first_run=', first);
+      if (ok && first && !_sessSeen()) {
+        showGuide();                // 真首启：显示首次引导（不置位，允许整页刷新重看）
+      } else {
+        _sessMark();                // 已在本会话进入过主页/完成过引导 → 置位，后续刷新不再弹
+        warmOnHome(); hide();       // 老用户 / 判定失败 / 会话内已看过：进主页（顺带暖机）
+      }
+    }
+    // 初始化：默认隐藏，等后端判定
+    ov.hidden = true;
+    // pywebview 的 api 在页面脚本执行时往往尚未注入，必须等 pywebviewready（或
+    // window.pywebview.ready）之后再判定；否则 api 为 null → 走 else 直接进主页，
+    // 导致「全新用户也看不到首启引导页」。判定时重新取一次 api，确保拿到已注入的桥。
+    function startOnboarding(){
+      var apiNow = window.Backend || (window.pywebview && window.pywebview.api) || null;
+      console.log('[onboarding] 启动判定：Backend?', !!window.Backend, ' pywebview?', !!window.pywebview, ' api?', !!apiNow);
+      if(apiNow){
+        // 真实运行时方法名为 snake_case（is_first_run），redesign 原型为 camelCase（isFirstRun）
+        var fr = (apiNow.isFirstRun ? apiNow.isFirstRun() : apiNow.is_first_run());
+        Promise.resolve(fr).then(decide).catch(function(e){
+          console.warn('[onboarding] isFirstRun 调用失败，直接进主页:', e);
+          _settled = true; hide();
+        });
+      } else {
+        console.log('[onboarding] 无可用后端：直接进主页');
+        _settled = true; hide();
+      }
+    }
+    // 真实运行时优先用 ready promise，其次监听 pywebviewready 事件；浏览器预览等无
+    // pywebview 环境则不绑定，叠加 3s 兜底避免浮层卡死。
+    if (window.pywebview && window.pywebview.ready && typeof window.pywebview.ready.then === 'function') {
+      window.pywebview.ready.then(startOnboarding);
+    } else if (window.pywebview && window.pywebview.api) {
+      startOnboarding();
+    } else {
+      window.addEventListener('pywebviewready', startOnboarding, { once: true });
+      setTimeout(function(){ if(!_settled) hide(); }, 3000);
+    }
+  })();
+  </script>
+
+  <!-- 通话模式选择弹窗（单工轮询 vs 双工），挂在 startCall 入口 -->
+  <script src="/call_mode_modal.js?v=20260930b"></script>
+
+  <!-- 电脑操作代理·逐步确认弹窗（点击/输入/按键/命令前弹此框，用户允许/拒绝） -->
+  <div id="agentConfirmModal" style="display:none;position:fixed;inset:0;z-index:10000;align-items:center;justify-content:center;background:var(--mask-strong)">
+    <div style="width:min(420px,86vw);background:var(--surface-1);border:1px solid var(--line);border-radius:var(--r-lg);box-shadow:var(--shadow-pop);padding:22px 22px 18px;color:var(--ink);font-size:14px;line-height:1.6">
+      <div style="font-weight:700;font-size:15px;margin-bottom:10px;color:var(--ink)">达妮娅想操作电脑</div>
+      <div id="agentConfirmDesc" style="white-space:pre-wrap;word-break:break-word;background:var(--surface-2);border:1px solid var(--line);border-radius:10px;padding:12px 14px;margin-bottom:18px;color:var(--ink-2)"></div>
+      <div style="display:flex;gap:10px;justify-content:flex-end">
+        <button id="agentConfirmDeny" style="flex:1;padding:10px 0;border:none;border-radius:10px;background:var(--surface-3);color:var(--ink);font-size:14px;cursor:pointer">拒绝</button>
+        <button id="agentConfirmAllow" style="flex:1;padding:10px 0;border:none;border-radius:10px;background:var(--accent-1);color:var(--on-accent);font-weight:700;font-size:14px;cursor:pointer">允许执行</button>
+      </div>
+      <div style="margin-top:10px;text-align:right;font-size:11px;color:var(--ink-3)">60 秒未操作将自动拒绝</div>
+    </div>
+  </div>
+  <script>
+    (function(){
+      var modal = document.getElementById('agentConfirmModal');
+      var descEl = document.getElementById('agentConfirmDesc');
+      var allowBtn = document.getElementById('agentConfirmAllow');
+      var denyBtn = document.getElementById('agentConfirmDeny');
+      var _cb = null, _timer = null;
+      function hide(){ if(modal) modal.style.display='none'; if(_timer){ clearTimeout(_timer); _timer=null; } _cb=null; }
+      window.showAgentConfirm = function(desc, cb){
+        if(!modal){ if(cb) cb(false); return; }   // DOM 未就绪 → fail-closed
+        _cb = cb; if(descEl) descEl.textContent = desc || '执行一个电脑操作';
+        modal.style.display='flex';
+        if(_timer) clearTimeout(_timer);
+        _timer = setTimeout(function(){ var c=_cb; hide(); if(c) c(false); }, 60000);
+      };
+      if(allowBtn) allowBtn.onclick = function(){ var c=_cb; hide(); if(c) c(true); };
+      if(denyBtn) denyBtn.onclick = function(){ var c=_cb; hide(); if(c) c(false); };
+    })();
+  </script>
+
+  <script>
+    /* 图标占位渲染：把 [data-icon] 换成真正的矢量图标。
+       DOMContentLoaded 后先挂一次；再用 MutationObserver 兜住后续动态插入的节点
+       （模型面板等是 JS 后建的），省得每个地方都记得手动 mount。 */
+    (function(){
+      function mountAll(){ try{ if(window.DIcon) window.DIcon.mount(document); }catch(e){} }
+      if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', mountAll);
+      else mountAll();
+      try{
+        var mo = new MutationObserver(function(muts){
+          for (var i=0;i<muts.length;i++){
+            var m = muts[i];
+            if (!m.addedNodes || !m.addedNodes.length) continue;
+            for (var j=0;j<m.addedNodes.length;j++){
+              var n = m.addedNodes[j];
+              if (n.nodeType !== 1) continue;
+              if (n.getAttribute && n.getAttribute('data-icon')) { mountAll(); return; }
+              if (n.querySelector && n.querySelector('[data-icon]')) { mountAll(); return; }
+            }
+          }
+        });
+        mo.observe(document.body, { childList: true, subtree: true });
+      }catch(e){}
+    })();
+  </script>
+
+</body>
+</html>

@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>引导页重设计预览 · 极光风格</title>
+<link rel="stylesheet" href="redesign/design_tokens.css?v=20261007g" />
+<link rel="stylesheet" href="redesign/pages.css" />
+<style>
+  /* 仅本预览用：把内容居中铺开，模拟首启 overlay 内的卡片 */
+  body{ display:block; padding:40px 20px; }
+  .ob{ max-width:760px; margin:0 auto; background:var(--bg-2); border:1px solid var(--line-2);
+    border-radius:var(--r-xl); box-shadow:var(--shadow-pop); padding:28px 30px; }
+  .ob + .ob{ margin-top:22px; }
+  .ob-step{ display:flex; align-items:center; gap:10px; margin-bottom:18px; }
+  .ob-step .no{ font-family:var(--font-mono); font-size:11px; letter-spacing:.18em; color:var(--accent-1); }
+  .ob-step .bar{ flex:1; height:2px; background:var(--line); border-radius:2px; }
+  .ob-step .bar.on{ background:var(--accent-grad); }
+  .ob-step .lab{ font-size:12px; color:var(--ink-3); }
+  .ob h1{ font-size:var(--fs-xl); font-weight:600; color:var(--ink); margin:0 0 6px; }
+  .ob .sub{ font-size:var(--fs-sm); color:var(--ink-2); margin:0 0 18px; line-height:1.6; }
+
+  /* 显卡分段选择器 */
+  .vram-row{ display:flex; align-items:center; gap:12px; flex-wrap:wrap; margin-bottom:18px; }
+  .vram-row > span{ font-size:var(--fs-sm); color:var(--ink-2); }
+  .rec{ font-size:11px; color:var(--accent-1); background:var(--accent-soft-1);
+    border:1px solid var(--line-strong); border-radius:99px; padding:3px 10px; }
+
+  /* 模式卡网格：复用 .eng-card */
+  .mode-grid{ display:grid; grid-template-columns:repeat(auto-fill,minmax(168px,1fr)); gap:12px; }
+  .eng-card .ed{ line-height:1.5; }
+  .eng-card .req{ font-family:var(--font-mono); font-size:9px; letter-spacing:.08em; color:var(--ink-3);
+    border:1px solid var(--line); border-radius:6px; padding:2px 6px; margin-top:6px; align-self:flex-start; }
+
+  .foot{ display:flex; align-items:center; justify-content:space-between; gap:12px; margin-top:24px; }
+  .foot .skip{ font-size:var(--fs-sm); color:var(--ink-3); cursor:pointer; }
+  .foot .skip:hover{ color:var(--ink-2); }
+</style>
+</head>
+<body>
+
+  <!-- ===== 第 1 步：选择陪伴模式 ===== -->
+  <section class="ob">
+    <div class="ob-step">
+      <span class="no">01</span><span class="bar on"></span><span class="no" style="color:var(--ink-3)">02</span>
+      <span class="lab">选择陪伴模式</span>
+    </div>
+    <h1>欢迎，先选一种和达妮娅相处的方式</h1>
+    <p class="sub">随时能在设置里改。显卡越好，她能陪你做的事越多。</p>
+
+    <div class="vram-row">
+      <span>你的显卡</span>
+      <div class="seg">
+        <button class="on" type="button">16GB</button>
+        <button type="button">12GB</button>
+        <button type="button">8GB</button>
+        <button type="button">核显</button>
+      </div>
+      <span class="rec">为你推荐：全感知伙伴</span>
+    </div>
+
+    <div class="mode-grid">
+      <div class="eng-card">
+        <div class="ek">聊</div>
+        <div class="emeta">
+          <div class="en">纯聊天</div>
+          <div class="ed">只文字对话，最省资源</div>
+        </div>
+      </div>
+
+      <div class="eng-card">
+        <div class="ek">看</div>
+        <div class="emeta">
+          <div class="en">聊天 + 看得见</div>
+          <div class="ed">能看你的屏幕，帮你操作</div>
+        </div>
+      </div>
+
+      <div class="eng-card on">
+        <div class="ek">全</div>
+        <div class="emeta">
+          <div class="en" style="display:flex;align-items:center;gap:8px">全感知伙伴
+            <span class="badge on">推荐</span>
+          </div>
+          <div class="ed">看屏幕 + 听环境，像伙伴在身边</div>
+          <span class="req">需 12GB+ 独显</span>
+        </div>
+      </div>
+
+      <div class="eng-card">
+        <div class="ek">自</div>
+        <div class="emeta">
+          <div class="en">自定义配置</div>
+          <div class="ed">高级玩家自己调参数</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="foot">
+      <span class="skip">跳过引导 ›</span>
+      <button class="btn primary" type="button">下一步：声音设置 →</button>
+    </div>
+  </section>
+
+  <!-- ===== 第 2 步：配置声音（可跳过） ===== -->
+  <section class="ob">
+    <div class="ob-step">
+      <span class="no" style="color:var(--ink-3)">01</span><span class="bar on"></span><span class="no">02</span>
+      <span class="lab">配置达妮娅的声音</span>
+    </div>
+    <h1>给达妮娅配个声音（可跳过）</h1>
+    <p class="sub">先用最省资源的方案，之后随时能在语音设置里换。</p>
+
+    <div class="group">
+      <div class="gt">声音渠道</div>
+      <div class="vlist">
+        <div class="vcard on">
+          <div class="vk">–</div>
+          <div class="vmeta">
+            <div class="vn">先不配置</div>
+            <div class="vd">最省资源，后续在设置里一键开启</div>
+          </div>
+          <span class="act">已选</span>
+        </div>
+        <div class="vcard">
+          <div class="vk">Mi</div>
+          <div class="vmeta">
+            <div class="vn">小米 MiMo</div>
+            <div class="vd">免费 · 本机克隆你的声音</div>
+          </div>
+          <span class="act">选择</span>
+        </div>
+        <div class="vcard">
+          <div class="vk">百</div>
+          <div class="vmeta">
+            <div class="vn">阿里云百炼</div>
+            <div class="vd">免费额度 · 云端音色</div>
+          </div>
+          <span class="act">选择</span>
+        </div>
+      </div>
+
+      <div class="form">
+        <label>API Key
+          <input type="text" placeholder="选了 MiMo / 百炼 后在此粘贴" />
+        </label>
+        <label>录音文件
+          <input type="text" placeholder="拖动或粘贴录音路径" />
+        </label>
+      </div>
+    </div>
+
+    <div class="foot">
+      <span class="skip">跳过，稍后再说 ›</span>
+      <button class="btn primary" type="button">完成，进入达妮娅 →</button>
+    </div>
+  </section>
+
+  <script>
+    /* 跟随主程序主题（系统黑白模式 + 强调色）。引导页在同源 iframe 内，是独立
+       文档，需主动从 window.parent 同步 data-theme / data-accent；拿不到（单独预览 /
+       跨域）则退回 design_tokens.css?v=20261007g 的媒体查询默认，即跟随系统。 */
+    (function () {
+      try {
+        var p = window.parent && window.parent.document && window.parent.document.documentElement;
+        if (!p) return;
+        var root = document.documentElement;
+        var t = p.getAttribute('data-theme');
+        var a = p.getAttribute('data-accent');
+        if (t) root.setAttribute('data-theme', t); else root.removeAttribute('data-theme');
+        if (a) root.setAttribute('data-accent', a); else root.removeAttribute('data-accent');
+      } catch (e) { /* 预览/跨域：忽略，走默认媒体查询 */ }
+    })();
+  </script>
+
+</body>
+</html>

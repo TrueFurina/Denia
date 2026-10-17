@@ -1,0 +1,273 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AI 桌面伴侣 - 启动中</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+html, body { width: 100%; height: 100%; overflow: hidden; }
+body {
+  font-family: 'PingFang SC', 'HarmonyOS Sans SC', 'Microsoft YaHei', system-ui, sans-serif;
+  background: #0A0C12; color: #E7ECF3;
+  display: flex; align-items: center; justify-content: center;
+  position: relative; user-select: none; cursor: default;
+}
+/* 网格纹理 */
+.bg {
+  position: fixed; inset: 0; z-index: 0;
+  background-image:
+    linear-gradient(rgba(255,255,255,.03) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255,255,255,.03) 1px, transparent 1px);
+  background-size: 38px 38px;
+  -webkit-mask-image: radial-gradient(circle at 50% 45%, #000 0%, transparent 72%);
+  mask-image: radial-gradient(circle at 50% 45%, #000 0%, transparent 72%);
+}
+/* 电光晕 */
+.blob { position: fixed; border-radius: 50%; filter: blur(72px); opacity: .5; pointer-events: none; z-index: 0; }
+.b1 { width: 340px; height: 340px; background: #0e7490; top: -120px; left: -100px; animation: b1 15s ease-in-out infinite alternate; }
+.b2 { width: 300px; height: 300px; background: #6d28d9; bottom: -120px; right: -90px; animation: b2 17s ease-in-out infinite alternate; }
+@keyframes b1 { to { transform: translate(60px, 50px) scale(1.12); } }
+@keyframes b2 { to { transform: translate(-70px, -40px) scale(1.1); } }
+
+.card {
+  position: relative; z-index: 1; width: 380px; padding: 34px 34px 26px;
+  border-radius: 22px; background: rgba(255,255,255,.04);
+  border: 1px solid rgba(255,255,255,.09);
+  box-shadow: 0 20px 60px rgba(0,0,0,.5), inset 0 1px 0 rgba(255,255,255,.06);
+  -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px);
+  animation: cardIn .7s cubic-bezier(.2,.8,.3,1) both;
+}
+@keyframes cardIn { 0% { opacity: 0; transform: translateY(26px) scale(.97); } 100% { opacity: 1; transform: none; } }
+
+.logo { text-align: center; margin-bottom: 6px; animation: logoFloat 4s ease-in-out infinite; }
+@keyframes logoFloat { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-6px); } }
+.logo .mark {
+  display: inline-grid; place-items: center; width: 46px; height: 46px; margin: 0 auto 10px;
+  border-radius: 14px; background: linear-gradient(135deg, #2DD4FF, #A06BFF); color: #06121b;
+}
+.logo .title { font-size: 26px; font-weight: 700; letter-spacing: 3px; color: #F2F6FB; }
+.logo .subtitle { margin-top: 6px; font-size: 12.5px; color: #8b97a8; letter-spacing: 1px; }
+
+/* 步骤 */
+.steps { margin: 20px 0 18px; display: flex; flex-direction: column; gap: 6px; }
+.step {
+  display: flex; align-items: center; gap: 9px;
+  font-size: 12.5px; color: #7d8796;
+  opacity: .5; transform: translateY(8px); animation: stepIn .5s ease forwards;
+}
+.step:nth-child(1) { animation-delay: .30s; }
+.step:nth-child(2) { animation-delay: .38s; }
+.step:nth-child(3) { animation-delay: .46s; }
+.step:nth-child(4) { animation-delay: .54s; }
+.step:nth-child(5) { animation-delay: .62s; }
+.step:nth-child(6) { animation-delay: .70s; }
+.step:nth-child(7) { animation-delay: .78s; }
+.step:nth-child(8) { animation-delay: .86s; }
+.step:nth-child(9) { animation-delay: .94s; }
+@keyframes stepIn { to { transform: none; opacity: .8; } }
+.step .dot { width: 7px; height: 7px; border-radius: 50%; flex: none; background: rgba(255,255,255,.18); }
+.step.done { opacity: .85; color: #aeb8c7; }
+.step.done .dot { background: #2DD4FF; box-shadow: 0 0 7px rgba(45,212,255,.6); }
+.step.active { opacity: 1; color: #7fd8ff; font-weight: 600; }
+.step.active .dot {
+  background: #2DD4FF; box-shadow: 0 0 10px rgba(45,212,255,.9);
+  animation: dotPulse 1s ease-in-out infinite;
+}
+.step.active span:last-child { animation: stepActive .5s ease; }
+@keyframes dotPulse { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.5); } }
+@keyframes stepActive { 0% { transform: scale(1.04); } 100% { transform: none; } }
+
+/* 进度条：电光流光 */
+.track {
+  position: relative; height: 8px; border-radius: 99px;
+  background: rgba(255,255,255,.08); overflow: hidden;
+}
+.fill {
+  position: relative; height: 100%; width: 0%;
+  border-radius: 99px;
+  background: linear-gradient(90deg, #2DD4FF, #A06BFF);
+  background-size: 200% 100%;
+  animation: fillFlow 2.2s linear infinite;
+}
+@keyframes fillFlow { to { background-position: -200% 0; } }
+.fill::after {
+  content: ''; position: absolute; top: 0; bottom: 0; left: -50%; width: 45%;
+  background: linear-gradient(90deg, transparent, rgba(255,255,255,.7), transparent);
+  animation: sheen 1.5s linear infinite;
+}
+@keyframes sheen { from { left: -50%; } to { left: 110%; } }
+.percent { text-align: right; margin-top: 7px; font-size: 13px; font-weight: 700; color: #7fd8ff; letter-spacing: 1px; }
+
+/* 状态文字 */
+.status-wrap { position: relative; overflow: hidden; height: 28px; margin-top: 6px; display: flex; align-items: center; justify-content: center; }
+.status-text { white-space: nowrap; font-size: 13.5px; font-weight: 500; color: #aeb8c7; letter-spacing: .3px; }
+.status-text.error { color: #ff7a90; }
+</style>
+</head>
+<body>
+    <div class="bg"></div>
+    <div class="blob b1"></div>
+    <div class="blob b2"></div>
+
+    <div class="card">
+        <div class="logo">
+            <div class="mark">
+                <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2l2.4 6.6L21 11l-6.6 2.4L12 20l-2.4-6.6L3 11l6.6-2.4z"/></svg>
+            </div>
+            <div class="title">AI 桌面伴侣</div>
+            <div class="subtitle">正在为你启动…</div>
+        </div>
+
+        <div class="steps" id="steps">
+            <div class="step"><span class="dot"></span><span>加载配置文件</span></div>
+            <div class="step"><span class="dot"></span><span>检查 LLM 与语音环境</span></div>
+            <div class="step"><span class="dot"></span><span>启动 WebSocket 服务</span></div>
+            <div class="step"><span class="dot"></span><span>初始化视觉模块</span></div>
+            <div class="step"><span class="dot"></span><span>初始化语音模块</span></div>
+            <div class="step"><span class="dot"></span><span>启动语音识别</span></div>
+            <div class="step"><span class="dot"></span><span>初始化角色与对话</span></div>
+            <div class="step"><span class="dot"></span><span>加载音色模型</span></div>
+            <div class="step"><span class="dot"></span><span>启动完成</span></div>
+        </div>
+
+        <div class="track">
+            <div class="fill" id="fill"></div>
+        </div>
+        <div class="percent" id="percent">0%</div>
+
+        <div class="status-wrap">
+            <span class="status-text" id="statusText">正在初始化…</span>
+        </div>
+    </div>
+
+<script>
+(function () {
+    'use strict';
+
+    var fill = document.getElementById('fill');
+    var percentEl = document.getElementById('percent');
+    var statusEl = document.getElementById('statusText');
+    var stepEls = Array.prototype.slice.call(document.querySelectorAll('.step'));
+
+    var curPercent = 0;      // 当前显示值
+    var targetPercent = 0;  // 目标值（后端上报）
+    var animating = false;
+    var animFrom = 0, animTo = 0, animStart = 0;
+    var DURATION = 650;      // 进度条线性动画时长 ms（让进度平滑爬升不跳变）
+
+    var curText = statusEl.textContent;
+    var slideTimer = null;
+
+    // ======== 状态文字：旧文字线性滑出到左，新文字从右线性滑入 ========
+    function setStatus(text) {
+        text = text || '';
+        if (text === curText) return;
+        curText = text;
+        if (slideTimer) clearTimeout(slideTimer);
+
+        var error = /失败|超时|异常/.test(text) && text.indexOf('进入软件') < 0;
+        statusEl.classList.toggle('error', error);
+
+        // 滑出
+        statusEl.style.transition = 'transform 0.22s linear, opacity 0.22s linear';
+        statusEl.style.transform = 'translateX(-100%)';
+        statusEl.style.opacity = '0';
+        slideTimer = setTimeout(function () {
+            statusEl.textContent = text;
+            statusEl.style.transition = 'none';
+            statusEl.style.transform = 'translateX(100%)';
+            statusEl.style.opacity = '0';
+            // 强制回流后再滑入（线性）
+            void statusEl.offsetWidth;
+            requestAnimationFrame(function () {
+                statusEl.style.transition = 'transform 0.28s linear, opacity 0.28s linear';
+                statusEl.style.transform = 'translateX(0)';
+                statusEl.style.opacity = '1';
+            });
+        }, 230);
+    }
+
+    // ======== 进度条线性插值（流畅爬升） ========
+    function tweenTo(target) {
+        target = Math.max(0, Math.min(100, target));
+        if (Math.abs(target - curPercent) < 0.5) { curPercent = target; return; }
+        animFrom = curPercent;
+        animTo = target;
+        animStart = performance.now();
+        if (!animating) {
+            animating = true;
+            requestAnimationFrame(step);
+        }
+    }
+    function step(now) {
+        if (!animating) return;
+        var t = Math.min(1, (now - animStart) / DURATION);
+        curPercent = animFrom + (animTo - animFrom) * t;  // 线性
+        if (t >= 1) { curPercent = animTo; animating = false; }
+        render();
+        if (animating) requestAnimationFrame(step);
+    }
+    function render() {
+        var p = Math.round(curPercent);
+        fill.style.width = p + '%';
+        percentEl.textContent = p + '%';
+    }
+
+    // ======== 步骤高亮（phase 索引驱动） ========
+    function updateSteps(phase) {
+        for (var i = 0; i < stepEls.length; i++) {
+            stepEls[i].classList.remove('active', 'done');
+            if (i < phase) stepEls[i].classList.add('done');
+            else if (i === phase) stepEls[i].classList.add('active');
+        }
+    }
+
+    // ======== 轮询后端启动进度 ========
+    function waitForBridge(cb, timeout) {
+        if (window.pywebview && window.pywebview.api) { cb(); return; }
+        var start = Date.now();
+        var timer = setInterval(function () {
+            if (window.pywebview && window.pywebview.api) {
+                clearInterval(timer); cb(); return;
+            }
+            if (Date.now() - start > (timeout || 15000)) {
+                clearInterval(timer);
+                setStatus('正在初始化…');
+            }
+        }, 60);
+    }
+
+    function poll() {
+        if (!(window.pywebview && window.pywebview.api)) {
+            setTimeout(poll, 300);
+            return;
+        }
+        window.pywebview.api.get_progress().then(function (res) {
+            if (!res) { setTimeout(poll, 300); return; }
+            if (typeof res.percent === 'number') tweenTo(res.percent);
+            if (res.msg) setStatus(res.msg);
+            if (typeof res.phase === 'number') updateSteps(res.phase);
+            if (res.error) { setStatus(res.error); updateSteps(8); return; }
+            if (res.done) return;  // 加载完成：停止轮询，避免窗口销毁后仍访问 API
+            setTimeout(poll, 200);
+        }).catch(function (e) {
+            console.error('轮询启动进度失败:', e);
+            setTimeout(poll, 600);
+        });
+    }
+
+    waitForBridge(function () {
+        // 占位：bridge 就绪后立刻拉一次，尽早显示真实进度
+        window.pywebview.api.get_progress().then(function (res) {
+            if (res && typeof res.percent === 'number') {
+                curPercent = Math.max(0, Math.min(100, res.percent));
+                render();
+            }
+        }).catch(function () {});
+        poll();
+    });
+})();
+</script>
+</body>
+</html>

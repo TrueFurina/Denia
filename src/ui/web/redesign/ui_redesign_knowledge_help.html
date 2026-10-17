@@ -1,0 +1,371 @@
+<!DOCTYPE html>
+
+<html lang="zh-CN">
+
+<head>
+
+<meta charset="UTF-8" />
+
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+
+<meta name="stage" content="off" />
+
+<title>知识库教学 · 桌面伴侣</title>
+
+<link rel="stylesheet" href="/redesign/design_tokens.css?v=20261013e" />
+
+<link rel="stylesheet" href="/redesign/ui_shared.css?v=20261013e" />
+
+<link rel="stylesheet" href="/redesign/pages.css" />
+
+<style>
+
+  .help-section{ margin-bottom:18px; }
+
+  .help-h2{ font-size:15px; font-weight:680; color:var(--ink); margin:0 0 10px;
+
+    display:flex; align-items:center; gap:8px; }
+
+  .help-h2 .num{ display:inline-flex; align-items:center; justify-content:center;
+
+    width:22px; height:22px; border-radius:7px; background:var(--accent-soft-1);
+
+    color:var(--accent-1); font-size:12px; font-weight:700; flex-shrink:0; }
+
+  .help-p{ font-size:13px; color:var(--ink-2); line-height:1.7; margin:0 0 8px; }
+
+  .help-p b{ color:var(--accent-1); font-weight:600; }
+
+  .help-grid{ display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+
+  .help-card{ padding:13px 15px; border-radius:var(--r-lg); background:var(--surface);
+
+    border:1px solid var(--line); box-shadow:var(--shadow-1); }
+
+  .help-card-k{ font-size:13px; font-weight:680; color:var(--ink); margin-bottom:5px; }
+
+  .help-card-d{ font-size:12px; color:var(--ink-2); line-height:1.6; }
+
+  .help-card-d b{ color:var(--accent-1); font-weight:600; }
+
+  .help-example{ border-radius:var(--r-lg); overflow:hidden; border:1px solid var(--line); }
+
+  .help-ex{ padding:12px 15px; }
+
+  .help-ex.good{ background:linear-gradient(90deg, var(--accent-soft-1), transparent 60%); }
+
+  .help-ex.bad{ background:var(--surface-2); }
+
+  .help-ex-tag{ font-size:11px; font-weight:700; margin-bottom:5px; }
+
+  .help-ex.good .help-ex-tag{ color:#10b981; }
+
+  .help-ex.bad .help-ex-tag{ color:var(--ink-3); }
+
+  .help-ex-t{ font-size:12px; color:var(--ink-2); line-height:1.6; white-space:pre-wrap; }
+
+  .help-back{ margin-top:6px; }
+
+  .help-tips{ list-style:none; padding:0; margin:0; display:flex; flex-direction:column; gap:8px; }
+
+  .help-tips li{ font-size:12.5px; color:var(--ink-2); line-height:1.6;
+
+    display:flex; gap:8px; align-items:flex-start; }
+
+  .help-tips .dot{ color:var(--accent-1); font-weight:700; flex-shrink:0; }
+
+  /* 教学页独立打开时的两栏兜底（.app.help-page 不会命中外壳 .app，绝不泄漏） */
+
+  .app.help-page{ grid-template-columns: var(--side-w) minmax(0,1fr); }
+
+</style>
+
+</head>
+
+<body>
+
+<div class="app help-page">
+
+  <aside class="side">
+
+    <div class="brand"><div class="wm">达妮娅</div><div class="wmsub">DESKTOP COMPANION</div></div>
+
+    <div class="grp">
+
+      <div class="gt">日常</div>
+
+      <a class="nav" href="/index.html"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>对话</a>
+
+      <a class="nav" href="/redesign/ui_redesign_daily.html"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M4 4h16v16H4z"/><path d="M8 9h8M8 13h5"/></svg>日报周报</a>
+
+    </div>
+
+    <div class="grp">
+
+      <div class="gt">伴侣</div>
+
+      <a class="nav" href="/redesign/ui_redesign_characters.html"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/></svg>角色</a>
+
+      <a class="nav" href="/redesign/ui_redesign_memory.html"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M5 4h12a2 2 0 0 1 2 2v14H7a2 2 0 0 1-2-2z"/></svg>记忆库</a>
+
+  <a class="nav" href="/redesign/ui_redesign_stickers.html"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="3"/><circle cx="9" cy="9" r="1.4"/><path d="M21 15l-4.5-4.5L7 20"/></svg>表情包管理</a>
+
+    </div>
+
+    <div class="grp">
+
+      <div class="gt">系统</div>
+
+      <a class="nav" href="/redesign/ui_redesign_settings.html"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/></svg>设置</a>
+
+      <a class="nav" href="/redesign/ui_redesign_software_profiles.html"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>软件档案</a>
+
+      <a class="nav on" href="/redesign/lib.html"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M5 4h11a2 2 0 0 1 2 2v14H7a2 2 0 0 1-2-2z M4 9h11 M4 13h11"/></svg>知识库</a>
+
+      <a class="nav" href="/redesign/ui_redesign_developer.html"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M4 6h16M7 12h10M10 18h4"/></svg>开发者</a>
+
+    </div>
+
+    <div class="spacer"></div>
+
+  </aside>
+
+
+
+  <main class="main">
+
+    <header class="top">
+
+      <div><div class="who">知识库教学</div><div class="sub">怎么让达妮娅更懂你正在用什么软件 / 玩什么游戏</div></div>
+
+      <div class="right"></div>
+
+    </header>
+
+    <section class="content">
+
+
+
+      <div class="help-section">
+
+        <h2 class="help-h2"><span class="num">?</span>什么是知识库</h2>
+
+        <p class="help-p">知识库让你按「软件 / 游戏」给达妮娅添加专属背景知识。写进去之后，当你把这个软件<b>全屏或最大化沉浸</b>使用时，达妮娅会<b>自动切换</b>成更懂这个场景的陪伴方式——知道该留意什么画面、用什么语气陪你。平时小窗切来切去不会打扰你。</p>
+
+        <p class="help-p">内置条目可以直接编辑（覆盖默认），用户新增的条目也可以彻底删除。内置和用户的区别用卡片右上角的小标签标注。</p>
+
+      </div>
+
+
+
+      <div class="help-section">
+
+        <h2 class="help-h2"><span class="num">1</span>主要字段怎么填</h2>
+
+        <div class="help-grid">
+
+          <div class="help-card">
+
+            <div class="help-card-k">知识内容</div>
+
+            <div class="help-card-d">按三段式写：<b>【领域关注】</b>画面元素 + 该留意什么 → <b>【建议 / 优先级】</b>多事件时先说哪个、何时闭嘴 → <b>【表达风格】</b>语气 + 禁忌。<b>短而准</b>比一大段攻略更管用，太长它反而记不住。点「+ 领域模板」可一键起手。</div>
+
+          </div>
+
+          <div class="help-card">
+
+            <div class="help-card-k">画面关注（可选）</div>
+
+            <div class="help-card-d">写它通常长什么样——界面布局、常见元素。<b>不是</b>写软件百科。达妮娅靠这个看准你屏幕，不乱编。</div>
+
+          </div>
+
+          <div class="help-card">
+
+            <div class="help-card-k">表达风格（可选）</div>
+
+            <div class="help-card-d">陪聊语气和分寸、<b>别碰</b>什么。比如「背景音乐只是氛围别评价」「别把输入法皮肤当表情包」。</div>
+
+          </div>
+
+          <div class="help-card">
+
+            <div class="help-card-k">怎么触发</div>
+
+            <div class="help-card-d">只有把该软件<b>全屏 / 最大化沉浸</b>时才会切换陪伴方式（小窗不触发，避免来回跳）；切走几秒自动恢复通用。切换时右上角弹窗会跟着真实连接状态走：<b>正在连 → 连上啦 （绿条）→ 自动收起</b>。</div>
+
+          </div>
+
+        </div>
+
+      </div>
+
+
+
+      <div class="help-section">
+
+        <h2 class="help-h2"><span class="num">2</span>陪伴模式：双工 vs 快照 + OCR</h2>
+
+        <p class="help-p">新增软件时有一个<b>陪伴模式</b>下拉，决定达妮娅怎么「看」这款软件：</p>
+
+        <div class="help-grid">
+
+          <div class="help-card">
+
+            <div class="help-card-k">双工（默认）</div>
+
+            <div class="help-card-d">真全双工：带上下文、能听声音、每秒看画面。适合<b>视频、聊天、IDE</b>这类没有固定文字、靠语义理解的场景，开口最自然。</div>
+
+          </div>
+
+          <div class="help-card">
+
+            <div class="help-card-k">快照 + OCR</div>
+
+            <div class="help-card-d">事件驱动：不靠模型自由发挥，<b>只响应你框定区域里出现的文字</b>再开口（仿三角洲游戏的 OCR 陪伴方案）。适合能稳定显示固定文字的软件——比如状态栏、进度、报错、结算横幅。配合下方「OCR 识别区块」使用。</div>
+
+          </div>
+
+        </div>
+
+        <p class="help-p" style="margin-top:10px"><b>怎么选：</b>软件界面里有没有「一出现某个词就该说话」的固定文字？有 → 选快照 + OCR（更准、不抢戏）；没有、全靠理解画面 → 选双工。</p>
+
+      </div>
+
+
+
+      <div class="help-section">
+
+        <h2 class="help-h2"><span class="num">3</span>OCR 识别区块（文字 → 触发因果）</h2>
+
+        <p class="help-p">选了「快照 + OCR」后，点「+ 添加识别区块」就能给这款软件画一块屏幕区域，并告诉达妮娅：<b>这块区域出现哪些字 → 触发什么</b>。每个区块四项：</p>
+
+        <ul class="help-tips">
+
+          <li><span class="dot">·</span><span><b>区块名</b>：随便起，便于辨认（如「状态栏」「报错框」）。</span></li>
+
+          <li><span class="dot">·</span><span><b>触发类型</b>：这次识别到后达妮娅扮演的「身份」，比如「完成 / 出错 / 建造 / 通关」，也可以填你自定义的任意中文词（英文也行）。</span></li>
+
+          <li><span class="dot">·</span><span><b>关键词</b>：逗号分隔。区块里出现其中任意词即触发（如「完成, 成功, done」）。</span></li>
+
+          <li><span class="dot">·</span><span><b>坐标 x,y,w,h</b>：归一化（0~1，相对整屏）。例如 <b>0.2,0.1,0.6,0.3</b> = 从左 20%、上 10% 起，占宽 60%、高 30% 的一块。不确定可以先填 <b>0,0,1,1</b>（整屏）再调。</span></li>
+
+        </ul>
+
+        <div class="help-example" style="margin-top:10px">
+
+          <div class="help-ex good">
+
+            <div class="help-ex-tag"> 例子（编译软件）</div>
+
+            <div class="help-ex-t">区块1：名=报错框，触发=error，关键词=error, 失败, 异常，坐标=0.3,0.7,0.4,0.25
+
+区块2：名=状态栏，触发=done，关键词=成功, BUILD SUCCESSFUL, 完成，坐标=0.2,0.05,0.6,0.08
+
+—— 编译失败达妮娅会来安慰/调侃，成功则夸一句，平时不抢戏。</div>
+
+          </div>
+
+        </div>
+
+        <p class="help-p" style="margin-top:8px;color:var(--ink-3)">同一区块 + 同一关键词 5 秒内不重复触发，避免刷屏。没框准区域、或软件改版导致文字变了，就调坐标/关键词即可，不用动代码。</p>
+
+      </div>
+
+
+
+      <div class="help-section">
+
+        <h2 class="help-h2"><span class="num">4</span>写得好 vs 写得凑合</h2>
+
+        <div class="help-example">
+
+          <div class="help-ex good">
+
+            <div class="help-ex-tag"> 推荐写法（微信）</div>
+
+            <div class="help-ex-t">【领域关注】
+
+聊天列表 + 右侧气泡对话，顶部是搜索和 + 号。留意他在回消息还是盯某条发呆。
+
+【建议 / 优先级】
+
+回消息/处理隐私时闭嘴；他主动聊才接；长时间盯一条消息发呆可关心一句。
+
+【表达风格】
+
+像身边的朋友，分寸自然；别把屏幕上的聊天内容念出来（隐私）。</div>
+
+          </div>
+
+          <div class="help-ex bad">
+
+            <div class="help-ex-tag"> 不推荐（写成了百科）</div>
+
+            <div class="help-ex-t">微信是腾讯2011年推出的即时通讯软件，月活超13亿，支持文字、语音、视频、朋友圈……
+
+—— 达妮娅看屏幕时根本用不上这段，反而占额度。</div>
+
+          </div>
+
+        </div>
+
+      </div>
+
+
+
+      <div class="help-section">
+
+        <h2 class="help-h2"><span class="num">5</span>几条小提醒</h2>
+
+        <ul class="help-tips">
+
+          <li><span class="dot">·</span><span><b>标识 ID</b> 是合并键：和内置 ID 相同会覆盖内置条目；填一个全新 ID 就新增一条用户知识库。</span></li>
+
+          <li><span class="dot">·</span><span>把写进知识库的软件<b>全屏</b>后，达妮娅会切换陪伴方式，右上角弹窗会告诉你正在换上、并跟着真实连接状态走到「连上啦」再收起。</span></li>
+
+          <li><span class="dot">·</span><span>软件 / 游戏靠<b>窗口标题里的关键词</b>匹配；常用的没被识别，在知识库「新增一条」填上对应关键词即可。</span></li>
+
+          <li><span class="dot">·</span><span>选「快照 + OCR」的软件，<b>必须同时配至少一个识别区块</b>，否则和双工没区别（不会自动开口）。</span></li>
+
+          <li><span class="dot">·</span><span>不确定怎么写，就点「新增知识库」用 <b>【领域关注】/【建议 / 优先级】/【表达风格】</b> 三段式模板起步。</span></li>
+
+        </ul>
+
+      </div>
+
+
+
+      <a class="btn primary help-back" href="/redesign/lib.html" style="text-decoration:none">← 返回知识库</a>
+
+
+
+    </section>
+
+  </main>
+
+
+
+  <!-- 右栏仅对话页保留，教学页不显示 -->
+
+</div>
+
+<script src="/redesign/app_backend.js?v=20261015f"></script>
+
+<script>
+
+  if (window.gsap && !window.matchMedia('(prefers-reduced-motion: reduce)').matches){
+
+    gsap.from('.top', { opacity: 0, y: -6, duration: .4, ease: 'power2.out' });
+
+    gsap.from('.content > *', { opacity: 0, y: 10, duration: .4, stagger: .05, delay: .1, ease: 'power3.out' });
+
+  }
+
+</script>
+
+<script src="/redesign/theme_manager.js?v=20261013d"></script>
+</body>
+
+</html>
+

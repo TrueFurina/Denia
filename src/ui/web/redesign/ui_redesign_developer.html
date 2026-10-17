@@ -1,0 +1,2724 @@
+<!DOCTYPE html>
+
+<html lang="zh-CN">
+
+<head>
+
+<meta charset="UTF-8" />
+
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+
+<meta name="stage" content="off" />
+
+<title>开发者 · 桌面伴侣</title>
+
+<link rel="stylesheet" href="/redesign/design_tokens.css?v=20261013e" />
+
+<link rel="stylesheet" href="/redesign/ui_shared.css?v=20261013e" />
+
+    <link rel="stylesheet" href="/redesign/pages.css" />
+
+    <style>
+
+      /* 开发者页：独立打开时两栏兜底（软件内由路由 .no-stage 控制，带页面类不泄漏外壳） */
+
+      .app.dev-page{ grid-template-columns: var(--side-w) minmax(0,1fr); }
+
+      .app.dev-page .stage{ display:none; }
+
+
+
+      /* ===== OCR 分块调优画布 ===== */
+
+      .ocr-wrap{ margin-top:12px; }
+
+      .ocr-toolbar{ display:flex; flex-wrap:wrap; gap:10px; align-items:center; margin-bottom:10px; }
+
+      .ocr-toolbar label{ font-size:12px; color:var(--ink-3); }
+
+      .ocr-stage{ position:relative; width:100%; aspect-ratio:16/9; background:
+
+        repeating-linear-gradient(45deg, #0e1116 0 10px, #10141b 10px 20px);
+
+        border:1px solid rgba(255,255,255,.08); border-radius:10px; overflow:hidden; }
+
+      .ocr-block{ position:absolute; box-sizing:border-box; border:2px solid #fff;
+
+        border-radius:6px; cursor:move; opacity:.9; display:flex; flex-direction:column;
+
+        overflow:hidden; min-width:14px; min-height:14px; }
+
+      .ocr-block.sel{ outline:2px solid #ffd43b; z-index:5; }
+
+      .ocr-block .bk-tag{ font-size:10px; padding:1px 5px; color:#0b0d12; font-weight:700;
+
+        white-space:nowrap; overflow:hidden; text-overflow:ellipsis; flex:none; }
+
+      .ocr-block .bk-txt{ font-size:9px; color:#fff; padding:2px 4px; line-height:1.15;
+
+        overflow:hidden; opacity:.92; background:rgba(0,0,0,.28); flex:1; }
+
+      .ocr-block .bk-rsz{ position:absolute; right:-4px; bottom:-4px; width:14px; height:14px;
+
+        background:#fff; border:1px solid #000; border-radius:3px; cursor:nwse-resize; }
+
+      .ocr-legend{ display:flex; flex-wrap:wrap; gap:12px; margin-top:8px; font-size:11px; color:var(--ink-3); }
+
+      .ocr-legend span{ display:inline-flex; align-items:center; }
+
+      .ocr-legend i{ display:inline-block; width:10px; height:10px; border-radius:3px; margin-right:4px; }
+
+      .ocr-tbl{ width:100%; border-collapse:collapse; margin-top:12px; font-size:12px; }
+
+      .ocr-tbl th,.ocr-tbl td{ border-bottom:1px solid rgba(0,0,0,.06); padding:5px 6px; text-align:left; vertical-align:middle; }
+
+      .ocr-tbl th{ color:var(--ink-3); font-weight:600; }
+
+      .ocr-tbl input{ width:60px; background:#f8f9fa; color:var(--ink); border:1px solid rgba(0,0,0,.12);
+
+        border-radius:5px; padding:3px 5px; font-size:11px; }
+
+      .ocr-tbl select{ background:#f8f9fa; color:var(--ink); border:1px solid rgba(0,0,0,.12);
+
+        border-radius:5px; padding:3px 5px; font-size:11px; }
+
+      .ocr-tbl .live{ color:var(--ink-2); font-size:11px; max-width:240px; word-break:break-all; }
+
+      .ocr-tbl .nm{ font-weight:600; }
+
+      .ocr-add{ display:flex; gap:6px; align-items:center; margin-top:10px; flex-wrap:wrap; }
+
+      .ocr-add input,.ocr-add select{ background:#f8f9fa; color:var(--ink); border:1px solid rgba(0,0,0,.12);
+
+        border-radius:5px; padding:4px 7px; font-size:12px; }
+
+      .btn.rd{ color:#ff8787; border-color:rgba(255,135,135,.4); }
+
+      /* ===== 文字锚点训练器 ===== */
+
+      .anc-list{ display:flex; flex-direction:column; gap:8px; margin-top:12px; }
+
+      .anc-row{ border:1px solid rgba(0,0,0,.08); border-radius:8px; padding:9px 10px; background:#fafbfc; }
+
+      .anc-row.hit{ border-color:#51cf66; box-shadow:0 0 0 1px #51cf66 inset; }
+
+      .anc-grid{ display:grid; grid-template-columns:120px 1fr; gap:6px 10px; align-items:center; }
+
+      .anc-grid label{ font-size:11px; color:var(--ink-3); }
+
+      .anc-grid input,.anc-grid select{ width:100%; background:#f8f9fa; color:var(--ink); border:1px solid rgba(0,0,0,.12);
+
+        border-radius:5px; padding:4px 6px; font-size:12px; box-sizing:border-box; }
+
+      .anc-hit{ font-size:11px; color:#51cf66; margin-top:4px; min-height:14px; }
+
+      .anc-actions{ display:flex; gap:8px; margin-top:12px; }
+
+      /* ===== UI 健康面板 ===== */
+
+      .uih-grid{ display:grid; grid-template-columns:repeat(2,1fr); gap:8px 14px; margin-top:10px; }
+
+      .uih-item{ display:flex; align-items:center; gap:8px; font-size:12px; }
+
+      .uih-dot{ width:9px; height:9px; border-radius:50%; flex:0 0 auto; background:#adb5bd; }
+
+      .uih-dot.ok{ background:#51cf66; }
+
+      .uih-dot.bad{ background:#ff6b6b; }
+
+      .uih-dot.warn{ background:#ffd43b; }
+
+      .uih-k{ color:var(--ink-3); }
+
+      .uih-v{ margin-left:auto; font-variant-numeric:tabular-nums; font-weight:600; }
+
+      .uih-send{ margin-top:10px; font-size:11px; color:var(--ink-3); }
+
+      .uih-dumps{ margin-top:8px; font-size:11px; display:none; }
+
+      .uih-dumps code{ display:block; word-break:break-all; color:#868e96; background:#f1f3f5;
+
+        padding:2px 5px; border-radius:4px; margin-top:2px; }
+
+      .uih-note{ margin-top:8px; font-size:11px; color:var(--ink-3); line-height:1.5; }
+
+
+
+      /* ===== 显存占比卡片（2026-09-20） ===== */
+
+      .vram-head{ display:flex; align-items:baseline; justify-content:space-between; margin:12px 0 10px; }
+
+      .vram-num{ font-variant-numeric:tabular-nums; color:var(--ink-3); font-size:12px; }
+
+      .vram-num b{ font-size:26px; font-weight:600; color:var(--ink); letter-spacing:-.5px; }
+
+      .vram-num em{ font-style:normal; }
+
+      .vram-right{ display:flex; align-items:center; gap:8px; }
+
+      .vram-pct{ font-size:15px; font-weight:600; font-variant-numeric:tabular-nums; }
+
+      .vram-bar{ display:flex; width:100%; height:26px; border-radius:8px; overflow:hidden;
+
+        background:var(--surface-2); border:1px solid var(--line); }
+
+      .vram-seg{ height:100%; transition:width .35s ease; min-width:0; }
+
+      .vram-seg.seg-model{ background:#4c8dff; }
+
+      .vram-seg.seg-other{ background:#ffa94d; }
+
+      .vram-seg.seg-free{ background:transparent; }
+
+      /* 归属不可判定：整卡已用但无法拆分模型/其它 —— 用中性灰，别再假装是"其它程序" */
+
+      .vram-seg.seg-unknown{ background:#868e96; }
+
+      .vram-legend{ display:flex; flex-wrap:wrap; gap:6px 18px; margin-top:8px; font-size:11px; color:var(--ink-3); }
+
+      .vram-legend span{ display:flex; align-items:center; gap:5px; }
+
+      .vram-legend b{ color:var(--ink); font-variant-numeric:tabular-nums; font-weight:600; }
+
+      .vram-legend .dot{ width:9px; height:9px; border-radius:2px; display:inline-block; flex:none; }
+
+      .vram-legend .dot.seg-model{ background:#4c8dff; }
+
+      .vram-legend .dot.seg-other{ background:#ffa94d; }
+
+      .vram-legend .dot.seg-free{ background:var(--line); }
+
+      .vram-pct.h-ok{ color:#51cf66; }
+
+      .vram-pct.h-tight{ color:#ffd43b; }
+
+      .vram-pct.h-over{ color:#ff6b6b; }
+
+      .badge.h-ok{ background:rgba(81,207,102,.14); color:#2f9e44; }
+
+      .badge.h-tight{ background:rgba(255,212,59,.16); color:#b8860b; }
+
+      .badge.h-over{ background:rgba(255,107,107,.16); color:#e03131; }
+
+    </style>
+
+    <!--  自 body 搬入（2026-09-29）：SPA spa.js 只注入 head 内样式，body 里的 style 标签会被丢弃  -->
+
+<style>
+
+        .ocr-tbl tr.hit{ background:rgba(54,212,153,.10); }
+
+        .ocr-tbl tr.hit td.hitcell{ color:#36d399; font-weight:700; }
+
+        .ocr-tbl td.hitcell{ color:var(--ink-3); text-align:center; }
+
+      </style></head>
+
+<body>
+
+<div class="app dev-page">
+
+    <aside class="side">
+
+    <div class="brand"><div class="wm">达妮娅</div><div class="wmsub">DESKTOP COMPANION</div></div>
+
+    <div class="grp">
+
+      <div class="gt">日常</div>
+
+      <a class="nav" href="/index.html"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>对话</a>
+
+      <a class="nav" href="/redesign/ui_redesign_daily.html"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M4 4h16v16H4z"/><path d="M8 9h8M8 13h5"/></svg>日报周报</a>
+
+    </div>
+
+    <div class="grp">
+
+      <div class="gt">伴侣</div>
+
+      <a class="nav" href="/redesign/ui_redesign_characters.html"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/></svg>角色</a>
+
+      <a class="nav" href="/redesign/ui_redesign_memory.html"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M5 4h12a2 2 0 0 1 2 2v14H7a2 2 0 0 1-2-2z"/></svg>记忆库</a>
+
+  <a class="nav" href="/redesign/ui_redesign_stickers.html"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="3"/><circle cx="9" cy="9" r="1.4"/><path d="M21 15l-4.5-4.5L7 20"/></svg>表情包管理</a>
+
+    </div>
+
+    <div class="grp">
+
+      <div class="gt">系统</div>
+
+      <a class="nav" href="/redesign/ui_redesign_settings.html"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/></svg>设置</a>
+
+      <a class="nav" href="/redesign/ui_redesign_software_profiles.html"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>软件档案</a>
+
+      <a class="nav" href="/redesign/lib.html"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M5 4h11a2 2 0 0 1 2 2v14H7a2 2 0 0 1-2-2z M4 9h11 M4 13h11"/></svg>知识库</a>
+
+      <a class="nav on" href="/redesign/ui_redesign_developer.html"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M4 6h16M7 12h10M10 18h4"/></svg>开发者</a>
+
+    </div>
+
+    <div class="spacer"></div>
+
+  </aside>
+
+
+
+  <main class="main">
+
+    <header class="top">
+
+      <div><div class="who">开发者</div><div class="sub">技术 / 未开放项收口 · 普通用户无需改动</div></div>
+
+      <div class="right"></div>
+
+    </header>
+
+    <section class="content">
+
+      <div><div class="kicker">Developer</div><div class="lead">运行与调试</div></div>
+
+
+
+      <!-- ===== 感知调试台（旧版「视觉感知调试台」收口至此） ===== -->
+
+      <article class="card dbg" id="dbgCard">
+
+        <div class="chead-row">
+
+          <div class="ct">感知调试台</div>
+
+          <div class="dbg-bar">
+
+            <span class="dbg-state" id="dbgPollState">● 连接中</span>
+
+            <span class="dbg-time" id="dbgLastRefresh">—</span>
+
+            <button class="btn sm" id="dbgRefresh" title="立即抓一次调试快照" type="button">刷新</button>
+
+            <label class="dbg-toggle" title="每秒自动刷新一次（关闭后只手动刷新）">
+
+              <input type="checkbox" id="dbgAuto" checked> 自动
+
+            </label>
+
+            <button class="btn sm" id="ocrCalBtn" title="在真实屏幕上显示 OCR 识别区域，拖动色块调整，S 保存，Esc 关闭" type="button">OCR 校准</button>
+
+            <button class="btn sm" id="chatOverlayBtn" title="游戏画面上透明显示 AI 说的话（可拖动，Esc 关闭）" type="button">悬浮层</button>
+
+          </div>
+
+        </div>
+
+
+
+        <div class="dbg-privacy" id="dbgPrivacy" hidden>隐私模式已开启：截图与音频感知已暂停，模型当前看不到画面</div>
+
+
+
+        <!-- 模型当前看到的那一帧 -->
+
+        <div class="dbg-frame" id="dbgDuplexFrame">等待数据…</div>
+
+
+
+        <div class="dbg-cols">
+
+          <div class="dbg-box"><h5>屏幕采样 · ScreenCapture</h5><div id="dbgCapture"></div></div>
+
+          <div class="dbg-box"><h5>视觉分析 · VisionAnalyzer</h5><div id="dbgAnalyzer"></div></div>
+
+          <div class="dbg-box"><h5>前台监听 · ForegroundMonitor</h5><div id="dbgForeground"></div></div>
+
+          <div class="dbg-box"><h5>主动搭话 · ProactiveStrategy</h5><div id="dbgProactive"></div></div>
+
+        </div>
+
+      </article>
+
+
+
+      <article class="card">
+
+        <div class="chead-row"><div class="ct">双工输出 · Duplex Output</div><span class="badge ro">最近 100 条 · 新→旧</span></div>
+
+        <div class="dup-out" id="dbgDuplexOut" style="margin-top:10px;max-height:320px;overflow:auto"></div>
+
+      </article>
+
+
+
+      <article class="card">
+
+        <div class="chead-row"><div class="ct">感知活动时间线</div><span class="badge ro">最近 20 条 · 新→旧</span></div>
+
+        <div class="dbg-muted" style="margin-top:6px;font-size:11px">来源：<b>视觉</b>＝VLM 看屏（芯片标注实际调用的是云端还是本地模型，云端失败会自动兜底本地）；<b>OCR</b>＝本地 RapidOCR 文字识别（<b>OCR+输入</b>＝叠加键鼠输入证据门的击杀判定）；<b>音效</b>＝本地音频相似度匹配。后两者不经过任何模型。</div>
+
+        <div class="timeline" id="dbgTimeline" style="margin-top:10px"></div>
+
+      </article>
+
+
+
+      <article class="card">
+
+        <div class="chead-row"><div class="ct">记忆库</div><span class="badge ro">只读 · 开发者</span></div>
+
+        <div class="kv" style="margin-top:10px">
+
+          <div class="k">条目数</div><div class="v">1,240 条</div>
+
+          <div class="k">语义检索</div><div class="v">开启（Top-K 8）</div>
+
+          <div class="k">长期记忆</div><div class="v">开启</div>
+
+          <div class="k">注入策略</div><div class="v">双工建立时注入 + 文本上下文软同步</div>
+
+        </div>
+
+        <p class="ghost" style="font-size:11px;color:var(--ink-3);margin-top:12px">记忆内容不可在此修改，编辑入口已收口至开发者只读视图。</p>
+
+      </article>
+
+
+
+      <article class="card">
+
+        <div class="chead-row"><div class="ct">记忆性能观测仪</div><span class="badge ro">D 步 · 分档对比 · 5s 刷新</span></div>
+
+        <div class="kv" style="margin-top:10px">
+
+          <div class="k">长期记忆总量</div><div class="v" id="mpTotal">—</div>
+
+          <div class="k">有效 / 已反悔</div><div class="v" id="mpActive">—</div>
+
+          <div class="k">来源分布</div><div class="v" id="mpSource">—</div>
+
+          <div class="k">各模型对比</div><div class="v" id="mpModels">—</div>
+
+        </div>
+
+        <div id="memProfTable" style="margin-top:12px"></div>
+
+        <p class="ghost" style="font-size:11px;color:var(--ink-3);margin-top:10px">量化各档位（cloud / local / local_duplex）的记忆注入 token、LLM 延迟、召回命中率。需主程序 GUI 运行并实际触发记忆/操作后才有数据。</p>
+
+      </article>
+
+
+
+      <article class="card">
+
+        <div class="chead-row"><div class="ct">引擎与模型</div><span class="badge ro">只读 · 开发者</span></div>
+
+        <div class="kv" style="margin-top:10px">
+
+          <!-- 这一行读后端实时值（proactive.snapshot 的 duplex_mode），不是写死的文本 -->
+
+          <div class="k">双工运行态 · 实时</div><div class="v" id="engDuplex">读取中…</div>
+
+          <div class="k">双工引擎 · 配置</div><div class="v">本地 · local_omni（own_llama_server）</div>
+
+          <div class="k">快照引擎</div><div class="v">云端 · M3（本地快照开发中）</div>
+
+          <div class="k">视觉模型</div><div class="v">minicpm-o4.5-cloud</div>
+
+          <div class="k">主动开口强度</div><div class="v">listen_prob_scale = 0.4</div>
+
+          <div class="k">云端双工容量</div><div class="v cap-unknown" id="engCap">读取中…</div>
+
+        </div>
+
+      </article>
+
+
+
+      <div class="twocol">
+
+        <article class="card" id="ocrCard">
+
+          <div class="chead-row"><div class="ct">游戏校准</div><span class="badge ro">只读 · 开发者</span></div>
+
+          <div class="kv" style="margin-top:10px">
+
+            <div class="k">OCR 触发</div><div class="v">关键时刻 + 跨域切换</div>
+
+            <div class="k">音效监听</div><div class="v">关闭（game_audio 杂乱）</div>
+
+          </div>
+
+        </article>
+
+        <article class="card">
+
+          <div class="chead-row"><div class="ct">Unity 3D 视图</div><span class="badge ro">只读 · 开发者</span></div>
+
+          <div class="kv" style="margin-top:10px">
+
+            <div class="k">状态</div><div class="v">未连接</div>
+
+            <div class="k">说明</div><div class="v">调试用 3D 场景预览</div>
+
+          </div>
+
+        </article>
+
+      </div>
+
+
+
+      <!-- ===== 显存占比（实时 · 2026-09-20） ===== -->
+
+      <article class="card" id="vramCard">
+
+        <div class="chead-row">
+
+          <div class="ct">显存占比 · 实时</div>
+
+          <div class="dbg-bar">
+
+            <span class="dbg-state" id="vramState">● 连接中</span>
+
+            <span class="dbg-time" id="vramTime">—</span>
+
+          </div>
+
+        </div>
+
+
+
+        <div class="vram-head">
+
+          <div class="vram-num"><b id="vramUsedGb">—</b><span>/ <em id="vramTotalGb">—</em> GB</span></div>
+
+          <div class="vram-right">
+
+            <span class="vram-pct" id="vramPct">—</span>
+
+            <span class="badge" id="vramHealth">—</span>
+
+          </div>
+
+        </div>
+
+
+
+        <div class="vram-bar" title="整卡显存占用：模型 / 其它程序 / 空闲">
+
+          <div class="vram-seg seg-model" id="vramSegModel"></div>
+
+          <div class="vram-seg seg-other" id="vramSegOther"></div>
+
+          <div class="vram-seg seg-free"  id="vramSegFree"></div>
+
+        </div>
+
+        <div class="vram-legend">
+
+          <span><i class="dot seg-model"></i>双工模型 <b id="vramModelGb">—</b></span>
+
+          <span><i class="dot seg-other"></i>其它程序 <b id="vramOtherGb">—</b></span>
+
+          <span><i class="dot seg-free"></i>空闲 <b id="vramFreeGb">—</b></span>
+
+        </div>
+
+
+
+        <div class="uih-grid" style="margin-top:12px">
+
+          <div class="uih-item"><span class="uih-k">目标上限</span><span class="uih-v" id="vramTarget">—</span></div>
+
+          <div class="uih-item"><span class="uih-k">距上限余量</span><span class="uih-v" id="vramHeadroom">—</span></div>
+
+          <div class="uih-item"><span class="uih-k">显存档位</span><span class="uih-v" id="vramProfile">—</span></div>
+
+          <div class="uih-item"><span class="uih-k">GPU 利用率</span><span class="uih-v" id="vramUtil">—</span></div>
+
+          <div class="uih-item"><span class="uih-k">模型进程</span><span class="uih-v" id="vramPids">—</span></div>
+
+          <div class="uih-item"><span class="uih-k">档位生效</span><span class="uih-v" id="vramProfileState">—</span></div>
+
+        </div>
+
+
+
+        <p class="ghost" id="vramAdvice" style="font-size:11px;color:var(--ink-3);margin:10px 0 0">—</p>
+
+        <p class="ghost" style="font-size:11px;color:var(--ink-3);margin:6px 0 0">
+
+          切换档位改 <code>config.yaml → proactive.duplex_vram_profile</code>（<code>stock_8k</code> / <code>safe_4k</code>），
+
+          下次本地双工挂载时生效。改动写在 Comni 的 <code>apps/server/config.json</code>，原件已备份为
+
+          <code>.vram_profile_backup.json</code>，可一键还原。
+
+        </p>
+
+      </article>
+
+
+
+      <!-- ===== UI 健康诊断（卡死自检 · 2026-09-05） ===== -->
+
+      <article class="card" id="uiHealthCard">
+
+        <div class="chead-row"><div class="ct">UI 健康诊断</div><span class="badge ro">实时 · 开发者</span></div>
+
+        <div class="uih-grid">
+
+          <div class="uih-item"><span class="uih-dot" id="uihGuiDot"></span><span class="uih-k">GUI 线程</span><span class="uih-v" id="uihGui">—</span></div>
+
+          <div class="uih-item"><span class="uih-dot" id="uihFeDot"></span><span class="uih-k">前端心跳</span><span class="uih-v" id="uihFe">—</span></div>
+
+          <div class="uih-item"><span class="uih-k">WebView2 窗</span><span class="uih-v" id="uihWv2">—</span></div>
+
+          <div class="uih-item"><span class="uih-k">运行时间</span><span class="uih-v" id="uihUp">—</span></div>
+
+        </div>
+
+        <div class="uih-send" id="uihSend">最近发送：暂无</div>
+
+        <div class="uih-dumps" id="uihDumps">
+
+          <div class="uih-k" style="margin-bottom:2px"> 检测到 GUI 冻结现场（卡死时自动抓取，发给开发者定位）：</div>
+
+          <div id="uihDumpList"></div>
+
+        </div>
+
+        <div class="uih-note">绿灯=正常。若 <b>GUI 线程</b> 变红，说明主界面消息泵卡死（弹窗/输入无响应），现场已自动保存到 <code>logs/gui_freeze_*.txt</code>。卡死后再打开本页即可看到文件列表，把这些 .txt 发给我就能定位卡死在哪一行。</div>
+
+      </article>
+
+
+
+      
+
+      <!-- ===== OCR 识别区域 · 只读参考（配置在软件档案卡片内） ===== -->
+
+      <article class="card">
+
+        <div class="chead-row">
+
+          <div class="ct">OCR 识别区域 · 只读参考</div>
+
+          <span class="badge note" id="ocrActiveBadge">全局默认</span>
+
+        </div>
+
+        <p class="ghost" style="font-size:11px;color:var(--ink-3);margin:4px 0 0">本页只读，实时显示 OCR 实际扫到的文字与各区块命中情况。要改区域 / 玩家名 / 模式，请去「软件档案」卡片里配置。</p>
+
+
+
+        <!-- 规则命中诊断 -->
+
+        <div style="display:flex;flex-wrap:wrap;gap:6px 16px;background:var(--surface-2);border:1px solid var(--line);border-radius:10px;padding:10px 12px;margin:8px 0 6px;">
+
+          <div style="display:flex;gap:6px;font-size:12px;align-items:baseline;"><span style="color:var(--ink-3);min-width:60px;">前台进程</span><b id="ohExe" style="color:var(--ink);font-weight:600;">—</b></div>
+
+          <div style="display:flex;gap:6px;font-size:12px;align-items:baseline;"><span style="color:var(--ink-3);min-width:60px;">命中档案</span><b id="ohProfile" style="color:var(--ink);font-weight:600;">—</b></div>
+
+          <div style="display:flex;gap:6px;font-size:12px;align-items:baseline;"><span style="color:var(--ink-3);min-width:60px;">模式决策</span><b id="ohMode" style="color:var(--ink);font-weight:600;">—</b></div>
+
+          <div style="display:flex;gap:6px;font-size:12px;align-items:baseline;"><span style="color:var(--ink-3);min-width:60px;">是否高性能</span><b id="ohHigh" style="color:var(--ink);font-weight:600;">—</b></div>
+
+          <div style="display:flex;gap:6px;font-size:12px;align-items:baseline;"><span style="color:var(--ink-3);min-width:60px;">OCR 命中</span><b id="ohHit" style="color:var(--ink);font-weight:600;">—</b></div>
+
+        </div>
+
+        <p class="ghost" id="ocrActiveHint" style="font-size:11px;color:var(--accent-1);margin:4px 0 0;display:none"></p>
+
+
+
+        <div class="ocr-wrap">
+
+          <div class="ocr-stage" id="ocrStage">
+
+            <div id="ocrStageEmpty" style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:var(--ink-3);font-size:12px">等待 OCR 数据…（需主程序运行）</div>
+
+          </div>
+
+          <div class="ocr-legend" id="ocrLegend"></div>
+
+          <table class="ocr-tbl" id="ocrTbl"></table>
+
+        </div>
+
+      </article>
+
+
+
+      <!-- ===== 文字锚点训练器 ===== -->
+
+      <article class="card">
+
+        <div class="chead-row">
+
+          <div class="ct">文字锚点训练器</div>
+
+          <span class="badge note">命中即确定页面状态</span>
+
+        </div>
+
+        <p class="ghost" style="font-size:11px;color:var(--ink-3);margin:4px 0 0">规则 = 某区域出现某关键词 → 判定页面处于某状态（去重 / 调试用）。当前实时命中的规则会高亮绿框。改完点「保存全部锚点」热生效。</p>
+
+        <div class="anc-list" id="ancList"></div>
+
+        <div class="anc-actions">
+
+          <button class="btn sm" id="ancAddBtn" type="button">＋ 新增锚点规则</button>
+
+          <button class="btn sm on" id="ancSaveBtn" type="button">保存全部锚点</button>
+
+        </div>
+
+      </article>
+
+
+
+      <article class="card">
+
+        <div class="chead-row"><div class="ct">课程记录</div><span class="badge note">数据</span></div>
+
+        <div class="kv" style="margin-top:10px">
+
+          <div class="k">本周学习</div><div class="v">12 节 · 剪辑技巧 / 烹饪 / 游戏攻略</div>
+
+          <div class="k">来源</div><div class="v">屏幕活动自动归类</div>
+
+        </div>
+
+      </article>
+
+
+
+      <!-- ===== 音频自测台（2026-10-17 升级：设备下拉 + 实时律动条 + 指定设备放音） ===== -->
+
+      <article class="card">
+
+        <div class="chead-row"><div class="ct">音频自测台</div><span class="badge note">麦克风 / 扬声器 · 逐设备验证</span></div>
+
+        <p class="ghost" style="font-size:11px;color:var(--ink-3);margin:4px 0 0">
+
+          用来把「她听不见我 / 我听不见她」查死：<b>① 麦克风</b>选一路 → 点开始 → 对着说话，
+          看律动条是否跳动（跳动=这一路真的在采你的人声）；<b>② 扬声器</b>选一路 → 点播放，
+          测试音会从<b>那一路设备</b>出来（没响就是那一路在你机器上不出声）。
+          两处都会回显后端**实际解析到的索引 / host API**，所以"选了 A 却响在 B"也一眼可见。
+
+        </p>
+
+        <div class="kv" style="margin-top:10px">
+
+          <div class="k">麦克风设备</div>
+
+          <div class="v"><select id="devMicSel" class="mdl-drv" style="min-width:280px"><option value="default">系统默认设备</option></select>
+
+            <button class="btn sm" type="button" id="devMicStart">开始检测</button>
+
+            <button class="btn sm" type="button" id="devMicStop">停止</button></div>
+
+          <div class="k">说话电平</div>
+
+          <div class="v">
+
+            <div style="height:12px;border-radius:7px;background:var(--line);overflow:hidden;max-width:420px">
+
+              <div id="devMicBar" style="height:100%;width:0%;background:linear-gradient(90deg,#3ad07a,#ffd166,#ff6b6b);transition:width .08s linear"></div>
+
+            </div>
+
+            <span class="ghost" id="devMicNum" style="font-size:11px;margin-left:8px">rms 0.00000</span>
+
+          </div>
+
+          <div class="k">扬声器设备</div>
+
+          <div class="v"><select id="devSpkSel" class="mdl-drv" style="min-width:280px"><option value="default">系统默认设备</option></select>
+
+            <button class="btn sm" type="button" id="devSpkPlay">播放测试音</button>
+
+            <span class="ghost" style="font-size:11px;margin-left:6px">660Hz · 1 秒</span></div>
+
+        </div>
+
+        <p class="ghost" id="devTestResult" style="font-size:11px;color:var(--ink-3);margin:10px 0 0"></p>
+
+      </article>
+
+    </section>
+
+  </main>
+
+</div>
+
+
+
+<script src="/redesign/gsap.min.js"></script>
+
+<script type="module" src="/redesign/morph_icons.js"></script>
+
+  <script src="/redesign/app_backend.js?v=20261015f"></script>
+
+
+
+  <script>
+
+
+
+const root = document.documentElement;
+
+const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+/* 主题色 / 深浅模式由 app_backend.js?v=20261015f 的 window.Theme 统一处理（首屏前执行，并会清理自定义色残留的内联变量），此处不再重复实现。 */
+
+
+
+/* ============================================================
+
+   感知调试台：1s 轮询 get_vision_debug
+
+   展示「模型当前看到的那一帧」+ 各感知模块的运行概述 + 活动时间线
+
+   ============================================================ */
+
+function esc(s){ return String(s==null?'':s).replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m])); }
+
+function fmtClock(ts){ if(!ts) return '—'; try{ return new Date(ts*1000).toLocaleTimeString('zh-CN',{hour12:false}); }catch(e){ return '—'; } }
+
+function fmtAgo(ts, now){ if(!ts) return '—'; const d = Math.max(0, Math.round((now||Date.now()/1000) - ts)); return d < 60 ? d + 's 前' : Math.round(d/60) + 'm 前'; }
+
+function kv(k, v, cls){ return '<div class="dbg-kv"><span class="k">'+esc(k)+'</span><span class="v '+(cls||'')+'">'+v+'</span></div>'; }
+
+function onOff(b){ return b ? '<span class="dbg-ok">启用</span>' : '<span class="dbg-err">已禁用</span>'; }
+
+
+
+const dbgRoot    = document.getElementById('dbgCard');
+
+const elFrame    = document.getElementById('dbgDuplexFrame');
+
+const elCapture  = document.getElementById('dbgCapture');
+
+const elAnalyzer = document.getElementById('dbgAnalyzer');
+
+const elFg       = document.getElementById('dbgForeground');
+
+const elPro      = document.getElementById('dbgProactive');
+
+const elTl       = document.getElementById('dbgTimeline');
+
+const elState    = document.getElementById('dbgPollState');
+
+const elTime     = document.getElementById('dbgLastRefresh');
+
+const elPrivacy  = document.getElementById('dbgPrivacy');
+
+const elAuto     = document.getElementById('dbgAuto');
+
+const elDupOut   = document.getElementById('dbgDuplexOut');
+
+const elOcrBtn   = document.getElementById('ocrCalBtn');
+
+const elOvBtn    = document.getElementById('chatOverlayBtn');
+
+
+
+/* ---- 模型看到的那一帧 ---- */
+
+function duplexModeText(m){
+
+  if (m === 'realtime' || m === 'cloud') return '云端真全双工';
+
+  if (m === 'local_omni') return '本地真全双工（Comni 本地模型）';
+
+  if (m === 'local') return '本地真全双工（本地 AI 模型）';
+
+  if (m === true || m === 'snapshot') return '快照双工';
+
+  return '规则引信（未启用双工）';
+
+}
+
+function renderFrame(d){
+
+  if (!elFrame) return;
+
+  const p = d.proactive || {};
+
+  if (p.duplex_frame_b64){
+
+    const native = p.duplex_native_audio ? '原生语音' : '本地 TTS';
+
+    const meta = '模式 ' + esc(duplexModeText(p.duplex_mode)) +
+
+                 ' · 状态 ' + esc(p.duplex_status || '—') +
+
+                 ' · 语音 ' + native +
+
+                 ' · ' + (p.duplex_frame_ago != null ? p.duplex_frame_ago + 's 前' : '—');
+
+    const think = p.duplex_report_last
+
+      ? '<div class="dbg-think"><b>模型理解</b>' + esc(p.duplex_report_last) +
+
+        (p.duplex_report_ago != null ? '<em>' + p.duplex_report_ago + 's 前</em>' : '') + '</div>'
+
+      : '<div class="dbg-think muted"><b>模型理解</b>尚未收到观察汇报（模型还没发，属正常）</div>';
+
+    elFrame.innerHTML =
+
+      '<div class="dbg-shot"><img src="data:image/jpeg;base64,' + p.duplex_frame_b64 + '" alt="模型当前看到的画面" title="这就是推给模型看的那一帧"></div>' +
+
+      '<div class="dbg-meta">' + meta + '</div>' + think;
+
+  } else {
+
+    elFrame.innerHTML = '<div class="dbg-empty"><b>当前没有推流画面</b><br>' +
+
+      '<span class="dbg-mono">duplex_mode = ' + esc(String(p.duplex_mode)) + '</span>' +
+
+      (p.duplex_status ? '<br><span class="dbg-mono">状态：' + esc(p.duplex_status) + '</span>' : '') +
+
+      '<div class="dbg-why">' + esc(duplexWhy(d, p)) + '</div></div>';
+
+  }
+
+}
+
+
+
+/* 没有画面时说明「最可能是什么原因」，免得把正常状态误读成双工坏了。
+
+   判定依据：proactive._run_realtime_duplex() 的分支逻辑。 */
+
+function duplexWhy(d, p){
+
+  if (d.privacy_mode)
+
+    return '隐私模式已开启 → 抓屏被主动跳过，恢复后自动继续（不是故障）。';
+
+  const m = p.duplex_mode;
+
+  if (m === false || m === 'off')
+
+    return '双工已关闭（duplex_mode = off）→ 走规则引信模式，不推画面。';
+
+  if (m === true || m === 'snapshot')
+
+    return '当前是「快照双工」：按节奏截图送视觉分析，不做实时推流 —— 这里持续无画面是正常的。';
+
+  if (m === 'realtime' || m === 'cloud')
+
+    return '云端双工客户端未连接/未启动，或还没抓到第一帧。';
+
+  if (m === 'local' || m === 'local_omni' || m === 'auto')
+
+    return '本地双工还没抓到第一帧。常见三种原因：① 启动检测发现有游戏进程或大 GPU 负载在跑，'
+
+         + '会自动跳过本地双工直接切到云端（日志里有「启动检测: 游戏/大负载已在运行」）；'
+
+         + '② 引擎仍在加载/未就绪；③ 主动搭话被禁用。'
+
+         + '下方「双工运行态 · 实时」显示的就是后端此刻真正在跑的模式。';
+
+  return '未识别的双工模式。';
+
+}
+
+
+
+/* 引擎卡：显示后端此刻真正在跑的模式（不是配置里的字面量） */
+
+function renderEngine(d){
+
+  const el = document.getElementById('engDuplex');
+
+  if (!el) return;
+
+  const p = d.proactive || {};
+
+  const ago = p.duplex_frame_ago;
+
+  const snapMode = (p.duplex_mode === true || p.duplex_mode === 'snapshot');
+
+  const live = (ago != null && ago <= 6) ? '<span class="dbg-ok">画面活跃</span>'
+
+             : snapMode ? '<span class="dbg-muted">快照模式（不推流）</span>'
+
+             : '<span class="dbg-warn">无画面</span>';
+
+  el.innerHTML = esc(duplexModeText(p.duplex_mode)) + ' · ' + live +
+
+    (ago != null ? ' <span class="dbg-muted">（最近一帧 ' + ago + 's 前）</span>' : '');
+
+  }
+
+
+
+  /* 云端双工容量徽标（X/14 空闲 · 已满则排队），15s 轮询 */
+
+  function renderDevCap(){
+
+    const el = document.getElementById('engCap');
+
+    if (!el) return;
+
+    if (typeof Backend.getCapacity !== 'function'){ el.textContent = '容量未知 · 后端未暴露'; el.className = 'v cap-unknown'; return; }
+
+    Backend.getCapacity().then(c => { const b = Backend.capacityBadge(c); el.textContent = b.text; el.className = 'v ' + b.cls; });
+
+  }
+
+  renderDevCap();
+
+  setInterval(renderDevCap, 15000);
+
+
+
+/* ---- 屏幕采样 ---- */
+
+function renderCapture(d){
+
+  if (!elCapture) return;
+
+  const c = d.capture;
+
+  if (!c){ elCapture.innerHTML = '<div class="dbg-err">' + esc(d.capture_error || '模块未注入') + '</div>'; return; }
+
+  const pct = c.static_streak_s > 0 ? Math.min(100, Math.round((c.static_seconds / c.static_streak_s) * 100)) : 0;
+
+  elCapture.innerHTML =
+
+    kv('运行状态', c.enabled ? '<span class="dbg-ok">采样中</span>' : '<span class="dbg-err">已禁用</span>') +
+
+    kv('采样次数', c.sample_count + '（变化 ' + c.change_count + ' / 送分析 ' + c.analyze_count + '）') +
+
+    kv('基础间隔', c.interval_s + 's ±' + Math.round((c.jitter||0)*100) + '%（当前 ' + c.last_interval + 's）') +
+
+    kv('上次采样', fmtClock(c.last_ts) + ' · ' + fmtAgo(c.last_ts, d.ts)) +
+
+    kv('静态画面', c.static_seconds + 's / ' + c.static_streak_s + 's', pct >= 100 ? 'dbg-warn' : '') +
+
+    '<div class="dbg-bar-wrap"><div class="dbg-bar-fill" style="width:' + pct + '%"></div></div>';
+
+}
+
+
+
+/* ---- 视觉分析（模型识别屏幕的概述） ---- */
+
+function renderAnalyzer(d){
+
+  if (!elAnalyzer) return;
+
+  const a = d.analyzer;
+
+  if (!a){ elAnalyzer.innerHTML = '<div class="dbg-err">' + esc(d.analyzer_error || '模块未注入') + '</div>'; return; }
+
+  const failCls = a.fail_count >= a.fail_limit ? 'dbg-err' : (a.fail_count > 0 ? 'dbg-warn' : '');
+
+  /* 看屏链路来源：这条管线由哪路 VLM 实际产出（云端优先、本地兜底，兜底后
+     last_used 才是真相）。用户要求"把感知活动写清楚是来源"——这里先给总链路。 */
+  const vs = a.vision_source || null;
+  let srcVal;
+  if (!vs){
+    srcVal = '<span class="dbg-muted">未知（后端未上报）</span>';
+  } else if (!vs.label && !vs.model){
+    srcVal = '<span class="dbg-muted">未绑定视觉模型</span>';
+  } else {
+    const where = vs.local === false ? '云端 VLM' : (vs.local === true ? '本地 VLM' : 'VLM');
+    srcVal = '<span class="' + (vs.local === false ? 'dbg-warn' : (vs.local === true ? 'dbg-ok' : '')) + '">'
+      + esc(where) + '</span> · ' + esc(vs.label || vs.model || '—');
+  }
+
+  elAnalyzer.innerHTML =
+
+    kv('看屏链路', srcVal) +
+
+    kv('LLM 视觉', a.vision_available ? '<span class="dbg-ok">可用</span>' : '<span class="dbg-err">不可用</span>') +
+
+    kv('分析器', a.disabled ? '<span class="dbg-err">已禁用（连续失败）</span>' : '<span class="dbg-ok">正常</span>') +
+
+    kv('调用次数', a.call_count + ' 次（去重跳过 ' + (a.dedup_skip||0) + ' 次）') +
+
+    kv('上次调用', a.last_call_ts ? fmtClock(a.last_call_ts) + ' · ' + fmtAgo(a.last_call_ts, d.ts) : '从未调用') +
+
+    kv('失败', a.fail_count + ' / ' + a.fail_limit, failCls);
+
+
+
+  /* 最近屏幕识别：模型看完画面给出的概述 */
+
+  const recent = (a.recent || []).slice().reverse().slice(0, 5);
+
+  const list = recent.map(it =>
+
+    '<div class="dbg-line"><span class="dbg-tag">' + esc(it.app_hint || '视觉') + '</span>' +
+
+    '<span class="dbg-txt">' + esc(it.summary || '') + '</span>' +
+
+    '<span class="dbg-ago">' + fmtAgo(it.ts, d.ts) + '</span></div>').join('');
+
+  elAnalyzer.innerHTML += '<div class="dbg-sub">最近识别（' + (a.recent||[]).length + ' 条）</div>' +
+
+    (list || '<div class="dbg-muted">暂无记录（画面无变化或视觉未触发）</div>');
+
+}
+
+
+
+/* ---- 前台监听 ---- */
+
+function renderForeground(d){
+
+  if (!elFg) return;
+
+  const f = d.foreground;
+
+  if (!f){ elFg.innerHTML = '<div class="dbg-err">' + esc(d.foreground_error || '模块未注入') + '</div>'; return; }
+
+  elFg.innerHTML =
+
+    kv('监听', onOff(f.enabled)) +
+
+    kv('前台窗口', esc((f.last_title || '—').slice(0, 26))) +
+
+    /* last_hint 为空不是故障：hint_from_title() 用关键词匹配窗口标题，
+
+       配不上就返回空串（如桌面、自家窗口、未收录的软件）。用中性色显示，别当错误。 */
+
+    kv('前台类型', f.last_hint
+
+        ? '<span class="' + (f.last_hint === 'game' ? 'dbg-ok' : '') + '">' + esc(f.last_hint) + '</span>'
+
+        : '<span class="dbg-muted">未分类（标题未命中关键词）</span>') +
+
+    kv('系统空闲', f.idle_seconds != null ? f.idle_seconds + 's' : '—') +
+
+    kv('切换次数', (f.switch_count || 0) + ' 次');
+
+}
+
+
+
+/* ---- 主动搭话 ---- */
+
+function renderProactive(d){
+
+  if (!elPro) return;
+
+  const p = d.proactive;
+
+  if (!p){ elPro.innerHTML = '<div class="dbg-err">' + esc(d.proactive_error || '模块未注入') + '</div>'; return; }
+
+  elPro.innerHTML =
+
+    kv('策略', onOff(p.enabled)) +
+
+    kv('状态机', esc(p.state || '—') + ' · 距上次互动 ' + p.last_proactive_ago + 's') +
+
+    kv('累计缓冲', p.buffer_len + ' / ' + p.batch_max_entries + ' 条') +
+
+    kv('下次批量', p.next_batch_in + 's 后（每 ' + p.batch_interval_s + 's）') +
+
+    kv('今日互动', p.count_today + ' 次' + (p.max_per_day > 0 ? ' / 上限 ' + p.max_per_day : '（不限）')) +
+
+    kv('游戏沉浸', p.game_immersive ? '<span class="dbg-ok">开启</span>' : '关闭');
+
+}
+
+
+
+/* ---- 感知活动时间线（视觉 + OCR + 音效 合并倒序） ---- */
+
+/* 来源芯片：视觉事件标"云端/本地 VLM"（哪路模型真看了屏），OCR/音效是本地
+   感知算法（RapidOCR / 音频相似度匹配），不经过任何 LLM，统一标"本地"。 */
+
+function visSrcChip(it, curSrc){
+
+  // 逐事件 source 戳优先（后端 _recent 已带）；旧事件/缺字段回退当前链路
+  const s = it.source || curSrc || null;
+
+  if (!s) return { text: '视觉', cls: '' };
+
+  if (s.local === false) return { text: '云端 VLM', cls: 'src-cloud' };
+
+  if (s.local === true) return { text: '本地 VLM', cls: 'src-local' };
+
+  return { text: '视觉', cls: '' };
+
+}
+
+function renderTimeline(d){
+
+  if (!elTl) return;
+
+  const items = [];
+
+  const curSrc = d.analyzer && d.analyzer.vision_source;
+
+  (d.analyzer && d.analyzer.recent || []).forEach(it =>
+
+    items.push({ ts: it.ts, summary: it.summary, tag: '视觉', src: visSrcChip(it, curSrc) }));
+
+  /* OCR 真实来源值：ocr（纯文字）/ ocr+input（OCR + 键鼠输入证据门，击杀判定）——
+     两者都是本地 RapidOCR，没有"ocr+vision"（v2 起视觉不再参与时刻裁决，
+     旧前端那个分支是死代码，标签永远显示"OCR"，顺手修正）。 */
+
+  (d.ocr && d.ocr.recent || []).forEach(it => items.push({ ts: it.ts, summary: it.summary,
+
+    tag: it.source === 'ocr+input' ? 'OCR+输入' : 'OCR', src: { text: '本地', cls: 'src-local' } }));
+
+  (d.audio && d.audio.recent || []).forEach(it =>
+
+    items.push({ ts: it.ts, summary: it.summary, tag: '音效', src: { text: '本地', cls: 'src-local' } }));
+
+  items.sort((a, b) => (b.ts||0) - (a.ts||0));
+
+  if (!items.length){ elTl.innerHTML = '<div class="dbg-muted">暂无感知活动（画面无变化或视觉未触发）</div>'; return; }
+
+  elTl.innerHTML = items.slice(0, 20).map(it =>
+
+    '<div class="tl-item"><div class="tl-t">' + fmtClock(it.ts) + '</div>' +
+
+    '<div class="tl-x">' + esc(it.summary || '') +
+
+    '<span class="dbg-tag">' + esc(it.tag) + '</span>' +
+
+    (it.src ? '<span class="dbg-tag ' + (it.src.cls || '') + '">' + esc(it.src.text) + '</span>' : '') +
+
+    '</div></div>').join('');
+
+}
+
+
+
+function renderDuplexOut(d){
+
+  if (!elDupOut) return;
+
+  const list = (d.duplex_output || []).slice().reverse();  // 新→旧
+
+  if (!list.length){
+
+    elDupOut.innerHTML = '<div class="dbg-muted">暂无双工输出（双工开口后会自动出现在此）</div>';
+
+    return;
+
+  }
+
+  elDupOut.innerHTML = list.map(it => {
+
+    // 第一行＝实际播出的（截断后）；第二行＝未裁剪的原句（仅本句真被长度卡口截断时才有）
+
+    const raw = (it.raw && it.raw !== it.text) ? String(it.raw) : '';
+
+    return '<div class="dbg-line"><span style="flex:none;font-family:var(--font-mono);font-size:10px;color:var(--ink-3)">' +
+
+      fmtClock(it.ts) + '</span><span class="dbg-txt">' + esc(it.text) + '</span></div>' +
+
+      (raw ? '<div class="dbg-line" style="padding-left:52px;opacity:.55;margin-top:-2px">' +
+
+        '<span class="dbg-txt" style="font-size:11px;line-height:1.5;white-space:normal;word-break:break-all">' +
+
+        '原句：' + esc(raw) + '</span></div>' : '');
+
+  }).join('');
+
+}
+
+
+
+function renderDebug(d){
+
+  if (elPrivacy) elPrivacy.hidden = !d.privacy_mode;
+
+  renderFrame(d); renderCapture(d); renderAnalyzer(d);
+
+  renderForeground(d); renderProactive(d); renderTimeline(d); renderEngine(d); renderDuplexOut(d);
+
+  if (elOcrBtn) elOcrBtn.textContent = d.ocr_calibration_open ? '校准中…（Esc）' : 'OCR 校准';
+
+  if (elOvBtn)  elOvBtn.classList.toggle('on', !!d.chat_overlay_open);
+
+  renderOcrPanel(d.ocr);   // OCR 分块调优 + 锚点训练器（开发者页）
+
+}
+
+
+
+/* ============================================================
+
+   显存占比：1s 轮询 get_vram_live
+
+   展示「整卡占用 / 双工模型 / 其它程序 / 空闲」四段，并按目标上限判健康档。
+
+    元素引用用惰性 getter（2026-09-20）：本脚本块很长，块内顶层
+
+   任何一处抛异常都会让 const vramEls 停在 TDZ，导致 renderVram 报
+
+   "Cannot access 'vramEls' before initialization"。惰性解析可在 DOM 就绪后
+
+   随时补齐，且不受初始化顺序影响。
+
+   ============================================================ */
+
+const _vramId = {
+
+  state: 'vramState', time: 'vramTime', used: 'vramUsedGb', total: 'vramTotalGb',
+
+  pct: 'vramPct', health: 'vramHealth', segM: 'vramSegModel', segO: 'vramSegOther',
+
+  segF: 'vramSegFree', mGb: 'vramModelGb', oGb: 'vramOtherGb', fGb: 'vramFreeGb',
+
+  target: 'vramTarget', head: 'vramHeadroom', prof: 'vramProfile', util: 'vramUtil',
+
+  pids: 'vramPids', pstate: 'vramProfileState', advice: 'vramAdvice'
+
+};
+
+const _vramCache = {};
+
+const vramEls = {};
+
+for (const _k in _vramId) {
+
+  Object.defineProperty(vramEls, _k, {
+
+    get() {
+
+      const el = _vramCache[_k];
+
+      if (el && el.isConnected) return el;
+
+      const found = document.getElementById(_vramId[_k]);
+
+      if (found) _vramCache[_k] = found;
+
+      return found || null;
+
+    },
+
+    enumerable: true
+
+  });
+
+}
+
+function setTxt(el, v){ if (el) el.textContent = v; }
+
+function setW(el, pct){ if (el) el.style.width = Math.max(0, Math.min(100, pct)) + '%'; }
+
+// 用整卡总量做分母，保证三段（模型/其它/空闲）加起来正好 100%
+
+function segPct(partGb, totalGb){ return totalGb > 0 ? (partGb / totalGb * 100) : 0; }
+
+
+
+const HEALTH_TEXT = { ok: '余量充足', tight: '偏紧', over: '超预算' };
+
+// 外层包一层保护：任何字段解析异常都不该让整张卡片（乃至整个轮询）挂掉。
+
+function renderVram(v){
+
+  try { _renderVram(v); }
+
+  catch (e) {
+
+    try {
+
+      setTxt(vramEls.advice, '显存卡片渲染异常：' + (e && e.message ? e.message : e));
+
+      if (vramEls.state){ vramEls.state.textContent = '● 渲染异常'; vramEls.state.className = 'dbg-state off'; }
+
+    } catch (_) { /* 彻底失败也不抛，避免打断轮询 */ }
+
+  }
+
+}
+
+function _renderVram(v){
+
+  const card = document.getElementById('vramCard');
+
+  if (!card) return;
+
+  if (!v || !v.success){
+
+    if (vramEls.state){ vramEls.state.textContent = '● 不可用'; vramEls.state.className = 'dbg-state off'; }
+
+    setTxt(vramEls.advice, (v && v.reason) ? v.reason : '显存探测不可用（非 NVIDIA 或无驱动）。');
+
+    return;
+
+  }
+
+  const g = v.gpu || {}, m = v.model || {}, o = v.others || {}, b = v.budget || {}, pf = v.profile || {};
+
+  const totalGb = g.total_gb || 0;
+
+  const modelGb = m.used_gb || 0;
+
+  const otherGb = o.used_gb || 0;
+
+  const freeGb  = g.free_gb || 0;
+
+  // 归属不可判定（模型在跑但读不到 per-PID 显存）时，不假装"模型 0 / 其它全占"，
+
+  // 否则就是用户报的那个 bug 的表现形态。
+
+  const indeterm = !!(m.indeterminate || o.indeterminate);
+
+
+
+  setTxt(vramEls.used,  g.used_gb != null ? g.used_gb.toFixed(2) : '—');
+
+  setTxt(vramEls.total, totalGb ? totalGb.toFixed(1) : '—');
+
+  setTxt(vramEls.pct,   (g.mem_pct != null ? g.mem_pct.toFixed(1) : '—') + '%');
+
+  setTxt(vramEls.mGb,   indeterm ? '归属未知' : modelGb.toFixed(2) + ' GB');
+
+  setTxt(vramEls.oGb,   indeterm ? '归属未知' : otherGb.toFixed(2) + ' GB');
+
+  setTxt(vramEls.fGb,   freeGb.toFixed(2) + ' GB');
+
+  setTxt(vramEls.util,  (g.util_pct != null ? Math.round(g.util_pct) : '—') + '%');
+
+
+
+  if (indeterm){
+
+    // 三段条退化为"整卡已用 + 空闲"两段，避免把未知部分涂成"其它程序"
+
+    setW(vramEls.segM, 0);
+
+    setW(vramEls.segO, segPct(g.used_gb || 0, totalGb));
+
+    setW(vramEls.segF, segPct(freeGb, totalGb));
+
+    if (vramEls.segO) { vramEls.segO.className = 'vram-seg seg-unknown'; }
+
+  } else {
+
+    setW(vramEls.segM, segPct(modelGb, totalGb));
+
+    setW(vramEls.segO, segPct(otherGb, totalGb));
+
+    setW(vramEls.segF, segPct(freeGb,  totalGb));
+
+    if (vramEls.segO) { vramEls.segO.className = 'vram-seg seg-other'; }
+
+  }
+
+
+
+  // 健康档：配色 + 文案
+
+  const h = b.health || 'ok';
+
+  if (vramEls.pct){ vramEls.pct.className = 'vram-pct h-' + h; }
+
+  if (vramEls.health){ vramEls.health.className = 'badge h-' + h; setTxt(vramEls.health, HEALTH_TEXT[h] || '—'); }
+
+
+
+  setTxt(vramEls.target, b.target_gb != null ? b.target_gb.toFixed(1) + ' GB' : '—');
+
+  if (vramEls.head){
+
+    const hg = b.headroom_gb;
+
+    setTxt(vramEls.head, hg == null ? '—' : ((hg >= 0 ? '' : '超 ') + Math.abs(hg).toFixed(2) + ' GB'));
+
+    vramEls.head.style.color = (h === 'over') ? '#ff6b6b' : (h === 'tight' ? '#ffd43b' : 'var(--ink)');
+
+  }
+
+
+
+  // 档位名 + 上次应用结果
+
+  const PROF_LABEL = { stock_8k: '原样 · 8K 上下文', safe_4k: '省显存 · 4K 上下文', safe_4k_novision: '省显存 · 4K + 视觉降级' };
+
+  setTxt(vramEls.prof, PROF_LABEL[pf.profile] || pf.profile || '—');
+
+  const lr = pf.last_result || {};
+
+  if (vramEls.pstate){
+
+    if (!pf.profile){ setTxt(vramEls.pstate, '引擎未挂载'); vramEls.pstate.style.color = 'var(--ink-3)'; }
+
+    else if (lr.ok){
+
+      const ch = lr.changes || {};
+
+      const keys = Object.keys(ch);
+
+      setTxt(vramEls.pstate, keys.length ? ('已应用 ' + keys.length + ' 项') : '无需改动');
+
+      vramEls.pstate.style.color = '#51cf66';
+
+    } else {
+
+      setTxt(vramEls.pstate, '未应用');
+
+      vramEls.pstate.style.color = '#ffd43b';
+
+    }
+
+  }
+
+
+
+  if (vramEls.pids){
+
+    const pids = m.pids || [];
+
+    setTxt(vramEls.pids, pids.length ? (pids.length + ' 个 · ' + pids.slice(0,3).join(',')) : '未挂载');
+
+  }
+
+
+
+  // 建议：优先用后端给的 advice；若档位未生效或引擎没挂载，补一句更直白的话
+
+  let adv = b.advice || '';
+
+  if (indeterm){
+
+    adv = '模型进程在运行，但本机取不到它的 per-PID 显存，因此「模型 / 其它程序」暂无法拆分归属'
+
+        + '（图中灰色段为整卡已用合计）。' + (adv ? '　' + adv : '');
+
+  } else if (o.note){
+
+    adv = o.note + (adv ? '　' + adv : '');
+
+  }
+
+  if (pf.profile && lr.ok === false && lr.reason){
+
+    adv += '　档位未生效原因：' + lr.reason;
+
+  }
+
+  setTxt(vramEls.advice, adv || '—');
+
+  if (vramEls.advice){
+
+    vramEls.advice.style.color = (h === 'over' || indeterm) ? (h === 'over' ? '#ff6b6b' : '#ffd43b') : 'var(--ink-3)';
+
+  }
+
+  if (vramEls.state){ vramEls.state.textContent = '● 轮询中'; vramEls.state.className = 'dbg-state on'; }
+
+  if (vramEls.time) setTxt(vramEls.time, new Date().toLocaleTimeString('zh-CN', { hour12: false }));
+
+}
+
+
+
+/* ---- 轮询：页面被切走（DOM 脱离）时自动停止，避免旧页回调继续跑 ---- */
+
+let dbgTimer = null;
+
+function dbgStop(){ if (dbgTimer){ clearInterval(dbgTimer); dbgTimer = null; } }
+
+function dbgStart(){ dbgStop(); dbgTimer = setInterval(dbgTick, 1000); }
+
+function dbgAlive(){ return !!dbgRoot && document.body.contains(dbgRoot); }
+
+
+
+async function dbgTick(){
+
+  if (!dbgAlive()){ dbgStop(); return; }
+
+  const d = await Backend.getVisionDebug();
+
+  if (!dbgAlive()){ dbgStop(); return; }
+
+  if (elTime) elTime.textContent = new Date().toLocaleTimeString('zh-CN', { hour12: false });
+
+  if (d && d.success){
+
+    if (elState){ elState.textContent = '● 轮询中'; elState.className = 'dbg-state on'; }
+
+    // 先确定当前前台快照档案（规则命中 + 标注），再渲染（renderDebug 内部会调用 renderOcrPanel）
+
+    if (d.game_lock){ gameLockDiag = d.game_lock; }
+
+    activeOcrProfile = (gameLockDiag && gameLockDiag.matched_profile) ? gameLockDiag.matched_profile : null;
+
+    renderRuleHits(gameLockDiag);
+
+    renderDebug(d);
+
+    // UI 健康面板：独立探测，不依赖 getVisionDebug 是否成功（卡死时回退信息仍有价值）
+
+    try { const h = await Backend.getUiHealth(); if (h && h.success) renderUiHealth(h); } catch(e){}
+
+    // 显存占比：独立探测，与感知调试解耦（引擎没挂载时也应有数值）
+
+    try { const v = await Backend.getVramLive(); if (v) renderVram(v); } catch(e){}
+
+  } else {
+
+    if (elState){ elState.textContent = '● 后端未连接'; elState.className = 'dbg-state off'; }
+
+    if (elFrame) elFrame.innerHTML = '<div class="dbg-empty">调试台需要主程序 GUI 运行<br>（后端未连接，仅本地预览）</div>';
+
+  }
+
+}
+
+
+
+dbgTick();
+
+if (elAuto && elAuto.checked) dbgStart();
+
+if (elAuto) elAuto.addEventListener('change', () => {
+
+  if (elAuto.checked){ dbgStart(); dbgTick(); } else { dbgStop(); }
+
+});
+
+if (document.getElementById('dbgRefresh')) document.getElementById('dbgRefresh').addEventListener('click', dbgTick);
+
+
+
+/* ---- 记忆性能观测仪（D 步，2026-10-01）：独立轮询，5s 一次，与感知调试台解耦 ---- */
+
+async function pollMemProfile(){
+
+  try {
+
+    const p = await Backend.getMemoryProfile();
+
+    if (p && p.success) renderMemProfile(p);
+
+  } catch (e) { /* 后端未连接时静默 */ }
+
+}
+
+function renderMemProfile(p){
+
+  try {
+
+    const ss = p.store_stats || {};
+
+    setTxt(document.getElementById('mpTotal'), (ss.total != null ? ss.total : '—') + ' 条');
+
+    setTxt(document.getElementById('mpActive'),
+
+           (ss.active != null ? ss.active : '—') + ' / ' + (ss.invalidated != null ? ss.invalidated : 0));
+
+    const bs = ss.by_source || {};
+
+    const srcStr = Object.keys(bs).filter(k => bs[k] > 0).map(k => k + ':' + bs[k]).join(' · ') || '—';
+
+    setTxt(document.getElementById('mpSource'), srcStr);
+
+    const prof = p.profile || {};
+
+    const byModel = prof.by_model || {};
+
+    const modelStr = Object.keys(byModel).filter(k => k).map(k => {
+
+      const g = byModel[k];
+
+      return k + '(延迟P95 ' + (g.latency_p95_ms || 0) + 'ms)';
+
+    }).join(' · ') || '—';
+
+    setTxt(document.getElementById('mpModels'), modelStr);
+
+    const byTier = prof.by_tier || {};
+
+    const tiers = ['cloud', 'local', 'local_duplex'];
+
+    let html = '<table class="ocr-tbl" style="width:100%"><thead><tr>'
+
+      + '<th>档位</th><th>探针数</th><th>token中位</th><th>token P95</th>'
+
+      + '<th>延迟P95(ms)</th><th>召回命中率</th></tr></thead><tbody>';
+
+    for (const t of tiers) {
+
+      const g = byTier[t] || {};
+
+      const hit = (g.recall_hit_rate == null) ? '—' : (g.recall_hit_rate * 100).toFixed(0) + '%';
+
+      html += '<tr><td>' + t + '</td><td>' + (g.count || 0) + '</td>'
+
+        + '<td>' + (g.token_median || 0) + '</td><td>' + (g.token_p95 || 0) + '</td>'
+
+        + '<td>' + (g.latency_p95_ms || 0) + '</td><td>' + hit + '</td></tr>';
+
+    }
+
+    html += '</tbody></table>';
+
+    const tbl = document.getElementById('memProfTable');
+
+    if (tbl) tbl.innerHTML = html;
+
+  } catch (e) { /* 渲染异常不中断轮询 */ }
+
+}
+
+pollMemProfile();
+
+setInterval(pollMemProfile, 5000);
+
+
+
+/* ---- OCR 区域校准 ---- */
+
+if (elOcrBtn) elOcrBtn.addEventListener('click', () => {
+
+  Backend.startOcrCalibration().then(r => {
+
+    if (r && r.success) Backend.toast('已打开 OCR 区域校准：拖动色块定位，S 保存，Esc 关闭');
+
+    else Backend.toast(r && r.error ? ('启动失败：' + r.error) : '后端未连接（需主程序 GUI 运行）', 'err');
+
+  });
+
+});
+
+
+
+/* ---- 对话悬浮层（游戏画面上透明显示 AI 的话） ---- */
+
+if (elOvBtn) elOvBtn.addEventListener('click', () => {
+
+  const cur = elOvBtn.classList.contains('on');
+
+  const call = cur ? Backend.stopChatOverlay() : Backend.startChatOverlay();
+
+  call.then(r => {
+
+    if (r && r.success){
+
+      elOvBtn.classList.toggle('on', !cur);
+
+      Backend.toast(cur ? '已关闭对话悬浮层' : '已打开对话悬浮层：Esc 关闭');
+
+    } else {
+
+      Backend.toast(r && r.error ? ('操作失败：' + r.error) : '后端未连接（需主程序 GUI 运行）', 'err');
+
+    }
+
+  });
+
+});
+
+
+
+Backend.getLlm().then(r=>{
+
+  if (!r || !r.success) return;
+
+  const engCard = Array.from(document.querySelectorAll('.card')).find(c=>{ const t=c.querySelector('.ct'); return t && t.textContent.indexOf('引擎')>=0; });
+
+  if (!engCard) return;
+
+  const kvEl = engCard.querySelector('.kv'); if (!kvEl) return;
+
+  const add=(k,v)=>{ const d1=document.createElement('div'); d1.className='k'; d1.textContent=k; const d2=document.createElement('div'); d2.className='v'; d2.textContent=v; kvEl.appendChild(d1); kvEl.appendChild(d2); };
+
+  add('LLM 提供商', r.provider||'—');
+
+  if (r.runtime) add('运行态', r.runtime.llm_ok ? '正常' : '降级');
+
+});
+
+
+
+if (window.gsap && !reduce && !window.__SPA_NAV){
+
+  gsap.from('.top', { opacity:0, y:-6, duration:.4, ease:'power2.out' });
+
+  gsap.from('.kicker, .lead', { opacity:0, y:8, duration:.45, delay:.18, ease:'power2.out' });
+
+  gsap.from('.card', { opacity:0, y:16, duration:.5, stagger:.08, delay:.28, ease:'power3.out' });
+
+}
+
+
+
+/* ============================================================
+
+   OCR 分块调优 + 文字锚点训练器（开发者页）
+
+   读：复用 getVisionDebug().ocr（regions / region_texts / anchors /
+
+       player_name / anchor_hit_*）；写：Backend.ocr* 热生效。
+
+   ============================================================ */
+
+const OCR_PURPOSE_LABEL = {
+
+  kill:'击杀播报', kill_hint:'击杀确认提示', page:'页面名', settle:'结算/胜负',
+
+  hud:'顶部HUD', death:'阵亡名片', downed:'倒地待救', general:'通用'
+
+};
+
+const OCR_PURPOSE_COLOR = {
+
+  kill:'#ff6b6b', kill_hint:'#f783ac', page:'#4dabf7', settle:'#ffa94d',
+
+  hud:'#9775fa', death:'#ff8787', downed:'#fab005', general:'#51cf66'
+
+};
+
+const OCR_PURPOSES = Object.keys(OCR_PURPOSE_LABEL);
+
+
+
+const elStage = document.getElementById('ocrStage');
+
+const elStageEmpty = document.getElementById('ocrStageEmpty');
+
+const elLegend = document.getElementById('ocrLegend');
+
+const elTbl = document.getElementById('ocrTbl');
+
+const elPlayer = document.getElementById('ocrPlayer');
+
+const elNewName = document.getElementById('ocrNewName');
+
+const elNewPurpose = document.getElementById('ocrNewPurpose');
+
+const elAncList = document.getElementById('ancList');
+
+
+
+let lastOcr = {};
+
+let activeOcrProfile = null;   // 当前前台快照游戏档案（仅用于开发者页标注显示）；null=全局默认
+
+let gameLockDiag = null;       // get_vision_debug().game_lock 规则命中诊断
+
+const currentRects = {};
+
+let ocrDrag = null;     // {name, mode:'move'|'resize', sx, sy, stageRect, rect0}
+
+let ocrSel = null;      // 选中区域名
+
+const ocrLastSig = { regions:'', anchors:'' };
+
+
+
+function fillPurposeSelect(sel){
+
+  sel.innerHTML = OCR_PURPOSES.map(p =>
+
+    `<option value="${p}">${esc(OCR_PURPOSE_LABEL[p])}（${p}）</option>`).join('');
+
+}
+
+if (elNewPurpose) fillPurposeSelect(elNewPurpose);
+
+function cssEsc(s){ return String(s==null?'':s).replace(/["\\]/g, '\\$&'); }
+
+function clamp01(v){ return Math.max(0, Math.min(1, v)); }
+
+function hexA(hex, a){
+
+  const n = parseInt(hex.slice(1), 16);
+
+  return `rgba(${(n>>16)&255},${(n>>8)&255},${n&255},${a})`;
+
+}
+
+
+
+/* ---- 画布 ---- */
+
+function createBlockEl(name){
+
+  const b = document.createElement('div');
+
+  b.className = 'ocr-block';
+
+  b.dataset.name = name;
+
+  b.innerHTML = '<div class="bk-tag"></div><div class="bk-txt"></div><div class="bk-rsz"></div>';
+
+  b.addEventListener('mousedown', e => {
+
+    if (e.target.classList.contains('bk-rsz')) startDrag(e, name, 'resize');
+
+    else startDrag(e, name, 'move');
+
+  });
+
+  elStage.appendChild(b);
+
+  return b;
+
+}
+
+function updateBlockGeom(b, meta){
+
+  const r = meta.rect || [0,0,1,1];
+
+  const purpose = meta.purpose || 'general';
+
+  const color = OCR_PURPOSE_COLOR[purpose] || '#51cf66';
+
+  b.style.left = (r[0]*100) + '%';
+
+  b.style.top = (r[1]*100) + '%';
+
+  b.style.width = Math.max(1.4, r[2]*100) + '%';
+
+  b.style.height = Math.max(2.6, r[3]*100) + '%';
+
+  b.style.background = hexA(color, 0.22);
+
+  b.style.borderColor = color;
+
+  b.classList.toggle('sel', ocrSel === b.dataset.name);
+
+}
+
+function updateBlockText(b, meta, txt){
+
+  const purpose = meta.purpose || 'general';
+
+  const color = OCR_PURPOSE_COLOR[purpose] || '#51cf66';
+
+  const tag = b.querySelector('.bk-tag');
+
+  tag.style.background = color;
+
+  tag.textContent = b.dataset.name + '·' + (OCR_PURPOSE_LABEL[purpose] || purpose);
+
+  b.querySelector('.bk-txt').textContent = txt || '（无文字）';
+
+}
+
+function renderOcrCanvas(ocr){
+
+  if (!ocr || !ocr.regions){ if (elStageEmpty) elStageEmpty.style.display='flex'; return; }
+
+  if (elStageEmpty) elStageEmpty.style.display='none';
+
+  const regions = ocr.regions || {}, texts = ocr.region_texts || {};
+
+  const names = new Set(Object.keys(regions));
+
+  elStage.querySelectorAll('.ocr-block').forEach(b => { if (!names.has(b.dataset.name)) b.remove(); });
+
+  for (const [name, meta] of Object.entries(regions)){
+
+    let b = elStage.querySelector(`.ocr-block[data-name="${cssEsc(name)}"]`);
+
+    if (!b) b = createBlockEl(name);
+
+    if (ocrDrag && ocrDrag.name === name){
+
+      // 拖动中：只刷新文字，几何由拖拽回调实时管，避免回跳
+
+      updateBlockText(b, meta, texts[name] || '');
+
+      b.classList.toggle('sel', ocrSel === name);
+
+    } else {
+
+      updateBlockGeom(b, meta);
+
+      updateBlockText(b, meta, texts[name] || '');
+
+    }
+
+  }
+
+  if (elLegend){
+
+    elLegend.innerHTML = OCR_PURPOSES.map(p =>
+
+      `<span><i style="background:${OCR_PURPOSE_COLOR[p]}"></i>${esc(OCR_PURPOSE_LABEL[p])}</span>`).join('');
+
+  }
+
+}
+
+
+
+/* ---- 画布拖拽 ---- */
+
+function startDrag(e, name, mode){
+
+  // 开发者页只读参考：OCR 区域定位/编辑统一在「软件档案」卡片内完成，这里不响应拖拽
+
+  return;
+
+  e.preventDefault();
+
+  ocrSel = name;
+
+  if (!currentRects[name]){
+
+    const meta = (lastOcr.regions || {})[name];
+
+    currentRects[name] = (meta && meta.rect ? meta.rect : [0,0,1,1]).slice();
+
+  }
+
+  ocrDrag = { name, mode, sx:e.clientX, sy:e.clientY,
+
+              stageRect: elStage.getBoundingClientRect(), rect0: currentRects[name].slice() };
+
+  renderOcrCanvas(lastOcr);
+
+  window.addEventListener('mousemove', onDragMove);
+
+  window.addEventListener('mouseup', onDragUp);
+
+}
+
+function onDragMove(e){
+
+  if (!ocrDrag) return;
+
+  const d = ocrDrag;
+
+  const sw = d.stageRect.width, sh = d.stageRect.height;
+
+  const dx = (e.clientX - d.sx) / sw, dy = (e.clientY - d.sy) / sh;
+
+  let r = d.rect0.slice();
+
+  if (d.mode === 'move'){
+
+    r[0] = clamp01(r[0] + dx);
+
+    r[1] = clamp01(r[1] + dy);
+
+    r[0] = Math.min(r[0], 1 - r[2]);
+
+    r[1] = Math.min(r[1], 1 - r[3]);
+
+  } else {
+
+    let w = Math.max(0.03, clamp01(r[2] + dx));
+
+    let h = Math.max(0.03, clamp01(r[3] + dy));
+
+    r[2] = Math.min(w, 1 - r[0]);
+
+    r[3] = Math.min(h, 1 - r[1]);
+
+  }
+
+  currentRects[d.name] = r;
+
+  const b = elStage.querySelector(`.ocr-block[data-name="${cssEsc(d.name)}"]`);
+
+  if (b){
+
+    b.style.left=(r[0]*100)+'%'; b.style.top=(r[1]*100)+'%';
+
+    b.style.width=Math.max(1.4, r[2]*100)+'%'; b.style.height=Math.max(2.6, r[3]*100)+'%';
+
+  }
+
+  syncRowRect(d.name, r);
+
+}
+
+function onDragUp(){
+
+  if (!ocrDrag) return;
+
+  const name = ocrDrag.name, r = currentRects[name];
+
+  window.removeEventListener('mousemove', onDragMove);
+
+  window.removeEventListener('mouseup', onDragUp);
+
+  ocrDrag = null;
+
+  if (r) Backend.ocrSetRegionRect(name, r).then(ack => {
+
+    if (ack && ack.success) Backend.toast('区域已更新：' + name);
+
+    else Backend.toast(ack && ack.error ? ('保存失败：'+ack.error) : '后端未连接', 'err');
+
+  });
+
+}
+
+function syncRowRect(name, r){
+
+  const tr = elTbl.querySelector(`tr[data-name="${cssEsc(name)}"]`);
+
+  if (!tr) return;
+
+  ['rx','ry','rw','rh'].forEach((c, i) => {
+
+    const inp = tr.querySelector('.' + c);
+
+    if (inp && document.activeElement !== inp) inp.value = (Math.round(r[i]*10000)/10000);
+
+  });
+
+}
+
+
+
+/* ---- 区域表（只读参考，不采集编辑 ---- */
+
+function renderOcrTable(ocr){
+
+  if (!elTbl) return;
+
+  if (!ocr || !ocr.regions){ elTbl.innerHTML = ''; return; }
+
+  const regions = ocr.regions || {}, texts = ocr.region_texts || {};
+
+  const sig = JSON.stringify(Object.keys(regions).sort().map(n => [n, regions[n].purpose]));
+
+  if (sig !== ocrLastSig.regions){
+
+    ocrLastSig.regions = sig;
+
+    let html = '<thead><tr><th>区域名</th><th>用途</th><th>x</th><th>y</th><th>w</th><th>h</th><th>实时 OCR 文字</th><th>命中</th></tr></thead><tbody>';
+
+    for (const [name, meta] of Object.entries(regions)){
+
+      const r = meta.rect || [0,0,1,1];
+
+      const hit = (texts[name] || '').trim().length > 0;
+
+      html += `<tr data-name="${esc(name)}" class="${hit ? 'hit' : ''}">` +
+
+        `<td class="nm">${esc(name)}</td>` +
+
+        `<td>${esc(OCR_PURPOSE_LABEL[meta.purpose] || meta.purpose || 'general')}</td>` +
+
+        `<td>${r[0]}</td><td>${r[1]}</td><td>${r[2]}</td><td>${r[3]}</td>` +
+
+        `<td class="live" data-live="${esc(name)}">${esc(texts[name] || '')}</td>` +
+
+        `<td class="hitcell">${hit ? '●' : '○'}</td></tr>`;
+
+    }
+
+    html += '</tbody>';
+
+    elTbl.innerHTML = html;
+
+  } else {
+
+    for (const [name, meta] of Object.entries(regions)){
+
+      const cell = elTbl.querySelector(`[data-live="${cssEsc(name)}"]`);
+
+      if (cell) cell.textContent = (ocr.region_texts || {})[name] || '';
+
+      const tr = elTbl.querySelector(`tr[data-name="${cssEsc(name)}"]`);
+
+      if (tr){
+
+        const hit = ((ocr.region_texts || {})[name] || '').trim().length > 0;
+
+        tr.classList.toggle('hit', hit);
+
+        const hc = tr.querySelector('.hitcell'); if (hc) hc.textContent = hit ? '●' : '○';
+
+      }
+
+    }
+
+  }
+
+}
+
+
+
+/* ---- 文字锚点训练器 ---- */
+
+function collectAnchors(){
+
+  const arr = [];
+
+  if (!elAncList) return arr;
+
+  elAncList.querySelectorAll('.anc-row').forEach(row => {
+
+    arr.push({
+
+      region: row.querySelector('.a-region').value,
+
+      keywords: row.querySelector('.a-kw').value.split(',').map(s => s.trim()).filter(Boolean),
+
+      state: (row.querySelector('.a-state').value || '').trim(),
+
+      label: (row.querySelector('.a-label').value || '').trim(),
+
+      priority: parseInt(row.querySelector('.a-prio').value || '0', 10) || 0,
+
+      group: (row.querySelector('.a-group').value || '').trim(),
+
+      patterns: row.querySelector('.a-pat').value.split(',').map(s => s.trim()).filter(Boolean),
+
+    });
+
+  });
+
+  return arr;
+
+}
+
+function saveAnchors(arr){
+
+  Backend.ocrSetAnchors(arr).then(ack =>
+
+    ack && ack.success ? Backend.toast('锚点已保存（' + arr.length + ' 条）')
+
+      : Backend.toast(ack && ack.error ? ('保存失败：'+ack.error) : '后端未连接', 'err'));
+
+}
+
+function renderOcrAnchors(ocr){
+
+  if (!elAncList) return;
+
+  const anchors = ocr.anchors || [];
+
+  const hitStates = ocr.anchor_hit_states || [];
+
+  const hitLabels = ocr.anchor_hit_labels || [];
+
+  const regionNames = Object.keys(ocr.regions || {});
+
+  const sig = JSON.stringify(anchors.map(a => [a.region, a.state, a.label,
+
+    (a.keywords||[]).join(','), (a.patterns||[]).join(','), a.priority||0, a.group||'']));
+
+  if (sig !== ocrLastSig.anchors){
+
+    ocrLastSig.anchors = sig;
+
+    if (!anchors.length){
+
+      elAncList.innerHTML = '<div class="ghost" style="font-size:12px;color:var(--ink-3)">暂无锚点规则。点「＋ 新增锚点规则」从某个区域配置「关键词 → 状态」。</div>';
+
+      return;
+
+    }
+
+    elAncList.innerHTML = anchors.map((a, i) => {
+
+      const opts = regionNames.map(n =>
+
+        `<option value="${esc(n)}" ${n===a.region?'selected':''}>${esc(n)}</option>`).join('')
+
+        || '<option value="">（无区域）</option>';
+
+      return `<div class="anc-row" data-i="${i}"><div class="anc-grid">` +
+
+        `<label>区域</label><select class="a-region">${opts}</select>` +
+
+        `<label>关键词（逗号分隔）</label><input class="a-kw" value="${esc((a.keywords||[]).join(', '))}">` +
+
+        `<label>状态标签</label><input class="a-state" value="${esc(a.state||'')}">` +
+
+        `<label>中文描述（给 AI）</label><input class="a-label" value="${esc(a.label||'')}">` +
+
+        `<label>优先级</label><input class="a-prio" type="number" value="${a.priority||0}">` +
+
+        `<label>分组(menu/match)</label><input class="a-group" value="${esc(a.group||'')}">` +
+
+        `<label>正则 patterns（逗号分隔）</label><input class="a-pat" value="${esc((a.patterns||[]).join(', '))}">` +
+
+        `</div><div class="anc-hit" data-hit="${i}"></div>` +
+
+        `<div style="text-align:right;margin-top:6px"><button class="btn sm rd a-del" data-i="${i}" type="button">删除规则</button></div></div>`;
+
+    }).join('');
+
+    elAncList.querySelectorAll('.a-del').forEach(btn => {
+
+      btn.addEventListener('click', () => {
+
+        const arr = collectAnchors();
+
+        arr.splice(+btn.dataset.i, 1);
+
+        saveAnchors(arr);
+
+      });
+
+    });
+
+  }
+
+  // 高亮命中（即便结构未变也每轮更新）
+
+  elAncList.querySelectorAll('.anc-row').forEach((row, i) => {
+
+    const a = anchors[i]; if (!a) return;
+
+    const hit = hitStates.includes(a.state) || hitLabels.includes(a.label);
+
+    row.classList.toggle('hit', !!hit);
+
+    const h = row.querySelector('.anc-hit');
+
+    if (h) h.textContent = hit ? ('● 当前命中：' + esc(a.label || a.state)) : '';
+
+  });
+
+}
+
+
+
+/* ---- 总渲染（每次调试轮询调用） ---- */
+
+function escHtml(s){ return String(s == null ? '' : s).replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c])); }
+
+function setDot(el, ok, bad, known){
+
+  if (!el) return;
+
+  el.className = 'uih-dot' + (known ? (bad ? ' bad' : (ok ? ' ok' : ' warn')) : '');
+
+}
+
+function renderUiHealth(h){
+
+  const guiDot = document.getElementById('uihGuiDot');
+
+  const feDot  = document.getElementById('uihFeDot');
+
+  const guiV = document.getElementById('uihGui');
+
+  const feV  = document.getElementById('uihFe');
+
+  const wv2 = document.getElementById('uihWv2');
+
+  const up  = document.getElementById('uihUp');
+
+  const send = document.getElementById('uihSend');
+
+  const dumps = document.getElementById('uihDumps');
+
+  const dumpList = document.getElementById('uihDumpList');
+
+  if (!guiDot) return;
+
+  setDot(guiDot, h.gui_ok, h.gui_stalled, h.gui_beat_ms >= 0);
+
+  guiV.textContent = h.gui_beat_ms >= 0 ? (h.gui_beat_ms + 'ms') : '未知';
+
+  guiV.style.color = h.gui_stalled ? '#ff6b6b' : (h.gui_ok ? '#51cf66' : 'var(--ink)');
+
+  setDot(feDot, h.frontend_ok, !h.frontend_ok && h.frontend_armed, h.frontend_armed);
+
+  feV.textContent = h.frontend_ping_ms >= 0 ? (h.frontend_ping_ms + 'ms') : '未连';
+
+  feV.style.color = h.frontend_ok ? '#51cf66' : (h.frontend_armed ? '#ff6b6b' : 'var(--ink)');
+
+  wv2.textContent = h.wv2_windows + ' 个' + (h.wv2_windows > 2 ? '' : '');
+
+  wv2.style.color = h.wv2_windows > 2 ? '#ffd43b' : 'var(--ink)';
+
+  up.textContent = Math.floor((h.uptime_ms||0)/1000) + 's';
+
+  const sc = h.last_send_chat || {};
+
+  if (sc.ts){
+
+    const st = sc.ok ? ' 成功' : (sc.locked ? '已锁' : ' 失败');
+
+    const col = sc.ok ? '#51cf66' : '#ff6b6b';
+
+    send.innerHTML = '最近发送：' + st + ' · ' + (sc.ms||0) + 'ms · ' + (sc.text_len||0) + '字'
+
+      + (sc.err ? ' · <span style="color:#ff6b6b">' + escHtml(sc.err) + '</span>' : '');
+
+    send.style.color = col;
+
+  } else {
+
+    send.textContent = '最近发送：暂无';
+
+    send.style.color = '';
+
+  }
+
+  if (h.freeze_dumps && h.freeze_dumps.length){
+
+    dumps.style.display = '';
+
+    dumpList.innerHTML = h.freeze_dumps.map(p => '<code>' + escHtml(p) + '</code>').join('');
+
+  } else {
+
+    dumps.style.display = 'none';
+
+  }
+
+}
+
+
+
+function renderOcrPanel(ocr){
+
+  lastOcr = ocr || {};
+
+  // 当前生效来源标注（只读参考：标注当前前台游戏档案，不写回）
+
+  const badge = document.getElementById('ocrActiveBadge');
+
+  const hint = document.getElementById('ocrActiveHint');
+
+  if (activeOcrProfile){
+
+    if (badge) badge.textContent = '当前游戏：' + (activeOcrProfile.display_name || activeOcrProfile.exe_name);
+
+    if (hint){
+
+      hint.style.display = '';
+
+      hint.textContent = ' 此游戏「' + (activeOcrProfile.mode === 'snapshot' ? 'OCR+快照' : '双工+三段式') + '」档案已生效——下方区域即其专属配置（只读，改请在「软件档案」卡片）。';
+
+    }
+
+  } else {
+
+    if (badge) badge.textContent = '全局默认';
+
+    if (hint){
+
+      hint.style.display = '';
+
+      hint.textContent = '当前前台无快照游戏档案，下方为全局默认 OCR 配置（只读参考）。打开某款已设「OCR+快照」的软件即自动切换为其专属配置。';
+
+    }
+
+  }
+
+  if (!ocr){
+
+    if (elStageEmpty) elStageEmpty.style.display = 'flex';
+
+    return;
+
+  }
+
+  for (const [name, meta] of Object.entries(ocr.regions || {})){
+
+    if (!(ocrDrag && ocrDrag.name === name))
+
+      currentRects[name] = (meta.rect || [0,0,1,1]).slice();
+
+  }
+
+  renderOcrCanvas(ocr);
+
+  renderOcrTable(ocr);
+
+  renderOcrAnchors(ocr);
+
+  // OCR 区块命中统计（规则命中面板用）
+
+  const regions = ocr.regions || {};
+
+  const texts = ocr.region_texts || {};
+
+  let hit = 0, total = 0;
+
+  for (const n of Object.keys(regions)){ total++; if ((texts[n] || '').trim().length > 0) hit++; }
+
+  const elHit = document.getElementById('ohHit');
+
+  if (elHit) elHit.textContent = total ? (hit + ' / ' + total + ' 块有文字') : '（无区块）';
+
+}
+
+
+
+/* ---- 规则命中诊断（只读参考）：前台 exe / 命中档案 / 模式决策来源 / 是否高性能 ---- */
+
+function renderRuleHits(d){
+
+  const elExe = document.getElementById('ohExe');
+
+  const elProf = document.getElementById('ohProfile');
+
+  const elMode = document.getElementById('ohMode');
+
+  const elHigh = document.getElementById('ohHigh');
+
+  if (elExe) elExe.textContent = (d && d.foreground_exe) ? d.foreground_exe : '（无前台）';
+
+  if (elProf) elProf.textContent = (d && d.matched_profile) ? (d.matched_profile.display_name || d.matched_profile.exe_name) : '（未命中软件档案）';
+
+  if (elMode){
+
+    if (d && d.success){
+
+      const m = d.decision_mode === 'snapshot' ? 'OCR+快照' : '双工+三段式';
+
+      elMode.textContent = m + ' ← ' + (d.decision_source || '未知');
+
+    } else {
+
+      elMode.textContent = '（无数据）';
+
+    }
+
+  }
+
+  if (elHigh) elHigh.textContent = (d && d.high_performance) ? '是 ' : '否';
+
+}
+
+
+
+/* ---- 开发者页 OCR 区：只读参考，不绑定任何写回（配置在「软件档案」卡片内完成） ---- */
+
+if (document.getElementById('ancAddBtn')) document.getElementById('ancAddBtn').addEventListener('click', () => {
+
+  const arr = collectAnchors();
+
+  const firstRegion = (Object.keys(lastOcr.regions || {}))[0] || '';
+
+  arr.push({ region: firstRegion, keywords: [], state: '', label: '', priority: 0, group: '', patterns: [] });
+
+  saveAnchors(arr);
+
+});
+
+if (document.getElementById('ancSaveBtn')) document.getElementById('ancSaveBtn').addEventListener('click', () => {
+
+  saveAnchors(collectAnchors());
+
+});
+
+
+
+/* ===================== 音频自测台（2026-10-17 重写） =====================
+
+   与旧版的区别：旧版只用浏览器 MediaRecorder（**走的是 WebView2 自己的音频栈**，
+   跟通话用的 pyaudio 采集完全不是一条路），所以"这里正常、通话里没声"根本查不出来。
+   现在两处都走**后端真实链路**：
+     · 麦克风：dev_mic_level（pyaudio 采集，含"同设备换 host"兜底）→ 实时律动条；
+     · 扬声器：dev_play_tone（应用自己的 _AudioPlayer，与云端双工播放同源）。
+   并且两处都回显后端**实际解析到的 索引 / host API**，用于定位"选了 A 却响在 B"。 */
+(function(){
+
+  const B = window.Backend || {};
+
+  const res   = document.getElementById('devTestResult');
+
+  const micSel= document.getElementById('devMicSel');
+
+  const spkSel= document.getElementById('devSpkSel');
+
+  const bar   = document.getElementById('devMicBar');
+
+  const num   = document.getElementById('devMicNum');
+
+  function say(msg, ok){
+
+    if (res){ res.textContent = msg; res.style.color = (ok === false) ? '#ff6b6b' : (ok ? '#51cf66' : 'var(--ink-3)'); }
+
+  }
+
+  function fill(sel, arr, cur){
+
+    if (!sel) return;
+
+    sel.innerHTML = '<option value="default">系统默认设备</option>';
+
+    (arr || []).forEach(function(it){
+
+      /* 【2026-10-17 新增·同名设备展开 host API】
+         同一只设备在 MME / DirectSound / WASAPI 上的**索引不同、可用性也不同**
+         （用户实测：K20 Pro 的某一路放不出声、X9 的某一路才行）。
+         旧列表按名字去重后只留一条 → 程序只能"替你挑"，挑错就表现为"切换是假的"。
+         现在：**只有多路时才展开**（每路一条 `名字 · host`），唯一名字仍是一条，
+         所以列表不会虚高，同时"选哪个就是哪个"。 */
+      /* 【2026-10-17 定稿·一只设备一条】
+         上一版把同一设备的 MME/DirectSound/WASAPI 展开成多条，用户反馈
+         "怎么又变成了一个设备显示多个"。现在只显示设备名（与 Windows 声音面板一致）；
+         host API 由后端自动挑（已验证记忆 → WASAPI → DirectSound → MME），
+         实际用了哪一路会在"检测结果"里回显，排障时照样看得见。 */
+      const o = document.createElement('option');
+
+      o.value = String(it.id != null ? it.id : it.name);
+
+      o.textContent = String(it.name || it.id);
+
+      if (cur && o.value === String(cur)) o.selected = true;
+
+      sel.appendChild(o);
+
+    });
+
+  }
+
+  function loadDevices(){
+
+    if (!B.listAudioDevices){ say('后端未连接（拿不到设备表）', false); return; }
+
+    B.listAudioDevices().then(function(r){
+
+      if (!r || !r.success){ say('设备表读取失败：' + ((r && r.error) || '未知'), false); return; }
+
+      fill(micSel, r.mic_devices, r.mic_current);
+
+      fill(spkSel, r.speaker_devices, r.speaker_current);
+
+      say('设备表已加载：麦克风 ' + ((r.mic_devices || []).length) + ' 条 / 扬声器 '
+
+          + ((r.speaker_devices || []).length) + ' 条。麦克风点「开始检测」后说话看律动；'
+
+          + '扬声器选一路点「播放测试音」听哪一路真的响。');
+
+    }).catch(function(e){ say('设备表异常：' + (e && (e.message || e)), false); });
+
+  }
+
+  let timer = null;
+
+  function stopPoll(){
+
+    if (timer){ clearInterval(timer); timer = null; }
+
+    if (bar) bar.style.width = '0%';
+
+  }
+
+  function startMic(){
+
+    if (!B.devMicLevel){ say('后端未暴露 devMicLevel', false); return; }
+
+    const dev = micSel ? micSel.value : 'default';
+
+    /* 【2026-10-17 修复·换设备导致 UI 卡崩】旧顺序是"先 start 再 stopPoll"——
+       换设备那次请求发出时，上一轮 poll 仍在飞，后端又在切音频流，叠加把桥接线程拖住
+       → UI 卡死。现在：**先停轮询** → 串行 stop → start → 才重新开轮询。 */
+    stopPoll();
+
+    say('正在切换/打开麦克风…');
+
+    const begin = function(){
+    B.devMicLevel({ action:'start', device:dev }).then(function(r){
+
+      if (!r || !r.success){ say('打开失败：' + ((r && r.error) || '未知'), false); return; }
+
+      const u = r.device_used || {};
+
+      say('已开始采集 → 后端实际用的是：idx=' + (u.index == null ? '?' : u.index)
+
+          + ' 「' + (u.name || '?') + '」hostApi=' + (u.hostApi == null ? '?' : u.hostApi)
+
+          + (r.note ? ('；' + r.note) : '') + '　（现在对着麦克风说话，看下面律动条）', true);
+
+      stopPoll();
+
+      timer = setInterval(function(){
+
+        B.devMicLevel({ action:'poll' }).then(function(p){
+
+          if (!p || !p.success) return;
+
+          const lv = Math.max(0, Math.min(1, Number(p.level) || 0));
+
+          if (bar) bar.style.width = (lv * 100).toFixed(1) + '%';
+
+          if (num) num.textContent = 'rms ' + (Number(p.rms) || 0).toFixed(5)
+
+                                     + ' · peak ' + (Number(p.peak) || 0).toFixed(3);
+
+          if (p.error) say('采集报错：' + p.error, false);
+
+        }).catch(function(){});
+
+      }, 120);
+
+    }).catch(function(e){ say('打开异常：' + (e && (e.message || e)), false); });
+
+    };
+
+    // 先显式停一次（幂等），确保后端 worker 处在"已收流"的干净状态再换设备
+    B.devMicLevel({ action:'stop' }).then(begin).catch(begin);
+
+  }
+
+  function stopMic(){
+
+    stopPoll();
+
+    if (B.devMicLevel) B.devMicLevel({ action:'stop' }).catch(function(){});
+
+    say('已停止采集。');
+
+  }
+
+  function playTone(){
+
+    if (!B.devPlayTone){ say('后端未暴露 devPlayTone', false); return; }
+
+    const dev = spkSel ? spkSel.value : 'default';
+
+    say('正在播放测试音 → 请求设备：' + dev + ' …');
+
+    B.devPlayTone({ device:dev, freq:660, seconds:1.0 }).then(function(r){
+
+      if (!r || !r.success){ say('播放失败：' + ((r && r.error) || '未知'), false); return; }
+
+      const u = r.device_used || {};
+
+      const a = r.actual || {};
+
+      say('测试音已播放 → 实际打开：idx=' + (u.index == null ? '系统默认' : u.index)
+
+          + ' 「' + (u.name || '系统默认') + '」host=' + (a.hostapi || u.hostapi || '?')
+
+          + ' rate=' + (a.samplerate || '?') + '（backend=' + (r.backend || '?') + '）'
+
+          + (r.hint ? ('　⚠ ' + r.hint) : ''), true);
+
+    }).catch(function(e){ say('播放异常：' + (e && (e.message || e)), false); });
+
+  }
+
+  const bStart = document.getElementById('devMicStart');
+
+  const bStop  = document.getElementById('devMicStop');
+
+  const bPlay  = document.getElementById('devSpkPlay');
+
+  if (bStart) bStart.addEventListener('click', startMic);
+
+  if (bStop)  bStop.addEventListener('click', stopMic);
+
+  if (bPlay)  bPlay.addEventListener('click', playTone);
+
+  loadDevices();
+
+})();
+
+
+
+  </script>
+
+<script src="/redesign/theme_manager.js?v=20261013d"></script>
+</body>
+
+</html>
+

@@ -1,0 +1,309 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>欢迎 · 能力槽引导</title>
+<link rel="stylesheet" href="/redesign/design_tokens.css?v=20261013e" />
+<link rel="stylesheet" href="/redesign/ui_shared.css?v=20261013e" />
+<link rel="stylesheet" href="/redesign/pages.css?v=20261007l" />
+<style>
+  .ob-wrap{max-width:960px;margin:0 auto;padding:28px 22px 90px}
+  .ob-hero{text-align:center;margin-bottom:8px}
+  .ob-hero h1{font-size:26px;margin:0 0 6px;
+    background:linear-gradient(90deg,var(--accent-1),var(--accent-2));
+    -webkit-background-clip:text;background-clip:text;color:transparent}
+  .ob-hero p{color:var(--ink-3);font-size:13px;max-width:640px;margin:0 auto}
+  /* 阿里云单卡 */
+  .ob-ali{display:flex;gap:16px;align-items:center;flex-wrap:wrap;
+    background:linear-gradient(135deg,color-mix(in srgb,var(--accent-1) 12%,transparent),color-mix(in srgb,var(--accent-2) 12%,transparent));
+    border:1px solid var(--line);border-radius:16px;padding:18px 20px;margin:20px 0}
+  .ob-ali .ali-ico{width:54px;height:54px;border-radius:14px;flex:0 0 54px;display:grid;place-items:center;font-size:26px;
+    background:linear-gradient(135deg,var(--accent-1),var(--accent-2));color:#06121a;font-weight:800}
+  .ob-ali .ali-body{flex:1;min-width:240px}
+  .ob-ali .ali-title{font-weight:800;font-size:16px;color:var(--ink-1)}
+  .ob-ali .ali-sub{color:var(--ink-3);font-size:12.5px;margin-top:3px}
+  .ob-ali .ali-covers{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px}
+  .ob-ali .ali-covers span{font-size:11px;padding:2px 9px;border-radius:20px;border:1px solid var(--line);background:var(--surface-3);color:var(--ink-2)}
+  .ob-ali .ali-action{flex:0 0 auto;display:flex;flex-direction:column;gap:8px;min-width:200px}
+  .ob-ali input{width:100%;background:var(--surface);border:1px solid var(--line);border-radius:9px;color:var(--ink);
+    padding:9px 11px;font-size:12.5px;font-family:ui-monospace,Menlo,Consolas,monospace}
+  .ob-ali .ali-keyhint{font-size:11px;color:var(--ink-3);text-align:center}
+  .ob-ali .btn{flex:0 0 auto;background:linear-gradient(135deg,var(--accent-1),var(--accent-2));color:#06121a;border:none;border-radius:9px;padding:10px 16px;font-weight:800;cursor:pointer;font-size:13px}
+  .ob-ali .btn.ghost{background:none;border:1px solid var(--line);color:var(--ink-2);font-weight:700}
+  /* 四槽 */
+  .ob-slots{display:grid;grid-template-columns:repeat(2,1fr);gap:14px}
+  @media(max-width:760px){.ob-slots{grid-template-columns:1fr}}
+  .ob-slot{background:var(--surface-2);border:1px solid var(--line);border-radius:14px;overflow:hidden;transition:border-color .2s}
+  .ob-slot.open{border-color:var(--accent-1)}
+  .ob-head{display:flex;align-items:center;gap:12px;padding:14px 16px;cursor:pointer}
+  .ob-ico{width:38px;height:38px;border-radius:10px;flex:0 0 38px;display:grid;place-items:center;font-size:19px;
+    background:linear-gradient(135deg,rgba(45,212,255,.18),rgba(160,107,255,.18));border:1px solid var(--line-2)}
+  .ob-head .meta{flex:1;min-width:0}
+  .ob-head .name{font-weight:700;font-size:15px}
+  .ob-head .desc{color:var(--ink-3);font-size:12px}
+  .ob-st{font-size:11.5px;padding:3px 9px;border-radius:20px;white-space:nowrap}
+  .ob-st.ok{background:color-mix(in srgb,var(--ok) 14%,transparent);color:var(--ok)}
+  .ob-st.warn{background:color-mix(in srgb,var(--warn) 14%,transparent);color:var(--warn)}
+  .ob-st.bad{background:color-mix(in srgb,var(--bad) 14%,transparent);color:var(--bad)}
+  .ob-st.none{background:var(--surface-3);color:var(--ink-3)}
+  .ob-chev{color:var(--ink-3);transition:transform .2s;font-size:12px}
+  .ob-slot.open .ob-chev{transform:rotate(90deg)}
+  .ob-panel{padding:0 16px 16px;display:none;border-top:1px solid var(--line)}
+  .ob-slot.open .ob-panel{display:block}
+  .ob-hint{color:var(--ink-3);font-size:12px;margin:12px 0 10px}
+  .ob-prov{border:1px solid var(--line);border-radius:11px;padding:12px;margin:10px 0;background:var(--surface-3)}
+  .ob-prov.rec{border-color:color-mix(in srgb,var(--ok) 35%,transparent)}
+  .ob-prov.adapting{opacity:.6;filter:grayscale(.3)}
+  .ob-prov .ph{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+  .ob-prov .pn{font-weight:700;font-size:14px}
+  .ob-badge{font-size:10.5px;padding:2px 8px;border-radius:20px;border:1px solid var(--line)}
+  .ob-badge.rank{background:var(--surface-2);color:var(--ink-2)}
+  .ob-badge.clone-y{background:color-mix(in srgb,var(--ok) 14%,transparent);color:var(--ok);border-color:color-mix(in srgb,var(--ok) 40%,transparent)}
+  .ob-badge.clone-n{background:color-mix(in srgb,var(--bad) 14%,transparent);color:var(--bad);border-color:color-mix(in srgb,var(--bad) 40%,transparent)}
+  .ob-badge.adapt{background:color-mix(in srgb,var(--accent-2) 12%,transparent);color:var(--accent-2);border-color:color-mix(in srgb,var(--accent-2) 40%,transparent)}
+  .ob-prov .row{display:flex;gap:8px;margin-top:9px;flex-wrap:wrap;align-items:flex-end}
+  .ob-field{flex:1;min-width:140px}
+  .ob-field label{display:block;color:var(--ink-3);font-size:11px;margin-bottom:3px}
+  .ob-field input,.ob-field select{width:100%;background:var(--surface);border:1px solid var(--line);border-radius:8px;color:var(--ink);padding:7px 9px;font-size:12.5px;font-family:ui-monospace,Menlo,Consolas,monospace}
+  .ob-field select{font-family:inherit;cursor:pointer}
+  .ob-field input:disabled{color:var(--accent-1);opacity:.85}
+  .ob-use{flex:0 0 auto;background:linear-gradient(135deg,var(--accent-1),var(--accent-2));color:#06121a;border:none;border-radius:8px;padding:8px 16px;font-weight:700;cursor:pointer;font-size:12.5px}
+  .ob-use:disabled{background:var(--surface-3);color:var(--ink-3);cursor:not-allowed}
+  .ob-prov .note{color:var(--ink-3);font-size:11.5px;margin-top:8px}
+  .ob-clone-split{background:color-mix(in srgb,var(--accent-1) 6%,transparent);border:1px solid color-mix(in srgb,var(--accent-1) 25%,transparent);border-radius:11px;padding:12px;margin:12px 0;font-size:12.5px;color:var(--ink-2)}
+  .ob-clone-split b{color:var(--accent-1)}
+  .ob-foot{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-top:26px;flex-wrap:wrap}
+  .ob-foot .note{color:var(--ink-3);font-size:12px;flex:1;min-width:200px}
+  .ob-foot .btn{background:linear-gradient(135deg,var(--accent-1),var(--accent-2));color:#06121a;border:none;border-radius:10px;padding:12px 26px;font-weight:800;cursor:pointer;font-size:14px}
+  .ob-offline{color:var(--warn);font-size:12px;padding:6px 0}
+</style>
+</head>
+<body>
+<div class="ob-wrap">
+  <div class="ob-hero">
+    <h1>欢迎，先把这些接上</h1>
+    <p>只要一个阿里云 Key 就能开全部能力；想更省/更稳，可再补其它服务商。按「能力槽」一步步来，每一步都能随时回去改。</p>
+  </div>
+
+  <!-- 阿里云单卡：一个 Key 四槽通用 -->
+  <div class="ob-ali">
+    <div class="ali-ico">☁</div>
+    <div class="ali-body">
+      <div class="ali-title">阿里云百炼 · 一个 Key 四槽通用</div>
+      <div class="ali-sub">LLM / VLM / TTS / 双工全部走百炼，零显存、按额度计费，克隆音色也在这里。</div>
+      <div class="ali-covers"><span>💬 聊天</span><span>👁 看屏</span><span>🔊 语音</span><span>📞 通话</span></div>
+    </div>
+    <div class="ali-action">
+      <input id="aliKey" placeholder="sk-... 阿里云百炼 Key（填入即连）" autocomplete="off" />
+      <button class="btn" id="aliApply" type="button">用这个 Key 接通四槽</button>
+      <div class="ali-keyhint" id="aliKeyHint">留空也能先下一步，之后再补</div>
+    </div>
+  </div>
+
+  <div class="ob-slots" id="obSlots">
+    <div class="ob-hint">读取中…</div>
+  </div>
+
+  <div class="ob-foot">
+    <div class="note" id="obNote">没 Key 也能先体验：本地看屏 + 本地双工（Comni）随时可用。</div>
+    <button class="btn" id="obDone" type="button">完成引导 →</button>
+  </div>
+  <div class="ob-offline" id="obOffline"></div>
+</div>
+
+<script src="/redesign/app_backend.js?v=20261015f"></script>
+<script>
+(function(){
+  "use strict";
+  var B = window.Backend;
+  var ORDER = ["llm","vlm","tts","duplex"];
+  var META = {
+    llm:{icon:"💬",title:"LLM 大模型",desc:"文字对话 / 推理",allows_custom:true},
+    vlm:{icon:"👁",title:"VLM 视觉",desc:"看屏 / 图像理解",allows_custom:true},
+    tts:{icon:"🔊",title:"TTS 语音合成",desc:"消息播报 · 克隆音色",allows_custom:true},
+    duplex:{icon:"📞",title:"双工 实时通话",desc:"全双工语音 · 角色通话音色",allows_custom:false}
+  };
+  function esc(s){return String(s==null?"":s).replace(/[&<>"']/g,function(c){return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c];});}
+  function hasB(){return !!(window.Backend && typeof Backend.getCapabilitySlots==="function");}
+
+  function cloneBadge(c){
+    if(c==="y") return '<span class="ob-badge clone-y">✅ 可克隆</span>';
+    if(c==="n") return '<span class="ob-badge clone-n">❌ 不可克隆</span>';
+    return "";
+  }
+
+  function render(data){
+    var slots = (data && data.slots) || {};
+    var wrap = document.getElementById("obSlots");
+    wrap.innerHTML = "";
+    ORDER.forEach(function(id){
+      var s = slots[id] || {state:"none",state_text:"未配置",providers:[],active:{},clone:{supported:false}};
+      var meta = META[id];
+      var open = (id==="llm");
+      var div = document.createElement("div");
+      div.className = "ob-slot" + (open?" open":"");
+      div.id = "slot_"+id;
+      var provHtml = "";
+      (s.providers||[]).forEach(function(p){ provHtml += renderProvider(id,p); });
+      var customHtml = meta.allows_custom ? renderCustom(id) : "";
+      var cloneHtml = renderCloneSplit(id,s);
+      div.innerHTML =
+        '<div class="ob-head" onclick="window.__obToggle(\''+id+'\')">'+
+          '<div class="ob-ico">'+meta.icon+'</div>'+
+          '<div class="meta"><div class="name">'+esc(meta.title)+'</div><div class="desc">'+esc(meta.desc)+'</div></div>'+
+          '<span class="ob-st '+s.state+'">'+esc(s.state_text)+'</span><span class="ob-chev">▶</span>'+
+        '</div>'+
+        '<div class="ob-panel">'+
+          '<div class="ob-hint">按性价比排序的推荐服务商（预填 URL+模型，一个 Key 多模型任选）；底部保留自定义'+(id==="duplex"?"（<b>双工不开放自定义</b>）":"")+'。</div>'+
+          provHtml + customHtml + cloneHtml +
+        '</div>';
+      wrap.appendChild(div);
+    });
+  }
+
+  function renderProvider(cap,p){
+    var adapted = (p.adapted!==false);
+    var cls = "ob-prov" + (p.configured?" rec":"") + (adapted?"":" adapting") + (p.active?" ob-active":"");
+    var badges = "";
+    if(p.rank!=null) badges += '<span class="ob-badge rank">第'+(p.rank===1?"1·性价比最高":p.rank)+'</span>';
+    badges += cloneBadge(p.clone);
+    if(p.adapted===false) badges += '<span class="ob-badge adapt">适配中·暂不可选</span>';
+    if(p.configured) badges += '<span class="ob-badge clone-y">已配置</span>';
+    if(p.local) badges += '<span class="ob-badge rank">本地·离线</span>';
+    var modelsOpts = (p.models||[]).map(function(m){
+      var label=(typeof m==="string")?m:m.name, val=(typeof m==="string")?m:m.id;
+      return '<option value="'+esc(val)+'">'+esc(label)+'</option>';
+    }).join("");
+    var needKey = !p.local;
+    var keyField = p.local ? '' :
+      '<div class="ob-field"><label>API Key'+(p.needs_group?" / GroupId":"")+'</label>'+
+      '<input class="ck_'+esc(p.id)+'" placeholder="'+(p.needs_group?"Key + GroupId":"sk-... 填入即连")+'"></div>';
+    var useBtn = adapted ?
+      '<button class="ob-use" onclick="window.__obEnable(\''+cap+'\',\''+esc(p.id)+'\',event)">启用</button>' :
+      '<button class="ob-use" disabled>适配中</button>';
+    return '<div class="'+cls+'">'+
+      '<div class="ph"><span class="pn">'+esc(p.name)+'</span>'+badges+'</div>'+
+      '<div class="row">'+
+        '<div class="ob-field"><label>接口地址（已填）</label><input disabled value="'+esc(p.base_url||"")+'"></div>'+
+        '<div class="ob-field"><label>模型（同 Key 任选）</label><select class="cm_'+esc(p.id)+'">'+modelsOpts+'</select></div>'+
+        keyField + useBtn +
+      '</div>'+
+      (p.hint?'<div class="note">'+esc(p.hint)+'</div>':'')+
+    '</div>';
+  }
+
+  function renderCustom(cap){
+    return '<div class="ob-prov" style="border-style:dashed">'+
+      '<div class="ph"><span class="pn">+ 自定义 OpenAI 兼容接口</span></div>'+
+      '<div class="note">兼容 OpenAI 的服务，自填 URL + 单模型名 + Key。</div>'+
+      '<div class="row">'+
+        '<div class="ob-field"><label>Base URL</label><input class="cu_url" placeholder="https://your/v1"></div>'+
+        '<div class="ob-field"><label>模型名（单）</label><input class="cu_model" placeholder="model-id"></div>'+
+        '<div class="ob-field"><label>API Key</label><input class="cu_key" placeholder="sk-..."></div>'+
+        '<button class="ob-use" onclick="window.__obCustom(\''+cap+'\')">测试连接</button>'+
+      '</div>'+
+      (cap==="tts"?'<div class="note">⚠️ 自定义 TTS 只保证「基础合成」，语音克隆需走预设服务商。</div>':'')+
+    '</div>';
+  }
+
+  function renderCloneSplit(cap,s){
+    if(!s.clone || !s.clone.supported) return "";
+    if(cap==="tts") return '<div class="ob-clone-split"><b>⚠ 双工克隆 ≠ TTS 克隆，二者分开决断：</b><br><span style="color:var(--ink)">TTS 克隆</span> = 消息播报音色（CosyVoice / MiniMax / Fish Audio）。当前克隆音色数：<b>'+(s.clone.cloned_count||0)+'</b>。</div>';
+    if(cap==="duplex") return '<div class="ob-clone-split"><b>⚠ 双工克隆 ≠ TTS 克隆，二者分开决断：</b><br><span style="color:var(--ink)">双工克隆</span> = 实时通话里角色的音色（走本槽选中的实时模型复刻 voice）。</div>';
+    return "";
+  }
+
+  window.__obToggle = function(id){ var el=document.getElementById("slot_"+id); if(el) el.classList.toggle("open"); };
+  function toggle(id){ window.__obToggle(id); }
+
+  window.__obEnable = function(cap,pid,ev){
+    var root=document.getElementById("slot_"+cap);
+    var sel=root.querySelector(".cm_"+pid), key=root.querySelector(".ck_"+pid);
+    doSet({cap:cap,provider:pid,model:sel?sel.value:"",api_key:key?key.value:"",base_url:""});
+  };
+  window.__obCustom = function(cap){
+    var root=document.getElementById("slot_"+cap);
+    var url=root.querySelector(".cu_url").value, model=root.querySelector(".cu_model").value, key=root.querySelector(".cu_key").value;
+    if(!url||!model){ if(Backend&&Backend.toast) Backend.toast("自定义需填 Base URL + 单模型名","err"); return; }
+    doSet({cap:cap,is_custom:true,custom_url:url,custom_model:model,custom_key:key});
+  };
+
+  function doSet(payload){
+    if(!hasB()){ if(Backend&&Backend.toast) Backend.toast("后端未连接","err"); return; }
+    Backend.setCapabilitySlot(payload).then(function(r){
+      if(r&&r.success){ if(Backend&&Backend.toast) Backend.toast("已保存："+(r.message||""),"ok"); load(); }
+      else { if(Backend&&Backend.toast) Backend.toast("保存失败："+((r&&r.error)||""),"err"); }
+    });
+  }
+
+  // 阿里云单卡：一个 Key 同时接通四槽的百炼端口
+  document.getElementById("aliApply").onclick = function(){
+    var key = document.getElementById("aliKey").value.trim();
+    if(!key){ if(Backend&&Backend.toast) Backend.toast("先填入阿里云 Key，或跳过直接下一步","err"); return; }
+    if(!hasB()){ if(Backend&&Backend.toast) Backend.toast("后端未连接","err"); return; }
+    /* 【2026-10-17 修复·引导页"一键配置"配不全双工】
+       旧实现逐槽传 provider:"bailian"，但**双工槽的 provider id 是 bailian_qwen_omni**，
+       后端 _set_duplex 直接拒绝 → 对话/TTS 配好了、双工没配上 →
+       用户以为都配好了，拨号时被 no_cloud_duplex 拦住（语音电话永远打不出去）。
+       正解：走 **aliyun 一键槽**（后端 _set_aliyun 会正确写 对话+看屏+TTS+双工 四处）。 */
+    Backend.setCapabilitySlot({cap:"aliyun",provider:"bailian",model:"",api_key:key,base_url:""}).then(function(r){
+      var sub=(r&&r.sub)||{};
+      var bad=[];
+      Object.keys(sub).forEach(function(k){ if(sub[k]&&sub[k].ok===false) bad.push(k); });
+      if(r&&r.success&&bad.length===0){
+        if(Backend&&Backend.toast) Backend.toast("已用阿里云 Key 接通全部能力 ✅","ok");
+      } else {
+        if(Backend&&Backend.toast) Backend.toast("部分能力接通失败"+(bad.length?("："+bad.join("/")):"")+"，去设置页检查","err");
+      }
+      load();
+    }).catch(function(){
+      if(Backend&&Backend.toast) Backend.toast("配置失败，去设置页重试","err");
+      load();
+    });
+  };
+
+  document.getElementById("obDone").onclick = function(){
+    try{ window.location.assign("/redesign/ui_redesign_settings.html#aiapi"); }catch(e){ if(Backend&&Backend.toast) Backend.toast("引导完成","ok"); }
+  };
+
+  function load(){
+    if(!hasB()){
+      document.getElementById("obOffline").textContent="（后端未连接，仅显示布局预览）";
+      render(STATIC_PREVIEW); return;
+    }
+    document.getElementById("obOffline").textContent="";
+    Backend.getCapabilitySlots().then(function(r){
+      if(r&&r.success) render(r);
+      else document.getElementById("obOffline").textContent="（读取失败："+((r&&r.error)||"")+"）";
+    }).catch(function(){ document.getElementById("obOffline").textContent="（读取异常）"; });
+  }
+
+  var STATIC_PREVIEW = {slots:{
+    llm:{state:"none",state_text:"未配置",allows_custom:true,active:{},providers:[
+      {id:"bailian",name:"阿里云百炼 Qwen",base_url:"https://dashscope.aliyuncs.com/compatible-mode/v1",models:["qwen3.8-max","qwen3.8-flash","qwen-plus"],clone:null,rank:1,configured:false,active:false},
+      {id:"deepseek",name:"DeepSeek",base_url:"https://api.deepseek.com/v1",models:["deepseek-chat","deepseek-reasoner"],clone:null,rank:2,configured:false,active:false},
+      {id:"zhipu",name:"智谱 GLM",base_url:"https://open.bigmodel.cn/api/paas/v4",models:["glm-4.6","glm-4-plus"],clone:null,rank:3,configured:false,active:false}
+    ],clone:{supported:false}},
+    vlm:{state:"none",state_text:"未配置",allows_custom:true,active:{},providers:[
+      {id:"bailian",name:"阿里云 Qwen-VL",base_url:"https://dashscope.aliyuncs.com/compatible-mode/v1",models:["qwen3-vl-plus","qwen3-vl-flash"],clone:null,rank:1,configured:false,active:false},
+      {id:"zhipu",name:"智谱 GLM-4V",base_url:"https://open.bigmodel.cn/api/paas/v4",models:["glm-4v-plus","glm-4v-flash"],clone:null,rank:2,configured:false,active:false}
+    ],clone:{supported:false}},
+    tts:{state:"none",state_text:"未配置",allows_custom:true,active:{},providers:[
+      {id:"dashscope_cosy",name:"阿里云 CosyVoice",base_url:"https://dashscope.aliyuncs.com/api-ws/v1/inference",models:["cosyvoice-v3.5-plus","cosyvoice-v3.5-flash"],clone:"y",rank:1,configured:false,active:false},
+      {id:"minimax",name:"MiniMax Speech",base_url:"https://api.minimax.chat/v1/t2a_v2",models:["speech-02-hd","speech-02-turbo"],clone:"y",needs_group:true,rank:2,configured:false,active:false},
+      {id:"fish_audio",name:"Fish Audio",base_url:"https://api.fish.audio/v1/tts",models:["<克隆模型 id>"],clone:"y",rank:3,configured:false,active:false},
+      {id:"openai_tts",name:"OpenAI TTS",base_url:"https://api.openai.com/v1/audio/speech",models:["alloy","echo","fable","onyx","nova","shimmer"],clone:"n",rank:null,configured:false,active:false}
+    ],clone:{supported:true,cloned_count:0}},
+    duplex:{state:"none",state_text:"未配置",allows_custom:false,active:{},providers:[
+      {id:"bailian_qwen_omni",name:"阿里云 百炼 Qwen-Omni Realtime",base_url:"https://dashscope.aliyuncs.com",models:["qwen3.8-omni-flash-realtime","qwen3.5-omni-plus-realtime","qwen3.5-omni-flash-realtime"],clone:"y",rank:1,adapted:true,configured:false,active:false},
+      {id:"local_comni",name:"本地 Comni（llama.cpp-omni）",base_url:"https://localhost:8006",models:["MiniCPM-o 4.5 (Q4_K_M)"],clone:"n",rank:2,adapted:true,local:true,configured:false,active:false},
+      {id:"volcano",name:"火山引擎 豆包 Realtime",base_url:"https://openspeech.bytedance.com",models:["doubao-realtime-sc-2.0"],clone:"y",rank:3,adapted:false,configured:false,active:false}
+    ],clone:{supported:true}}
+  }};
+
+  load();
+})();
+</script>
+</body>
+</html>

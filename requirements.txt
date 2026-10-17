@@ -1,0 +1,60 @@
+# 达妮娅 AI 桌面伴侣 · 运行依赖
+# 由源码 import 反推 + 开发环境实测（Python 3.12 / Windows 11）2026-10-17
+#
+# 安装器会先装「核心」，再装「重要」，最后尽力装「可选」。
+# 核心缺一不可；重要缺了部分功能不可用；可选失败不影响启动。
+
+# ===== 核心（缺一不可，软件启动必需）=====
+PyYAML>=6.0
+httpx>=0.27
+numpy>=1.26
+sounddevice>=0.4.7
+websockets>=13.0
+pywebview>=5.0
+dashscope>=1.20
+mss>=9.0
+Pillow>=10.0
+requests>=2.31
+rich>=13.7
+psutil>=5.9
+
+# ===== 重要（录音/托盘/音量/游戏等部分功能）=====
+PyAudio>=0.2.14
+pystray>=0.19
+ImageHash>=4.3
+comtypes>=1.4
+pycaw>=20240210
+pywin32>=306
+pygame>=2.5
+vosk>=0.3.45
+ollama>=0.4.0
+edge-tts>=6.1
+pyttsx3>=2.90
+
+# ===== 可选（装了更好，失败不影响启动）=====
+rapidocr-onnxruntime>=1.3
+soundfile>=0.12
+soundcard>=0.4
+pyautogui>=0.9.54
+pynput>=1.7
+pyperclip>=1.8
+PyGetWindow>=0.0.9
+uiautomation>=2.0
+imageio-ffmpeg>=0.5
+aiohttp>=3.9
+fastapi>=0.110
+uvicorn>=0.29
+pydantic>=2.6
+opencv-python>=4.9
+pixivpy3>=3.7
+PyAudioWPatch>=0.2
+# 以下体积过大（GB级），内测版不随包安装，需要时用户自行 pip install
+# torch
+# torchaudio
+# funasr
+# sherpa-onnx
+# onnxruntime
+# gradio_client
+# psd-tools
+# yt-dlp
+# winsdk

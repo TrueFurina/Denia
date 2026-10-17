@@ -1,0 +1,368 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>主题编辑器 · 升级方案评审副本（带标注）</title>
+<!-- 沿用当前编辑器的样式源，保证外观一致；新增/修改处用本文件内联 .anno-* 标注层呈现 -->
+<link rel="stylesheet" href="design_tokens.css?v=20261007g" />
+<link rel="stylesheet" href="ui_shared.css?v=20261006c" />
+<link rel="stylesheet" href="home.css?v=20261005h" />
+<link rel="stylesheet" href="pages.css?v=20261005h" />
+<style>
+  /* ===================== 评审标注层（仅本副本有） ===================== */
+  /* 颜色约定：
+     橙色虚线 = 计划【修改】现有功能
+     绿色虚线 = 建议【新增图片区】（贴纸落点 / 每页壁纸槽）
+     紫色虚线 = 建议【新增功能】（高级面板 / 贴纸库）
+     无框线   = 当前已有（保持） */
+  body{ font-family: var(--font-sans, system-ui, "Microsoft YaHei", sans-serif); }
+  .rev-banner{
+    position:sticky; top:0; z-index:99999; display:flex; gap:14px; align-items:center; flex-wrap:wrap;
+    background:linear-gradient(90deg,#2a2350,#1b2a4a); color:#eef1ff;
+    padding:8px 16px; font-size:12.5px; border-bottom:2px solid #7c5cff;
+  }
+  .rev-banner b{ color:#ffd479; }
+  .lg{ display:inline-flex; align-items:center; gap:5px; }
+  .lg i{ width:16px; height:0; border-top:2px dashed; display:inline-block; }
+  .lg.mod i{ border-color:#ff9f43; } .lg.add i{ border-color:#36d399; } .lg.feat i{ border-color:#b58bff; }
+  .rev-banner .sp{ flex:1; }
+
+  /* 标注框：绝对定位覆盖在目标区域上 */
+  .anno{ position:absolute; pointer-events:none; border-radius:10px; z-index:50; }
+  .anno .tag{
+    position:absolute; top:-11px; left:8px; font-size:11px; line-height:1; padding:3px 8px; border-radius:8px;
+    color:#fff; white-space:nowrap; box-shadow:0 2px 8px rgba(0,0,0,.35); pointer-events:auto;
+  }
+  .anno .num{ position:absolute; top:-13px; right:-9px; width:20px; height:20px; border-radius:50%;
+    background:#fff; color:#222; font-size:12px; font-weight:700; display:grid; place-items:center; box-shadow:0 2px 6px rgba(0,0,0,.4); }
+  .anno.mod{ border:2px dashed #ff9f43; background:rgba(255,159,67,.10); }
+  .anno.mod .tag{ background:#ff9f43; }
+  .anno.add{ border:2px dashed #36d399; background:rgba(54,211,153,.12); }
+  .anno.add .tag{ background:#1d9e75; }
+  .anno.feat{ border:2px dashed #b58bff; background:rgba(181,139,255,.12); }
+  .anno.feat .tag{ background:#7c5cff; }
+
+  /* ===================== 编辑器外壳（复制自当前 _theme_editor_design.html） ===================== */
+  #teRoot{ display:flex; flex-direction:column; height:100vh; background:var(--surface-1, #f4f5f9); color:var(--ink, #1c2030); }
+  #teBar{ display:flex; align-items:center; gap:10px; padding:10px 16px; background:var(--surface-2,#fff); border-bottom:1px solid var(--line,#e3e6ee); }
+  .te-title{ font-weight:700; font-size:15px; }
+  .te-state{ font-size:12px; color:var(--ink-2,#6b7280); }
+  .te-sp{ flex:1; }
+  .te-btn{ border:1px solid var(--line,#e3e6ee); background:var(--surface-2,#fff); color:var(--ink,#1c2030);
+    padding:6px 12px; border-radius:9px; font-size:13px; cursor:pointer; }
+  .te-btn.primary{ background:var(--accent-1,#5b7cfa); color:#fff; border-color:transparent; }
+  #teBind{ display:flex; align-items:center; gap:12px; padding:8px 16px; background:var(--surface-2,#fff); border-bottom:1px solid var(--line,#e3e6ee); flex-wrap:wrap; }
+  .te-bind-label{ font-size:13px; font-weight:600; }
+  .te-bind-pick{ display:flex; gap:8px; }
+  .te-char{ display:flex; align-items:center; gap:8px; border:1px solid var(--line,#e3e6ee); background:var(--surface-1,#f4f5f9);
+    padding:6px 10px; border-radius:10px; cursor:pointer; font-size:12px; }
+  .te-char.on{ border-color:var(--accent-1,#5b7cfa); background:var(--accent-soft-1, #eaeaff); }
+  .te-char-av{ width:30px; height:30px; border-radius:50%; background:var(--grad-1,#8b6cff); color:#fff; display:grid; place-items:center; font-size:13px; }
+  .te-bind-note{ font-size:12px; color:var(--ink-2,#6b7280); }
+  #teStrip{ display:flex; align-items:center; gap:8px; padding:8px 16px; background:var(--surface-2,#fff); border-bottom:1px solid var(--line,#e3e6ee); flex-wrap:wrap; }
+  .te-strip-label{ font-size:12px; color:var(--ink-2,#6b7280); }
+  .te-where{ font-weight:600; font-size:13px; }
+  .te-jump{ font-size:12px; border:1px solid var(--line,#e3e6ee); background:var(--surface-1,#f4f5f9); border-radius:8px; padding:4px 9px; cursor:pointer; }
+  .te-strip-sep{ width:1px; height:18px; background:var(--line,#e3e6ee); }
+  .te-slot{ display:inline-flex; align-items:center; gap:6px; border:1px solid var(--line,#e3e6ee); background:var(--surface-1,#f4f5f9);
+    padding:6px 11px; border-radius:9px; font-size:12.5px; cursor:pointer; }
+  .te-slot.on{ border-color:var(--accent-1,#5b7cfa); background:var(--accent-soft-1,#eaeaff); }
+  .te-slot .dot{ width:8px; height:8px; border-radius:50%; }
+  .te-slot em{ color:var(--ink-3,#9aa3b2); font-style:normal; font-size:11px; }
+
+  #teBody{ display:flex; flex:1; min-height:0; }
+  #teStage{ position:relative; flex:1; min-width:0; background:#0e1018; overflow:hidden; }
+  /* 内联的预览副本（便于直接画标注，不依赖 iframe 内部） */
+  #teMock{ position:absolute; inset:0; display:flex; color:#e8eaed; font-size:13px; }
+  #teMock .side{ width:190px; background:#15171f; border-right:1px solid #262a36; padding:14px 10px; display:flex; flex-direction:column; gap:6px; }
+  #teMock .brand{ font-weight:700; margin-bottom:8px; }
+  #teMock .nav{ padding:7px 10px; border-radius:8px; color:#aeb4c2; }
+  #teMock .nav.on{ background:#232838; color:#fff; }
+  #teMock .main{ flex:1; display:flex; flex-direction:column; }
+  #teMock .top{ padding:12px 16px; border-bottom:1px solid #262a36; display:flex; justify-content:space-between; }
+  #teMock .scroll{ flex:1; padding:18px; }
+  #teMock .bub{ background:#1f232c; border-radius:14px; padding:10px 13px; max-width:60%; margin-bottom:12px; }
+  #teMock .composer{ padding:12px 16px; border-top:1px solid #262a36; display:flex; gap:8px; align-items:center; }
+  #teMock .composer .box{ flex:1; height:34px; background:#1f232c; border-radius:9px; }
+  #teMock .stage{ width:230px; background:#15171f; border-left:1px solid #262a36; padding:14px; }
+  #teMock .panel{ height:200px; border-radius:14px; background:linear-gradient(135deg,#2a2f4a,#1a2740); display:grid; place-items:center; color:#9aa3b2; }
+  #teMock .ccard{ margin-top:12px; height:90px; border-radius:12px; background:linear-gradient(135deg,#1d9e75,#2a6f8f); display:grid; place-items:center; color:#fff; font-size:12px; }
+  #teHint{ position:absolute; left:12px; bottom:12px; font-size:11px; color:#7c8294; background:rgba(0,0,0,.4); padding:4px 9px; border-radius:8px; }
+
+  aside#teSide{ width:340px; background:var(--surface-2,#fff); border-left:1px solid var(--line,#e3e6ee); overflow:auto; padding:14px; display:flex; flex-direction:column; gap:12px; }
+  .te-card{ border:1px solid var(--line,#e3e6ee); border-radius:14px; padding:13px; background:var(--surface-1,#fafbff); }
+  .te-card-t{ font-weight:700; font-size:13.5px; margin-bottom:8px; }
+  .te-card-s{ font-size:12px; color:var(--ink-2,#6b7280); margin-bottom:8px; }
+  .te-thumb{ height:84px; border-radius:10px; background:repeating-linear-gradient(45deg,#eef,#eef 8px,#e6e9f2 8px,#e6e9f2 16px); display:grid; place-items:center; color:var(--ink-3,#9aa3b2); font-size:12px; margin-bottom:8px; }
+  .te-spec{ font-size:11.5px; color:var(--ink-2,#6b7280); margin-bottom:6px; }
+  .te-spec.dim{ color:var(--ink-3,#9aa3b2); }
+  .te-btn.block{ display:block; width:100%; margin-top:6px; text-align:center; }
+  .te-sw-row{ display:flex; gap:8px; align-items:center; margin-bottom:8px; }
+  .te-sw{ width:26px; height:26px; border-radius:7px; background:var(--accent-1,#5b7cfa); }
+
+  /* —— 升级模块视觉（新增/修改） —— */
+  .te-pagerow{ display:flex; flex-wrap:wrap; gap:6px; }
+  .te-pagechip{ font-size:11.5px; border:1px solid var(--line,#e3e6ee); background:var(--surface-1,#f4f5f9); border-radius:8px; padding:4px 9px; cursor:pointer; display:inline-flex; align-items:center; gap:5px; }
+  .te-pagechip .mk{ width:7px; height:7px; border-radius:50%; background:#3a3f5a; }
+  .te-pagechip.on{ border-color:var(--accent-1,#5b7cfa); background:var(--accent-soft-1,#eaeaff); }
+  .te-pagechip.set .mk{ background:#36d399; }
+
+  /* 高级面板（折叠） */
+  details.adv{ border:1px solid var(--line,#e3e6ee); border-radius:14px; padding:4px 13px; background:#fbfaff; }
+  details.adv>summary{ cursor:pointer; font-weight:700; font-size:13.5px; padding:9px 0; list-style:none; display:flex; align-items:center; gap:8px; }
+  details.adv>summary::-webkit-details-marker{ display:none; }
+  .adv-grid{ display:grid; grid-template-columns:1fr 1fr; gap:10px; padding:6px 0 12px; }
+  .adv-item{ font-size:12px; }
+  .adv-item label{ display:block; color:var(--ink-2,#6b7280); margin-bottom:4px; }
+  .adv-item input[type=range]{ width:100%; }
+  .adv-item select, .adv-item input[type=text]{ width:100%; padding:5px 7px; border:1px solid var(--line,#e3e6ee); border-radius:7px; font-size:12px; }
+  .adv-row{ display:flex; align-items:center; gap:7px; font-size:12px; margin-top:4px; }
+
+  /* 贴纸库 */
+  .stk-packs{ display:flex; gap:6px; flex-wrap:wrap; margin-bottom:8px; }
+  .stk-pack{ font-size:11.5px; border:1px solid var(--line,#e3e6ee); background:var(--surface-1,#f4f5f9); border-radius:8px; padding:4px 9px; cursor:pointer; }
+  .stk-pack.on{ border-color:var(--accent-1,#5b7cfa); background:var(--accent-soft-1,#eaeaff); }
+  .stk-grid{ display:grid; grid-template-columns:repeat(6,1fr); gap:6px; margin:6px 0; }
+  .stk{ height:38px; border-radius:8px; background:#f0f1f6; display:grid; place-items:center; font-size:20px; border:1px solid var(--line,#e3e6ee); cursor:pointer; }
+  .stk-target{ font-size:11.5px; color:var(--ink-2,#6b7280); margin-top:4px; }
+  .stk-target b{ color:#1d9e75; }
+
+  .rev-notes{ font-size:12px; color:var(--ink-2,#6b7280); line-height:1.6; }
+  .rev-notes h4{ color:var(--ink,#1c2030); font-size:13px; margin:10px 0 4px; }
+  .rev-notes code{ background:#eef; padding:1px 5px; border-radius:5px; font-size:11px; }
+</style>
+</head>
+<body>
+
+<!-- ============ 评审横幅（标注图例） ============ -->
+<div class="rev-banner">
+  <b>🔍 主题编辑器升级方案 · 评审副本</b>
+  <span class="lg mod"><i></i>橙色虚线 = 计划修改现有功能</span>
+  <span class="lg add"><i></i>绿色虚线 = 建议新增图片区</span>
+  <span class="lg feat"><i></i>紫色虚线 = 建议新增功能</span>
+  <span class="sp"></span>
+  <span>派生自 <code>_theme_editor_design.html</code> (2026-10-08)</span>
+</div>
+
+<div id="teRoot">
+  <!-- 顶栏（当前，保持） -->
+  <header id="teBar">
+    <div class="te-title">主题编辑器 · <span>我的主题</span></div>
+    <div class="te-state">空白主题 · 跟随界面配色</div>
+    <div class="te-sp"></div>
+    <button class="te-btn">重命名</button>
+    <button class="te-btn">关闭</button>
+    <button class="te-btn primary">保存</button>
+  </header>
+
+  <!-- 绑定条（当前，保持） -->
+  <div id="teBind">
+    <span class="te-bind-label">绑定角色</span>
+    <div class="te-bind-pick">
+      <button class="te-char on"><span class="te-char-av">角</span><span><b>达妮娅</b><br><em>已实装</em></span></button>
+      <button class="te-char"><span class="te-char-av">?</span><span><b>未命名伙伴</b><br><em>开发中</em></span></button>
+      <button class="te-char"><span class="te-char-av">＋</span><span><b>暂不绑定</b><br><em>仅全局</em></span></button>
+    </div>
+    <div class="te-bind-note">已绑定「达妮娅」· 切角色时整套主题跟随</div>
+  </div>
+
+  <!-- 图位条（当前，保持） -->
+  <div id="teStrip">
+    <span class="te-strip-label">图位所在页面</span>
+    <span class="te-where">对话页</span>
+    <button class="te-jump">去看角色卡（④ 在那）↗</button>
+    <button class="te-jump">回到对话页（①②③ 在那）↗</button>
+    <span class="te-strip-sep"></span>
+    <button class="te-slot on"><i class="dot" style="background:#378ADD"></i>① 主页背景<em>空</em></button>
+    <button class="te-slot"><i class="dot" style="background:#7F77DD"></i>② 角色立绘<em>空</em></button>
+    <button class="te-slot"><i class="dot" style="background:#D85A30"></i>③ 头像<em>空</em></button>
+    <button class="te-slot"><i class="dot" style="background:#1D9E75"></i>④ 角色卡头图<em>空</em></button>
+  </div>
+
+  <!-- 主体 -->
+  <div id="teBody">
+    <!-- 左侧预览舞台（内联副本 + 标注层） -->
+    <div id="teStage">
+      <div id="teMock">
+        <aside class="side">
+          <div class="brand">达妮娅</div>
+          <div class="nav on">对话</div>
+          <div class="nav">日报周报</div>
+          <div class="nav">角色</div>
+          <div class="nav">记忆库</div>
+          <div class="nav">设置</div>
+          <!-- 📌 建议新增图片区：侧栏底部状态贴纸落点 -->
+          <div style="margin-top:auto;height:42px;border:1px dashed #36d399;border-radius:9px;display:grid;place-items:center;color:#36d399;font-size:11px;">侧栏底部贴纸区</div>
+        </aside>
+        <section class="main">
+          <div class="top"><div>对话</div><div>文本输入</div></div>
+          <div class="scroll">
+            <!-- 📌 建议新增图片区：对话气泡角标贴纸 -->
+            <div class="bub" style="position:relative;">达妮娅在等你，说点什么吧～<span style="position:absolute;top:-8px;right:-8px;font-size:16px;">🌟</span></div>
+            <div class="bub" style="position:relative;">今天想聊点什么？<span style="position:absolute;top:-8px;right:-8px;font-size:16px;">💡</span></div>
+          </div>
+          <div class="composer">
+            <!-- 📌 建议新增图片区：输入栏上方贴纸条 -->
+            <div style="position:absolute;top:-30px;left:8px;display:flex;gap:5px;">
+              <span style="font-size:15px;">😊</span><span style="font-size:15px;">🐱</span><span style="font-size:15px;">☕</span>
+            </div>
+            <div class="box"></div>
+            <button class="te-btn">发</button>
+          </div>
+        </section>
+        <aside class="stage">
+          <!-- 📌 当前已有 ②：Live2D 舞台（建议新增贴纸落点：舞台角落） -->
+          <div class="panel" style="position:relative;">Live2D 舞台
+            <span style="position:absolute;bottom:8px;right:8px;font-size:18px;">🎀</span>
+          </div>
+          <!-- 📌 当前已有 ④：角色卡头图 -->
+          <div class="ccard">角色卡头图（④ 已支持）</div>
+        </aside>
+      </div>
+
+      <!-- ===== 标注层（覆盖在预览上，编号对应下方说明） ===== -->
+      <div class="anno add" style="left:12px;bottom:64px;width:166px;height:46px;">
+        <span class="tag">建议新增图片区</span><span class="num">A1</span>
+      </div>
+      <div class="anno add" style="left:212px;top:120px;width:120px;height:60px;">
+        <span class="tag">气泡角标贴纸</span><span class="num">A2</span>
+      </div>
+      <div class="anno add" style="left:212px;bottom:54px;width:200px;height:26px;">
+        <span class="tag">输入栏上方贴纸条</span><span class="num">A3</span>
+      </div>
+      <div class="anno add" style="right:14px;top:14px;width:202px;height:200px;">
+        <span class="tag">舞台角落贴纸</span><span class="num">A4</span>
+      </div>
+      <div class="anno mod" style="right:14px;bottom:14px;width:202px;height:90px;">
+        <span class="tag">计划修改：④ 头图增强</span><span class="num">M1</span>
+      </div>
+
+      <div id="teHint">内联预览副本（便于直接标注；真机仍走 iframe 加载真实页面）</div>
+    </div>
+
+    <!-- 右侧属性栏 -->
+    <aside id="teSide">
+      <!-- 当前：图位卡片（保持） -->
+      <div class="te-card">
+        <div class="te-card-t">① 主页背景</div>
+        <div class="te-card-s">未配置</div>
+        <div class="te-thumb">点「选择图片」填入</div>
+        <div class="te-spec">建议 1920×1080 以上横图</div>
+        <div class="te-spec dim">占整屏，按 cover 裁切</div>
+        <button class="te-btn primary block">选择图片</button>
+        <button class="te-btn block">清除此图</button>
+      </div>
+
+      <div class="te-card">
+        <div class="te-card-t">保存时会发生什么</div>
+        <div class="te-spec">① ② ③ 只写进这个主题包，互不影响。</div>
+      </div>
+
+      <!-- ===== 升级模块 1：页面壁纸（计划修改，替换占位桩） ===== -->
+      <div class="te-card" style="border-color:#ff9f43;">
+        <div class="te-card-t">🟠 页面壁纸 <span style="font-weight:400;color:#ff9f43;font-size:11px;">〔计划修改：占位桩 → 每页独立壁纸管理器〕</span></div>
+        <div class="te-spec">每个子页可单独配背景，支持 mp4 动态壁纸（数据层 <code>t_pick(page)</code> + <code>--tm-wall-*</code> 已就绪，仅差入口）</div>
+        <div class="te-pagerow" id="tePages">
+          <span class="te-pagechip on">对话页</span>
+          <span class="te-pagechip set">角色页</span>
+          <span class="te-pagechip">日报周报</span>
+          <span class="te-pagechip set">记忆库</span>
+          <span class="te-pagechip">设置</span>
+          <span class="te-pagechip">知识库</span>
+          <span class="te-pagechip">开发者</span>
+          <span class="te-pagechip">软件档案</span>
+        </div>
+        <!-- 选中页的赋值卡（新增） -->
+        <div style="margin-top:10px;border:1px dashed #36d399;border-radius:10px;padding:10px;">
+          <div style="font-size:12px;font-weight:600;margin-bottom:6px;">🟢 当前页：<span>对话页</span> 的壁纸</div>
+          <div class="te-thumb" style="height:60px;">点「选择壁纸」填入本页背景</div>
+          <div class="adv-row"><span>填充</span>
+            <select style="flex:1;padding:4px 6px;border:1px solid #e3e6ee;border-radius:6px;font-size:12px;">
+              <option>cover（铺满裁切）</option><option>contain（完整留边）</option><option>repeat（平铺）</option>
+            </select>
+          </div>
+          <div class="adv-row"><input type="checkbox" checked> <span>🎞 动态壁纸（mp4 / webm）</span></div>
+          <button class="te-btn primary block">选择壁纸</button>
+        </div>
+        <div class="te-spec dim" style="margin-top:8px;">与四图位正交：图位=角色内容，页面壁纸=页面背景，互不影响、单独保存</div>
+      </div>
+
+      <!-- ===== 升级模块 2：高级选项面板（建议新增） ===== -->
+      <details class="adv" open>
+        <summary>🟣 高级选项 <span style="font-weight:400;color:#7c5cff;font-size:11px;">〔建议新增：默认折叠〕</span></summary>
+        <div class="adv-grid">
+          <div class="adv-item"><label>背景模糊度</label><input type="range" min="0" max="30" value="0"></div>
+          <div class="adv-item"><label>圆角半径</label><input type="range" min="0" max="40" value="14"></div>
+          <div class="adv-item"><label>不透明度</label><input type="range" min="40" max="100" value="100"></div>
+          <div class="adv-item"><label>聚焦推近时长</label><input type="range" min="100" max="800" value="300"></div>
+          <div class="adv-item"><label>取色强度</label><input type="range" min="0" max="100" value="60"></div>
+          <div class="adv-item"><label>默认填充模式</label>
+            <select><option>cover</option><option>contain</option><option>repeat</option></select>
+          </div>
+        </div>
+        <div class="adv-row"><input type="checkbox"> <span>🔒 锁定主色（禁止自动取色覆盖手动设定）</span></div>
+        <div class="adv-row"><input type="checkbox"> <span>🌓 暗 / 亮主题分别定制</span></div>
+        <div class="adv-row"><input type="checkbox" checked> <span>🖼 图片缺失时显示占位渐变</span></div>
+        <div class="adv-row" style="margin-top:8px;gap:8px;">
+          <button class="te-btn" style="flex:1;">⬇ 导出 JSON</button>
+          <button class="te-btn" style="flex:1;">⬆ 导入 JSON</button>
+        </div>
+      </details>
+
+      <!-- ===== 升级模块 3：表情包 / 贴纸库（建议新增） ===== -->
+      <div class="te-card" style="border-color:#b58bff;">
+        <div class="te-card-t">🟣 表情包 / 贴纸库 <span style="font-weight:400;color:#7c5cff;font-size:11px;">〔建议新增〕</span></div>
+        <div class="stk-packs">
+          <span class="stk-pack on">内置表情</span>
+          <span class="stk-pack">达妮娅专属</span>
+          <span class="stk-pack">＋ 上传包</span>
+        </div>
+        <div class="stk-grid">
+          <div class="stk">😊</div><div class="stk">🐱</div><div class="stk">☕</div>
+          <div class="stk">🌟</div><div class="stk">💡</div><div class="stk">🎀</div>
+          <div class="stk">😴</div><div class="stk">🔥</div><div class="stk">🌈</div>
+          <div class="stk">💖</div><div class="stk">🍰</div><div class="stk">👍</div>
+        </div>
+        <div class="stk-target">插入到：<b>输入栏上方贴纸条</b>（可切换：气泡角标 / 状态栏 / 舞台角落 / 角色卡 / 侧栏底部）</div>
+        <div class="adv-row"><span>缩放</span><input type="range" min="50" max="200" value="100" style="flex:1;"></div>
+        <div class="adv-row"><span>透明度</span><input type="range" min="20" max="100" value="100" style="flex:1;"></div>
+        <div class="adv-row"><input type="checkbox" checked> <span>随主题切换自动更换</span></div>
+        <div class="te-spec dim" style="margin-top:6px;">档位联动：纯本地档隐藏需联网的云端贴纸包（沿用 mode_gates 机制）</div>
+      </div>
+
+      <!-- 主题配色（当前，保持） -->
+      <div class="te-card">
+        <div class="te-card-t">主题配色</div>
+        <div class="te-sw-row"><span class="te-sw"></span><span class="te-sw" style="background:var(--accent-2,#7f77dd)"></span>
+          <span class="te-card-s">默认（极光青紫）</span></div>
+        <div class="te-spec">填入 ① 后自动提取主色</div>
+        <button class="te-btn block">手动微调配色</button>
+      </div>
+
+      <!-- ===== 评审说明（编号对照） ===== -->
+      <div class="te-card">
+        <div class="te-card-t">📋 标注对照 & 补充建议</div>
+        <div class="rev-notes">
+          <h4>预览区标注</h4>
+          <b style="color:#1d9e75;">A1</b> 侧栏底部状态贴纸区（建议新增图片区）<br>
+          <b style="color:#1d9e75;">A2</b> 对话气泡角标贴纸<br>
+          <b style="color:#1d9e75;">A3</b> 输入栏上方贴纸条<br>
+          <b style="color:#1d9e75;">A4</b> Live2D 舞台角落贴纸<br>
+          <b style="color:#ff9f43;">M1</b> ④ 角色卡头图增强（整卡背景，当前已支持，建议加圆角/模糊微调）
+          <h4>我补充的可行升级（供取舍）</h4>
+          1. 情景自动切换（按时间/档位换主题）<br>
+          2. AI 配图建议（按角色性格推色调/贴纸风）<br>
+          3. 主题模板市场 + 分享码<br>
+          4. 撤销/重做 & 版本历史<br>
+          5. 局部主题（只改某区域）<br>
+          6. 无障碍：高对比、动态壁纸省电暂停、取色器<br>
+          7. 多显示器/分辨率分别适配壁纸
+        </div>
+      </div>
+    </aside>
+  </div>
+</div>
+
+</body>
+</html>

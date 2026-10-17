@@ -1,0 +1,559 @@
+<!DOCTYPE html>
+
+<html lang="zh-CN">
+
+<head>
+
+<meta charset="UTF-8" />
+
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+
+<title>日报周报 · 桌面伴侣</title>
+
+<link rel="stylesheet" href="/redesign/design_tokens.css?v=20261013e" />
+
+<link rel="stylesheet" href="/redesign/ui_shared.css?v=20261013e" />
+
+<link rel="stylesheet" href="/redesign/pages.css" />
+
+
+
+  <style>
+
+    *{ -webkit-user-select:none; user-select:none; -webkit-touch-callout:none; -webkit-tap-highlight-color:transparent; }
+
+    input, textarea, select, [contenteditable="true"]{ -webkit-user-select:text; user-select:text; }
+
+    ::selection{ background:rgba(124,92,255,.25); }
+
+    img, canvas, svg, video{ -webkit-user-drag:none; user-drag:none; }
+
+    body{ -webkit-user-drag:none; }
+
+  </style>
+
+</head>
+
+<body>
+
+<div class="app">
+
+    <aside class="side">
+
+    <div class="brand"><div class="wm">达妮娅</div><div class="wmsub">DESKTOP COMPANION</div></div>
+
+    <div class="grp">
+
+      <div class="gt">日常</div>
+
+      <a class="nav" href="/index.html"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>对话</a>
+
+      <a class="nav on" href="/redesign/ui_redesign_daily.html"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M4 4h16v16H4z"/><path d="M8 9h8M8 13h5"/></svg>日报周报</a>
+
+    </div>
+
+    <div class="grp">
+
+      <div class="gt">伴侣</div>
+
+      <a class="nav" href="/redesign/ui_redesign_characters.html"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/></svg>角色</a>
+
+      <a class="nav" href="/redesign/ui_redesign_memory.html"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M5 4h12a2 2 0 0 1 2 2v14H7a2 2 0 0 1-2-2z"/></svg>记忆库</a>
+
+  <a class="nav" href="/redesign/ui_redesign_stickers.html"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="3"/><circle cx="9" cy="9" r="1.4"/><path d="M21 15l-4.5-4.5L7 20"/></svg>表情包管理</a>
+
+    </div>
+
+    <div class="grp">
+
+      <div class="gt">系统</div>
+
+      <a class="nav" href="/redesign/ui_redesign_settings.html"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/></svg>设置</a>
+
+      <a class="nav" href="/redesign/ui_redesign_software_profiles.html"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>软件档案</a>
+
+      <a class="nav" href="/redesign/lib.html"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M5 4h11a2 2 0 0 1 2 2v14H7a2 2 0 0 1-2-2z M4 9h11 M4 13h11"/></svg>知识库</a>
+
+      <a class="nav" href="/redesign/ui_redesign_developer.html"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M4 6h16M7 12h10M10 18h4"/></svg>开发者</a>
+
+    </div>
+
+    <div class="spacer"></div>
+
+  </aside>
+
+
+
+  <main class="main">
+
+    <header class="top">
+
+      <div><div class="who">日报周报</div><div class="sub">由达妮娅自动汇总你的日常</div></div>
+
+      <div class="right"></div>
+
+    </header>
+
+    <section class="content daily-app" data-mode="day" data-expanded="false">
+
+      <div><div class="kicker">回顾</div><div class="lead">今天发生了什么</div></div>
+
+      <div class="tabs">
+
+        <button class="tab on" data-tab="day" type="button"><svg class="micon tab-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 12m-1.1 0a1.1 1.1 0 1 0 2.2 0a1.1 1.1 0 1 0 -2.2 0"/></svg>日报</button>
+
+        <button class="tab" data-tab="week" type="button"><svg class="micon tab-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 12m-1.1 0a1.1 1.1 0 1 0 2.2 0a1.1 1.1 0 1 0 -2.2 0"/></svg>周报</button>
+
+      </div>
+
+
+
+      <div class="deck">
+
+        <div class="deck-bar">
+
+          <button class="expandbtn" id="expandBtn" title="展开整页 / 返回" type="button">
+
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path id="expPath" d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg>
+
+            <span id="expLabel">展开</span>
+
+          </button>
+
+          <div class="deck-mid">
+
+            <button class="navbtn prev" id="prevBtn" title="上一天 / 上一周" type="button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M15 6l-6 6 6 6"/></svg></button>
+
+            <div class="deck-date" id="deckDate">—</div>
+
+            <button class="navbtn next" id="nextBtn" title="下一天 / 下一周" type="button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg></button>
+
+          </div>
+
+          <div class="deck-spacer"></div>
+
+        </div>
+
+
+
+        <div class="deck-hint" id="deckHint">内容较长？点左上「展开」看完整日报</div>
+
+
+
+        <div class="deck-body" id="deckBody"></div>
+
+      </div>
+
+
+
+    </section>
+
+  </main>
+
+</div>
+
+
+
+<script src="/redesign/gsap.min.js"></script>
+
+<script type="module" src="/redesign/morph_icons.js"></script>
+
+  <script src="/redesign/app_backend.js?v=20261015f"></script>
+
+
+
+  <script>
+
+
+
+const root = document.documentElement;
+
+const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+const app = document.querySelector('.daily-app');
+
+const deckBody = document.getElementById('deckBody');
+
+const deckDate = document.getElementById('deckDate');
+
+const deckHint = document.getElementById('deckHint');
+
+const expandBtn = document.getElementById('expandBtn');
+
+const expPath = document.getElementById('expPath');
+
+const expLabel = document.getElementById('expLabel');
+
+const mdCache = {};
+
+const existing = { daily: new Set(), weekly: new Set() };
+
+const S = { mode: 'day', expanded: false, day: new Date(), weekMon: null };
+
+S.weekMon = weekStartMonday(S.day);
+
+
+
+/* 主题色 / 深浅模式由 app_backend.js?v=20261015f 的 window.Theme 统一处理（首屏前执行，并会清理自定义色残留的内联变量），此处不再重复实现。 */
+
+
+
+/* ---------- 日期工具 ---------- */
+
+const WD = ['周日','周一','周二','周三','周四','周五','周六'];
+
+function pad(n){ return String(n).padStart(2,'0'); }
+
+function fmt(d){ return d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate()); }
+
+function addDays(d, n){ const x = new Date(d); x.setDate(x.getDate()+n); return x; }
+
+function weekStartMonday(d){ const x = new Date(d); x.setHours(0,0,0,0); const day = x.getDay(); const diff = (day===0? -6 : 1-day); x.setDate(x.getDate()+diff); return x; }
+
+function weekDates(mon){ return Array.from({length:7}, (_,i)=> addDays(mon, i)); }
+
+
+
+/* ---------- Markdown 渲染 ---------- */
+
+function esc(s){ return String(s==null?'':s).replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m])); }
+
+function inline(s){ return esc(s).replace(/\*\*(.+?)\*\*/g, '<b>$1</b>'); }
+
+function mdToHtml(md){
+
+  const lines = (md||'').split('\n');
+
+  let html='', inList=false, sectionOpen=false;
+
+  const closeList=()=>{ if(inList){ html+='</ul>'; inList=false; } };
+
+  const closeSec=()=>{ closeList(); if(sectionOpen){ html+='</div>'; sectionOpen=false; } };
+
+  for (const ln of lines){
+
+    const t = ln.trim();
+
+    if (!t){ closeList(); continue; }
+
+    let m;
+
+    if ((m = t.match(/^##\s+(.*)$/))){ closeSec(); html+='<div class="sec"><span class="st">'+inline(m[1])+'</span>'; sectionOpen=true; }
+
+    else if ((m = t.match(/^#\s+(.*)$/))){ closeSec(); html+='<h3>'+inline(m[1])+'</h3>'; }
+
+    else if ((m = t.match(/^[-*]\s+(.*)$/))){ if(!inList){ html+='<ul>'; inList=true; } html+='<li>'+inline(m[1])+'</li>'; }
+
+    else { closeList(); html+='<p>'+inline(t)+'</p>'; }
+
+  }
+
+  closeSec();
+
+  return html;
+
+}
+
+
+
+/* ---------- 渲染：卡片（默认就展示当日活动 / 占位） ---------- */
+
+async function buildCard(date, key){
+
+  const wd = WD[date.getDay()];
+
+  const card = document.createElement('article');
+
+  card.className = 'daycard'; card.dataset.key = key;
+
+  if (!existing.daily.has(key)){
+
+    card.classList.add('empty');
+
+    card.innerHTML =
+
+      '<div class="rhead"><h3>'+key+'</h3><span class="rdate">'+wd+'</span></div>'+
+
+      '<div class="rbody"><p class="ghost">当天无活动记录</p></div>';
+
+    return card;
+
+  }
+
+  if (mdCache[key] === undefined){
+
+    const r = await Backend.getReport('daily', key);
+
+    mdCache[key] = (r && r.success) ? r.content : '';
+
+  }
+
+  const md = mdCache[key];
+
+  card.innerHTML =
+
+    '<div class="rhead"><h3>'+key+'</h3><span class="rdate">'+wd+'</span></div>'+
+
+    '<div class="rbody">'+mdToHtml(md)+'</div>'+
+
+    (md ? '<div class="actions"><button class="btn primary exp" type="button">导出</button><button class="btn cp" type="button">复制</button></div>' : '');
+
+  return card;
+
+}
+
+async function renderDeck(){
+
+  deckBody.innerHTML = '';
+
+  deckBody.classList.remove('week');
+
+  if (S.mode === 'day'){
+
+    const card = await buildCard(S.day, fmt(S.day));
+
+    deckBody.appendChild(card);
+
+  } else {
+
+    deckBody.classList.add('week');
+
+    const expbar = document.createElement('div');
+
+    expbar.className = 'expbar';
+
+    expbar.innerHTML = '<button class="btn primary" id="expWeek" type="button">导出本周</button><span class="expbar-tip">每天以卡片展示，无记录的日子显示占位</span>';
+
+    deckBody.appendChild(expbar);
+
+    for (const d of weekDates(S.weekMon)){
+
+      const card = await buildCard(d, fmt(d));
+
+      deckBody.appendChild(card);
+
+    }
+
+  }
+
+  applyCompact();
+
+  updateDateLabel();
+
+}
+
+function applyCompact(){
+
+  deckBody.querySelectorAll('.daycard').forEach(c => c.classList.toggle('compact', !S.expanded));
+
+  deckHint.style.display = S.expanded ? 'none' : '';
+
+}
+
+function updateDateLabel(){
+
+  if (S.mode === 'day'){ deckDate.textContent = fmt(S.day) + ' ' + WD[S.day.getDay()]; }
+
+  else { const ds = weekDates(S.weekMon); deckDate.textContent = fmt(ds[0]).slice(5) + ' → ' + fmt(ds[6]).slice(5) + ' 本周'; }
+
+}
+
+
+
+/* ---------- 导出 / 复制 ---------- */
+
+function downloadMd(name, md){
+
+  if (!md){ Backend.toast('暂无内容可导出','err'); return; }
+
+  Backend.exportMarkdown({name: name, content: md}).then(function(r){
+
+    if (r && r.success){ Backend.toast('已导出到：' + r.folder); }
+
+    else { Backend.toast((r && r.error) ? ('导出失败：' + r.error) : '导出失败', 'err'); }
+
+  }).catch(function(){ Backend.toast('导出失败', 'err'); });
+
+}
+
+function copyText(t){
+
+  if (!t){ Backend.toast('暂无内容可复制','err'); return; }
+
+  if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(t).then(()=>Backend.toast('已复制'), ()=>Backend.toast('复制失败','err'));
+
+  else Backend.toast('浏览器不支持复制','err');
+
+}
+
+deckBody.addEventListener('click', function(e){
+
+  const btn = e.target.closest('.exp, .cp');
+
+  if (btn){
+
+    const card = btn.closest('.daycard'); const key = card && card.dataset.key;
+
+    if (btn.classList.contains('exp')) downloadMd(key, mdCache[key]||'');
+
+    else copyText(mdCache[key]||'');
+
+    return;
+
+  }
+
+  if (e.target.id === 'expWeek'){
+
+    const ds = weekDates(S.weekMon);
+
+    const parts = ds.map(d => { const k = fmt(d); return existing.daily.has(k) ? ('# '+k+'\n'+(mdCache[k]||'')) : ('# '+k+'\n当天无活动记录'); });
+
+    downloadMd(fmt(S.weekMon)+'_week', parts.join('\n\n'));
+
+  }
+
+});
+
+
+
+/* ---------- 展开 / 收起（与返回同款 morph 形变） ---------- */
+
+function setExpanded(v){
+
+  if (S.expanded === v) return;
+
+  S.expanded = v; app.dataset.expanded = v ? 'true' : 'false';
+
+  applyCompact();
+
+  expLabel.textContent = v ? '返回' : '展开';
+
+  if (window.Morph) window.Morph.to(expPath, v ? 'chevronLeft' : 'expand');
+
+  if (window.gsap && !reduce) gsap.fromTo(expandBtn.querySelector('svg'), { scale: .7, opacity: 0 }, { scale: 1, opacity: 1, duration: .32, ease: 'back.out(2)' });
+
+}
+
+expandBtn.addEventListener('click', () => setExpanded(!S.expanded));
+
+
+
+/* ---------- 左右滑动切换（仅折叠态可翻） ---------- */
+
+let lastDir = 1, swipeMoved = false, pStartX = 0;
+
+function slideAnim(){
+
+  if (window.gsap && !reduce) gsap.fromTo(deckBody, { x: (lastDir>0?-18:18), opacity: .4 }, { x: 0, opacity: 1, duration: .3, ease: 'power2.out' });
+
+}
+
+function nav(dir){
+
+  if (S.expanded) return;            /* 展开态禁用滑动，仅返回可操作 */
+
+  lastDir = dir;
+
+  if (S.mode === 'day') S.day = addDays(S.day, dir);
+
+  else S.weekMon = addDays(S.weekMon, dir*7);
+
+  renderDeck().then(slideAnim);
+
+}
+
+document.getElementById('prevBtn').addEventListener('click', () => nav(-1));
+
+document.getElementById('nextBtn').addEventListener('click', () => nav(1));
+
+deckBody.addEventListener('pointerdown', e => { if (S.expanded) return; pStartX = e.clientX; swipeMoved = false; });
+
+deckBody.addEventListener('pointermove', e => { if (S.expanded) return; if (Math.abs(e.clientX - pStartX) > 8) swipeMoved = true; });
+
+deckBody.addEventListener('pointerup', e => {
+
+  if (S.expanded) return;
+
+  const dx = e.clientX - pStartX;
+
+  if (Math.abs(dx) > 40){ nav(dx < 0 ? 1 : -1); swipeMoved = true; }
+
+});
+
+
+
+/* ---------- 模式切换 ---------- */
+
+document.querySelectorAll('.tab').forEach(t => t.addEventListener('click', function(){
+
+  document.querySelectorAll('.tab').forEach(x => x.classList.remove('on')); t.classList.add('on');
+
+  S.mode = t.dataset.tab; app.dataset.mode = S.mode;
+
+  setExpanded(false);
+
+  document.querySelectorAll('.tab .tab-check path').forEach(p => { if (window.Morph) window.Morph.to(p, p.closest('.tab').classList.contains('on') ? 'check' : 'dot'); });
+
+  renderDeck();
+
+}));
+
+/* 横向紧挨的小卡片（日报 / 周报）：选中背景块横向位移过去。
+
+   Fx 内部用 MutationObserver 盯着 .on 的变化，上面切 tab 时会自动跟着移动。 */
+
+if (window.Fx) window.Fx.segInit(document.querySelector('.tabs'));
+
+document.addEventListener('morph-ready', function(){
+
+  document.querySelectorAll('.tab .tab-check path').forEach(p => { if (window.Morph) window.Morph.to(p, p.closest('.tab').classList.contains('on') ? 'check' : 'dot'); });
+
+});
+
+
+
+/* ---------- 初始化 ---------- */
+
+Backend.getReports().then(r => {
+
+  if (!r || !r.success){ Backend.toast('日报获取失败（后端未连接）', 'err'); renderDeck(); return; }
+
+  (r.daily||[]).forEach(k => existing.daily.add(k));
+
+  (r.weekly||[]).forEach(k => existing.weekly.add(k));
+
+  renderDeck();
+
+}).catch(() => renderDeck());
+
+
+
+if (window.gsap && !reduce && !window.__SPA_NAV){
+
+  gsap.from('.top', { opacity:0, y:-6, duration:.4, ease:'power2.out' });
+
+  gsap.from('.kicker, .lead, .tabs', { opacity:0, y:8, duration:.45, delay:.18, ease:'power2.out' });
+
+  gsap.from('.deck', { opacity:0, y:16, duration:.5, delay:.28, ease:'power3.out' });
+
+}
+
+[document.getElementById('prevBtn'), document.getElementById('nextBtn'), expandBtn].forEach(b => {
+
+  if (!b) return;
+
+  b.addEventListener('mouseenter', () => { if (window.gsap && !reduce && b.querySelector('svg')) gsap.to(b.querySelector('svg'), { scale:1.18, duration:.3, ease:'back.out(2.2)' }); });
+
+  b.addEventListener('mouseleave', () => { if (window.gsap && !reduce && b.querySelector('svg')) gsap.to(b.querySelector('svg'), { scale:1, duration:.25, ease:'power2.out' }); });
+
+});
+
+
+
+  </script>
+
+<script src="/redesign/theme_manager.js?v=20261013d"></script>
+</body>
+
+</html>
+

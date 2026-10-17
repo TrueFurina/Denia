@@ -1,0 +1,609 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>桌面伴侣 · 主页（编辑器预览副本）</title>
+<link rel="stylesheet" href="design_tokens.css?v=20261007g" />
+<link rel="stylesheet" href="ui_shared.css?v=20261006c" />
+  <link rel="stylesheet" href="home.css?v=20261006ah" />
+  <link rel="stylesheet" href="pages.css?v=20261013b" />
+  <!-- 本地图标库（Lucide ISC + css.gg MIT，离线内置，不依赖 CDN）：提供 window.DIcon -->
+  <style>
+    /* 语音模式按钮（模式1轻量语音：浏览器麦克风 → sherpa → /chat → TTS 念回） */
+    .mic-btn{ width:38px;height:38px;border:none;border-radius:12px;background:var(--surface-2);
+      color:var(--ink-2);cursor:pointer;font-size:18px;display:flex;align-items:center;justify-content:center;
+      flex:0 0 auto;transition:background .2s,transform .15s,box-shadow .2s; }
+    .mic-btn:hover{ background:var(--surface-3); }
+    .mic-btn.on{ background:var(--accent-grad); color:var(--on-accent);
+      box-shadow:0 0 0 3px color-mix(in srgb, var(--accent-1) 25%, transparent); }
+    .mic-btn.rec{ animation:micPulse 1.1s ease-in-out infinite; }
+    @keyframes micPulse{ 0%,100%{ box-shadow:0 0 0 0 rgba(255,90,90,.55);} 50%{ box-shadow:0 0 0 9px rgba(255,90,90,0);} }
+    .field{ align-items:center; }
+    /* 【2026-09-29 排版修复】中文输入框的 min-content 只有 1 个字宽（CJK 可逐字断行），
+       行内按钮/药丸一多，flex 挤压时输入框会塌成 1 个字（"和…"）。两条保底：
+       ① 输入框永远保留可读宽度，宁可让可收缩的药丸先让位；
+       ② 模型药丸固定宽度（132px），icon+名称+caret 在内、长名 ellipsis，进主页/切模型都不忽窄忽宽（覆盖 pages.css 弹性约束）。
+       另加作用域内的 [hidden] 权威规则，防止任何显式 display 把 hidden 元素顶出来
+       （此前 .call-btn 的 display:inline-flex 就这样把 hidden 的视频/屏幕按钮显示了出来）。 */
+    .field textarea{ min-width:160px; }
+    .field .model-pill{ flex:0 0 132px; }
+    .field [hidden]{ display:none !important; }
+    .voice-hint{ position:fixed;left:50%;bottom:98px;transform:translateX(-50%);
+      background:rgba(20,24,34,.92);color:#dfe7f3;padding:8px 14px;border-radius:20px;font-size:13px;
+      opacity:0;transition:opacity .25s;pointer-events:none;z-index:9998; }
+    .voice-hint.show{ opacity:1; }
+
+    /* ===== 微信风「+」展开面板（2026-10-03）=====
+       设计：底部栏只留 [+] [输入框] [发送]；点 + 平滑上滑展开功能网格，
+       面板占真实布局高度，展开时把整条输入栏顶起（消息区被压缩、内容上移）。 */
+    .plus-toggle{
+      flex:0 0 auto; width:36px; height:36px; border:1px solid var(--line); border-radius:11px;
+      background:var(--surface-2); color:var(--ink-2); cursor:pointer;
+      display:flex; align-items:center; justify-content:center;
+      transition:background .18s, transform .18s, border-color .18s, color .18s;
+    }
+    .plus-toggle:hover{ background:var(--surface-3); }
+    .plus-toggle:active{ transform:scale(.94); }
+    .plus-toggle .pi-plus{ width:20px; height:20px; transition:transform .28s cubic-bezier(.22,1,.36,1); }
+    .plus-toggle.open .pi-plus{ transform:rotate(45deg); }
+    .plus-toggle.open{ border-color:var(--accent-1); color:var(--accent-1); background:var(--accent-soft-1); }
+
+    /* 面板：grid-rows 0fr→1fr 实现高度自动动画，展开时占真实高度顶起输入栏 */
+    .plus-panel{
+      display:grid; grid-template-rows:0fr;
+      opacity:0; padding:0 14px;
+      transition:grid-template-rows .3s cubic-bezier(.22,1,.36,1), opacity .22s ease, padding .3s cubic-bezier(.22,1,.36,1);
+    }
+    .plus-panel > .plus-grid{ overflow:hidden; min-height:0; }
+    .composer.open .plus-panel{ grid-template-rows:1fr; opacity:1; padding:12px 14px 14px; }
+
+    .plus-grid{
+      display:grid; grid-template-columns:repeat(4, 1fr); gap:10px;
+      transform:translateY(10px); opacity:0;
+      transition:transform .3s cubic-bezier(.22,1,.36,1) .04s, opacity .25s ease .04s;
+    }
+    .composer.open .plus-grid{ transform:translateY(0); opacity:1; }
+
+    /* 网格项：盖掉 call-btn/mic-btn/model-pill 原本的圆形按钮外观，改成「图标圆+文案」 */
+    .plus-grid .call-btn,
+    .plus-grid .mic-btn,
+    .plus-grid .model-pill{
+      width:auto; height:auto; min-width:0; max-width:none; border:none; border-radius:0;
+      background:transparent; padding:4px 2px; gap:7px; flex-direction:column;
+      display:flex; align-items:center; color:var(--ink); font-size:11px; cursor:pointer;
+    }
+    .plus-grid .call-btn:hover,
+    .plus-grid .mic-btn:hover,
+    .plus-grid .model-pill:hover{ background:transparent; border-color:transparent; }
+    .plus-item .pi-ic{
+      width:52px; height:52px; border-radius:14px; display:flex; align-items:center; justify-content:center;
+      background:var(--surface-2); color:var(--ink); transition:background .18s, transform .12s, color .18s;
+    }
+    .plus-item:hover .pi-ic{ background:var(--surface-3); }
+    .plus-item:active .pi-ic{ transform:scale(.92); }
+    .plus-item .pi-ic svg{ width:24px; height:24px; }
+    .plus-item .pi-lbl{ font-size:11px; color:var(--ink-2); line-height:1; }
+
+    /* 语音模式开启：图标圈高亮 + 录音脉冲（复用 micPulse 关键帧） */
+    .plus-grid .mic-btn.on .pi-ic{ background:var(--accent-grad); color:var(--on-accent); box-shadow:0 0 0 3px color-mix(in srgb,var(--accent-1) 25%,transparent); }
+    .plus-grid .mic-btn.rec .pi-ic{ animation:micPulse 1.1s ease-in-out infinite; }
+    /* 档位锁死：图标圈置灰禁用 */
+    .plus-grid .call-btn.locked .pi-ic{ opacity:.4; filter:grayscale(1); }
+    /* 模型药丸在网格里的内部元素修正（保留 mp-name/mp-auto 供 JS 更新） */
+    .plus-grid .model-pill .mp-ic{ font-size:0; }
+    .plus-grid .model-pill .mp-auto,
+    .plus-grid .model-pill .mp-caret{ display:none; }
+    .plus-grid .model-pill .mp-name{ flex:none; text-align:center; max-width:64px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  </style>
+  <style>
+    /* 桌面化：去掉页面文本选中/长按菜单/拖拽，让 UI 像原生控件而非浏览器 */
+    *{ -webkit-user-select:none; user-select:none; -webkit-touch-callout:none; -webkit-tap-highlight-color:transparent; }
+    input, textarea, [contenteditable="true"]{ -webkit-user-select:text; user-select:text; }
+    ::selection{ background:rgba(124,92,255,.25); }
+    img, canvas, svg, video{ -webkit-user-drag:none; user-drag:none; }
+    body{ -webkit-user-drag:none; }
+  </style>
+  <!-- 预览小桥：父页要量坐标 / 写 --tm-* 时走 postMessage（file:// 或跨域预览下必须） -->
+  <script src="_te_bridge.js"></script>
+</head>
+<body>
+<div class="app" id="app">
+
+    <!-- 侧边栏 -->
+      <aside class="side">
+    <div class="brand"><div class="wm">达妮娅</div><div class="wmsub">DESKTOP COMPANION</div></div>
+    <div class="grp">
+      <div class="gt">日常</div>
+      <a class="nav on" href="_te_real_chat.html"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>对话</a>
+      <a class="nav" href="ui_redesign_daily.html"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M4 4h16v16H4z"/><path d="M8 9h8M8 13h5"/></svg>日报周报</a>
+    </div>
+    <div class="grp">
+      <div class="gt">通话</div>
+      <a class="nav" href="ui_redesign_calls.html"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M22 16.9v3a2 2 0 0 1-2.2 2 19.8 19.8 0 0 1-8.6-3.1 19.5 19.5 0 0 1-6-6A19.8 19.8 0 0 1 2.1 4.2 2 2 0 0 1 4.1 2h3a2 2 0 0 1 2 1.7c.1 1 .4 2 .7 2.9a2 2 0 0 1-.5 2.1L8.1 9.9a16 16 0 0 0 6 6l1.2-1.2a2 2 0 0 1 2.1-.5c.9.3 1.9.6 2.9.7a2 2 0 0 1 1.7 2z"/></svg>通话记录</a>
+    </div>
+    <div class="grp">
+      <div class="gt">伴侣</div>
+      <a class="nav" href="ui_redesign_characters.html"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/></svg>角色</a>
+      <a class="nav" href="ui_redesign_memory.html"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M5 4h12a2 2 0 0 1 2 2v14H7a2 2 0 0 1-2-2z"/></svg>记忆库</a>
+    </div>
+    <div class="grp">
+      <div class="gt">系统</div>
+      <a class="nav" href="ui_redesign_settings.html"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/></svg>设置</a>
+      <a class="nav" href="ui_redesign_software_profiles.html"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>软件档案</a>
+      <a class="nav" href="lib.html"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M5 4h11a2 2 0 0 1 2 2v14H7a2 2 0 0 1-2-2z M4 9h11 M4 13h11"/></svg>知识库</a>
+      <a class="nav" href="ui_redesign_developer.html"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M4 6h16M7 12h10M10 18h4"/></svg>开发者</a>
+    </div>
+    <div class="grp">
+      <button type="button" class="btn" id="shellReloadUi" onclick="location.replace('/index.html')" style="width:100%;font-size:12px;padding:6px 10px">重载界面（刷新到最新版）</button>
+    </div>
+    <div class="spacer"></div>
+  </aside>
+
+    <!-- 主对话 -->
+    <section class="main">
+      <header class="top">
+        <div>
+          <div class="who">对话</div>
+          <div class="sub">SESSION · 文本模式 / LOCAL_OMNI</div>
+        </div>
+        <div class="right">
+        <button class="ctl mic" id="micToggle" title="麦克风监听：开=收音，关=释放麦克风设备">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3a3 3 0 0 1 3 3v5l3 3H6l3-3V6a3 3 0 0 1 3-3z M4 4l16 16"/></svg>
+        </button>
+        <button class="ctl" id="contToggle" title="持续语音：开=免唤醒随时说，关=需唤醒词">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5h16v10H9.5L5 19V15H4z M4 4l16 16"/></svg>
+        </button>
+        <button class="ctl" id="clearChat" title="清空对话">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M9 7V5h6v2M6 7l1 13h10l1-13"/></svg>
+        </button>
+        <button class="ctl" id="focusToggle" title="专注模式：隐藏左右栏，放大对话区">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg>
+        </button>
+        <span class="modechip"><i data-icon="message-square" data-icon-size="13"></i> 文本输入</span>
+      </div>
+      </header>
+
+      <div class="stage-scroll" id="scroll">
+        <div class="empty" id="chatEmpty">
+          <div class="empty-card">
+            <div class="empty-orb"></div>
+            <div class="empty-title"><span data-char-name>达妮娅</span>在等你</div>
+            <div class="empty-sub">说点什么吧～</div>
+            <div class="empty-chips">
+              <button class="empty-chip" type="button" data-q="今天过得怎么样？">今天过得怎么样？</button>
+              <button class="empty-chip" type="button" data-q="陪我聊聊吧">陪我聊聊吧</button>
+              <button class="empty-chip" type="button" data-q="你在做什么呀？">你在做什么呀？</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="composer" id="composer">
+          <div class="img-prev" id="imgPrev" hidden></div>
+
+          <!-- 微信风「+」展开面板：占真实布局高度，展开时平滑上滑并把整条输入栏顶起。
+               四个功能按钮的 id（attachBtn/micBtn/callVoice/modelPill）原样保留，
+               下方原有交互逻辑（语音模式/通话/模型切换）全部照旧生效。 -->
+          <div class="plus-panel" id="plusPanel" aria-hidden="true">
+            <div class="plus-grid">
+              <button class="plus-item call-btn" id="attachBtn" type="button" title="发图片给达妮娅看（自动走视觉模型）">
+                <span class="pi-ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15l-5-5L5 21M3 17l4-4 4 4M14 4l6 6-9 9-4-4 7-7z"/></svg></span>
+                <span class="pi-lbl">图片</span>
+              </button>
+              <button class="plus-item mic-btn" id="micBtn" type="button" title="语音模式：开启后达妮娅会一直听你说话，随时开口可打断她">
+                <span class="pi-ic"><i data-icon="mic" data-icon-size="20"></i></span>
+                <span class="pi-lbl">语音</span>
+              </button>
+              <button class="plus-item call-btn" id="callVoice" type="button" title="语音通话（半双工·云端API）">
+                <span class="pi-ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M6.6 10.8a15 15 0 0 0 6.6 6.6l2.2-2.2a1 1 0 0 1 1-.24 11 11 0 0 0 3.5.56 1 1 0 0 1 1 1V20a1 1 0 0 1-1 1A17 17 0 0 1 3 4a1 1 0 0 1 1-1h3.5a1 1 0 0 1 1 1 11 11 0 0 0 .56 3.5 1 1 0 0 1-.24 1z"/></svg></span>
+                <span class="pi-lbl">通话</span>
+              </button>
+              <button class="plus-item model-pill" id="modelPill" type="button" title="切换推理模型（文本 / 视觉，点一下换）">
+                <span class="pi-ic"><i data-icon="cpu" data-icon-size="20"></i></span>
+                <span class="pi-lbl"><span class="mp-name" id="modelPillName">模型</span></span>
+                <span class="mp-auto" id="modelPillAuto" hidden>自动</span>
+                <span class="mp-caret" hidden><i data-icon="chevron-down" data-icon-size="11"></i></span>
+              </button>
+            </div>
+          </div>
+
+          <div class="field">
+            <button class="plus-toggle" id="plusToggle" type="button" title="更多功能" aria-expanded="false">
+              <svg class="pi-plus" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+            </button>
+            <input type="file" id="imgInput" accept="image/*" multiple hidden>
+            <textarea id="input" rows="1" placeholder="和达妮娅说点什么…"></textarea>
+            <button class="send" id="send"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M22 2 11 13M22 2l-7 20-4-9-9-4 20-7z"/></svg></button>
+            <div class="model-panel" id="modelPanel" hidden></div>
+          </div>
+      </div>
+    </section>
+
+    <!-- 右侧舞台 -->
+    <aside class="stage">
+      <div class="panel">
+        <div class="grid"></div>
+        <span class="tick tl"></span><span class="tick tr"></span><span class="tick bl"></span><span class="tick br"></span>
+        <iframe id="live2dRigFrame" class="live2d-frame" src="../live2d/rig/index.html?v=2" title="达娜娅"></iframe>
+      </div>
+
+      <div class="nameplate">
+        <div>
+          <div class="nm" data-char-name>达妮娅</div>
+          <div class="st">● ONLINE</div>
+        </div>
+        <div class="readouts">
+          <span class="ro">记忆 <b>1.2k</b></span>
+        </div>
+      </div>
+
+      <!-- 消耗面板（缩小 Live2D 后新增） -->
+      <div class="card">
+        <div class="ct">本会话消耗</div>
+        <div class="crow"><span>Token 消耗</span><b id="tok">0</b></div>
+        <div class="crow"><span>TTS 合成字数</span><b id="tts">0<em>字</em></b></div>
+        <div class="crow"><span>对话轮次</span><b id="rnd">0</b></div>
+      </div>
+
+      <div class="card status">
+        <div class="ct">运行状态</div>
+
+        <button class="modebtn" id="modeBtn" title="切换对话引擎（自动 / 云端双工 / 本地双工）">
+          <div class="mb-left">
+            <span class="mb-k">引擎模式</span>
+            <span class="mb-sub" id="modeBtnSub">点击更改运行引擎</span>
+          </div>
+          <span class="chev">›</span>
+        </button>
+
+        <div class="erow"><span>当前运行方式</span><b id="runModeVal">—</b></div>
+
+        <div class="srow">
+          <span>视觉感知</span>
+          <b id="visVal" class="badge on" title="开启后快照与双工读取屏幕">读取中</b>
+        </div>
+
+        <div class="srow">
+          <span>记忆库</span>
+          <b id="memVal" title="已存储的记忆条目数（约 1,240 条），不是字数">1,240 <em>条</em></b>
+        </div>
+      </div>
+    </aside>
+  </div>
+
+  <!-- ===================== 通话浮层：语音(微信风) / 视频(微信风·单向) / 屏幕共享(QQ风) ===================== -->
+  <style>
+    .call-overlay{position:fixed;inset:0;z-index:9000;display:flex;align-items:center;justify-content:center;
+      background:radial-gradient(125% 120% at 50% 0%,#1c1933 0%,#0b0b15 62%);color:#fff;
+      font-family:var(--font-sans);-webkit-user-select:none;user-select:none}
+    .call-overlay[hidden]{display:none}
+    .call-view{width:100%;height:100%;position:relative;display:flex;flex-direction:column;
+      align-items:center;justify-content:center;gap:16px;padding:26px;box-sizing:border-box}
+    .call-view[hidden]{display:none!important}
+    .call-view:not(.active){display:none!important}
+    .cv-avatar{width:104px;height:104px;border-radius:50%;display:flex;align-items:center;justify-content:center;
+      font-size:40px;font-weight:600;color:#fff;
+      background:linear-gradient(135deg,#8b6cff,#5b7cfa);box-shadow:0 0 0 8px rgba(139,108,255,.16),0 18px 50px rgba(91,124,250,.32)}
+    .cv-avatar img, .cd-avatar img, .cv-watch-av img, .cs-uav img{ width:100%; height:100%; object-fit:cover; border-radius:inherit; display:block; }
+    .cv-timer{font-size:13px;opacity:.72;font-variant-numeric:tabular-nums;letter-spacing:1.5px}
+    .cv-sub{font-size:12.5px;opacity:.6;max-width:76%;text-align:center;min-height:18px;line-height:1.5}
+    .cv-ctrls{display:flex;gap:28px;margin-top:10px}
+    /* morphicons / Material 风通话图标：统一填充态，按下(.on)=红色禁用态 */
+    .cc-ico{width:24px;height:24px;fill:currentColor;stroke:none;display:block}
+    .cc-btn.on{background:rgba(255,69,69,.16);color:#ff5a5a;border-color:rgba(255,90,90,.55)}
+    .cc-btn.on .cc-ico{color:#ff5a5a}
+    .cc-btn.on .cc-lbl{color:#ff5a5a}
+    .cc-btn{width:58px;height:58px;border-radius:50%;border:1px solid rgba(255,255,255,.26);
+      background:rgba(255,255,255,.12);color:#fff;display:flex;flex-direction:column;align-items:center;justify-content:center;
+      cursor:pointer;transition:background .15s,transform .1s}
+    .cc-btn:hover{background:rgba(255,255,255,.2)}
+    .cc-btn:active{transform:scale(.94)}
+    .cc-btn svg{width:24px;height:24px}
+    .cc-btn .cc-lbl{font-size:10px;margin-top:3px;opacity:.82}
+    .cc-btn.on{background:rgba(124,92,255,.42);border-color:rgba(124,92,255,.7)}
+    .cc-hang{background:#E24B4A;border:none}
+    .cc-hang:hover{background:#f05656}
+    .cc-hang svg{stroke:#fff}
+    .cv-vstatus{position:absolute;left:18px;top:18px;font-size:12.5px;background:rgba(0,0,0,.42);
+      padding:5px 11px;border-radius:9px;backdrop-filter:blur(3px);max-width:60%;text-align:center;z-index:4}
+    .cv-vstatus.q{opacity:.7}
+    .call-btn{display:inline-flex;align-items:center;justify-content:center;width:38px;height:38px;border-radius:50%;
+      border:1px solid var(--line);background:var(--surface);color:var(--ink);
+      cursor:pointer;transition:background .15s,transform .1s}
+    .call-btn:hover{background:var(--surface-2)}
+    .call-btn:active{transform:scale(.94)}
+    .call-btn svg{width:20px;height:20px}
+    /* 档位锁死：进 UI 前变灰禁用（点击只弹右上角提醒，不进拨号浮层） */
+    .call-btn.locked{opacity:.38;filter:grayscale(1);cursor:not-allowed;background:var(--surface-2)}
+    .call-btn.locked:hover{background:var(--surface-2)}
+    .call-btn.locked:active{transform:none}
+
+    /* ---------- 语音通话（微信风） ---------- */
+    .call-voice .cv-wx-top{position:absolute;top:56px;left:0;right:0;text-align:center}
+    .call-voice .cv-wx-name{display:block;font-size:23px;font-weight:600;letter-spacing:.5px}
+    .call-voice .cv-wx-state{display:block;font-size:13px;opacity:.72;margin-top:7px}
+    .call-voice .cv-waves{display:flex;gap:5px;align-items:flex-end;height:34px;margin-top:20px;justify-content:center}
+    .call-voice .cv-waves i{width:5px;height:9px;border-radius:3px;background:rgba(255,255,255,.45);
+      animation:cvWave 1s ease-in-out infinite}
+    .call-voice .cv-waves i:nth-child(2){animation-delay:.15s}
+    .call-voice .cv-waves i:nth-child(3){animation-delay:.3s}
+    .call-voice .cv-waves i:nth-child(4){animation-delay:.45s}
+    .call-voice .cv-waves i:nth-child(5){animation-delay:.6s}
+    .call-voice.speaking .cv-waves i{background:#9b8cff;animation-duration:.6s}
+    @keyframes cvWave{0%,100%{height:9px}50%{height:24px}}
+    .call-voice .cv-ctrls{position:absolute;bottom:62px}
+
+    /* ---------- 视频通话（微信风·单向：你看得自己，达妮娅看得见你） ---------- */
+    .call-video .cv-self{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;background:#000;transform:scaleX(-1)}
+    .call-video .cv-topbar{position:absolute;top:18px;left:18px;z-index:4;display:flex;align-items:center;gap:8px;
+      font-size:13px;background:rgba(0,0,0,.4);padding:6px 12px;border-radius:10px;backdrop-filter:blur(4px)}
+    .call-video .cv-dot{width:8px;height:8px;border-radius:50%;background:#36D399;flex:none}
+    .cv-watcher{position:absolute;right:16px;top:16px;z-index:4;display:flex;align-items:center;gap:8px;
+      background:rgba(0,0,0,.42);padding:7px 12px 7px 7px;border-radius:999px;backdrop-filter:blur(4px);
+      border:1px solid rgba(124,92,255,.42)}
+    .cv-watch-av{width:30px;height:30px;border-radius:50%;display:flex;align-items:center;justify-content:center;
+      font-size:14px;font-weight:600;color:#fff;background:linear-gradient(135deg,#8b6cff,#5b7cfa);flex:none}
+    .cv-watcher b{font-size:12.5px;font-weight:600;display:block;line-height:1.2}
+    .cv-watcher span{display:block;font-size:10.5px;opacity:.72;line-height:1.2}
+    .call-video .cv-ctrls-v{position:absolute;bottom:34px;left:50%;transform:translateX(-50%)}
+
+    /* ---------- 屏幕共享（QQ风） ---------- */
+    .call-screen .cs-self{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;background:#05060c}
+    .call-screen .cs-topbar{position:absolute;top:18px;left:18px;z-index:4;display:flex;align-items:center;gap:10px;
+      background:rgba(0,0,0,.5);padding:8px 14px;border-radius:10px;backdrop-filter:blur(4px)}
+    .call-screen .cs-live{font-size:13px;color:#ff7a7a;font-weight:600;display:flex;align-items:center;gap:7px}
+    .call-screen .cs-live::before{content:"";width:9px;height:9px;border-radius:50%;background:#ff4d4f;animation:csBlink 1.1s infinite}
+    @keyframes csBlink{0%,100%{opacity:1}50%{opacity:.3}}
+    .cs-userchip{position:absolute;left:18px;bottom:100px;z-index:4;display:flex;align-items:center;gap:9px;
+      background:rgba(0,0,0,.5);padding:8px 13px;border-radius:12px;backdrop-filter:blur(4px)}
+    .cs-uav{width:34px;height:34px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:14px;
+      font-weight:600;color:#0c0c16;background:#ffd166;flex:none}
+    .cs-userchip span{font-size:12.5px;line-height:1.2}
+    .cs-watcher{position:absolute;right:16px;top:16px;z-index:4;display:flex;align-items:center;gap:8px;
+      background:rgba(0,0,0,.5);padding:7px 12px 7px 7px;border-radius:999px;backdrop-filter:blur(4px);
+      border:1px solid rgba(124,92,255,.42)}
+    .call-screen .cv-ctrls.cs-ctrls{position:absolute;bottom:20px;left:50%;transform:translateX(-50%);z-index:10;
+      padding:10px 18px;border-radius:16px;background:rgba(0,0,0,.45);backdrop-filter:blur(8px)}
+    .cs-fallback{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px;
+      background:#05060c;color:#cdd0e0;z-index:2}
+    .cs-fallback svg{width:62px;height:62px;color:#3a3f5a}
+    .cs-fallback p{font-size:13px;opacity:.72;margin:0}
+
+    /* ---------- 设备菜单（悬停麦克风/免提按钮展开：切换麦克风·扬声器设备） ---------- */
+    /* fixed 定位、挂 body 上，三个通话视图共用一份；位置由 JS 按按钮矩形算。 */
+    .cc-menu{position:fixed;z-index:99998;min-width:230px;max-width:320px;max-height:250px;overflow:auto;
+      background:rgba(18,20,30,.97);border:1px solid rgba(124,92,255,.42);border-radius:14px;
+      padding:7px;box-shadow:0 18px 44px rgba(0,0,0,.55);backdrop-filter:blur(10px);
+      opacity:0;pointer-events:none;transform:translateY(8px);
+      transition:opacity .16s ease,transform .16s ease}
+    .cc-menu.open{opacity:1;pointer-events:auto;transform:translateY(0)}
+    .cc-menu .ccm-hd{font-size:11px;opacity:.6;padding:6px 9px 7px;letter-spacing:.4px}
+    .cc-menu .ccm-it{display:flex;align-items:center;gap:9px;width:100%;text-align:left;box-sizing:border-box;
+      padding:8px 9px;border:0;border-radius:9px;background:transparent;color:#e8edf6;font-size:12.5px;
+      cursor:pointer;line-height:1.25;font-family:inherit;transition:background .12s linear}
+    .cc-menu .ccm-it:hover{background:rgba(255,255,255,.1)}
+    .cc-menu .ccm-it .ccm-dot{width:7px;height:7px;border-radius:50%;background:#3a3f5a;flex:none}
+    .cc-menu .ccm-it.on .ccm-dot{background:#36D399;box-shadow:0 0 0 3px rgba(54,211,153,.18)}
+    .cc-menu .ccm-it .ccm-tx{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+    .cc-menu .ccm-hint{font-size:10.5px;opacity:.45;padding:7px 9px 3px;line-height:1.35}
+
+    /* ---------- 拨号/振铃态（微信风：模拟真实呼叫建立过程） ---------- */
+    .call-dialing{position:absolute;inset:0;z-index:8;display:flex;flex-direction:column;
+      align-items:center;justify-content:center;background:radial-gradient(125% 120% at 50% 0%,#1c1933 0%,#0b0b15 62%)}
+    .call-dialing[hidden]{display:none}
+    .cd-avatar{width:100px;height:100px;border-radius:50%;display:flex;align-items:center;justify-content:center;
+      font-size:38px;font-weight:600;color:#fff;
+      background:linear-gradient(135deg,#8b6cff,#5b7cfa);box-shadow:0 0 0 8px rgba(139,108,255,.16),0 18px 50px rgba(91,124,250,.32);
+      animation:cdPulse 1.6s ease-in-out infinite}
+    @keyframes cdPulse{0%,100%{transform:scale(1);box-shadow:0 0 0 8px rgba(139,108,255,.16),0 18px 50px rgba(91,124,250,.32)}
+      50%{transform:scale(1.06);box-shadow:0 0 0 14px rgba(139,108,255,.08),0 24px 60px rgba(91,124,250,.42)}}
+    .cd-name{font-size:22px;font-weight:600;margin-top:20px;letter-spacing:.5px}
+    .cd-state{font-size:13px;opacity:.72;margin-top:6px}
+    .cd-rings{display:flex;gap:6px;margin-top:28px;align-items:center}
+    .cd-rings i{width:4px;height:16px;border-radius:2px;background:rgba(255,255,255,.45);
+      animation:cdRing .9s ease-in-out infinite}
+    .cd-rings i:nth-child(2){animation-delay:.15s}
+    .cd-rings i:nth-child(3){animation-delay:.3s}
+    .cd-rings i:nth-child(4){animation-delay:.45s}
+    @keyframes cdRing{0%,100%{height:6px;opacity:.45}50%{height:20px;opacity:.9}}
+    .cd-tip{position:absolute;bottom:80px;font-size:12px;opacity:.5}
+
+    /* ---------- 麦克风律动条（真实电平，确认「我说的话有没有被采到」） ---------- */
+    /* 数据来自后端采集回调算出的平滑 RMS，不是装饰动画：静了就真的静。 */
+    .cv-mic{display:flex;flex-direction:column;align-items:center;gap:7px;
+      width:min(330px,74vw);margin:0 auto}
+    .cvm-bars{display:flex;align-items:flex-end;gap:3px;width:100%;height:36px;
+      padding:0 2px;box-sizing:border-box}
+    .cvm-bars i{flex:1;height:10%;min-width:2px;border-radius:2px;
+      background:rgba(255,255,255,.13);
+      transition:height .07s linear,background .15s linear}
+    .cvm-bars i.on{background:linear-gradient(180deg,#7ee0b0,#3ddc97)}
+    .cvm-bars i.hot{background:linear-gradient(180deg,#ffd479,#ff9f43)}
+    .cvm-bars i.peak{background:linear-gradient(180deg,#ff9a9a,#ff5f6d)}
+    .cvm-bars i.dim{background:rgba(255,255,255,.07)}
+    .cv-mic.muted .cvm-bars{opacity:.45}
+    .cvm-state{font-size:11.5px;opacity:.6;letter-spacing:.3px;text-align:center;
+      transition:opacity .2s linear,color .2s linear}
+    .cv-mic.live .cvm-state{opacity:.95;color:#7ee0b0}
+    .cv-mic.muted .cvm-state{color:#ff9a9a;opacity:.8}
+
+    /* ---------- 屏幕共享加载态 ---------- */
+    .cs-loading{position:absolute;inset:0;z-index:6;display:flex;flex-direction:column;
+      align-items:center;justify-content:center;gap:14px;background:rgba(5,6,12,.85);backdrop-filter:blur(6px)}
+    .cs-loading[hidden]{display:none}
+    .cs-loading svg{width:48px;height:48px;color:#8b6cff;animation:csSpin 1s linear infinite}
+    @keyframes csSpin{to{transform:rotate(360deg)}}
+    .cs-loading p{font-size:13px;color:#cdd0e0;margin:0;opacity:.85}
+    .cs-loading .cs-sub{font-size:11.5px;opacity:.55}
+  </style>
+
+  <div class="call-overlay" id="callOverlay" hidden>
+    <!-- 拨号/振铃态（覆盖在所有视图之上，接通后隐藏） -->
+    <div class="call-dialing" id="callDialing" hidden>
+      <div class="cd-avatar" data-char-initial>达</div>
+      <div class="cd-name" id="cdName" data-char-name>达妮娅</div>
+      <div class="cd-state" id="cdState">正在呼叫…</div>
+      <div class="cd-rings"><i></i><i></i><i></i><i></i></div>
+      <div class="cd-tip" id="cdTip">正在建立双工连接…</div>
+    </div>
+
+    <!-- 语音通话视图（微信风：角色名 + 头像居中 + 声波 + 计时） -->
+    <div class="call-view call-voice" id="callVoiceView" hidden>
+      <div class="cv-wx-top">
+        <span class="cv-wx-name" data-char-name>达妮娅</span>
+        <span class="cv-wx-state" id="cvStatus">正在接通…</span>
+      </div>
+      <div class="cv-avatar" data-char-initial>达</div>
+      <div class="cv-waves"><i></i><i></i><i></i><i></i><i></i></div>
+      <div class="cv-timer" id="cvTimer">00:00</div>
+      <div class="cv-sub" id="cvSub"></div>
+      <div class="cv-mic">
+        <div class="cvm-bars"></div>
+        <div class="cvm-state">麦克风待机</div>
+      </div>
+      <div class="cv-ctrls">
+        <button class="cc-btn" id="cvMute" title="关闭麦克风"><svg class="cc-ico" viewBox="0 0 24 24"><path d=""/></svg><span class="cc-lbl">麦克风</span></button>
+        <button class="cc-btn cc-hang" id="cvEnd" title="挂断"><svg class="cc-ico" viewBox="0 0 24 24"><path d=""/></svg><span class="cc-lbl">挂断</span></button>
+        <button class="cc-btn" id="cvSpk" title="关闭达妮娅的声音"><svg class="cc-ico" viewBox="0 0 24 24"><path d=""/></svg><span class="cc-lbl">免提</span></button>
+      </div>
+    </div>
+    <!-- 视频通话视图（微信风·单向：你看得见自己，达妮娅 看得见你） -->
+    <div class="call-view call-video" id="callVideoView" hidden>
+      <video class="cv-self" id="cvSelfVideo" autoplay muted playsinline></video>
+      <div class="cv-topbar"><span class="cv-dot"></span><span id="cvvStatus">视频通话中</span><span class="cv-timer" id="cvvTimer">00:00</span></div>
+      <div class="cv-watcher">
+        <div class="cv-watch-av" data-char-initial>达</div>
+        <div><b><span data-char-name>达妮娅</span> 正在看着你</b><span>你看得见自己，她看得到你的画面</span></div>
+      </div>
+      <div class="cv-mic">
+        <div class="cvm-bars"></div>
+        <div class="cvm-state">麦克风待机</div>
+      </div>
+      <div class="cv-ctrls cv-ctrls-v">
+        <button class="cc-btn" id="cvvMute" title="关闭麦克风"><svg class="cc-ico" viewBox="0 0 24 24"><path d=""/></svg><span class="cc-lbl">麦克风</span></button>
+        <button class="cc-btn cc-hang" id="cvvEnd" title="挂断"><svg class="cc-ico" viewBox="0 0 24 24"><path d=""/></svg><span class="cc-lbl">挂断</span></button>
+        <button class="cc-btn" id="cvvCam" title="关闭摄像头"><svg class="cc-ico" viewBox="0 0 24 24"><path d=""/></svg><span class="cc-lbl">摄像头</span></button>
+        <button class="cc-btn" id="cvvScreen" title="屏幕共享"><svg class="cc-ico" viewBox="0 0 24 24"><path d=""/></svg><span class="cc-lbl">共享屏幕</span></button>
+        <button class="cc-btn" id="cvvSpk" title="关闭达妮娅的声音"><svg class="cc-ico" viewBox="0 0 24 24"><path d=""/></svg><span class="cc-lbl">免提</span></button>
+      </div>
+    </div>
+    <!-- 屏幕共享视图（QQ风：你的屏幕为主 + 用户头像 + 达妮娅在看） -->
+    <div class="call-view call-screen" id="callScreenView" hidden>
+      <video class="cs-self" id="csScreenVideo" autoplay muted playsinline></video>
+      <!-- 屏幕共享加载态（getDisplayMedia 授权/启动期间显示） -->
+      <div class="cs-loading" id="csLoading" hidden>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="14" height="10" rx="1.5"/><path d="M16 9l6-3v10l-6-3"/><path d="M5 19h6"/></svg>
+        <p id="csLoadingMsg">正在建立屏幕共享连接…</p>
+        <p class="cs-sub" id="csLoadingSub">达妮娅正在连上你的屏幕</p>
+      </div>
+      <div class="cs-fallback" id="csFallback" hidden>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="14" height="10" rx="1.5"/><path d="M16 9l6-3v10l-6-3"/><path d="M5 19h6"/></svg>
+        <p>屏幕共享进行中 · 达妮娅 正在看你的屏幕<br>（前端预览需授权屏幕录制，不影响她看屏）</p>
+      </div>
+      <div class="cs-topbar"><span class="cs-live">正在共享屏幕</span><span class="cv-timer" id="csTimer">00:00</span></div>
+      <div class="cs-userchip"><div class="cs-uav">我</div><span>你正在共享屏幕</span></div>
+      <div class="cs-watcher">
+        <div class="cv-watch-av" data-char-initial>达</div>
+        <div><b><span data-char-name>达妮娅</span> 正在看你的屏幕</b><span>一边看画面一边和你对话</span></div>
+      </div>
+      <div class="cv-mic">
+        <div class="cvm-bars"></div>
+        <div class="cvm-state">麦克风待机</div>
+      </div>
+      <div class="cv-ctrls cs-ctrls">
+        <button class="cc-btn" id="csStop" title="停止共享"><svg class="cc-ico" viewBox="0 0 24 24"><path d=""/></svg><span class="cc-lbl">停止共享</span></button>
+        <button class="cc-btn cc-hang" id="csEnd" title="挂断"><svg class="cc-ico" viewBox="0 0 24 24"><path d=""/></svg><span class="cc-lbl">挂断</span></button>
+        <button class="cc-btn" id="csMute" title="关闭麦克风"><svg class="cc-ico" viewBox="0 0 24 24"><path d=""/></svg><span class="cc-lbl">麦克风</span></button>
+        <button class="cc-btn" id="csSpk" title="关闭达妮娅的声音"><svg class="cc-ico" viewBox="0 0 24 24"><path d=""/></svg><span class="cc-lbl">免提</span></button>
+      </div>
+
+    <style>
+    .call-simplex{display:flex;flex-direction:column;height:100%;background:#0f1115;color:#e8eaed;
+      font-family:-apple-system,"PingFang SC","Microsoft YaHei",sans-serif;}
+    .sx-top{display:flex;align-items:center;gap:10px;padding:14px 16px;border-bottom:1px solid #2a2f3a;}
+    .sx-av{width:38px;height:38px;border-radius:50%;background:linear-gradient(135deg,#7F77DD,#1D9E75);
+      display:grid;place-items:center;font-weight:600;color:#fff;font-size:16px;}
+    .sx-name{font-size:15px;font-weight:600;display:flex;flex-direction:column;line-height:1.3;}
+    .sx-name b{font-weight:400;font-size:11px;color:#9aa3b2;}
+    .sx-end{margin-left:auto;font-size:12px;color:#9aa3b2;background:none;border:1px solid #2a2f3a;
+      border-radius:8px;padding:5px 12px;cursor:pointer;}
+    .sx-status{padding:8px 16px;font-size:12px;color:#9aa3b2;border-bottom:1px solid #2a2f3a;}
+    .sx-status.err{color:#E24B4A;} .sx-status.ok{color:#1D9E75;}
+    .sx-log{flex:1;overflow-y:auto;padding:16px;display:flex;flex-direction:column;gap:12px;}
+    .sx-row{display:flex;gap:8px;align-items:flex-end;}
+    .sx-row.me{flex-direction:row-reverse;}
+    .sx-bub{max-width:78%;padding:9px 13px;border-radius:14px;line-height:1.5;font-size:14px;white-space:pre-wrap;word-break:break-word;}
+    .sx-row.me .sx-bub{background:#7F77DD;color:#fff;border-bottom-right-radius:4px;}
+    .sx-row.her .sx-bub{background:#1f232c;border-bottom-left-radius:4px;}
+    .sx-meta{font-size:10px;color:#9aa3b2;margin-top:3px;}
+    .sx-lat{display:flex;gap:10px;padding:8px 16px;font-size:11px;color:#9aa3b2;border-top:1px solid #2a2f3a;flex-wrap:wrap;}
+    .sx-lat b{color:#e8eaed;font-weight:600;}
+    .sx-ring{width:64px;height:64px;border-radius:50%;margin:14px auto 4px;display:grid;place-items:center;
+      font-size:12px;color:#0f1115;font-weight:600;transition:.2s;}
+    .sx-ring.listen{background:#1D9E75;animation:sxBreath 1.6s infinite;}
+    .sx-ring.think{background:#E2B04A;}
+    .sx-ring.speak{background:#7F77DD;animation:sxBreath 1.2s infinite;}
+    @keyframes sxBreath{0%{box-shadow:0 0 0 0 rgba(29,158,117,.45);}70%{box-shadow:0 0 0 14px rgba(29,158,117,0);}100%{box-shadow:0 0 0 0 rgba(29,158,117,0);}}
+    .sx-hint{font-size:11px;color:#9aa3b2;padding:0 16px 14px;text-align:center;}
+    </style>
+    <!-- 单工轮询通话视图（内置，不跳浏览器；后端连 127.0.0.1:9871） -->
+    <div class="call-view call-simplex" id="simplexView" hidden>
+      <div class="sx-top">
+        <span class="sx-av" data-char-initial>妮</span>
+        <div class="sx-name" data-char-name>达妮娅<b id="sxMode">流畅语音 · 云端百炼</b></div>
+        <button class="sx-end" id="sxEnd">结束</button>
+      </div>
+      <div class="sx-status" id="sxStatus">正在连接单工服务…</div>
+      <div class="sx-log" id="sxLog"></div>
+      <div class="sx-lat">
+        <span>ASR <b id="sxAsr">–</b></span>
+        <span>LLM <b id="sxLlm">–</b></span>
+        <span>TTS <b id="sxTts">–</b></span>
+        <span>端到端 <b id="sxTot">–</b></span>
+        <span id="sxStream"></span>
+      </div>
+        <div class="sx-ring listen" id="sxRing"><span id="sxRingTxt">聆听中</span></div>
+      <div class="sx-hint" id="sxHint">麦克风常开 · 说完停顿自动发送 · 说话可打断达妮娅</div>
+    </div>
+
+    </div>
+
+    <!-- ===================== 首启引导浮层（approach A：首启全屏 overlay，UI 后续打磨） ===================== -->
+  <style>
+    .ob-overlay{position:fixed;inset:0;z-index:10000;background:#f6f7fb;display:flex;flex-direction:column}
+    .ob-overlay[hidden]{display:none}
+    .ob-frame{width:100%;height:100%;border:0;flex:1}
+    .ob-frame[hidden]{display:none}
+    .ob-boot{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:18px;background:#f6f7fb}
+    .ob-boot .spin{width:42px;height:42px;border-radius:50%;border:3px solid #e6e8ef;border-top-color:#5b7cfa;animation:obspin .9s linear infinite}
+    .ob-boot .tip{color:#6b7280;font-size:14px;letter-spacing:.5px}
+    @keyframes obspin{to{transform:rotate(360deg)}}
+    .ob-skip{position:fixed;top:14px;right:16px;z-index:10001;padding:7px 14px;border:1px solid #e6e8ef;
+      background:#fff;color:#6b7280;border-radius:999px;font-size:13px;cursor:pointer;box-shadow:0 4px 16px rgba(0,0,0,.06)}
+    .ob-skip:hover{color:#1f2430}
+  </style>
+  <!-- 默认即盖住主页面（无 hidden），避免"先露主页再弹导览"的闪烁；仅非首启判定后才关闭 -->
+  <div id="onboardingOverlay" class="ob-overlay">
+    <button id="obSkip" class="ob-skip" title="跳过引导">跳过引导 ›</button>
+    <div id="onboardingBoot" class="ob-boot">
+      <div class="spin"></div>
+      <div class="tip">达妮娅正在准备…</div>
+    </div>
+    <iframe id="onboardingFrame" class="ob-frame" title="达妮娅 · 初次见面" hidden></iframe>
+  </div>
+  <!-- 通话模式选择弹窗（单工轮询 vs 双工），挂在 startCall 入口 -->
+  <!-- 电脑操作代理·逐步确认弹窗（点击/输入/按键/命令前弹此框，用户允许/拒绝） -->
+  <div id="agentConfirmModal" style="display:none;position:fixed;inset:0;z-index:10000;align-items:center;justify-content:center;background:var(--mask-strong)">
+    <div style="width:min(420px,86vw);background:var(--surface-1);border:1px solid var(--line);border-radius:var(--r-lg);box-shadow:var(--shadow-pop);padding:22px 22px 18px;color:var(--ink);font-size:14px;line-height:1.6">
+      <div style="font-weight:700;font-size:15px;margin-bottom:10px;color:var(--ink)">达妮娅想操作电脑</div>
+      <div id="agentConfirmDesc" style="white-space:pre-wrap;word-break:break-word;background:var(--surface-2);border:1px solid var(--line);border-radius:10px;padding:12px 14px;margin-bottom:18px;color:var(--ink-2)"></div>
+      <div style="display:flex;gap:10px;justify-content:flex-end">
+        <button id="agentConfirmDeny" style="flex:1;padding:10px 0;border:none;border-radius:10px;background:var(--surface-3);color:var(--ink);font-size:14px;cursor:pointer">拒绝</button>
+        <button id="agentConfirmAllow" style="flex:1;padding:10px 0;border:none;border-radius:10px;background:var(--accent-1);color:var(--on-accent);font-weight:700;font-size:14px;cursor:pointer">允许执行</button>
+      </div>
+      <div style="margin-top:10px;text-align:right;font-size:11px;color:var(--ink-3)">60 秒未操作将自动拒绝</div>
+    </div>
+  </div>
+  </body>
+</html>

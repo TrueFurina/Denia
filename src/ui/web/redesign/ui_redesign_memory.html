@@ -1,0 +1,477 @@
+<!DOCTYPE html>
+
+<html lang="zh-CN">
+
+<head>
+
+<meta charset="UTF-8" />
+
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+
+<title>记忆库 · 桌面伴侣</title>
+
+<link rel="stylesheet" href="/redesign/design_tokens.css?v=20261013e" />
+
+<link rel="stylesheet" href="/redesign/ui_shared.css?v=20261013e" />
+
+<link rel="stylesheet" href="/redesign/pages.css" />
+
+
+
+  <style>
+
+    *{ -webkit-user-select:none; user-select:none; -webkit-touch-callout:none; -webkit-tap-highlight-color:transparent; }
+
+    input, textarea, select, [contenteditable="true"]{ -webkit-user-select:text; user-select:text; }
+
+    ::selection{ background:rgba(124,92,255,.25); }
+
+    img, canvas, svg, video{ -webkit-user-drag:none; user-drag:none; }
+
+    body{ -webkit-user-drag:none; }
+
+  </style>
+
+</head>
+
+<body>
+
+<div class="app">
+
+    <aside class="side">
+
+    <div class="brand"><div class="wm">达妮娅</div><div class="wmsub">DESKTOP COMPANION</div></div>
+
+    <div class="grp">
+
+      <div class="gt">日常</div>
+
+      <a class="nav" href="/index.html"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>对话</a>
+
+      <a class="nav" href="/redesign/ui_redesign_daily.html"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M4 4h16v16H4z"/><path d="M8 9h8M8 13h5"/></svg>日报周报</a>
+
+    </div>
+
+    <div class="grp">
+
+      <div class="gt">伴侣</div>
+
+      <a class="nav" href="/redesign/ui_redesign_characters.html"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/></svg>角色</a>
+
+      <a class="nav on" href="/redesign/ui_redesign_memory.html"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M5 4h12a2 2 0 0 1 2 2v14H7a2 2 0 0 1-2-2z"/></svg>记忆库</a>
+
+  <a class="nav" href="/redesign/ui_redesign_stickers.html"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="3"/><circle cx="9" cy="9" r="1.4"/><path d="M21 15l-4.5-4.5L7 20"/></svg>表情包管理</a>
+
+    </div>
+
+    <div class="grp">
+
+      <div class="gt">系统</div>
+
+      <a class="nav" href="/redesign/ui_redesign_settings.html"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/></svg>设置</a>
+
+      <a class="nav" href="/redesign/ui_redesign_software_profiles.html"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>软件档案</a>
+
+      <a class="nav" href="/redesign/lib.html"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M5 4h11a2 2 0 0 1 2 2v14H7a2 2 0 0 1-2-2z M4 9h11 M4 13h11"/></svg>知识库</a>
+
+      <a class="nav" href="/redesign/ui_redesign_developer.html"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M4 6h16M7 12h10M10 18h4"/></svg>开发者</a>
+
+    </div>
+
+    <div class="spacer"></div>
+
+  </aside>
+
+
+
+  <main class="main">
+
+    <header class="top">
+
+      <div><div class="who">记忆库</div><div class="sub">长期记忆 · 指令 / 偏好 / 事实分类存储</div></div>
+
+      <div class="right"></div>
+
+    </header>
+
+    <section class="content">
+
+      <div><div class="kicker">Memory</div><div class="lead">记忆库</div></div>
+
+
+
+      <div class="mem-stats" id="memStats">
+
+        <div class="mstat"><div class="mstat-num">—</div><div class="mstat-label">总条数</div></div>
+
+        <div class="mstat directive"><div class="mstat-num">—</div><div class="mstat-label">指令</div></div>
+
+        <div class="mstat user"><div class="mstat-num">—</div><div class="mstat-label">偏好</div></div>
+
+        <div class="mstat world"><div class="mstat-num">—</div><div class="mstat-label">事实</div></div>
+
+        <div class="mstat episode"><div class="mstat-num">—</div><div class="mstat-label">片段</div></div>
+
+      </div>
+
+
+
+      <article class="card">
+
+        <div class="chead-row"><div class="ct">记忆条目</div><span class="badge ro" id="memMode">—</span></div>
+
+        <div class="mem-list-wrap">
+
+          <div class="mem-list-head">按更新时间倒序（最多 80 条）</div>
+
+          <div class="mem-list" id="memList"><div class="empty-tip">加载中…</div></div>
+
+        </div>
+
+        <div class="mem-actions">
+
+          <button class="mem-synth" id="memSynth" type="button">立即提炼</button>
+          <button class="mem-clear" id="memClear" type="button">清空全部记忆</button>
+          <button class="mem-export" id="memExport" type="button">导出记忆</button>
+
+          <span class="field-hint" id="memClearResult"></span>
+
+        </div>
+
+      </article>
+
+    </section>
+
+  </main>
+
+</div>
+
+
+
+<script src="/redesign/gsap.min.js"></script>
+
+<script type="module" src="/redesign/morph_icons.js"></script>
+
+  <script src="/redesign/ui_confirm.js?v=1"></script>
+<script src="/redesign/app_backend.js?v=20261015f"></script>
+
+
+
+  <script>
+
+
+
+const root = document.documentElement;
+
+const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+/* 主题色 / 深浅模式由 app_backend.js?v=20261015f 的 window.Theme 统一处理（首屏前执行，并会清理自定义色残留的内联变量），此处不再重复实现。 */
+
+
+
+const MEM_TYPE_LABEL = { directive: '指令', user: '偏好', world: '事实', episode: '片段' };
+
+/* 后端 mode 是内部代号（jarvis / legacy，见 src/companion/memory_store.py）；
+   这里只做展示名映射——不把内部代号当产品名露给用户（2026-10-08 文案核对）。
+   两种方案都是本软件自研，代号仅来自"当初借鉴开源 Jarvis 思路"的命名。 */
+const MEM_MODE_LABEL = { jarvis: '分类记忆', legacy: '整段摘要' };
+
+function modeLabel(mode){
+  const m = String(mode || 'jarvis');
+  return MEM_MODE_LABEL[m] || m;
+}
+
+function esc(s){ return String(s==null?'':s).replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m])); }
+
+
+
+const statsEl = document.getElementById('memStats');
+
+const listEl  = document.getElementById('memList');
+
+const modeEl  = document.getElementById('memMode');
+
+
+
+function statCard(num, label, type){
+
+  return '<div class="mstat '+(type||'')+'"><div class="mstat-num">'+num+'</div><div class="mstat-label">'+label+'</div></div>';
+
+}
+
+function renderStats(st){
+
+  const c = (st && st.count_by_type) || { directive: 0, user: 0, world: 0, episode: 0 };
+
+  const total = (st && st.count) || (c.directive + c.user + c.world + c.episode);
+
+  statsEl.innerHTML =
+
+    statCard(total, '总条数', '') +
+
+    statCard(c.directive, '指令', 'directive') +
+
+    statCard(c.user, '偏好', 'user') +
+
+    statCard(c.world, '事实', 'world') +
+
+    statCard(c.episode || 0, '片段', 'episode');
+
+}
+
+function fmtDate(ts){
+
+  if (!ts) return '—';
+
+  try { return new Date(ts * 1000).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }); }
+
+  catch(e){ return '—'; }
+
+}
+
+function renderList(st){
+
+  if (!st){ listEl.innerHTML = '<div class="empty-tip">后端未连接，无法读取记忆库</div>'; return; }
+
+  if (st.disabled){ listEl.innerHTML = '<div class="empty-tip">长期记忆当前为关闭状态（memory.enabled=false），重启程序可开启</div>'; return; }
+
+  const items = st.items || [];
+
+  if (!items.length){ listEl.innerHTML = '<div class="empty-tip">记忆库为空</div>'; return; }
+
+  listEl.innerHTML = items.map(it => {
+
+    const t = it.type || 'user';
+
+    const key = it.id || it.text || '';   /* 优先稳定 id；旧数据无 id 时退回文本 */
+
+    return '<div class="mem-item"><span class="mem-tag '+t+'">'+(MEM_TYPE_LABEL[t]||t)+'</span>' +
+
+      '<div class="mem-item-body"><div class="mem-item-text">'+esc(it.text)+'</div>' +
+
+      '<div class="mem-item-meta">命中 '+(it.hits||1)+' · '+fmtDate(it.updated_at)+'</div></div>' +
+
+      '<button class="mem-del" type="button" data-key="'+esc(key)+'" title="删除这条记忆" aria-label="删除这条记忆">删除</button></div>';
+
+  }).join('');
+
+  bindMemDel();
+
+  animItems();
+
+}
+
+/* 记忆条目同样要等后端数据到位，渲染后再补入场动画（与角色页同一处理） */
+
+function animItems(){
+
+  if (!window.gsap || reduce || !listEl || window.__SPA_NAV) return;
+
+  const rows = listEl.querySelectorAll('.mem-item');
+
+  if (rows.length) gsap.from(rows, { opacity: 0, y: 12, duration: .45, stagger: .03, ease: 'power3.out' });
+
+}
+
+/* 【2026-10-13】单条删除：列表行「删除」按钮（渲染后逐条绑定；含二次确认） */
+function bindMemDel(){
+
+  if (!listEl) return;
+
+  listEl.querySelectorAll('.mem-del').forEach(function(btn){
+
+    btn.addEventListener('click', async function(){
+
+      var key = btn.getAttribute('data-key') || '';
+
+      if (!key) return;
+
+      var item = btn.closest('.mem-item');
+
+      var tEl = item ? item.querySelector('.mem-item-text') : null;
+
+      var preview = tEl ? (tEl.textContent || '').slice(0, 60) : '';
+
+      var ok = (typeof uiConfirm === 'function')
+
+        ? await uiConfirm('确定删除这条记忆吗？\n\n' + preview + '\n\n删除后不可恢复。',
+
+            { danger: true, okText: '删除', title: '删除记忆' })
+
+        : window.confirm('确定删除这条记忆吗？');
+
+      if (!ok) return;
+
+      btn.disabled = true;
+
+      Backend.deleteMemory(key).then(function(r){
+
+        if (r && r.success){ Backend.toast('已删除'); load(); }
+
+        else { btn.disabled = false; Backend.toast((r && r.error) ? ('删除失败：' + r.error) : '删除失败', 'err'); }
+
+      }).catch(function(){ btn.disabled = false; Backend.toast('删除失败', 'err'); });
+
+    });
+
+  });
+
+}
+
+function load(){
+
+  Backend.getMemory().then(r => {
+
+    if (!r || !r.success){ modeEl.textContent = '未连接'; renderList(null); return; }
+
+    modeEl.textContent = modeLabel(r.mode) + (r.semantic_search ? ' · 语义检索' : '');
+
+    renderStats(r.stats); renderList(r.stats);
+
+    lastMemStats = r.stats;
+
+  });
+
+}
+
+load();
+
+
+
+let lastMemStats = null;
+
+
+
+/* 【2026-10-11】手动整段提炼：把整个对话上下文交 LLM 抽出记忆条目。
+   实测云端带思考 30~37s —— 故按钮期间锁定 + 文案给出"正在读取整段上下文"，
+   避免用户以为卡死。返回 stored 条数如实播报（0 条也明确说"没发现值得记的"）。 */
+const synthBtn = document.getElementById('memSynth');
+
+if (synthBtn) synthBtn.addEventListener('click', function(){
+
+  if (synthBtn.disabled) return;
+
+  if (typeof Backend.synthesizeMemory !== 'function'){
+
+    clearRes.textContent = '后端未连接（缺少提炼接口）'; Backend.toast && Backend.toast('无法提炼', 'err'); return;
+
+  }
+
+  synthBtn.disabled = true;
+
+  const oldText = synthBtn.textContent;
+
+  synthBtn.textContent = '提炼中…（读取整段上下文）';
+
+  clearRes.textContent = '正在让模型通读对话并抽出值得长期记住的事，请稍候 10~40 秒…';
+
+  Backend.synthesizeMemory().then(function(res){
+
+    synthBtn.disabled = false; synthBtn.textContent = oldText;
+
+    if (res && res.success){
+
+      const n = (res.stored != null) ? res.stored : ((res.items || []).length);
+
+      var _mm = (res && res.used_model) ? (' · ' + res.used_model) : '';
+      /* 【2026-10-13】回执带上「通读了多少轮」——0 条时用户能判断是内容太少还是链路坏了 */
+      var _tn = (res && res.turns) ? ('（通读 ' + res.turns + ' 轮对话' + _mm + '）') : (_mm ? ('（' + _mm + '）') : '');
+      clearRes.textContent = (n ? ('已提炼并写入 ' + n + ' 条记忆') : '通读完成：没发现值得长期记住的新内容') + _tn;
+
+      Backend.toast(n ? ('已记住 ' + n + ' 条') : '暂无需新增记忆');
+
+      load();
+
+    } else {
+
+      clearRes.textContent = '提炼失败：' + ((res && res.error) ? res.error : '后端未连接');
+
+      Backend.toast('提炼失败', 'err');
+
+    }
+
+  }).catch(function(e){
+
+    synthBtn.disabled = false; synthBtn.textContent = oldText;
+
+    clearRes.textContent = '提炼失败：' + (e && e.message ? e.message : e);
+
+    Backend.toast('提炼失败', 'err');
+
+  });
+
+});
+
+
+
+const clearBtn = document.getElementById('memClear');
+
+const clearRes = document.getElementById('memClearResult');
+
+if (clearBtn) clearBtn.addEventListener('click', async () => {
+
+  if (!await uiConfirm('确定清空所有长期记忆吗？\n此操作不可恢复。',
+      { danger: true, okText: '清空', title: '清空全部记忆' })) return;
+
+  clearRes.textContent = '清空中…';
+
+  Backend.clearMemory().then(res => {
+
+    if (res && res.success){ Backend.toast('记忆已清空'); clearRes.textContent = ''; load(); }
+
+    else { clearRes.textContent = (res && res.error) ? ('失败：' + res.error) : '后端未连接'; Backend.toast('清空失败', 'err'); }
+
+  });
+
+});
+
+
+
+const exportBtn = document.getElementById('memExport');
+
+function buildMemMd(stats){
+  const items = (stats && stats.items) || [];
+  const lines = ['# 长期记忆导出', '', '> 共 ' + (stats ? stats.count : items.length) + ' 条，按更新时间倒序。', ''];
+  items.forEach(function(m, i){
+    const t = new Date((m.updated_at || 0) * 1000).toLocaleString('zh-CN');
+    lines.push('## ' + (i + 1) + '. [' + (m.type || 'user') + '] ' + t);
+    lines.push('');
+    lines.push((m.text || '').trim());
+    lines.push('');
+  });
+  return lines.join('\n');
+}
+
+if (exportBtn) exportBtn.addEventListener('click', function(){
+  if (!lastMemStats || !lastMemStats.items || !lastMemStats.items.length){
+    Backend.toast('暂无可导出的记忆', 'err'); return;
+  }
+  const md = buildMemMd(lastMemStats);
+  const name = '长期记忆备份_' + new Date().toISOString().slice(0, 10);
+  Backend.exportMarkdown({name: name, content: md}).then(function(r){
+    if (r && r.success) Backend.toast('已导出到：' + r.folder);
+    else Backend.toast((r && r.error) ? ('导出失败：' + r.error) : '导出失败', 'err');
+  }).catch(function(){ Backend.toast('导出失败', 'err'); });
+});
+
+
+
+if (window.gsap && !reduce && !window.__SPA_NAV){
+
+  gsap.from('.top', { opacity:0, y:-6, duration:.4, ease:'power2.out' });
+
+  gsap.from('.kicker, .lead', { opacity:0, y:8, duration:.45, delay:.18, ease:'power2.out' });
+
+  gsap.from('.mem-stats, .card', { opacity:0, y:16, duration:.5, stagger:.08, delay:.28, ease:'power3.out' });
+
+}
+
+
+
+  </script>
+
+<script src="/redesign/theme_manager.js?v=20261013d"></script>
+</body>
+
+</html>
+
