@@ -94,6 +94,15 @@ def test_quoted_path_token() -> None:
     print("✓ 首 token 带引号时解析正确")
 
 
+def test_exe_suffix_normalized() -> None:
+    """.exe 后缀不应导致白名单误判（配置写 whoami.exe / 调用写 whoami 都算命中）。"""
+    out = _run_command("whoami", {"allow_cmd": True, "allow_cmds": ["whoami.exe"]})
+    assert "不在白名单" not in out, f"配置带 .exe 时应命中，实际：{out!r}"
+    out2 = _run_command("whoami.exe", {"allow_cmd": True, "allow_cmds": ["whoami"]})
+    assert "不在白名单" not in out2, f"调用带 .exe 时应命中，实际：{out2!r}"
+    print("✓ .exe 后缀归一（配置/调用两侧）")
+
+
 def main() -> None:
     test_gate_disabled()
     test_empty_allowlist_fail_closed()
@@ -103,6 +112,7 @@ def main() -> None:
     test_allowed_exe_runs()
     test_builtin_cmd_runs()
     test_quoted_path_token()
+    test_exe_suffix_normalized()
     print("\n全部通过 ✅")
 
 
