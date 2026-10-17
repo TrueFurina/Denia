@@ -1,0 +1,1397 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI 桌面伴侣 - 角色管理</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <!-- 背景装饰 -->
+    <div class="bg-decoration">
+        <div class="floating-shape shape1"></div>
+        <div class="floating-shape shape2"></div>
+        <div class="floating-shape shape3"></div>
+        <div class="floating-shape shape4"></div>
+    </div>
+
+    <div class="container">
+        <!-- 标题栏 -->
+        <header class="header">
+            <div class="logo">
+                <span class="logo-icon">✨</span>
+                <span class="logo-text">AI 桌面伴侣</span>
+            </div>
+            <div class="header-actions">
+                <button class="pet-toggle" id="petToggle" onclick="togglePetMode()" title="把看板娘放到桌面上当桌宠（左键点击互动 / 拖动挪动 / 右键呼出操作面板）">
+                    <span class="pet-toggle-icon">🐾</span>
+                    <span id="petToggleText">桌宠模式</span>
+                </button>
+                <button class="tray-toggle" id="trayToggle" onclick="toggleTrayMode()" title="最小化到系统托盘，后台运行">
+                    <span class="tray-toggle-icon">📦</span>
+                    <span id="trayToggleText">托盘模式</span>
+                </button>
+                <span id="trayStatus" class="tray-status" style="display: none;">
+                    <span class="tray-indicator"></span>
+                    <span id="trayStatusText">已最小化</span>
+                </span>
+                <span id="activeIndicator" class="active-indicator">
+                    <span class="pulse"></span>
+                    <span id="activeCharName">加载中...</span>
+                </span>
+            </div>
+        </header>
+
+        <!-- Tab 栏：左侧导航高亮 -->
+        <nav class="tab-bar glass-card">
+            <button class="tab-btn active" data-tab="chat" onclick="switchTab('chat')">
+                <span class="tab-icon">💬</span><span>聊天</span>
+            </button>
+            <button class="tab-btn" data-tab="characters" onclick="switchTab('characters')">
+                <span class="tab-icon">👥</span><span>角色管理</span>
+            </button>
+            <button class="tab-btn" data-tab="llm" onclick="switchTab('llm')">
+                <span class="tab-icon">🤖</span><span>模型设置</span>
+            </button>
+            <button class="tab-btn" data-tab="memory" onclick="switchTab('memory')">
+                <span class="tab-icon">🧠</span><span>记忆设置</span>
+            </button>
+            <button class="tab-btn" data-tab="activity" onclick="switchTab('activity')">
+                <span class="tab-icon">📅</span><span>日报周报</span>
+            </button>
+            <button class="tab-btn" data-tab="courses" onclick="switchTab('courses')">
+                <span class="tab-icon">📚</span><span>课程记录</span>
+            </button>
+            <button class="tab-btn" data-tab="unity" onclick="switchTab('unity')">
+                <span class="tab-icon">🎮</span><span>Unity 3D 视图 (2K)</span>
+                <span id="unityBadge" class="tab-badge">检查中</span>
+            </button>
+            <button class="tab-btn" data-tab="debug" onclick="switchTab('debug')">
+                <span class="tab-icon">🔬</span><span>感知调试台</span>
+            </button>
+        </nav>
+
+        <!-- Tab = 聊天 -->
+        <section id="tab-chat" class="tab-panel chat-panel active">
+            <div class="chat-header glass-card">
+                <div class="chat-title">
+                    <div class="chat-avatar-wrap" id="chatAvatarWrap">
+                        <div class="chat-avatar-ring"></div>
+                        <img id="chatAvatarImg" class="chat-avatar-img" src="assets/danya_avatar.png"
+                             alt="角色头像" onerror="this.style.visibility='hidden'">
+                        <span class="chat-avatar-dot" id="chatAvatarDot"></span>
+                    </div>
+                    <div class="chat-title-text">
+                        <div class="chat-title-name">
+                            <span class="chat-title-main" id="chatHeaderName">达妮娅</span>
+                            <span class="chat-title-badge" id="chatTitleBadge">伴星</span>
+                        </div>
+                        <div class="chat-title-sub" id="chatCharName">正陪在你身边</div>
+                    </div>
+                </div>
+                <div class="chat-controls">
+                    <label class="switch-label switch-label-chat" title="麦克风监听总开关：关闭后释放麦克风设备（不再监听，唤醒词/持续识别全停）；开启后恢复（持续对话关=喊小薇唤醒）">
+                        <span class="switch-text">麦克风</span>
+                        <input type="checkbox" id="chatMicToggle" class="switch-input"
+                               onchange="setMicListening(this.checked)" />
+                        <span class="switch-slider"></span>
+                    </label>
+                    <label class="switch-label switch-label-chat" title="开启后语音免唤醒：不用喊小薇，说话即识别、随时对话（方便随时纠正 AI 说错的话）；关闭后需喊小薇唤醒">
+                        <span class="switch-text">持续对话</span>
+                        <input type="checkbox" id="chatContinuousToggle" class="switch-input"
+                               onchange="setContinuousVoice(this.checked)" />
+                        <span class="switch-slider"></span>
+                    </label>
+                    <button class="btn-refresh btn-expr-toggle" onclick="toggleExprPanel()" title="看板娘表情调试：手动预览每个表情">表情</button>
+                    <button class="btn-refresh" onclick="clearChat()" title="清空对话">清空</button>
+                </div>
+                <!-- 表情调试面板：点击预设按钮预览看板娘表情 -->
+                <div id="exprPanel" class="expr-panel glass-card" style="display:none">
+                    <div class="expr-panel-title">
+                        <span>表情调试</span>
+                        <button type="button" class="expr-panel-close" onclick="toggleExprPanel()" title="关闭">×</button>
+                    </div>
+                    <div id="exprPanelGrid" class="expr-panel-grid"></div>
+                    <button type="button" id="exprFxToggle" class="expr-panel-fxbtn" onclick="toggleFxPosMode()" title="开启后可直接拖动看板娘身上的泪滴/zzz 特效到合适位置，松手自动保存">定位特效位置</button>
+                    <div class="expr-panel-note">点击预览表情 · 说话时由 AI 心情自动切换 · 当前表情高亮</div>
+                </div>
+            </div>
+            <div id="chatMessages" class="chat-messages glass-card">
+                <div class="chat-empty">
+                    <div class="chat-empty-avatar">
+                        <img id="chatEmptyAvatar" src="assets/danya_avatar.png" alt="角色头像" onerror="this.style.visibility='hidden'">
+                    </div>
+                    <div class="chat-empty-title" id="chatEmptyTitle">达妮娅在等你</div>
+                    <div class="chat-empty-text">轻轻说一句，她就会回应你</div>
+                </div>
+            </div>
+            <div class="chat-input-area glass-card">
+                <div class="chat-input-actions">
+                    <button class="input-action-btn" id="voiceInputBtn" type="button" title="语音输入">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"></path><path d="M19 10v2a7 7 0 0 1-14 0v-2"></path><line x1="12" y1="19" x2="12" y2="23"></line><line x1="8" y1="23" x2="16" y2="23"></line></svg>
+                    </button>
+                </div>
+                <div class="chat-input-row">
+                    <input id="chatInput" type="text" placeholder="想对达妮娅说什么…"
+                           autocomplete="off" maxlength="500" />
+                    <button class="btn-send" onclick="sendChat()">
+                        <span class="btn-send-text">发送</span>
+                        <span class="btn-send-arrow">➤</span>
+                    </button>
+                </div>
+            </div>
+
+            <!-- 看板娘（Anime2.5DRig，右下角悬浮）：把 see-through 拆好的 PSD 拖进里面的舞台即可自动绑定 -->
+            <div id="live2dDock" class="live2d-dock">
+                <div class="live2d-dock-bar">
+                    <span>看板娘</span>
+                    <button type="button" class="live2d-dock-toggle" onclick="toggleLive2dDock()" title="折叠/展开">—</button>
+                </div>
+                <iframe id="live2dRigFrame" class="live2d-dock-frame" src="live2d/rig/index.html"
+                        title="看板娘"></iframe>
+            </div>
+        </section>
+
+        <!-- 主内容区：Tab = 角色管理 -->
+        <main id="tab-characters" class="main-content tab-panel">
+            <!-- 左侧：角色列表 -->
+            <aside class="sidebar">
+                <div class="sidebar-header">
+                    <h2>角色列表</h2>
+                    <button class="btn-add" onclick="openEditModal()">
+                        <span class="btn-icon">+</span>
+                        <span>新增角色</span>
+                    </button>
+                </div>
+                <div id="characterList" class="character-list">
+                    <!-- 角色卡片由 JS 动态生成 -->
+                </div>
+            </aside>
+
+            <!-- 右侧：角色详情 -->
+            <section class="detail-panel">
+                <div id="emptyState" class="empty-state">
+                    <div class="empty-icon">💖</div>
+                    <p>选择左侧角色查看详情</p>
+                </div>
+
+                <div id="detailContent" class="detail-content hidden">
+                    <div class="detail-header">
+                        <h2 id="detailName">-</h2>
+                        <div class="detail-actions">
+                            <button class="btn-switch" onclick="switchActive()" id="switchBtn">设为当前</button>
+                            <button class="btn-edit" onclick="openEditModal(selectedId)">编辑</button>
+                            <button class="btn-delete" onclick="deleteCharacter()">删除</button>
+                        </div>
+                    </div>
+
+                    <div class="detail-sections">
+                        <!-- 人设信息 -->
+                        <div class="section glass-card">
+                            <div class="section-title">
+                                <span class="section-icon">👤</span>
+                                <h3>人设设定</h3>
+                            </div>
+                            <div class="section-body">
+                                <div class="info-row">
+                                    <span class="info-label">ID</span>
+                                    <span id="detailId" class="info-value">-</span>
+                                </div>
+                                <div class="info-row">
+                                    <span class="info-label">名称</span>
+                                    <span id="detailName2" class="info-value">-</span>
+                                </div>
+                                <div class="info-row">
+                                    <span class="info-label">性格特征</span>
+                                    <span id="detailCharacter" class="info-value">-</span>
+                                </div>
+                                <div class="info-row">
+                                    <span class="info-label">说话风格</span>
+                                    <span id="detailStyle" class="info-value">-</span>
+                                </div>
+                                <div class="info-row">
+                                    <span class="info-label">背景设定</span>
+                                    <span id="detailBackground" class="info-value">-</span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- 语音配置 -->
+                        <div class="section glass-card">
+                            <div class="section-title">
+                                <span class="section-icon">🎙️</span>
+                                <h3>语音配置</h3>
+                                <button type="button" class="btn-test btn-detail-test" onclick="previewDetailVoice()">🎧 试听音色</button>
+                            </div>
+                            <div class="section-body">
+                                <div class="info-row">
+                                    <span class="info-label">TTS 引擎</span>
+                                    <span id="detailEngine" class="info-value">-</span>
+                                </div>
+                                <div class="info-row">
+                                    <span class="info-label">音色</span>
+                                    <span id="detailVoice" class="info-value">-</span>
+                                </div>
+                                <div class="info-row" id="detailVoiceIdRow" style="display:none;">
+                                    <span class="info-label">云端音色 ID</span>
+                                    <span id="detailVoiceId" class="info-value">-</span>
+                                </div>
+                                <div class="info-row">
+                                    <span class="info-label">语速</span>
+                                    <span id="detailRate" class="info-value">-</span>
+                                </div>
+                                <div class="info-row">
+                                    <span class="info-label">音调</span>
+                                    <span id="detailPitch" class="info-value">-</span>
+                                </div>
+                                <div class="info-row">
+                                    <span class="info-label">音量</span>
+                                    <span id="detailVolume" class="info-value">-</span>
+                                </div>
+                                <div class="info-row">
+                                    <span class="info-label">参考音频</span>
+                                    <span id="detailRefAudio" class="info-value">-</span>
+                                </div>
+                                <div class="info-row">
+                                    <span class="info-label">辅助参考音频</span>
+                                    <span id="detailAuxRefAudio" class="info-value">-</span>
+                                </div>
+                                <div id="detailVoiceHint" class="info-tip hidden"></div>
+                            </div>
+                        </div>
+
+                        <!-- 3D 模型配置 -->
+                        <div class="section glass-card">
+                            <div class="section-title">
+                                <span class="section-icon">🎨</span>
+                                <h3>3D 模型 <span class="badge-future">接入 Unity 中</span></h3>
+                            </div>
+                            <div class="section-body">
+                                <div class="info-tip">先配好人设和语音，3D 模型接入 Unity 后在这里绑定 MMD / VRM 模型文件。现在可以先专注人格与语音～</div>
+                                <div class="info-row">
+                                    <span class="info-label">启用 3D</span>
+                                    <span id="detailModel3dEnabled" class="info-value">-</span>
+                                </div>
+                                <div class="info-row">
+                                    <span class="info-label">模型格式</span>
+                                    <span id="detailModelFormat" class="info-value">-</span>
+                                </div>
+                                <div class="info-row">
+                                    <span class="info-label">模型路径</span>
+                                    <span id="detailModelPath" class="info-value">-</span>
+                                </div>
+                                <div class="info-row">
+                                    <span class="info-label">描述</span>
+                                    <span id="detailModelDesc" class="info-value">-</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+        </main>
+
+        <!-- Tab = 模型设置（LLM Provider 自定义模型） -->
+        <section id="tab-llm" class="tab-panel llm-panel">
+            <div class="llm-header glass-card">
+                <div class="llm-title">
+                    <span class="llm-icon">🤖</span>
+                    <span>模型设置</span>
+                    <span class="llm-sub">自定义 LLM 提供商 · 云端多模态 · 保存后立即生效</span>
+                </div>
+                <div class="llm-controls">
+                    <span id="llmRuntimeState" class="conn-badge">●</span>
+                </div>
+            </div>
+
+            <div class="llm-layout">
+                <!-- 提供商选择 -->
+                <div class="section glass-card">
+                    <div class="section-title">
+                        <span class="section-icon">🧭</span>
+                        <h3>提供商 (Provider)</h3>
+                    </div>
+                    <div class="section-body">
+                        <div class="provider-cards">
+                            <label class="provider-card" data-provider="ollama">
+                                <input type="radio" name="llmProvider" value="ollama" onchange="onProviderChange()">
+                                <div class="provider-info">
+                                    <div class="provider-name">🖥️ Ollama 本地</div>
+                                    <div class="provider-desc">本地视觉 + 降级模型，离线可用</div>
+                                </div>
+                            </label>
+                            <label class="provider-card" data-provider="openai">
+                                <input type="radio" name="llmProvider" value="openai" onchange="onProviderChange()">
+                                <div class="provider-info">
+                                    <div class="provider-name">☁️ OpenAI 兼容</div>
+                                    <div class="provider-desc">自定义 base_url / api_key / model，任意云端多模态</div>
+                                </div>
+                            </label>
+                            <label class="provider-card" data-provider="minicpm">
+                                <input type="radio" name="llmProvider" value="minicpm" onchange="onProviderChange()">
+                                <div class="provider-info">
+                                    <div class="provider-name">🌙 MiniCPM-o 4.5 (免费)</div>
+                                    <div class="provider-desc">官方免费实时接口 · 支持图片 · 无需 Key</div>
+                                </div>
+                            </label>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 视觉模型（屏幕识别）切换：云端优先、本地兜底 -->
+                <div class="section glass-card">
+                    <div class="section-title">
+                        <span class="section-icon">👁️</span>
+                        <h3>视觉模型（屏幕识别）</h3>
+                        <button type="button" class="btn-test" onclick="testVisionModel()">测试当前</button>
+                    </div>
+                    <div class="section-body llm-form">
+                        <div class="form-group">
+                            <label>识别画面用的多模态模型</label>
+                            <select id="visionModelSelect" onchange="switchVisionModel()"></select>
+                            <span class="field-hint">云端优先、失败自动回退本地（治 AI 画面脑补幻觉）。切换立即生效，可直观对比各模型识别效果</span>
+                        </div>
+                        <div class="form-group" id="visionKeyRow" style="display:none">
+                            <label>API Key（云端多模态，如智谱 GLM-4V-Flash）</label>
+                            <div class="input-with-btn">
+                                <input type="password" id="visionModelApiKey" placeholder="粘贴 API Key（智谱在 open.bigmodel.cn 注册免费获取）">
+                                <button type="button" class="btn-save" onclick="saveVisionModelKey()">保存</button>
+                            </div>
+                            <span class="field-hint">仅 OpenAI 兼容云端条目需要；保存即热生效，无需重启</span>
+                        </div>
+                        <div class="form-group"><span id="visionModelStatus" class="field-hint"></span></div>
+                        <div class="form-group"><span id="visionModelTestResult" class="field-hint"></span></div>
+                    </div>
+                </div>
+
+                <!-- 双工引擎（云端 / 本地 / 关闭）：用户自选 + 显卡门槛检测 + 性能提醒 -->
+                <div class="section glass-card">
+                    <div class="section-title">
+                        <span class="section-icon">⚡</span>
+                        <h3>双工引擎（主动搭话）</h3>
+                        <button type="button" class="btn-test" onclick="loadDuplexSettings(true)"
+                                title="重新检测显卡显存门槛">重新检测</button>
+                    </div>
+                    <div class="section-body">
+                        <div class="provider-cards">
+                            <label class="provider-card" data-engine="cloud">
+                                <input type="radio" name="duplexEngine" value="cloud" onchange="onDuplexEngineChange()">
+                                <div class="provider-info">
+                                    <div class="provider-name">☁️ 云端全双工（推荐）</div>
+                                    <div class="provider-desc">官方免费接口 · 0 资源占用 · 需联网 · 会话约 5 分钟自动续</div>
+                                </div>
+                            </label>
+                            <label class="provider-card" data-engine="local">
+                                <input type="radio" name="duplexEngine" value="local" onchange="onDuplexEngineChange()">
+                                <div class="provider-info">
+                                    <div class="provider-name">🖥️ 本地全双工</div>
+                                    <div class="provider-desc">断网可用 · 无会话限制 · 需 ≥12GB 显存（选本地后按显卡推荐量化包）</div>
+                                </div>
+                            </label>
+                            <label class="provider-card" data-engine="off">
+                                <input type="radio" name="duplexEngine" value="off" onchange="onDuplexEngineChange()">
+                                <div class="provider-info">
+                                    <div class="provider-name">🚫 关闭双工</div>
+                                    <div class="provider-desc">不推流不采集，只保留规则引信搭话</div>
+                                </div>
+                            </label>
+                        </div>
+                        <div class="form-group">
+                            <span id="duplexGpuStatus" class="field-hint">检测显卡中…</span>
+                        </div>
+                        <div class="form-group" id="duplexEndpointRow" style="display:none">
+                            <label>自定义端点（留空 = 官方默认）</label>
+                            <input type="text" id="duplexEndpoint" placeholder="wss://…/v1/realtime">
+                            <span class="field-hint">云端/本地引擎的 WebSocket 地址，一般不需要填</span>
+                        </div>
+                        <!-- 云端双工·用户自有端点（2026-09-24）：缓解公共免费端口抢不到 -->
+                        <details class="cdn-details" id="cloudDuplexBox" style="margin-top:10px;border:1px solid #333a;border-radius:10px;padding:8px 12px;background:rgba(255,255,255,.02)">
+                            <summary style="cursor:pointer;color:#8be9fd;font-weight:600">🌐 云端双工·用户自有端点（缓解公共端口抢不到）</summary>
+                            <div class="field-hint" style="margin:6px 0">公共免费端点常被占满/排队。可分别在下方填你自己的<b>语音</b>、<b>视频</b>双工网关（完整 wss URL，含 host:port 与 ?mode=）。两者都留空则用官方默认。</div>
+                            <div class="form-group">
+                                <label>语音双工端点（mode=chat，纯音频·最省）</label>
+                                <input type="text" id="cdnVoiceEndpoint" placeholder="wss://your-host/v1/realtime?mode=chat">
+                            </div>
+                            <div class="form-group">
+                                <label>视频双工端点（mode=video，推屏·更强但更贵）</label>
+                                <input type="text" id="cdnVideoEndpoint" placeholder="wss://your-host/v1/realtime?mode=video">
+                            </div>
+                            <div class="form-group">
+                                <span class="field-hint">云端开销：视频双工 ≈ 音频 + 每 2s 一帧 JPEG(约 0.5fps)，算力/流量约为纯语音的 <b>1.3~2x</b>；纯语音只传 16k 音频，最省。不读屏时建议关掉视频双工。</span>
+                            </div>
+                            <div class="form-group" style="display:flex;gap:16px;flex-wrap:wrap">
+                                <label style="display:flex;align-items:center;gap:6px"><input type="checkbox" id="cdnVideoEnabled"> 启用视频双工（推屏）</label>
+                                <label style="display:flex;align-items:center;gap:6px"><input type="checkbox" id="cdnLocalFallback"> 连不上时自动回退另一端</label>
+                                <label style="display:flex;align-items:center;gap:6px"><input type="checkbox" id="cdnPreferCloud"> 默认云端优先</label>
+                            </div>
+                            <div class="field-hint">无显卡设备本地起不来 → 自动全程云端，无需配置。</div>
+                        </details>
+                        <div class="duplex-warn">
+                            ⚠️ 本地全双工推理时约占用 <b>6~11GB 显存</b>（取决于量化档位），会与游戏、剪辑等吃显存的软件争抢资源；
+                            玩大型游戏或跑重负载软件时建议切回云端（0 资源占用）或关闭双工。
+                        </div>
+                        <div class="form-group" id="modelQuantPanel" style="display:none">
+                            <label style="font-weight:600;color:#8be9fd">本地模型量化包（按显卡推荐）</label>
+                            <span id="modelQuantWarn" class="field-hint"></span>
+                            <div id="modelQuantList" class="quant-grid"></div>
+                            <span class="field-hint">想下大的下大的、想下小的下小的：选好点「下载」会自动拉取并写入配置（重启引擎生效），也可点「魔塔链接」手动下。</span>
+                        </div>
+                        <style>
+                            .quant-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:10px;margin-top:8px}
+                            .quant-card{border:1px solid #333a;border-radius:10px;padding:10px;background:rgba(255,255,255,.03)}
+                            .quant-card.recommended{border-color:#2ecc71}
+                            .quant-card.tight{border-color:#f5a623}
+                            .quant-card.manual{border-color:#666}
+                            .quant-head{display:flex;justify-content:space-between;align-items:center}
+                            .quant-id{font-weight:700;color:#fff}
+                            .quant-badge{font-size:11px;padding:1px 6px;border-radius:8px;background:#2ecc71;color:#04210f}
+                            .quant-badge.tight{background:#f5a623;color:#211500}
+                            .quant-badge.manual{background:#555;color:#fff}
+                            .quant-meta{font-size:12px;color:#9aa;margin:4px 0}
+                            .quant-note{font-size:12px;color:#bbb;min-height:30px}
+                            .quant-actions{display:flex;gap:6px;flex-wrap:wrap;margin-top:6px}
+                            .btn-mini{font-size:12px;padding:3px 8px;border-radius:6px;border:1px solid #444;background:#222;color:#cde;cursor:pointer;text-decoration:none;display:inline-block}
+                            .btn-mini.primary{background:#3a6df0;color:#fff;border-color:#3a6df0}
+                            .quant-status{font-size:12px;color:#8be9fd;margin-top:6px;white-space:pre-wrap;word-break:break-all}
+                        </style>
+                        <button class="btn-save" onclick="saveDuplexSettings()">保存并立即生效</button>
+                        <span id="duplexSaveResult" class="field-hint"></span>
+                    </div>
+                </div>
+
+                <!-- 游戏陪伴方案（双工）：按游戏配专属陪伴提示词（参照 pub-local-jarvis） -->
+                <div class="section glass-card">
+                    <div class="section-title">
+                        <span class="section-icon">🎮</span>
+                        <h3>游戏陪伴方案（双工）</h3>
+                        <button type="button" class="btn-test" onclick="addGamePlan()"
+                                title="为某个游戏配置专属陪伴提示词：双工模式检测到该游戏后，模型按该方案的口吻/关注重点陪伴">＋ 新增方案</button>
+                    </div>
+                    <div class="section-body llm-form" id="gamePlansWrap">
+                        <div class="form-group"><span class="field-hint">加载中...</span></div>
+                    </div>
+                </div>
+
+                <!-- Ollama 说明 -->
+                <div id="llmOllamaSection" class="section glass-card">
+                    <div class="section-title">
+                        <span class="section-icon">🖥️</span>
+                        <h3>Ollama 本地</h3>
+                    </div>
+                    <div class="section-body llm-form">
+                        <div class="form-group">
+                            <span class="field-hint">视觉模型 openbmb/minicpm-o2.6 · 降级模型 qwen3:14b · 地址 http://localhost:11434（在 config.yaml 的 ollama 段修改）</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- OpenAI 兼容配置 -->
+                <div id="llmOpenaiSection" class="section glass-card hidden">
+                    <div class="section-title">
+                        <span class="section-icon">☁️</span>
+                        <h3>OpenAI 兼容接口</h3>
+                        <button type="button" class="btn-test" onclick="testLlm('openai')">测试连接</button>
+                    </div>
+                    <div class="section-body llm-form">
+                        <div class="form-group">
+                            <label>Base URL</label>
+                            <input type="text" id="llmOpenaiBaseUrl" placeholder="https://api.openai.com/v1">
+                            <span class="field-hint">兼容端点根地址（OpenAI / DeepSeek / 智谱 / 通义 / 硅基流动 等）</span>
+                        </div>
+                        <div class="form-group">
+                            <label>API Key</label>
+                            <input type="password" id="llmOpenaiApiKey" placeholder="sk-...（无需鉴权可留空）">
+                        </div>
+                        <div class="form-row">
+                            <div class="form-group half">
+                                <label>模型名</label>
+                                <input type="text" id="llmOpenaiModel" placeholder="gpt-4o / deepseek-chat / glm-4v-flash">
+                            </div>
+                            <div class="form-group half">
+                                <label>超时 (s)</label>
+                                <input type="number" id="llmOpenaiTimeout" value="60" min="5">
+                            </div>
+                        </div>
+                        <div class="form-group check-row">
+                            <label class="check-label">
+                                <input type="checkbox" id="llmOpenaiVision" checked>
+                                <span>模型支持图片输入（多模态视觉）</span>
+                            </label>
+                        </div>
+                        <div class="form-group"><span id="llmOpenaiTestResult" class="field-hint"></span></div>
+                    </div>
+                </div>
+
+                <!-- MiniCPM 配置 -->
+                <div id="llmMinicpmSection" class="section glass-card hidden">
+                    <div class="section-title">
+                        <span class="section-icon">🌙</span>
+                        <h3>MiniCPM-o 4.5 Realtime（官方免费）</h3>
+                        <button type="button" class="btn-test" onclick="testLlm('minicpm')">测试连接</button>
+                    </div>
+                    <div class="section-body llm-form">
+                        <div class="form-group">
+                            <label>WebSocket Endpoint</label>
+                            <input type="text" id="llmMinicpmEndpoint" placeholder="wss://minicpmo45.modelbest.cn/v1/realtime?mode=chat">
+                            <span class="field-hint">官方文档：minicpmo45.modelbest.cn/docs/zh/realtime-api/</span>
+                        </div>
+                        <div class="form-row">
+                            <div class="form-group half">
+                                <label>max_new_tokens</label>
+                                <input type="number" id="llmMinicpmMaxTokens" value="512" min="16">
+                            </div>
+                            <div class="form-group half">
+                                <label>超时 (s)</label>
+                                <input type="number" id="llmMinicpmTimeout" value="60" min="5">
+                            </div>
+                        </div>
+                        <div class="form-group"><span id="llmMinicpmTestResult" class="field-hint"></span></div>
+                    </div>
+                </div>
+
+                <!-- 保存 -->
+                <div class="llm-actions glass-card">
+                    <button class="btn-save" onclick="saveLlmSettings()">保存并立即生效</button>
+                    <span id="llmSaveResult" class="field-hint"></span>
+                </div>
+            </div>
+        </section>
+
+        <!-- Tab = 记忆设置（jarvis / legacy 方案对比开关） -->
+        <section id="tab-memory" class="tab-panel memory-panel">
+            <div class="llm-header glass-card">
+                <div class="llm-title">
+                    <span class="llm-icon">🧠</span>
+                    <span>记忆设置</span>
+                    <span class="llm-sub">借鉴开源 Jarvis 的 purpose-driven 记忆 · 两种方案可切换对比 · 保存后立即生效</span>
+                </div>
+                <div class="llm-controls">
+                    <span id="memRuntimeState" class="conn-badge">●</span>
+                </div>
+            </div>
+
+            <div class="llm-layout">
+                <!-- 方案选择 -->
+                <div class="section glass-card">
+                    <div class="section-title">
+                        <span class="section-icon">🎛️</span>
+                        <h3>记忆方案 (Mode)</h3>
+                    </div>
+                    <div class="section-body">
+                        <div class="provider-cards">
+                            <label class="provider-card" data-provider="jarvis">
+                                <input type="radio" name="memMode" value="jarvis" onchange="onMemModeChange()">
+                                <div class="provider-info">
+                                    <div class="provider-name">🧠 Jarvis 方案 (推荐)</div>
+                                    <div class="provider-desc">分类记忆(指令/偏好/事实) + 指令特权注入 + 重要性加权 + 语义检索</div>
+                                </div>
+                            </label>
+                            <label class="provider-card" data-provider="legacy">
+                                <input type="radio" name="memMode" value="legacy" onchange="onMemModeChange()">
+                                <div class="provider-info">
+                                    <div class="provider-name">📄 Legacy 原方案</div>
+                                    <div class="provider-desc">原扁平记忆，按最近更新召回（用于对比两种方案差异）</div>
+                                </div>
+                            </label>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 开关 -->
+                <div class="section glass-card">
+                    <div class="section-title">
+                        <span class="section-icon">🔀</span>
+                        <h3>功能开关</h3>
+                    </div>
+                    <div class="section-body">
+                        <div class="form-group check-row">
+                            <label class="check-label">
+                                <input type="checkbox" id="memSemantic" checked>
+                                <span>语义检索（按语义召回相关记忆，需 <code>ollama pull nomic-embed-text</code>；未安装自动降级）</span>
+                            </label>
+                        </div>
+                        <div class="form-group check-row">
+                            <label class="check-label">
+                                <input type="checkbox" id="memIntent" checked>
+                                <span>意图判定（LLM 先判断用户话里是否值得记 + 分类提炼，再入库）</span>
+                            </label>
+                        </div>
+                        <div class="form-group check-row">
+                            <label class="check-label">
+                                <input type="checkbox" id="memEnabled" checked>
+                                <span>启用长期记忆（关闭需重启才生效）</span>
+                            </label>
+                        </div>
+                        <div class="form-group check-row">
+                            <label class="check-label">
+                                <input type="checkbox" id="memInject" checked>
+                                <span>记忆接入（把记忆注入对话/搭话上下文；关闭后仍照常记录、只是不注入——小模型易歧义时建议关闭）</span>
+                            </label>
+                        </div>
+                        <div class="form-row">
+                            <div class="form-group half">
+                                <label>记忆容量上限</label>
+                                <input type="number" id="memMaxItems" value="100" min="1" max="500">
+                            </div>
+                        </div>
+                        <span id="memEmbedState" class="field-hint"></span>
+                    </div>
+                </div>
+
+                <!-- 记忆库统计 -->
+                <div class="section glass-card">
+                    <div class="section-title">
+                        <span class="section-icon">📊</span>
+                        <h3>记忆库统计</h3>
+                    </div>
+                    <div class="section-body">
+                        <div class="mem-stats-row">
+                            <div class="mem-stat-card">
+                                <div class="mem-stat-num" id="memCountTotal">0</div>
+                                <div class="mem-stat-label">总条数</div>
+                            </div>
+                            <div class="mem-stat-card">
+                                <div class="mem-stat-num mem-stat-directive" id="memCountDirective">0</div>
+                                <div class="mem-stat-label">🎯 指令</div>
+                            </div>
+                            <div class="mem-stat-card">
+                                <div class="mem-stat-num mem-stat-user" id="memCountUser">0</div>
+                                <div class="mem-stat-label">👤 用户偏好</div>
+                            </div>
+                            <div class="mem-stat-card">
+                                <div class="mem-stat-num mem-stat-world" id="memCountWorld">0</div>
+                                <div class="mem-stat-label">🌍 外部事实</div>
+                            </div>
+                        </div>
+                        <div class="mem-list-wrap">
+                            <div class="mem-list-title">记忆条目（按更新时间倒序，最多 80 条）</div>
+                            <div id="memList" class="mem-list">加载中...</div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 操作 -->
+                <div class="llm-actions glass-card">
+                    <button class="btn-save" onclick="saveMemorySettings()">保存并立即生效</button>
+                    <button class="btn-delete" onclick="clearMemory()">🗑 清空记忆</button>
+                    <span id="memSaveResult" class="field-hint"></span>
+                </div>
+            </div>
+        </section>
+
+        <!-- Tab = 日报周报（活动记忆自动生成 + 高级感图片 + 导出） -->
+        <section id="tab-activity" class="tab-panel memory-panel">
+            <div class="llm-header glass-card">
+                <div class="llm-title">
+                    <span class="llm-icon">📅</span>
+                    <span>日报周报</span>
+                    <span class="llm-sub">活动记忆自动生成 · 高级感日程卡图片（本地渲染 / AI 生图）· 一键导出到桌面</span>
+                </div>
+                <div class="llm-controls">
+                    <button class="btn-refresh" onclick="loadActivityReports()">🔄 刷新</button>
+                </div>
+            </div>
+
+            <div style="display: flex; gap: 14px; align-items: flex-start; padding-bottom: 8px;">
+                <!-- 左侧：日期列表 -->
+                <div style="flex: 0 0 300px; display: flex; flex-direction: column; gap: 14px;">
+                    <div class="section glass-card">
+                        <div class="section-title">
+                            <span class="section-icon">📋</span>
+                            <h3>日报</h3>
+                        </div>
+                        <div class="section-body">
+                            <div id="dailyList" class="mem-list">加载中...</div>
+                        </div>
+                    </div>
+                    <div class="section glass-card">
+                        <div class="section-title">
+                            <span class="section-icon">🗓️</span>
+                            <h3>周报</h3>
+                        </div>
+                        <div class="section-body">
+                            <div id="weeklyList" class="mem-list">加载中...</div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 右侧：预览 -->
+                <div class="section glass-card" style="flex: 1; min-width: 0;">
+                    <div class="section-title">
+                        <span class="section-icon">🖼️</span>
+                        <h3>预览</h3>
+                        <div class="llm-controls" id="reportPreviewActions" style="margin-left: auto;">
+                            <button class="btn-refresh" id="btnRenderImage" onclick="renderReportImage()" disabled>🎨 本地渲染图片</button>
+                            <button class="btn-refresh" id="btnAiImage" onclick="generateAiReportImage()" disabled>✨ AI 生图封面</button>
+                            <button class="btn-save" id="btnExportReport" onclick="exportReport()" disabled>📤 导出</button>
+                        </div>
+                    </div>
+                    <div class="section-body">
+                        <div id="reportPreview" class="report-preview-empty">选择左侧日期查看日报/周报</div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Tab = 课程记录（网课自动记录 → 笔记 + 关键画面） -->
+        <section id="tab-courses" class="tab-panel memory-panel">
+            <div class="llm-header glass-card">
+                <div class="llm-title">
+                    <span class="llm-icon">📚</span>
+                    <span>课程记录</span>
+                    <span class="llm-sub">自动检测网课 · 转写授课语音 · 抓关键画面 · 生成 Markdown 笔记（参照开源 Jarvis）</span>
+                </div>
+                <div class="llm-controls">
+                    <span id="courseStatusBadge" class="conn-badge">●</span>
+                    <button class="btn-refresh" onclick="loadCourses()">🔄 刷新</button>
+                    <button class="btn-refresh" onclick="openCourseDir()">📂 打开笔记目录</button>
+                </div>
+            </div>
+
+            <div class="section glass-card">
+                <div class="section-title">
+                    <span class="section-icon">🗒️</span>
+                    <h3>已记录课程</h3>
+                    <span class="llm-sub" style="margin-left: 10px;">完成 → README.md 笔记 · 进行中 → 正在录制</span>
+                </div>
+                <div class="section-body">
+                    <div id="courseList" class="mem-list">加载中...</div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Tab = Unity 3D 视图 (2K QHD MJPEG 流) -->
+        <section id="tab-unity" class="tab-panel unity-view-panel">
+            <div class="unity-view-header glass-card">
+                <div class="unity-view-title">
+                    <span class="unity-icon">🌸</span>
+                    <span class="unity-view-name">Unity 实时 3D 视图</span>
+                    <span class="unity-view-sub">源分辨率 2560×1440 · QHD · MJPEG 30fps</span>
+                </div>
+                <div class="unity-view-controls">
+                    <span id="unityHttpStatus" class="conn-badge">HTTP●</span>
+                    <span id="unityWsStatus" class="conn-badge">WS●</span>
+                    <button class="btn-refresh" onclick="restartUnityStream()">🔄 重载流</button>
+                    <button class="btn-refresh" onclick="testAllAnimations()">🎬 测试全部动画</button>
+                    <button class="btn-fullscreen" onclick="openUnityFullscreen()">⛶ 全屏</button>
+                </div>
+            </div>
+
+            <div class="unity-video-wrap glass-card">
+                <img id="unityStreamImg"
+                     alt="Unity 3D 实时视图"
+                     referrerpolicy="no-referrer"
+                     decoding="async"
+                     loading="eager" />
+                <div id="unityStreamOffline" class="unity-offline">
+                    <div class="unity-offline-icon">🎬</div>
+                    <div class="unity-offline-title">Unity 未启动</div>
+                    <div class="unity-offline-desc">请在 Unity Editor 中点击 <b>▶ 播放</b>，启动 Play Mode<br>端口: HTTP 8767 / WS 8765</div>
+                </div>
+                <div id="unitySubtitle" class="unity-subtitle hidden"></div>
+            </div>
+
+            <div class="unity-camera-row glass-card">
+                <div class="cam-control">
+                    <span class="cam-label">缩放</span>
+                    <input type="range" id="camDist" min="1.4" max="4.5" step="0.05" value="2.2"
+                           oninput="onCamChange()" title="相机距离" />
+                    <span id="camDistVal" class="cam-val">2.2</span>
+                </div>
+                <div class="cam-control">
+                    <span class="cam-label">转向</span>
+                    <input type="range" id="camYaw" min="-180" max="180" step="1" value="0"
+                           oninput="onCamChange()" title="绕角色旋转（0=正面）" />
+                    <span id="camYawVal" class="cam-val">0°</span>
+                </div>
+                <div class="cam-control">
+                    <span class="cam-label">高度</span>
+                    <input type="range" id="camHeight" min="0.5" max="1.8" step="0.05" value="1.3"
+                           oninput="onCamChange()" title="相机高度" />
+                    <span id="camHeightVal" class="cam-val">1.3</span>
+                </div>
+                <button class="btn-refresh" onclick="resetUnityCamera()">↺ 重置视角</button>
+            </div>
+
+            <div id="clothingPanel" class="unity-clothing glass-card">
+                <div class="clothing-title">👗 衣服 / 配饰（三套互斥，VRC 直控）</div>
+
+                <!-- 泳装 -->
+                <div class="cloth-group">
+                    <div class="cloth-group-head">
+                        <span class="cloth-group-name">🏖️ 泳装</span>
+                        <button class="cloth-btn set-btn" data-item="泳装">穿上泳装</button>
+                    </div>
+                    <div class="clothing-btns">
+                        <button class="cloth-btn" data-item="胸罩">胸罩</button>
+                        <button class="cloth-btn" data-item="内裤">内裤</button>
+                        <button class="cloth-btn" data-item="裙子">裙子</button>
+                        <button class="cloth-btn" data-item="帽子">帽子</button>
+                        <button class="cloth-btn" data-item="鞋子">鞋子</button>
+                        <button class="cloth-btn" data-item="头饰">头饰</button>
+                        <button class="cloth-btn" data-item="墨镜">墨镜</button>
+                        <button class="cloth-btn" data-item="头戴花朵">花朵</button>
+                        <button class="cloth-btn" data-item="手上饰品">手饰</button>
+                        <button class="cloth-btn" data-item="脚上的装饰">脚饰</button>
+                        <button class="cloth-btn" data-item="脸上贝壳">贝壳</button>
+                        <button class="cloth-btn" data-item="肩膀海豹">海豹</button>
+                        <button class="cloth-btn" data-item="腿环">腿环</button>
+                    </div>
+                </div>
+
+                <!-- 毛绒派对 -->
+                <div class="cloth-group">
+                    <div class="cloth-group-head">
+                        <span class="cloth-group-name">🐻 毛绒派对</span>
+                        <button class="cloth-btn set-btn" data-item="毛绒派对">穿上毛绒</button>
+                    </div>
+                    <div class="clothing-btns">
+                        <button class="cloth-btn" data-item="毛绒衣服">衣服</button>
+                        <button class="cloth-btn" data-item="毛绒帽子">帽子</button>
+                        <button class="cloth-btn" data-item="毛绒内裤">内裤</button>
+                        <button class="cloth-btn" data-item="毛绒鞋子">鞋子</button>
+                        <button class="cloth-btn" data-item="项圈">项圈</button>
+                        <button class="cloth-btn" data-item="蝴蝶结">蝴蝶结</button>
+                        <button class="cloth-btn" data-item="丝袜">丝袜</button>
+                    </div>
+                </div>
+
+                <!-- 默认衣服 -->
+                <div class="cloth-group">
+                    <div class="cloth-group-head">
+                        <span class="cloth-group-name">👗 默认衣服</span>
+                        <button class="cloth-btn set-btn" data-item="默认衣服">穿回默认</button>
+                    </div>
+                    <div class="clothing-btns">
+                        <button class="cloth-btn" data-item="白丝">白丝</button>
+                        <button class="cloth-btn" data-item="娅娅团子">团子</button>
+                    </div>
+                </div>
+
+                <!-- 武器 / 道具 -->
+                <div class="clothing-btns cloth-footer">
+                    <button class="cloth-btn" data-item="武器">⚔️ 武器</button>
+                    <button class="cloth-btn" data-item="巧克力盒子">🍫 巧克力盒子</button>
+                    <button class="cloth-btn" data-item="手机">📱 手机</button>
+                    <button class="cloth-btn" data-item="井字棋">⭕❌ 井字棋</button>
+                </div>
+
+                <!-- 表情（FaceEmo 预设，一次一个） -->
+                <div class="cloth-group">
+                    <div class="cloth-group-head">
+                        <span class="cloth-group-name">😊 表情（FaceEmo 预设）</span>
+                    </div>
+                    <div class="clothing-btns">
+                        <button class="cloth-btn emo-btn" data-emotion="生气表情">😠 生气</button>
+                        <button class="cloth-btn emo-btn" data-emotion="震惊">😱 震惊</button>
+                        <button class="cloth-btn emo-btn" data-emotion="惊">😮 惊</button>
+                        <button class="cloth-btn emo-btn" data-emotion="机智如我表情">🤓 机智</button>
+                        <button class="cloth-btn emo-btn" data-emotion="眯眯眼">😌 眯眯眼</button>
+                        <button class="cloth-btn emo-btn" data-emotion="眯眯眼哭泣优化">🥹 眯眯眼哭</button>
+                        <button class="cloth-btn emo-btn" data-emotion="哭哭">😭 哭哭</button>
+                        <button class="cloth-btn emo-btn" data-emotion="尴尬">😅 尴尬</button>
+                        <button class="cloth-btn emo-btn" data-emotion="疑惑">🤔 疑惑</button>
+                        <button class="cloth-btn emo-btn" data-emotion="哇哦表情">🤩 哇哦</button>
+                        <button class="cloth-btn emo-btn" data-emotion="邪恶表情">😈 邪恶</button>
+                        <button class="cloth-btn emo-btn" data-emotion="晕了">💫 晕了</button>
+                        <button class="cloth-btn emo-btn" data-emotion="发情">💗 发情</button>
+                        <button class="cloth-btn emo-btn" data-emotion="高潮过程表情">😵 高潮</button>
+                        <button class="cloth-btn emo-btn" data-emotion="达妮娅被爆炒了">🔥 爆炒</button>
+                    </div>
+                </div>
+            </div>
+
+            <div class="unity-meta-row">
+                <div class="meta-card glass-card">
+                    <div class="meta-label">情绪</div>
+                    <div id="metaEmotion" class="meta-value">neutral</div>
+                </div>
+                <div class="meta-card glass-card">
+                    <div class="meta-label">动作</div>
+                    <div id="metaAction" class="meta-value">idle</div>
+                </div>
+                <div class="meta-card glass-card">
+                    <div class="meta-label">状态</div>
+                    <div id="metaState" class="meta-value">idle</div>
+                </div>
+                <div class="meta-card glass-card">
+                    <div class="meta-label">感知</div>
+                    <div id="metaActivity" class="meta-value">—</div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Tab = 感知调试台 -->
+        <section id="tab-debug" class="tab-panel debug-panel">
+            <div class="debug-header glass-card">
+                <div class="debug-title">
+                    <span class="debug-icon">🔬</span>
+                    <span>视觉感知调试台</span>
+                    <span class="debug-sub">1s 实时轮询</span>
+                </div>
+                <div class="debug-controls">
+                    <span id="dbgPollState" class="conn-badge">●</span>
+                    <span id="dbgLastRefresh" class="debug-last-refresh">—</span>
+                    <button class="btn-refresh" onclick="dbgPollNow()">🔄 刷新</button>
+                    <button class="btn-refresh" onclick="startOcrCalibration()"
+                            title="在真实屏幕上显示 OCR 击杀/阵亡识别区域，拖动色块调整，S 保存，Esc 关闭">🎯 OCR区域校准</button>
+                    <button class="btn-refresh" id="chatOverlayBtn" onclick="toggleChatOverlay()"
+                            title="游戏画面上透明显示 AI 说的话 + 你语音说过去的话（可拖动，Esc 关闭）">💬 对话悬浮层</button>
+                </div>
+            </div>
+
+            <div class="debug-grid">
+                <!-- 双工所见画面（本地/云端双工实时看的那一帧） -->
+                <div class="debug-card glass-card" style="grid-column: span 2;">
+                    <div class="debug-card-title">🖥️ 双工所见画面（AI 实时看的那一帧）</div>
+                    <div id="dbgDuplexFrame" class="debug-body" style="text-align:center">等待数据...</div>
+                </div>
+                <!-- 屏幕采样 -->
+                <div class="debug-card glass-card">
+                    <div class="debug-card-title">📷 屏幕采样 (ScreenCapture)</div>
+                    <div id="dbgCapture" class="debug-body">等待数据...</div>
+                </div>
+                <!-- 视觉分析 -->
+                <div class="debug-card glass-card">
+                    <div class="debug-card-title">🧠 视觉分析 (VisionAnalyzer)</div>
+                    <div id="dbgAnalyzer" class="debug-body">等待数据...</div>
+                </div>
+                <!-- 主动搭话 -->
+                <div class="debug-card glass-card">
+                    <div class="debug-card-title">💬 主动搭话 (ProactiveStrategy)</div>
+                    <div id="dbgProactive" class="debug-body">等待数据...</div>
+                </div>
+                <!-- 前台监听 -->
+                <div class="debug-card glass-card">
+                    <div class="debug-card-title">🪟 前台监听 (ForegroundMonitor)</div>
+                    <div id="dbgForeground" class="debug-body">等待数据...</div>
+                </div>
+                <!-- 游戏 OCR -->
+                <div class="debug-card glass-card">
+                    <div class="debug-card-title">🔍 游戏 OCR (GameOcrMonitor)
+                        <label class="switch-label switch-label-push" id="ocrCalibSwitchLabel"
+                               title="打开校准悬浮窗：在真实屏幕上显示识别区域色块，拖动调整位置大小，S 保存锁定">
+                            <input type="checkbox" class="switch-input" id="ocrCalibSwitch"
+                                   onchange="toggleOcrCalibration(this)">
+                            <span class="switch-slider"></span>
+                            校准识别区域
+                        </label>
+                    </div>
+                    <div id="dbgOcr" class="debug-body">等待数据...</div>
+                    <div class="ocr-player-name">
+                        <label for="ocrPlayerName" title="游戏内显示的玩家昵称。击杀播报「击杀者A 枪械图标 被杀者B」：左侧匹配=你击杀，右侧匹配=你阵亡，纯 OCR 精准判断不用 AI 看图猜">
+                            🎮 我的游戏名字</label>
+                        <input type="text" id="ocrPlayerName" maxlength="24"
+                               placeholder="填你的游戏昵称，如 透亮的J能量棒">
+                        <button class="btn ocr-add-btn" onclick="ocrSavePlayerName()"
+                                title="保存玩家名：击杀播报左侧=你击杀、右侧=你阵亡，纯 OCR 精准判断（也可等 AI 主动问你后语音/打字告诉它）">保存名字</button>
+                    </div>
+                    <div class="ocr-region-add">
+                        <input type="text" id="ocrNewRegionName" placeholder="新区域名，如 kill_feed" maxlength="24">
+                        <select id="ocrNewRegionPurpose" title="区域用途：决定该区域文字用于什么判断">
+                            <option value="kill">击杀播报</option>
+                            <option value="kill_hint">击杀提示(中下)</option>
+                            <option value="page">页面名</option>
+                            <option value="settle">结算/胜负</option>
+                            <option value="hud">顶部HUD</option>
+                            <option value="death">阵亡名片(被谁淘汰)</option>
+                            <option value="general">通用</option>
+                        </select>
+                        <button class="btn ocr-add-btn" onclick="ocrAddRegion()"
+                                title="新增识别区域：默认全屏，用顶部「校准识别区域」悬浮窗拖动到目标位置，S 保存">＋ 新增区域</button>
+                    </div>
+                    <div id="dbgOcrRegions" class="ocr-regions">等待数据...</div>
+
+                    <!-- 文字锚点训练器：把「某区域出现某关键词 = 页面处于某状态」训练成强判定规则 -->
+                    <div class="ocr-anchor-box">
+                        <div class="ocr-anchor-head">
+                            <span class="ocr-anchor-title" title="训练「区域文字 → 页面状态」强判定：某区域扫到关键词就确定当前页面是什么，AI 就不靠视觉乱猜了">
+                                🎯 文字锚点训练器
+                            </span>
+                            <span class="ocr-anchor-state" id="dbgAnchorState">未命中</span>
+                        </div>
+                        <div class="ocr-anchor-tip">规则：某区域出现关键词 → 判定页面状态（喂给 AI，优先于视觉猜测）。先看下面每区域扫到的字，再对症配关键词。</div>
+                        <div id="dbgOcrAnchors" class="ocr-anchors">等待数据...</div>
+                    </div>
+                </div>
+                <!-- 游戏音效识别 -->
+                <div class="debug-card glass-card">
+                    <div class="debug-card-title">🔊 游戏音效 (GameAudioMonitor)</div>
+                    <div id="dbgAudio" class="debug-body">等待数据...</div>
+                    <div class="audio-rec-tip">没有模板时需先录制参考音：进入游戏→触发一次对应音效→马上点按钮录制。录制期间保持安静（别放歌、别让 AI 说话）。</div>
+                    <div class="audio-rec-btns">
+                        <button class="btn audio-rec-btn" data-type="kill" onclick="recordAudioRef(this)">录制击杀音</button>
+                        <button class="btn audio-rec-btn" data-type="headshot" onclick="recordAudioRef(this)">录制爆头音</button>
+                        <button class="btn audio-rec-btn" data-type="died" onclick="recordAudioRef(this)">录制阵亡音</button>
+                        <button class="btn audio-rec-btn" data-type="victory" onclick="recordAudioRef(this)">录制胜利音</button>
+                        <button class="btn audio-rec-btn" data-type="defeat" onclick="recordAudioRef(this)">录制失败音</button>
+                    </div>
+                </div>
+            </div>
+
+            <div class="debug-card glass-card debug-timeline-card">
+                <div class="debug-card-title">⏱ 感知活动时间线 <span class="debug-legend">最近 20 条（新→旧）</span></div>
+                <div id="dbgTimeline" class="debug-timeline">等待数据...</div>
+            </div>
+        </section>
+
+        <!-- 底部状态栏 -->
+        <footer class="footer">
+            <span class="footer-status" id="statusText">准备就绪</span>
+        </footer>
+    </div>
+
+    <!-- 编辑模态框 -->
+    <div id="editModal" class="modal hidden">
+        <div class="modal-overlay" onclick="closeEditModal()"></div>
+        <div class="modal-content glass-card">
+            <div class="modal-header">
+                <h2 id="modalTitle">新增角色</h2>
+                <button class="modal-close" onclick="closeEditModal()">✕</button>
+            </div>
+            <form id="editForm" class="modal-form">
+                <!-- 人格模板：一键填充 -->
+                <div class="form-group">
+                    <label>人格模板 <span class="field-hint">不想从零写？点一个模板自动填好人设，再按你的想法微调</span></label>
+                    <div id="personaTemplates" class="template-chips">
+                        <!-- 由 JS 动态生成 -->
+                    </div>
+                </div>
+
+                <!-- ① 人设 -->
+                <div class="step-block">
+                    <div class="step-title">① 人设 <span class="step-sub">这是角色的灵魂，决定 TA 怎么说话、怎么想</span></div>
+
+                    <div class="form-row">
+                        <div class="form-group half">
+                            <label>角色 ID <span class="req-star">*</span></label>
+                            <input type="text" id="charId" required placeholder="英文小写，如: danya">
+                            <span class="field-hint">英文字母/数字/下划线，保存后不可改</span>
+                        </div>
+                        <div class="form-group half">
+                            <label>角色名称 <span class="req-star">*</span></label>
+                            <input type="text" id="charName" required placeholder="如: 达妮娅">
+                            <span class="field-hint">平时叫 TA 的名字，聊天里也会用</span>
+                        </div>
+                    </div>
+
+                    <div class="form-group">
+                        <label>性格特征</label>
+                        <textarea id="charCharacter" rows="2" placeholder="如：雌小鬼风格的毒舌小恶魔，爱用'杂鱼'叫你，嘴上嘲讽其实心里偷偷护着你"></textarea>
+                        <span class="field-hint">写清楚 TA 是哪种性格、怎么对你（越具体越像真人）</span>
+                    </div>
+                    <div class="form-group">
+                        <label>说话风格</label>
+                        <textarea id="charStyle" rows="2" placeholder="如：语气嚣张爱嘲讽，口头禅'哼''笨死了'，赢了嘴硬不承认但忍不住高兴，输了先损你两句再安慰"></textarea>
+                        <span class="field-hint">语气、口头禅、对输赢/夸奖的反应——AI 全靠这个学口癖</span>
+                    </div>
+                    <div class="form-group">
+                        <label>背景设定</label>
+                        <textarea id="charBackground" rows="2" placeholder="如：从异世界掉进你屏幕里的小恶魔，以捉弄人类为乐，嘴硬心软"></textarea>
+                        <span class="field-hint">TA 从哪来、是什么、和你的关系，帮 AI 找到说话的感觉</span>
+                    </div>
+
+                    <div class="form-group">
+                        <button type="button" class="btn-test btn-try-talk" onclick="testPersonaTalk()">💬 试聊一句</button>
+                        <span id="personaTestResult" class="field-hint">填好上面的人设后点这里，让 AI 以这个角色说句话给你听（不保存）</span>
+                    </div>
+                </div>
+
+                <!-- ② 语音 -->
+                <div class="step-block">
+                    <div class="step-title">② 语音 <span class="step-sub">先试听音色，满意了再保存</span></div>
+
+                    <div class="form-row">
+                        <div class="form-group half">
+                            <label>TTS 引擎</label>
+                            <select id="voiceEngine" onchange="toggleGptSovits()">
+                                <option value="edge-tts">Edge TTS (微软在线·免费)</option>
+                                <option value="minimax">MiniMax 语音 (云端·克隆音色)</option>
+                                <option value="mimo_tts">小米 MiMo 语音 (云端·克隆音色·免费)</option>
+                                <option value="gpt-sovits">GPT-SoVITS (本地语音克隆)</option>
+                                <option value="voxcpm">VoxCPM2 (本地语音克隆)</option>
+                                <option value="qwen3tts">Qwen3-TTS (本地语音克隆·轻量)</option>
+                                <option value="cosyvoice">CosyVoice2 (本地语音克隆)</option>
+                                <option value="pyttsx3">pyttsx3 (离线降级)</option>
+                            </select>
+                        </div>
+                        <div class="form-group half">
+                            <label>音色 <span id="voiceVoiceHint" class="field-hint"></span></label>
+                            <select id="voiceVoice">
+                                <!-- 由 JS 动态填充 -->
+                            </select>
+                        </div>
+                    </div>
+
+                    <div class="form-row">
+                        <div class="form-group third">
+                            <label>语速</label>
+                            <input type="text" id="voiceRate" value="+0%" placeholder="+10% 或 -10%">
+                        </div>
+                        <div class="form-group third">
+                            <label>音调</label>
+                            <input type="text" id="voicePitch" value="+0Hz" placeholder="+10Hz 或 -10Hz">
+                        </div>
+                        <div class="form-group third">
+                            <label>音量</label>
+                            <input type="text" id="voiceVolume" value="+0%" placeholder="+10% 或 -10%">
+                        </div>
+                    </div>
+
+                    <div class="form-group">
+                        <button type="button" class="btn-test btn-voice-test" onclick="previewVoice()">🎧 试听音色</button>
+                        <span id="voicePreviewResult" class="field-hint">选好引擎和音色后点这里，用当前设置念一句给你听</span>
+                    </div>
+
+                    <!-- 本地语音克隆配置（engine=gpt-sovits / voxcpm 时显示） -->
+                    <div id="gptSovitsSection" class="hidden gpt-section">
+                        <div class="form-divider gpt-title" id="cloneSectionTitle">GPT-SoVITS 语音克隆配置</div>
+                        <div class="form-group">
+                            <label>服务地址 (API URL)</label>
+                            <div class="input-with-btn">
+                                <input type="text" id="gptApiUrl" value="http://127.0.0.1:9880" placeholder="http://127.0.0.1:9880">
+                                <button type="button" class="btn-test" id="gptTestBtn" onclick="testGptSovits()">测试连接</button>
+                            </div>
+                            <span class="field-hint" id="gptTestResult">本地克隆服务的地址：GPT-SoVITS 默认 9880 端口，VoxCPM2 默认 9881 端口</span>
+                        </div>
+                        <div class="form-group">
+                            <label>参考音频 (Reference Audio)</label>
+                            <div class="input-with-btn">
+                                <input type="text" id="gptRefAudio" placeholder="如 D:\voices\danya.wav">
+                                <button type="button" class="btn-test" onclick="pickAudioFile()">📂 浏览…</button>
+                            </div>
+                            <span class="field-hint">点击"浏览"在电脑里选音频，或直接粘贴绝对路径（.wav，3~10秒，清晰人声）</span>
+                        </div>
+                        <div class="form-group">
+                            <label>参考音频文本 (Reference Text)</label>
+                            <textarea id="gptRefText" rows="2" placeholder="参考音频里说的话，中文一字不差"></textarea>
+                        </div>
+                        <div class="form-group">
+                            <label>辅助参考音频（可选，提升语气还原）</label>
+                            <textarea id="gptAuxRefAudio" rows="2" placeholder="每行一个音频路径，共 2~3 段不同语气的最佳。如：&#10;D:\voices\danya_lazy.wav&#10;D:\voices\danya_gentle.wav"></textarea>
+                            <span class="field-hint">选 2~3 段不同语气的语音（日常/慵懒/关心），多段融合后说话更"有感觉"；不填则只用主参考</span>
+                        </div>
+                        <div class="form-group">
+                            <label>语言</label>
+                            <select id="gptLang">
+                                <option value="zh">中文</option>
+                                <option value="en">英文</option>
+                                <option value="ja">日文</option>
+                                <option value="ko">韩文</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <!-- MiniMax 云端语音克隆配置（engine=minimax 时显示） -->
+                    <div id="minimaxSection" class="hidden gpt-section">
+                        <div class="form-divider gpt-title">MiniMax 语音配置（云端，不占本地显卡）</div>
+                        <div class="info-tip">云端合成音色，低性能设备也能用克隆音色。需要去 platform.minimaxi.com 注册拿 API Key（有免费额度，超出自费）。</div>
+                        <button type="button" class="btn-test btn-wizard" onclick="openMinimaxWizard()">🧭 新用户接入向导（跟着走 3 分钟配好）</button>
+                        <div class="form-group">
+                            <label>API Key（用户自费）</label>
+                            <input type="password" id="minimaxApiKey" placeholder="在 platform.minimaxi.com 账户管理 → 接口密钥 获取">
+                            <span class="field-hint">每个人填自己的 key，费用由使用者承担</span>
+                        </div>
+                        <div class="form-group">
+                            <label>GroupId</label>
+                            <input type="text" id="minimaxGroupId" placeholder="账户管理 → 基本信息 → 用户组">
+                        </div>
+                        <div class="form-group">
+                            <label>音色选择 (Voice ID)</label>
+                            <div class="input-with-btn">
+                                <input type="text" id="minimaxVoiceId" list="minimaxVoices" value="female-shaonv" placeholder="点击右侧箭头选系统音色，或直接输入复刻音色 id">
+                                <button type="button" class="btn-test" onclick="testMinimaxVoice()">测试连接</button>
+                            </div>
+                            <datalist id="minimaxVoices">
+                                <option value="female-shaonv">少女音</option>
+                                <option value="female-yujie">御姐音</option>
+                                <option value="female-chengshu">成熟女性音</option>
+                                <option value="female-tianmei">甜美女性音</option>
+                                <option value="male-qn-qingse">青涩青年音</option>
+                                <option value="male-qn-jingying">精英青年音</option>
+                                <option value="male-qn-badao">霸道青年音</option>
+                                <option value="male-qn-daxuesheng">青年大学生音</option>
+                                <option value="presenter_female">女性主持人</option>
+                                <option value="presenter_male">男性主持人</option>
+                                <option value="audiobook_female_1">有声书女声1</option>
+                                <option value="audiobook_female_2">有声书女声2</option>
+                                <option value="audiobook_male_1">有声书男声1</option>
+                                <option value="audiobook_male_2">有声书男声2</option>
+                                <option value="female-shaonv-jingpin">少女音(精晶版)</option>
+                                <option value="female-yujie-jingpin">御姐音(精晶版)</option>
+                                <option value="female-chengshu-jingpin">成熟女音(精晶版)</option>
+                                <option value="female-tianmei-jingpin">甜美女音(精晶版)</option>
+                                <option value="male-qn-qingse-jingpin">青涩青年(精晶版)</option>
+                                <option value="male-qn-jingying-jingpin">精英青年(精晶版)</option>
+                                <option value="male-qn-badao-jingpin">霸道青年(精晶版)</option>
+                                <option value="male-qn-daxuesheng-jingpin">青年大学生(精晶版)</option>
+                            </datalist>
+                            <span class="field-hint" id="minimaxTestResult">点击输入框右侧下拉箭头选择系统音色（少女/御姐/甜美等），或直接输入 MiniMax 平台复刻音色的 id（克隆达妮娅本音：平台上传语音生成复刻音色后，把复刻音色 id 填这里）。更多音色见 platform.minimaxi.com 文档</span>
+                        </div>
+                        <div class="form-divider gpt-title">从本地音频克隆新音色（快速复刻）</div>
+                        <div class="form-group">
+                            <label>选择参考音频（10 秒~5 分钟干声，mp3/m4a/wav，≤20MB）</label>
+                            <div class="input-with-btn">
+                                <input type="file" id="minimaxCloneFile" accept=".mp3,.m4a,.wav"
+                                       class="clone-file-input" title="选择要克隆的音频">
+                                <button type="button" class="btn-test btn-clone" onclick="cloneMinimaxVoice()">克隆</button>
+                            </div>
+                            <div class="form-group" style="margin-top:8px; margin-bottom:0">
+                                <input type="text" id="minimaxCloneVoiceId"
+                                       placeholder="给克隆音色起个名字（8 位以上，字母开头，如 danny_voice）"
+                                       style="width:100%">
+                            </div>
+                            <span class="field-hint" id="minimaxCloneResult">上传你的录音即可克隆出同款音色，克隆成功后自动回填到上方音色框，保存角色即可使用。需要平台已完成实名认证</span>
+                        </div>
+                        <div class="form-row">
+                            <div class="form-group half">
+                                <label>模型版本</label>
+                                <select id="minimaxModel">
+                                    <option value="speech-02-turbo">speech-02-turbo (快·便宜)</option>
+                                    <option value="speech-02-hd">speech-02-hd (音质好)</option>
+                                    <option value="speech-2.5-turbo-preview">speech-2.5-turbo-preview (最新)</option>
+                                    <option value="speech-2.5-hd-preview">speech-2.5-hd-preview (最新·复刻佳)</option>
+                                </select>
+                            </div>
+                            <div class="form-group half">
+                                <label>语速 (0.5~2)</label>
+                                <input type="text" id="minimaxSpeed" value="1.0" placeholder="1.0">
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- 小米 MiMo 云端语音克隆配置（engine=mimo_tts 时显示） -->
+                    <div id="mimoSection" class="hidden gpt-section">
+                        <div class="form-divider gpt-title">小米 MiMo 语音配置（云端·限时免费·不占本地显卡）</div>
+                        <div class="info-tip">小米 MiMo-V2.5-TTS 语音克隆，中文顶级、限时免费（超出自费）。去 <b>api.xiaomimimo.com</b> 注册拿 API Key（跳过 Bearer 前缀，直接粘 Key）。上传一段达娅录音即可克隆同款声线，每句直接带上参考音合成，无需单独复刻步骤。</div>
+                        <div class="form-group">
+                            <label>API Key（用户自费，限时免费）</label>
+                            <input type="password" id="mimoApiKey" placeholder="在 api.xiaomimimo.com 控制台获取">
+                            <span class="field-hint">每个人填自己的 key，费用由使用者承担；小米说改收费就收费，可随时换其它克隆引擎</span>
+                        </div>
+                        <div class="form-group">
+                            <label>参考音频（达娅录音，数秒清晰人声即可，mp3/wav）</label>
+                            <div class="input-with-btn">
+                                <input type="text" id="mimoRefAudio" placeholder="如 D:\voices\danya.wav">
+                                <button type="button" class="btn-test" onclick="pickMimoAudioFile()">📂 浏览…</button>
+                            </div>
+                            <span class="field-hint">点击"浏览"在电脑里选音频，或直接粘贴绝对路径。建议 10~30 秒清晰干声，声线还原更稳</span>
+                        </div>
+                        <div class="form-group">
+                            <button type="button" class="btn-test" id="mimoTestBtn" onclick="testMimoVoice()">测试连接（播放声音）</button>
+                            <span class="field-hint" id="mimoTestResult">填好 Key + 达娅录音后点这里，用当前设置念一句给你听</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- ③ 3D 模型 -->
+                <div class="step-block">
+                    <div class="step-title">③ 3D 模型 <span class="step-sub">接入 Unity 中，先把人设和语音配好</span></div>
+                    <div class="info-tip">3D 模型接入 Unity 后，在这里绑定 MMD / VRM 模型文件，角色就有形象了～</div>
+                </div>
+
+                <div class="form-actions">
+                    <button type="button" class="btn-cancel" onclick="closeEditModal()">取消</button>
+                    <button type="submit" class="btn-save">保存角色</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- MiniMax 接入向导 -->
+    <div id="minimaxWizard" class="modal hidden">
+        <div class="modal-overlay" onclick="closeMinimaxWizard()"></div>
+        <div class="modal-content glass-card wizard">
+            <div class="modal-header">
+                <h2>🎙️ MiniMax 接入向导</h2>
+                <button class="modal-close" onclick="closeMinimaxWizard()">✕</button>
+            </div>
+            <div class="wizard-dots" id="wizardDots">
+                <span class="wizard-dot active"></span><span class="wizard-dot"></span><span class="wizard-dot"></span><span class="wizard-dot"></span><span class="wizard-dot"></span>
+            </div>
+            <div class="wizard-panel">
+                <div class="wizard-card" id="wzCard0">
+                    <h3>1. 注册账号</h3>
+                    <p class="wizard-desc">用手机号注册 <b>MiniMax 开放平台</b>，新用户赠送 15 元体验金（够克隆 1 个音色 + 合成几百句）。注册后请<b>完成实名认证</b>（个人认证，几分钟通过）——复刻音色必需，不认证克隆会报 2038。</p>
+                    <div class="wizard-row">
+                        <button type="button" class="btn-test" onclick="openMiniMaxPage('register')">打开注册页面</button>
+                        <button type="button" class="btn-test" onclick="openMiniMaxPage('verify')">打开实名认证页</button>
+                    </div>
+                </div>
+                <div class="wizard-card hidden" id="wzCard1">
+                    <h3>2. 获取 GroupId</h3>
+                    <p class="wizard-desc">在「账户信息」页找 <b>GroupId / 用户组</b> 字段（纯数字，个人账号 = UID）。复制后粘贴到下面：</p>
+                    <div class="form-group">
+                        <input type="text" id="wizardGroupId" placeholder="粘贴 GroupId（纯数字）">
+                    </div>
+                    <button type="button" class="btn-test" onclick="openMiniMaxPage('group')">打开账户信息页</button>
+                </div>
+                <div class="wizard-card hidden" id="wzCard2">
+                    <h3>3. 创建 API Key</h3>
+                    <p class="wizard-desc">在「接口密钥」页点「创建新的 API Key」。Key 只在创建时完整显示一次，请<b>立即复制完整内容</b>（不要带 Bearer 前缀）粘贴到下面：</p>
+                    <div class="form-group">
+                        <input type="password" id="wizardApiKey" placeholder="粘贴完整 API Key（sk- 开头）">
+                    </div>
+                    <button type="button" class="btn-test" onclick="openMiniMaxPage('key')">打开接口密钥页</button>
+                </div>
+                <div class="wizard-card hidden" id="wzCard3">
+                    <h3>4. 克隆音色（可选）</h3>
+                    <p class="wizard-desc">选一段 <b>10 秒~5 分钟</b> 的干净录音（mp3/m4a/wav，≤20MB），克隆你的专属音色。想先快速用起来就「跳过」用系统音色（少女/御姐/甜美等）。</p>
+                    <div class="form-group">
+                        <input type="file" id="wizardCloneFile" accept=".mp3,.m4a,.wav"
+                               title="选择要克隆的录音（10 秒~5 分钟干声）">
+                    </div>
+                    <div class="form-group">
+                        <input type="text" id="wizardCloneVoiceId"
+                               placeholder="给克隆音色起名（8 位以上字母开头，如 danny_voice）">
+                    </div>
+                    <div class="wizard-row">
+                        <button type="button" class="btn-test btn-clone" onclick="wizardCloneVoice()">开始克隆</button>
+                        <button type="button" class="btn-cancel" onclick="wizardStep(1)">跳过此步</button>
+                    </div>
+                    <span class="field-hint" id="wizardCloneResult">克隆成功后自动回填音色并进入下一步（首次合成时收取复刻费 9.9 元）</span>
+                </div>
+                <div class="wizard-card hidden" id="wzCard4">
+                    <h3>5. 完成！</h3>
+                    <p class="wizard-desc">点「测试连接」：能播放出声音就说明全部配置完成。之后给角色选「MiniMax 语音」引擎、保存角色，就能用克隆音色说话了。</p>
+                    <div class="wizard-row">
+                        <button type="button" class="btn-test" onclick="testMinimaxVoiceFromWizard()">测试连接（播放声音）</button>
+                    </div>
+                    <span class="field-hint" id="wizardTestResult"></span>
+                </div>
+            </div>
+            <div class="wizard-nav">
+                <button type="button" class="btn-cancel" id="wizardPrevBtn" onclick="wizardStep(-1)">上一步</button>
+                <span class="wizard-counter" id="wizardCounter">1 / 5</span>
+                <button type="button" class="btn-save" id="wizardNextBtn" onclick="wizardStep(1)">下一步</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Toast 提示 -->
+    <div id="toast" class="toast hidden"></div>
+
+    <script src="live2d/live2d.js"></script>
+    <script src="app.js"></script>
+    <script>
+      // 2026-08-24 黑屏排查：页面真正在渲染进程里加载完成后，主动回调 Python
+      // 报告渲染状态（绕过 pywebview evaluate_js 的线程/事件时序限制）。
+      function _reportLoaded(){
+        try {
+          var len = document.body ? document.body.innerHTML.length : -1;
+          if (window.pywebview && window.pywebview.api && window.pywebview.api.on_page_loaded) {
+            window.pywebview.api.on_page_loaded(len);
+          }
+        } catch (e) {}
+      }
+      if (window.pywebview) {
+        _reportLoaded();
+      } else {
+        // 等 pywebviewready 事件（api 注入完成）再报告
+        window.addEventListener('pywebviewready', _reportLoaded);
+        // 兜底：无论如何 1.5s 后也尝试一次
+        setTimeout(_reportLoaded, 1500);
+      }
+    </script>
+</body>
+</html>

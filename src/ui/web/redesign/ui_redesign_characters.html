@@ -1,0 +1,1126 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>角色 · 桌面伴侣</title>
+<link rel="stylesheet" href="/redesign/design_tokens.css?v=20261013e" />
+<link rel="stylesheet" href="/redesign/ui_shared.css?v=20261013e" />
+<link rel="stylesheet" href="/redesign/pages.css" />
+
+  <style>
+    *{ -webkit-user-select:none; user-select:none; -webkit-touch-callout:none; -webkit-tap-highlight-color:transparent; }
+    input, textarea, select, [contenteditable="true"]{ -webkit-user-select:text; user-select:text; }
+    ::selection{ background:rgba(124,92,255,.25); }
+    img, canvas, svg, video{ -webkit-user-drag:none; user-drag:none; }
+    body{ -webkit-user-drag:none; }
+  </style>
+
+  <style id="v4char">
+  /* ============ 角色卡 + 角色编辑器（落码 2026-10-11 · 对齐 docs/mockups/角色卡与编辑器_设计稿_20261011.html）
+     全部作用域限定在 .ch-grid / #charEditor 下。原因：.ccard / .cbanner / .pill / .caction
+     在 settings 页也在用，直接改全局会污染其它页。 */
+
+  /* ---------- 卡片网格 ---------- */
+  .ch-grid{display:grid;gap:24px;transition:opacity .19s var(--ease),gap .32s var(--ease)}
+  .ch-grid.big{grid-template-columns:repeat(auto-fill,minmax(340px,1fr))}
+  .ch-grid.tight{grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:16px}
+
+  /* ---------- 工具条（密度切换 + 新建 + 说明） ---------- */
+  .ch-toolbar{display:flex;align-items:center;gap:12px;margin:0 0 22px;flex-wrap:wrap}
+  .ch-seg{display:flex;background:var(--surface-2);border:1px solid var(--line);border-radius:99px;padding:4px;gap:2px}
+  .ch-seg button{border:0;background:transparent;color:var(--ink-3);font-family:inherit;font-size:12.5px;padding:6px 16px;border-radius:99px;cursor:pointer;transition:all .18s var(--ease)}
+  .ch-seg button.on{background:var(--accent-1);color:var(--on-accent);font-weight:600;box-shadow:0 2px 10px rgba(45,212,255,.3)}
+  .ch-toolbar .btn.primary{border-radius:99px;padding:8px 18px;font-size:13px}
+  .ch-toolbar .ch-hint{margin-left:auto;font-size:12.5px;color:var(--ink-3);line-height:1.55}
+
+  /* ---------- 角色卡：完整覆盖 pages.css 旧外观 ---------- */
+  .ch-grid .ccard{
+    background-color:var(--surface);border:1px solid var(--line);border-radius:var(--r-lg);
+    box-shadow:var(--shadow-1);padding:0 0 20px;display:flex;flex-direction:column;gap:0;
+    position:relative;overflow:hidden;cursor:default;
+    transition:border-color .32s var(--ease),box-shadow .32s var(--ease),transform .32s var(--ease-out)
+  }
+  .ch-grid .ccard:hover{border-color:var(--line-strong);box-shadow:0 12px 34px rgba(0,0,0,.42);transform:translateY(-6px)}
+  .ch-grid .ccard.active{
+    border-color:var(--line-strong);
+    box-shadow:0 0 0 2px rgba(45,212,255,.18),var(--shadow-2)
+  }
+  .ch-grid .ccard::after{
+    content:'';position:absolute;top:0;left:0;right:0;height:1.5px;
+    background:linear-gradient(90deg,transparent,var(--accent-1),var(--accent-2,#A06BFF),transparent);
+    opacity:0;transition:opacity .32s var(--ease)
+  }
+  .ch-grid .ccard:hover::after{opacity:1}
+
+  /* 加载骨架：保持内边距，别让 .sk-line 贴着卡片边（骨架卡的 .ccard 被上面规则重置了 padding） */
+  .ch-grid .ccard.skeleton{padding:20px;cursor:default;transform:none}
+
+  /* 头图 */
+  .ch-grid .cbanner{
+    margin:0;height:104px;flex:none;overflow:hidden;position:relative;
+    border-radius:var(--r-lg) var(--r-lg) 0 0;background:var(--accent-soft-1)
+  }
+  .ch-grid .cbanner-grad{background:linear-gradient(120deg,rgba(45,212,255,.22),rgba(160,107,255,.22))}
+  .ch-grid .cbanner img{display:block;width:100%;height:100%;object-fit:cover;transition:transform .7s var(--ease-out)}
+  .ch-grid .ccard:hover .cbanner img{transform:scale(1.07)}
+  .ch-grid .cbanner::before{
+    content:'';position:absolute;left:0;right:0;bottom:0;height:38px;z-index:1;pointer-events:none;
+    background:linear-gradient(to top,transparent,var(--surface))
+  }
+  .ch-grid .cbanner::after{
+    content:'';position:absolute;top:0;bottom:0;left:0;width:42%;z-index:2;pointer-events:none;
+    background:linear-gradient(105deg,transparent,rgba(255,255,255,.14),transparent);
+    transform:translateX(-150%) skewX(-14deg)
+  }
+  .ch-grid .ccard:hover .cbanner::after{animation:ch-sweep .9s var(--ease)}
+  @keyframes ch-sweep{0%{transform:translateX(-150%) skewX(-14deg)}100%{transform:translateX(330%) skewX(-14deg)}}
+
+  /* 头部：头像与名字并排 */
+  .ch-grid .chead{
+    display:flex;gap:14px;align-items:flex-end;
+    padding:0 22px;margin-top:-38px;position:relative;z-index:3
+  }
+  .ch-grid .chead > div:last-child{min-width:0}
+  .ch-grid .cname{font-size:18px;font-weight:650;letter-spacing:.3px;line-height:1.25}
+  .ch-grid .ctag{
+    display:inline-block;font-size:11px;letter-spacing:.5px;color:var(--accent-1);
+    background:var(--accent-soft-1);border:1px solid var(--line-strong);
+    padding:3px 10px;border-radius:99px;margin-top:5px
+  }
+  .ch-grid .ccard.active .ctag{box-shadow:0 0 12px rgba(45,212,255,.28)}
+
+  /* 头像 */
+  .ch-grid .cav{
+    width:66px;height:66px;border-radius:16px;flex:none;overflow:hidden;position:relative;
+    border:3px solid var(--bg);background-color:var(--surface-3);
+    display:grid;place-items:center;color:var(--ink-4);
+    transition:transform .32s var(--ease-out),box-shadow .32s var(--ease)
+  }
+  .ch-grid .ccard:hover .cav{transform:scale(1.08) rotate(-3deg)}
+  .ch-grid .cav img{width:100%;height:100%;object-fit:cover;display:block}
+  .ch-grid .cav svg{width:26px;height:26px;fill:currentColor}
+  /* 渐变兜底：只在没挂主题/角色头像、且是真实 img 时显示，避免覆盖 .has-img */
+  .ch-grid .cav:not(.has-img):has(img:not([src*="ph-av"])){
+    background-image:radial-gradient(circle at 30% 24%,rgba(255,255,255,.38),transparent 46%),linear-gradient(135deg,#38B6E8,#9A6BFF)
+  }
+  .ch-grid .ccard.active .cav{box-shadow:0 0 16px rgba(45,212,255,.35)}
+  @keyframes ch-sync{0%{box-shadow:0 0 0 0 rgba(45,212,255,.55)}100%{box-shadow:0 0 0 10px rgba(45,212,255,0)}}
+  .ch-grid .cav.sync{animation:ch-sync .7s var(--ease)}
+
+  /* 入场：错峰上浮（纯 CSS 驱动，不依赖 gsap，绝不会卡在透明态） */
+  @keyframes ch-card-in{from{opacity:0;transform:translateY(22px) scale(.985)}to{opacity:1;transform:none}}
+  .ch-grid.ch-enter .ccard,
+  .ch-grid.ch-enter .ch-new{animation:ch-card-in .62s var(--ease-out) both}
+  /* 当前默认角色：持续呼吸光环（仅在非入场阶段播放，避免与入场动画冲突） */
+  .ch-grid:not(.ch-enter) .ccard.active{animation:ch-active-glow 4.5s var(--ease) infinite}
+  @keyframes ch-active-glow{0%,100%{box-shadow:0 0 0 2px rgba(45,212,255,.16),var(--shadow-2)}50%{box-shadow:0 0 0 3px rgba(45,212,255,.32),0 14px 34px rgba(45,212,255,.20)}}
+
+  /* 环境极光（角色页签名质感；作用域锁在 .ch-content，绝不污染 SPA 其它页） */
+  .ch-content{position:relative;z-index:0}
+  .ch-content > *{position:relative;z-index:1}
+  .ch-aurora{position:absolute;inset:0;z-index:0;pointer-events:none;overflow:hidden}
+  .ch-aurora::before,.ch-aurora::after{content:'';position:absolute;border-radius:50%;filter:blur(92px);will-change:transform}
+  .ch-aurora::before{width:520px;height:520px;left:-160px;top:-130px;background:rgba(45,212,255,.13);animation:ch-drift-a 18s var(--ease) infinite alternate}
+  .ch-aurora::after{width:600px;height:600px;right:-200px;bottom:-210px;background:rgba(160,107,255,.13);animation:ch-drift-b 22s var(--ease) infinite alternate}
+  @keyframes ch-drift-a{to{transform:translate(64px,52px) scale(1.12)}}
+  @keyframes ch-drift-b{to{transform:translate(-72px,-42px) scale(1.1)}}
+
+  /* 描述 */
+  .ch-grid .cdesc{
+    font-size:13.5px;color:var(--ink-2);line-height:1.68;
+    display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;
+    padding:0 22px;margin:14px 0 0;
+    transition:color .32s var(--ease)
+  }
+  .ch-grid .ccard:hover .cdesc{color:var(--ink)}
+
+  /* 标签 */
+  .ch-grid .cmeta{display:flex;flex-wrap:wrap;gap:8px;padding:0 22px;margin-top:14px}
+  .ch-grid .pill{
+    font-size:11.5px;color:var(--ink-2);background:var(--surface-2);border:1px solid var(--line);
+    border-radius:var(--r-sm);padding:4px 11px;display:inline-flex;align-items:center;gap:6px;
+    transition:color .32s var(--ease),border-color .32s var(--ease),box-shadow .32s var(--ease)
+  }
+  .ch-grid .pill.off{opacity:.72;border-style:dashed}
+  .ch-grid .ccard:hover .pill{color:var(--ink);border-color:var(--line-2)}
+  .ch-grid .pill::before{
+    content:'';width:6px;height:6px;border-radius:50%;background:var(--ok);flex:none;
+    box-shadow:0 0 0 rgba(47,170,106,0);transition:box-shadow .32s var(--ease)
+  }
+  .ch-grid .pill.off::before{background:var(--ink-4)}
+  .ch-grid .ccard:hover .pill:not(.off)::before{box-shadow:0 0 7px rgba(47,170,106,.7)}
+
+  /* 操作按钮 */
+  .ch-grid .caction{
+    display:flex;gap:10px;padding:18px 22px 0;border-top:1px solid var(--line);margin-top:auto
+  }
+  .ch-grid .caction .btn{
+    flex:1;justify-content:center;padding:9px 0;border:1px solid var(--line-2);
+    background:var(--surface-2);color:var(--ink);font-size:13.5px;border-radius:var(--r-sm);
+    cursor:pointer;transition:all .18s var(--ease)
+  }
+  .ch-grid .caction .btn:hover{background:var(--surface-3);border-color:var(--line-strong);transform:translateY(-1px)}
+  .ch-grid .caction .btn:disabled{opacity:.55;cursor:not-allowed;transform:none}
+  /* 「设为默认」是主操作：占两格宽 + hover 扫光 */
+  .ch-grid .caction .btn.act-set,
+  .ch-grid .caction .btn.major{flex:2;background:var(--accent-grad,linear-gradient(90deg,var(--accent-1),var(--accent-2)));color:var(--on-accent);border-color:transparent;font-weight:600;position:relative;overflow:hidden}
+  .ch-grid .caction .btn.act-set:hover,
+  .ch-grid .caction .btn.major:hover{filter:brightness(1.08);border-color:transparent;background:var(--accent-grad,linear-gradient(90deg,var(--accent-1),var(--accent-2)))}
+  .ch-grid .caction .btn.act-set::after,
+  .ch-grid .caction .btn.major::after{
+    content:'';position:absolute;top:0;bottom:0;left:0;width:40%;
+    background:linear-gradient(90deg,transparent,rgba(255,255,255,.5),transparent);
+    transform:translateX(-150%) skewX(-14deg);pointer-events:none
+  }
+  .ch-grid .caction .btn.act-set:hover::after,
+  .ch-grid .caction .btn.major:hover::after{animation:ch-sweep .9s var(--ease)}
+  .ch-grid .caction .btn.act-edit{position:relative;overflow:hidden}
+  .ch-grid .caction .btn.act-edit::after{
+    content:'';position:absolute;top:0;bottom:0;left:0;width:40%;
+    background:linear-gradient(90deg,transparent,rgba(255,255,255,.5),transparent);
+    transform:translateX(-150%) skewX(-14deg);pointer-events:none
+  }
+  .ch-grid .caction .btn.act-edit:hover::after{animation:ch-sweep .9s var(--ease)}
+
+  /* 新建角色卡 */
+  .ch-new{
+    border:1px dashed var(--line-2);background:transparent;display:grid;place-items:center;cursor:pointer;
+    color:var(--ink-3);gap:6px;position:relative;overflow:hidden;border-radius:var(--r-lg);
+    transition:border-color .18s var(--ease),color .18s var(--ease),background .18s var(--ease)
+  }
+  .ch-grid.big .ch-new{min-height:360px}
+  .ch-grid.tight .ch-new{min-height:150px}
+  .ch-new::before{content:'';position:absolute;width:130px;height:130px;border-radius:50%;left:calc(50% - 65px);top:calc(42% - 65px);
+    pointer-events:none;background:radial-gradient(circle,rgba(45,212,255,.12),transparent 70%);animation:ch-breathe 4s var(--ease) infinite}
+  @keyframes ch-breathe{0%,100%{opacity:.45;transform:scale(1)}50%{opacity:.9;transform:scale(1.06)}}
+  .ch-new .ch-plus{font-size:22px;line-height:1;position:relative;animation:ch-breathe 3.2s var(--ease) infinite}
+  .ch-new:hover{border-color:var(--accent-1);color:var(--accent-1);background:var(--accent-soft-1)}
+  .ch-new:hover .ch-plus{animation:none;transform:rotate(90deg) scale(1.15)}
+
+  /* ---------- 编辑器：三段折叠（她是谁 / 她的声音 / 她的样子） ---------- */
+  #charEditor .ch-sec{border:1px solid var(--line);border-radius:var(--r-md);margin-top:12px;overflow:hidden;background:var(--surface);transition:border-color .32s var(--ease)}
+  #charEditor .ch-sec:first-child{margin-top:0}
+  #charEditor .ch-sec.open{border-color:var(--line-2)}
+  #charEditor .ch-sec-h{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:12px 14px;cursor:pointer;user-select:none;transition:background .18s var(--ease)}
+  #charEditor .ch-sec-h:hover{background:var(--surface-2)}
+  #charEditor .ch-sec-t{display:flex;align-items:center;gap:9px;font-size:13.5px;font-weight:600}
+  #charEditor .ch-sec-n{width:20px;height:20px;border-radius:6px;background:var(--surface-3);color:var(--ink-3);font-size:11px;display:grid;place-items:center;flex:none;transition:all .32s var(--ease)}
+  #charEditor .ch-sec.open .ch-sec-n{background:var(--accent-1);color:var(--on-accent)}
+  #charEditor .ch-sec-s{font-size:11px;color:var(--ink-4);font-weight:400}
+  #charEditor .ch-sec-arrow{color:var(--ink-3);display:inline-flex;transition:transform .32s var(--ease-out),color .32s var(--ease)}
+  #charEditor .ch-sec.open .ch-sec-arrow{transform:rotate(180deg);color:var(--accent-1)}
+  #charEditor .ch-sec-b{display:grid;grid-template-rows:0fr;transition:grid-template-rows .6s var(--ease-out)}
+  #charEditor .ch-sec.open .ch-sec-b{grid-template-rows:1fr}
+  #charEditor .ch-sec-b>div{overflow:hidden;min-height:0}
+  #charEditor .ch-sec-in{padding:2px 14px 16px;display:flex;flex-direction:column;gap:11px}
+  #charEditor .ch-hint{font-size:12px;color:var(--ink-3);line-height:1.55}
+  #charEditor .ch-hint.ch-err{color:var(--warn,#E0A33E)}
+  /* 编辑器图片预览角标：预览的是绑定主题的图（非角色自己的 banner/avatar）时提示来源 */
+  #charEditor .banner-prev{position:relative}
+  #charEditor .banner-prev .prev-tag{
+    position:absolute;left:6px;bottom:6px;font-size:10.5px;line-height:1;
+    background:rgba(10,14,24,.62);color:#fff;padding:3px 9px;border-radius:99px;pointer-events:none
+  }
+
+  /* 复制提示词条（她是谁段内） */
+  #charEditor .ch-copybar{border:1px solid var(--line);border-radius:var(--r-md);padding:11px 13px;background:var(--surface-2);display:flex;align-items:center;gap:11px}
+  #charEditor .ch-copybar .ch-cb-t{flex:1;min-width:0}
+  #charEditor .ch-copybar .ch-cb-h{font-size:12.5px;font-weight:600;margin-bottom:2px}
+  #charEditor .ch-copybar .ch-cb-s{font-size:11.5px;color:var(--ink-4);line-height:1.5}
+  #charEditor .ch-cpbtn{flex:none;position:relative;overflow:hidden;border:1px solid var(--line-2);background:var(--accent-soft-1);color:var(--accent-1);
+    font-family:inherit;font-size:12px;padding:7px 13px;border-radius:var(--r-sm);cursor:pointer;display:inline-flex;align-items:center;gap:6px;transition:all .18s var(--ease)}
+  #charEditor .ch-cpbtn:hover{background:var(--accent-1);color:var(--on-accent)}
+  #charEditor .ch-cpbtn.done{background:var(--accent-1);color:var(--on-accent)}
+  #charEditor .ch-cpbtn svg{width:13px;height:13px;flex:none}
+  #charEditor .ch-cpbtn .ch-tick path{stroke-dasharray:24;stroke-dashoffset:24}
+  #charEditor .ch-cpbtn.done .ch-tick path{animation:ch-check .4s var(--ease) forwards}
+  @keyframes ch-check{0%{stroke-dashoffset:24}100%{stroke-dashoffset:0}}
+  #charEditor .ch-paste{display:grid;grid-template-rows:0fr;transition:grid-template-rows .6s var(--ease-out)}
+  #charEditor .ch-paste.open{grid-template-rows:1fr}
+  #charEditor .ch-paste>div{overflow:hidden;min-height:0}
+  #charEditor .ch-paste-in{padding-top:11px;display:flex;flex-direction:column;gap:7px}
+  @keyframes ch-fill{0%{border-color:var(--accent-1);box-shadow:0 0 0 0 rgba(45,212,255,0)}
+    30%{border-color:var(--accent-1);box-shadow:0 0 0 4px rgba(45,212,255,.22)}
+    100%{border-color:var(--line);box-shadow:0 0 0 0 rgba(45,212,255,0)}}
+  #charEditor .ch-filled{animation:ch-fill 1.1s var(--ease) 1}
+
+  @media (prefers-reduced-motion:reduce){
+    .ch-grid *,.ch-new *,.ch-toolbar *,.ch-aurora::before,.ch-aurora::after,
+    #charEditor .ch-sec-b,#charEditor .ch-paste{animation-duration:.01ms !important;transition-duration:.01ms !important}
+  }
+  </style>
+</head>
+<body>
+
+<div class="app">
+
+  <aside class="side">
+    <div class="brand"><div class="wm">达妮娅</div><div class="wmsub">DESKTOP COMPANION</div></div>
+    <div class="grp">
+      <div class="gt">日常</div>
+      <a class="nav" href="/index.html"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>对话</a>
+      <a class="nav" href="/redesign/ui_redesign_daily.html"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M4 4h16v16H4z"/><path d="M8 9h8M8 13h5"/></svg>日报周报</a>
+    </div>
+    <div class="grp">
+      <div class="gt">伴侣</div>
+      <a class="nav on" href="/redesign/ui_redesign_characters.html"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/></svg>角色</a>
+      <a class="nav" href="/redesign/ui_redesign_memory.html"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M5 4h12a2 2 0 0 1 2 2v14H7a2 2 0 0 1-2-2z"/></svg>记忆库</a>
+
+  <a class="nav" href="/redesign/ui_redesign_stickers.html"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="3"/><circle cx="9" cy="9" r="1.4"/><path d="M21 15l-4.5-4.5L7 20"/></svg>表情包管理</a>
+    </div>
+    <div class="grp">
+      <div class="gt">系统</div>
+      <a class="nav" href="/redesign/ui_redesign_settings.html"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/></svg>设置</a>
+      <a class="nav" href="/redesign/ui_redesign_software_profiles.html"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>软件档案</a>
+      <a class="nav" href="/redesign/lib.html"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M5 4h11a2 2 0 0 1 2 2v14H7a2 2 0 0 1-2-2z M4 9h11 M4 13h11"/></svg>知识库</a>
+      <a class="nav" href="/redesign/ui_redesign_developer.html"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M4 6h16M7 12h10M10 18h4"/></svg>开发者</a>
+    </div>
+    <div class="spacer"></div>
+  </aside>
+
+  <main class="main">
+    <header class="top">
+      <div><div class="who">角色</div><div class="sub">点「编辑」改她的人设、声音和样子</div></div>
+      <div class="right"></div>
+    </header>
+    <section class="content ch-content">
+      <div class="ch-aurora" aria-hidden="true"></div>
+
+      <div><div class="kicker">角色库</div><div class="lead">和谁一起生活</div></div>
+
+      <div class="ch-toolbar">
+        <div class="ch-seg" id="chDensity">
+          <button class="on" data-mode="big" type="button">大卡</button>
+          <button data-mode="tight" type="button">紧凑</button>
+        </div>
+        <button class="btn primary" id="chNewChar" type="button">＋ 新建角色</button>
+        <span class="ch-hint">模型与看屏能力统一跟随「设置 → 模型与 API」，角色卡不单独配置</span>
+      </div>
+
+      <div class="grid ch-grid big" id="charGrid"></div>
+    </section>
+  </main>
+
+</div>
+
+<script src="/redesign/gsap.min.js"></script>
+<script type="module" src="/redesign/morph_icons.js"></script>
+<script src="/redesign/ui_confirm.js?v=1"></script>
+<script src="/redesign/app_backend.js?v=20261015f"></script>
+<script src="/redesign/voice_profile_picker.js?v=20261008a"></script>
+
+<script>
+/* 统一提示出口（P1-5：替代原生 alert —— 系统灰白框与暗色界面割裂，且阻塞交互）。
+   优先走 Backend.toast（app_backend.js 提供），退化到本地 toast()，
+   都没有则回落到 alert（宁可丑也不丢提示）。 */
+function toastMsg(text, kind){
+  try {
+    if (window.Backend && typeof Backend.toast === 'function'){ Backend.toast(text, kind || 'ok'); return; }
+    if (typeof window.toast === 'function'){ window.toast(text, kind); return; }
+  } catch(e){}
+  window.alert(text);
+}
+
+const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+/* 主题色 / 深浅模式由 app_backend.js?v=20261015f 的 window.Theme 统一处理（首屏前执行，并会清理自定义色残留的内联变量），此处不再重复实现。 */
+
+const grid = document.getElementById('charGrid') || document.querySelector('.grid');
+
+function makeNewCard(){
+  const card = document.createElement('article');
+  card.className='ccard ch-new';
+  card.setAttribute('aria-label','新建角色');
+  card.innerHTML = '<div class="ch-plus">＋</div><div style="font-size:13px">新建角色</div>';
+  card.addEventListener('click', ()=>{ try { openEditor(null); } catch(e){ toastMsg('新建编辑器未就绪','err'); } });
+  return card;
+}
+
+function esc(s){ return String(s==null?'':s).replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m])); }
+
+/* 关闭图标：DIcon 由外壳 index.html 的 /assets/icons.js 提供；SPA 注入时有，
+   但独立打开本页（预览 / 直接访问）时没有 —— 原代码直接写 DIcon.svg('x')，
+   DIcon 未定义会让 openEditor 在构造 DOM 时抛错 ⇒ 编辑器根本打不开。
+   这里给内联 SVG 兜底，两种情况都能出图。 */
+function iconX(){
+  try { if (window.DIcon && typeof DIcon.svg === 'function') return DIcon.svg('x'); } catch(e){}
+  return '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 6l12 12M18 6L6 18"/></svg>';
+}
+
+/* 引擎显示名：键名必须同时接受下划线与连字符写法（历史数据里两种都出现过）。
+   原表只有 'gpt_sovits'，而旧内联下拉的键是 'gpt-sovits' → 查不到 → 原样吐小写
+   "gpt-sovits"（用户截图里那一项就是这么露馅的）。补 openai_tts / dashscope_cosy，
+   这两个引擎此前在角色页压根无法显示（硅基流动走 openai_tts、百炼走 dashscope_cosy）。 */
+function engineLabel(e){ return ({ 'edge-tts':'微软小薇','gpt_sovits':'GPT-SoVITS','gpt-sovits':'GPT-SoVITS','voxcpm':'VoxCPM','qwen3tts':'Qwen3-TTS','cosyvoice':'CosyVoice','local':'本地克隆','minimax':'MiniMax','mimo_tts':'小米MiMo','pyttsx3':'离线降级','openai_tts':'云端OpenAI兼容','dashscope_cosy':'阿里云百炼' }[e]) || e || '默认'; }
+
+/* 已移除内联 VOICE_OPTIONS：那份表是硬编码的假列表（本地引擎一律 ['默认']、
+   且缺 openai_tts / dashscope_cosy），与真实后端脱节。音色一律走「音色档」。 */
+
+let currentList=[], currentActive=null, templates=[], allProfiles=[], profilesLoaded=false, justSavedId=null;
+
+/* 角色卡头图（2026-09-29）：banner 是本地图片路径，经 /local_img 只读路由取图。
+   没设头图就返回空串，卡片保持原来的（头像 + 渐变）外观，不强行占位。 */
+function bannerHtml(c, themeCover){
+  const p = c && c.banner;
+  if (p) return '<div class="cbanner"><img src="/local_img?path=' + encodeURIComponent(p) + '" alt="'+esc(c.name||'')+'头图"></div>';
+  /* 绑定主题的封面：与角色自带 banner 完全同一渲染（卡内通栏小条），
+     不再走 .ccard.has-cover 整卡铺图（文字压图、头像被裁，用户裁决废弃）。 */
+  if (themeCover && themeCover.url) return '<div class="cbanner"><img src="'+esc(themeCover.url)+'" alt="'+esc(c.name||'')+'头图"></div>';
+  /* 无本地头图又没绑主题封面：用极光渐变占位条，保证所有卡片顶部一致的高级感（对齐设计稿） */
+  return '<div class="cbanner cbanner-grad"></div>';
+}
+
+function avatarHtml(c, themeAvatar){
+  /* ① 角色专属头像（2026-10-11）：c.avatar 是本地路径，经 /local_img 取图。
+     优先级最高——用户给这个角色单独设的头像，应压过主题通用头像。 */
+  if (c && c.avatar) return '<div class="cav"><img src="/local_img?path=' + encodeURIComponent(c.avatar) + '" alt="'+esc(c.name||'')+'"></div>';
+  /* ② 绑定主题的头像图位：与角色自带头像同一渲染（方头像 <img>），
+     不再走 .cav.has-img 背景图——那套和通栏头图排版混用时头像被裁、观感差。 */
+  if (themeAvatar && themeAvatar.url) return '<div class="cav"><img src="'+esc(themeAvatar.url)+'" alt="'+esc(c.name||'')+'"></div>';
+  const img = c.model_3d && c.model_3d.thumbnail;
+  if (img) return '<div class="cav"><img src="'+esc(img)+'" alt="'+esc(c.name)+'"></div>';
+  /* 无头像占位：中性圆 + 人形剪影（抖音式），不再用姓名首字。
+     配了主题头像图时由 .cav.has-img 覆盖并隐藏本占位。 */
+  return '<div class="cav"><span class="ph-av" aria-hidden="true"><i><svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="8.2" r="3.7"/><path d="M12 13.7c-4.15 0-7.5 2.34-7.5 5.23 0 .63.53 1.14 1.18 1.14h12.64c.65 0 1.18-.51 1.18-1.14 0-2.89-3.35-5.23-7.5-5.23z"/></svg></i></span></div>';
+}
+
+function findProfile(id){ return (allProfiles||[]).find(p=>p && p.id===id) || null; }
+
+/* 角色 → 绑定主题的图位（cover / avatar）。
+   卡片渲染和编辑器预览都要用，抽成共享：编辑器里即使角色没设自己的图，
+   也要把主题封面/头像透出来当预览（此前只读 c.banner/c.avatar ⇒ 主题图进编辑器全变"未设置"）。
+   数据源与 renderChars 同一套：window.ThemeManager.state.themes + bindings。 */
+function themeArtOf(charId){
+  const TM = window.ThemeManager;
+  const themes = (TM && TM.state && TM.state.themes) || [];
+  const binds = (TM && TM.state && TM.state.bindings) || {};
+  const themeById = {};
+  themes.forEach(th => { if (th && th.id) themeById[th.id] = th; });
+  let th = themeById[binds[charId]];
+  if (!th) themes.forEach(t => { if (t && t.boundCharacter === charId) th = t; });
+  const im = (th && th.images) || {};
+  return {
+    cover:  (im.cover  && im.cover.url)  ? im.cover  : null,
+    avatar: (im.avatar && im.avatar.url) ? im.avatar : null
+  };
+}
+
+/* 角色卡/档案里显示「真正会出声的那个音色」。
+   运行时是音色档优先（config.get_active_voice_config），所以绑了档就必须显示档名，
+   原来显示 v.engine 是错的 —— 绑了档的角色卡片上会写着一个根本没生效的引擎名。
+   档列表还没拉回来时先显示 id，不要急着报「缺失」，否则会闪一下假错误。 */
+function voicePillText(c){
+  const v = c.voice||{};
+  if (c.voice_profile){
+    const p = findProfile(c.voice_profile);
+    if (p) return (p.name||p.id) + ' · ' + engineLabel(p.engine);
+    return profilesLoaded ? (c.voice_profile + '（音色档缺失）') : c.voice_profile;
+  }
+  return v.engine ? engineLabel(v.engine) : '';
+}
+
+/* 状态标签：全部来自真实配置，未配的如实标 dashed「未配…」，不假装已配（对齐设计稿）。 */
+function pillsHtml(c){
+  const ps = [];
+  const label = voicePillText(c);
+  ps.push(label ? '<span class="pill">音色 ' + esc(label) + '</span>'
+                : '<span class="pill off">未配音色</span>');
+  ps.push(c.cloud_voice_id ? '<span class="pill">双工已配</span>'
+                           : '<span class="pill off">未配双工</span>');
+  if (c.model_3d && c.model_3d.enabled) ps.push('<span class="pill">Live2D</span>');
+  return ps.join('');
+}
+
+function renderChars(list, activeId){
+  grid.innerHTML='';
+
+  /* 绑定关系：角色 → 其绑定主题的图位，统一经 themeArtOf() 取
+     （卡片渲染与编辑器预览同源，改一处两边都变）。 */
+  (list||[]).forEach((c, i)=>{
+    const active = c.id===activeId;
+    const art = document.createElement('article');
+    art.className='ccard'+(active?' active':'');
+    art.setAttribute('data-char-id', c.id);
+    art.style.animationDelay = (i*0.06)+'s';
+    /* 激活态描边交给 CSS（.ccard.active 青环 + ch-active-glow 呼吸），不再内联写死，避免与呼吸动画冲突 */
+
+    /* 2026-10-12 用户裁决：所有卡统一「通栏头图 + 方头像」排版（此前绑主题的卡走
+       .has-cover 整卡铺图 + .cav.has-img 背景头像，文字压图、头像被裁，
+       与自带 banner 的卡（大肥鱼）两套排版并存 ⇒ 以大肥鱼那套为准统一）。 */
+    const thArt = themeArtOf(c.id);
+
+    art.innerHTML = bannerHtml(c, thArt.cover) +
+      '<div class="chead">'+avatarHtml(c, thArt.avatar)+'<div><div class="cname">'+esc(c.name)+'</div><span class="ctag">'+(active?'当前默认':'已实装')+'</span></div></div>'+
+      '<p class="cdesc">'+esc(c.character||c.background||'桌面伙伴')+'</p>'+
+      '<div class="cmeta">'+pillsHtml(c)+'</div>'+
+      '<div class="caction">'+
+        (active?'':'<button class="btn primary major act-set" type="button">设为默认</button>')+
+        '<button class="btn act-edit" type="button">编辑</button>'+
+        '<button class="btn ghost act-view" type="button">档案</button>'+
+      '</div>';
+
+    art.querySelector('.act-view').addEventListener('click', ()=>openArchive(c));
+    art.querySelector('.act-edit').addEventListener('click', ()=>openEditor(c));
+    const setBtn = art.querySelector('.act-set');
+    if (setBtn) setBtn.addEventListener('click', ()=>setDefault(c.id));
+
+    grid.appendChild(art);
+  });
+
+  grid.appendChild(makeNewCard());
+
+  /* 刚保存的角色卡：头像同步闪光确认 */
+  if (justSavedId){
+    const savedArt = grid.querySelector('[data-char-id="'+justSavedId+'"]');
+    if (savedArt){ const cav = savedArt.querySelector('.cav'); if (cav) cav.classList.add('sync'); }
+    justSavedId = null;
+  }
+
+  /* 仅首次渲染播放错峰入场；之后的刷新（切默认/删除/换主题）不再重播，避免整页闪烁 */
+  if (!grid.dataset.entered){
+    grid.classList.add('ch-enter');
+    const total = (list||[]).length + 1;
+    setTimeout(()=>{ grid.classList.remove('ch-enter'); grid.dataset.entered = '1'; }, total*60 + 760);
+  }
+}
+
+function setDefault(id){
+  /* P4 通话中锁：用户拍板「角色卡可进，但通话中无法切换角色」。
+     按钮照常显示+可点（不 disabled/display:none），点一下给琥珀 toast「为什么+怎么解」，
+     符合项目铁律；挂断后 __isCallActive() 自动回落，锁自然解除。 */
+  if (window.__isCallActive && window.__isCallActive()){
+    try { toastMsg('通话中无法切换角色，挂断后再试', 'warn'); } catch(_) {}
+    return;
+  }
+  Backend.switchCharacter(id).then(r=>{
+    if (r && r.success){ Backend.toast('已切换为默认角色' + (r.duplex_reconnected ? '，双工已重连加载新人格' : '')); renderChars(currentList, id); }
+    else Backend.toast(r&&r.error?('切换失败：'+r.error):'后端未连接（仅本地预览）','err');
+  });
+}
+
+function delChar(c){
+  if (!window.uiConfirm) { if (!confirm('确定删除角色「'+c.name+'」？此操作不可撤销。')) return; return delCharNow(c); }
+  uiConfirm('确定删除角色「'+c.name+'」？\n此操作不可撤销。',
+      { danger: true, okText: '删除', title: '删除角色' })
+    .then(function(ok){ if (ok) delCharNow(c); });
+}
+
+function delCharNow(c){
+  Backend.deleteCharacter(c.id).then(r=>{
+    if (r && r.success){ Backend.toast('已删除 '+c.name); currentList=currentList.filter(x=>x.id!==c.id); renderChars(currentList, currentActive); }
+    else Backend.toast(r&&r.error?('删除失败：'+r.error):'后端未连接','err');
+  });
+}
+
+function openArchive(c){
+  let m = document.getElementById('charArchive');
+  if (!m){
+    m = document.createElement('div'); m.id='charArchive'; m.className='archive-mask';
+    document.body.appendChild(m);
+    m.addEventListener('click', e=>{ if (e.target===m) m.classList.remove('show'); });
+  }
+  m.innerHTML = '<div class="archive-card">'+
+    (c.banner ? '<div class="archive-banner"><img src="/local_img?path='+encodeURIComponent(c.banner)+'" alt="头图"></div>' : '')+
+    '<div class="archive-head"><div class="archive-title">角色档案 · '+esc(c.name)+'</div><button id="caClose" class="archive-close" type="button">'+iconX()+'</button></div>'+
+    '<div class="archive-field"><div class="archive-label">人格</div><p class="cdesc">'+esc(c.character||'—')+'</p></div>'+
+    '<div class="archive-field"><div class="archive-label">说话风格</div><p class="cdesc">'+esc(c.speaking_style||'—')+'</p></div>'+
+    '<div class="archive-field"><div class="archive-label">背景</div><p class="cdesc">'+esc(c.background||'—')+'</p></div>'+
+    '<div class="archive-field"><div class="archive-label">语音</div><p class="cdesc">'+esc(voicePillText(c)||'未绑定音色档（edge-tts 兜底）')+'</p></div></div>';
+  m.querySelector('#caClose').addEventListener('click', ()=>{ m.classList.remove('show'); });
+  m.classList.add('show');
+}
+
+/* ---------- 人设提示词：生成 / 复制 / 粘贴自动回填 ---------- */
+function charTplText(name, desc){
+  const d = (desc||'').trim();
+  return ['你是一个桌面 AI 伴侣（桌宠）的角色人设设计师。',
+    '请为下面的角色生成三段式人设，严格按这三个小标题输出：','',
+    '【性格特征】','（这个角色的性格、脾气、口头禅、对用户的态度。3~5 句，口语化、有画面感。）','',
+    '【说话风格】','（平时怎么说话：语气、句式长短、称呼用户什么、会不会撒娇/吐槽。3~5 句。）','',
+    '【背景设定】','（她从哪来、和用户是什么关系、为什么会在你屏幕里。3~5 句，留出互动空间。）','',
+    '角色名：' + (name || '（未填写）'),
+    '角色补充描述：' + (d || '（用户未提供）'),'',
+    '要求：',
+    '1. 如果角色名来自已有作品（游戏/动漫/小说等），必须按原作人设生成：性格、说话方式、背景都要贴合原作形象，不要编造与原作冲突的设定。',
+    '2. 如果是原创角色或你不了解这个名字，按「角色补充描述」设计；两者都没有时，设计一个有记忆点的独特角色，禁止套用"开朗元气萌妹"这类千篇一律的模板。',
+    '3. 三段里至少写出 2 个具体的、可互动的细节（特定的称呼、口头禅、小动作或梗），让角色一开口就能被认出来。','',
+    '只输出这三段内容，不要加任何解释、前言或总结。'].join('\n');
+}
+
+/* 三段解析（返回 [性格, 说话风格, 背景]，缺段为 ''）：
+   ① 先认软件模板自带的【性格特征】等方头括号标记；
+   ② 兜底走宽松标题行匹配 —— 容忍编号 / 星号 / 加粗 / 书名号 / 破折号等装饰，
+      只看「这一行去掉装饰后是否就是那三段标题」，不依赖字数。 */
+function parsePersona3(text){
+  if (!text) return null;
+  const marks = ['【性格特征】','【说话风格】','【背景设定】'];
+  if (marks.some(mm=>text.indexOf(mm)>=0)){
+    const out = ['','',''];
+    const pos = marks.map(mm=>text.indexOf(mm));
+    for (let i=0;i<3;i++){
+      if (pos[i] < 0) continue;
+      let end = text.length;
+      for (let j=0;j<3;j++){ if (pos[j] > pos[i] && pos[j] < end) end = pos[j]; }
+      out[i] = text.slice(pos[i] + marks[i].length, end).replace(/^[\s:：\-—]*/, '').trim();
+    }
+    if (out[0] || out[1] || out[2]) return out;
+  }
+
+  const defs = [
+    { i:0, re:/性格特征|性格特点|性格/ },
+    { i:1, re:/说话风格|语言风格|语气风格|口吻|说话方式/ },
+    { i:2, re:/背景设定|背景故事|背景/ }
+  ];
+  const lines = text.split(/\r?\n/);
+  const found = [];
+  for (let i=0;i<lines.length;i++){
+    const bare = lines[i].replace(/[\s\d一二三四五六七八九十.、。*#>\-—~（）()【】\[\]「」《》"'：:]/g, '');
+    if (!bare || bare.length > 16) continue;
+    for (const d of defs){
+      if (d.re.test(bare) && !found.some(f=>f.i===d.i)) found.push({ i:d.i, line:i });
+    }
+  }
+  if (found.length < 2) return null;
+  found.sort((a,b)=>a.line-b.line);
+  const out = ['','',''];
+  found.forEach((f, idx)=>{
+    const end = idx+1 < found.length ? found[idx+1].line : lines.length;
+    const seg = [];
+    const title = lines[f.line];
+    const ci = title.search(/[:：]/);
+    if (ci >= 0 && ci < title.length - 1) seg.push(title.slice(ci+1).trim());
+    for (let j=f.line+1; j<end; j++) seg.push(lines[j]);
+    out[f.i] = seg.join('\n').replace(/\n{3,}/g,'\n\n').trim();
+  });
+  return (out[0] || out[1] || out[2]) ? out : null;
+}
+
+/* 复制提示词 → 下方 0fr→1fr 长出粘贴框 → 粘贴 0.4s 自动识别三段并回填（三段依次闪一圈青色）。 */
+function bindCopyPaste(m, c){
+  const cpBtn = m.querySelector('#eAiGen');
+  if (!cpBtn) return;
+  const cpTxt = m.querySelector('#eAiTxt');
+  const wrap  = m.querySelector('#ePasteWrap');
+  const area  = m.querySelector('#ePasteArea');
+  const hint  = m.querySelector('#ePasteHint');
+  let pasteTimer = null, resetTimer = null, focusTimer = null;
+
+  function flash(el, delay){
+    if (!el) return;
+    setTimeout(()=>{
+      el.classList.remove('ch-filled'); void el.offsetWidth; el.classList.add('ch-filled');
+      setTimeout(()=>el.classList.remove('ch-filled'), 1200);
+    }, delay);
+  }
+  function markDone(txt){
+    cpBtn.classList.add('done');
+    if (cpTxt) cpTxt.textContent = txt || '已复制';
+    clearTimeout(resetTimer);
+    resetTimer = setTimeout(()=>{ cpBtn.classList.remove('done'); if (cpTxt) cpTxt.textContent = '复制提示词'; }, 2200);
+  }
+  function afterCopy(){
+    markDone('已复制');
+    if (wrap) wrap.classList.add('open');
+    clearTimeout(focusTimer);
+    focusTimer = setTimeout(()=>{ try { if (area) area.focus(); } catch(_){} }, 320);
+  }
+  function fallbackCopy(text){
+    let ok = false;
+    try {
+      const ta = document.createElement('textarea');
+      ta.value = text; ta.style.position='fixed'; ta.style.top='-9999px'; ta.style.opacity='0';
+      document.body.appendChild(ta); ta.select(); ta.setSelectionRange(0, 999999);
+      ok = document.execCommand('copy');
+      document.body.removeChild(ta);
+    } catch(e){ ok = false; }
+    if (ok){ afterCopy(); return; }
+    /* 剪贴板两条路都不可用（权限被拒 / 非安全上下文）：不能让功能死掉 ——
+       展开粘贴框并把提示词放进框里，用户可手动全选复制（Ctrl+C）。 */
+    if (wrap) wrap.classList.add('open');
+    if (area){ area.value = text; try { area.focus(); area.select(); } catch(_){} }
+    if (hint){ hint.textContent = '剪贴板不可用：提示词已放在下面，可手动全选复制（Ctrl+C）。'; hint.classList.remove('ch-err'); }
+    if (cpTxt) cpTxt.textContent = '请手动复制';
+  }
+
+  cpBtn.addEventListener('click', ()=>{
+    const nm = m.querySelector('#eName');
+    const name = ((nm && nm.value) || '').trim() || (c && c.name) || '';
+    const text = charTplText(name, '');
+    if (navigator.clipboard && navigator.clipboard.writeText){
+      navigator.clipboard.writeText(text).then(afterCopy, ()=>fallbackCopy(text));
+    } else fallbackCopy(text);
+  });
+
+  if (area) area.addEventListener('input', ()=>{
+    clearTimeout(pasteTimer);
+    pasteTimer = setTimeout(()=>{
+      const v = (area.value || '').trim();
+      if (v.length < 12) return;
+      const r = parsePersona3(v);
+      if (!r){
+        if (hint){ hint.textContent = '还没认出三段结构——每段标题里要有「性格特征 / 说话风格 / 背景设定」字样。'; hint.classList.add('ch-err'); }
+        return;
+      }
+      if (hint){ hint.textContent = ''; hint.classList.remove('ch-err'); }
+      const eChar = m.querySelector('#eChar'), eStyle = m.querySelector('#eStyle'), eBg = m.querySelector('#eBg');
+      if (r[0] && eChar)  eChar.value  = r[0];
+      if (r[1] && eStyle) eStyle.value = r[1];
+      if (r[2] && eBg)    eBg.value    = r[2];
+      flash(eChar, 0); flash(eStyle, 140); flash(eBg, 280);
+      if (wrap) wrap.classList.remove('open');
+      area.value = '';
+      markDone('已填入');
+    }, 400);
+  });
+}
+
+/* 2026-10-08（P2·音色档三源收口）：setupVoiceSelector 已抽为共享模块，
+   唯一实现在 /redesign/voice_profile_picker.js（角色页 + 引导页共用）。 */
+function openEditor(c){
+  const editing = !!c;
+  const onlyDanya = !!(c && c.id === 'danya');
+  /* 主题图位：角色没设自己的 banner/avatar 时，卡上显示的是绑定主题的封面/头像
+     ⇒ 编辑器预览也必须透出来，否则"卡上有图、进编辑器变未设置"（实测 bug）。 */
+  const thArt = themeArtOf((c && c.id) || '');
+
+  let m = document.getElementById('charEditor');
+  if (!m){
+    m = document.createElement('div'); m.id='charEditor'; m.className='edit-mask';
+    m.addEventListener('click', e=>{ if(e.target===m) m.classList.remove('show'); });
+    document.body.appendChild(m);
+  }
+
+  const m3 = c ? (c.model_3d||{}) : {};
+  const m3dOn = !!m3.enabled;
+  const m3dPath = m3.path || '';
+  const m3dFmtOpts = ['vrm'].map(f => '<option value="'+f+'"'+( (m3.format||'vrm')===f ? ' selected' : '' )+'>'+f.toUpperCase()+'</option>').join('');
+  const caret = '<span class="ch-sec-arrow"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg></span>';
+
+  m.innerHTML =
+    '<div class="edit-card">'+
+      '<div class="edit-head"><div class="edit-title">'+(editing?'编辑角色':'新增角色')+'</div><button class="edit-x" data-x type="button">' + iconX() + '</button></div>'+
+
+      '<div class="edit-body">'+
+        '<div class="form">'+
+
+          /* ================= 一、她是谁 ================= */
+          '<div class="ch-sec open" id="secWho">'+
+            '<div class="ch-sec-h"><div class="ch-sec-t"><span class="ch-sec-n">1</span>她是谁<span class="ch-sec-s">名称 · 人设</span></div>'+caret+'</div>'+
+            '<div class="ch-sec-b"><div><div class="ch-sec-in">'+
+
+              '<div class="form-row2">'+
+                '<div class="fg"><label>角色名称 <span class="req">*</span></label><input id="eName" value="'+esc(c?c.name:'')+'" placeholder="如 达妮娅"></div>'+
+                '<div class="fg"><label>角色 ID <span class="req">*</span></label><input id="eId" '+(editing?'readonly':'')+' value="'+esc(c?c.id:'')+'" placeholder="英文小写，如 danya"></div>'+
+              '</div>'+
+
+              '<div class="ch-copybar">'+
+                '<div class="ch-cb-t">'+
+                  '<div class="ch-cb-h">没有灵感？复制人设提示词</div>'+
+                  '<div class="ch-cb-s">粘到 DeepSeek / 任意聊天模型，把它的回答再粘回来，下面三段自动填好</div>'+
+                '</div>'+
+                '<button class="ch-cpbtn" id="eAiGen" type="button">'+
+                  '<svg class="ch-tick" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12.5l5 5L20 6.5"/></svg>'+
+                  '<span id="eAiTxt">复制提示词</span>'+
+                '</button>'+
+              '</div>'+
+
+              '<div class="ch-paste" id="ePasteWrap"><div><div class="ch-paste-in">'+
+                '<div class="fg"><label>把 AI 的回答粘到这里（自动识别三段，不看字数）</label>'+
+                  '<textarea id="ePasteArea" rows="5" placeholder="粘贴后自动识别：1. 性格特征 …　2. 说话风格 …　3. 背景设定 …"></textarea>'+
+                '</div>'+
+                '<div class="ch-hint" id="ePasteHint"></div>'+
+              '</div></div></div>'+
+
+              '<div class="fg"><label>性格特征</label><textarea id="eChar" rows="3" placeholder="如：雌小鬼风格的毒舌小恶魔，爱用杂鱼叫你…">'+esc(c?c.character:'')+'</textarea></div>'+
+              '<div class="fg"><label>说话风格</label><textarea id="eStyle" rows="3" placeholder="如：语气嚣张爱嘲讽，口头禅哼、笨死了…">'+esc(c?c.speaking_style:'')+'</textarea></div>'+
+              '<div class="fg"><label>背景设定</label><textarea id="eBg" rows="3" placeholder="如：从异世界掉进你屏幕里的小恶魔…">'+esc(c?c.background:'')+'</textarea></div>'+
+
+            '</div></div></div>'+
+          '</div>'+
+
+          /* ================= 二、她的声音 ================= */
+          '<div class="ch-sec" id="secVoice">'+
+            '<div class="ch-sec-h"><div class="ch-sec-t"><span class="ch-sec-n">2</span>她的声音<span class="ch-sec-s">出声音色</span></div>'+caret+'</div>'+
+            '<div class="ch-sec-b"><div><div class="ch-sec-in">'+
+
+              '<div id="eModeBanner" style="display:none;padding:10px 12px;border:1px solid var(--line-2);border-radius:12px;background:var(--bg-2);font-size:12.5px;line-height:1.6;color:var(--ink-2)"></div>'+
+
+              '<div class="fg"><label>出声音色 <span style="color:var(--ink-3);font-weight:400">（本地 / 云端混排 · 本地双工与本地 TTS 都走这里）</span></label>'+
+                '<div style="display:flex;gap:8px;align-items:stretch">'+
+                  '<select id="eVoiceSel" style="flex:1;min-width:0"></select>'+
+                  '<button type="button" class="btn ghost sm" id="eVoiceTry" style="white-space:nowrap">试听</button>'+
+                  '<button type="button" class="btn ghost sm" id="eVoiceNew" style="white-space:nowrap">+ 新建音色档</button>'+
+                '</div>'+
+              '</div>'+
+              '<div id="eVoiceTip" class="ch-hint"></div>'+
+
+              '<div id="eVoiceNewBox" style="display:none;margin-top:10px;padding:12px;border:1px solid var(--line-2);border-radius:12px;background:var(--bg-2)">'+
+                '<div style="font-size:13px;font-weight:600;margin-bottom:8px">新建音色档</div>'+
+                '<div class="form-row2">'+
+                  '<div class="fg"><label>名称 <span class="req">*</span></label><input id="eVNName" placeholder="如 达妮娅·甜"></div>'+
+                  '<div class="fg"><label>引擎</label><select id="eVNEngine">'+
+                    '<option value="edge-tts">Edge 微软语音</option>'+
+                    '<option value="dashscope_cosy">百炼 CosyVoice</option>'+
+                    '<option value="minimax">MiniMax</option>'+
+                    '<option value="openai_tts">OpenAI TTS</option>'+
+                    '<option value="gpt-sovits">GPT-SoVITS</option>'+
+                    '<option value="voxcpm">VoxCPM</option>'+
+                    '<option value="mimo_tts">小米 MiMo</option>'+
+                    '<option value="pyttsx3">pyttsx3（离线）</option>'+
+                  '</select></div>'+
+                '</div>'+
+                '<div class="form-row2" style="margin-top:8px">'+
+                  '<div class="fg"><label>云端 Key / 本地音色名</label><input id="eVNApiKey" placeholder="云端引擎填 api_key；本地克隆填 voice"></div>'+
+                  '<div class="fg"><label>voice_id / 模型</label><input id="eVNVoiceId" placeholder="云端填 voice_id；可再填 model"></div>'+
+                '</div>'+
+                '<div id="eVoiceNewTip" class="ch-hint" style="margin-top:8px">详细字段（参考音、group_id 等）可在「设置 → 声音」页继续编辑。</div>'+
+                '<div style="display:flex;gap:8px;margin-top:8px">'+
+                  '<button type="button" class="btn primary sm" id="eVoiceNewSave">保存音色档</button>'+
+                  '<button type="button" class="btn ghost sm" id="eVoiceNewCancel">取消</button>'+
+                '</div>'+
+              '</div>'+
+
+            '</div></div></div>'+
+          '</div>'+
+
+          /* ================= 三、她的样子 ================= */
+          '<div class="ch-sec" id="secLook">'+
+            '<div class="ch-sec-h"><div class="ch-sec-t"><span class="ch-sec-n">3</span>她的样子<span class="ch-sec-s">头像 · 头图</span></div>'+caret+'</div>'+
+            '<div class="ch-sec-b"><div><div class="ch-sec-in">'+
+
+              '<div class="fg"><label>角色头像 <span style="color:var(--ink-3);font-weight:400">（1:1 方图 · 角色卡头像 + 聊天页她的头像都用它，不选则用人形占位）</span></label>'+
+                '<div class="banner-pick">'+
+                  '<div class="banner-prev" id="eAvatarPrev"></div>'+
+                  '<div style="flex:1;min-width:0">'+
+                    '<div style="display:flex;gap:8px;flex-wrap:wrap">'+
+                      '<button type="button" class="btn ghost sm" id="eAvatarPick">选择图片…</button>'+
+                      '<button type="button" class="btn ghost sm" id="eAvatarClear">清除</button>'+
+                    '</div>'+
+                    '<div class="ch-hint" style="margin-top:6px">图片会复制到软件数据目录（data/char_avatars），原图删掉或移动也不影响显示。</div>'+
+                  '</div>'+
+                '</div>'+
+                '<input type="hidden" id="eAvatar" value="'+esc((c&&c.avatar)||'')+'">'+
+              '</div>'+
+
+              '<div class="sep"></div>'+
+
+              '<div class="fg"><label>角色头图 <span style="color:var(--ink-3);font-weight:400">（角色卡顶部封面 · 建议横图 16:9，不选则显示渐变色块）</span></label>'+
+                '<div class="banner-pick">'+
+                  '<div class="banner-prev" id="eBannerPrev"></div>'+
+                  '<div style="flex:1;min-width:0">'+
+                    '<div style="display:flex;gap:8px;flex-wrap:wrap">'+
+                      '<button type="button" class="btn ghost sm" id="eBannerPick">选择图片…</button>'+
+                      '<button type="button" class="btn ghost sm" id="eBannerClear">清除</button>'+
+                    '</div>'+
+                    '<div class="ch-hint" style="margin-top:6px">图片会复制到软件数据目录（data/char_banners），原图删掉或移动也不影响显示。</div>'+
+                  '</div>'+
+                '</div>'+
+                '<input type="hidden" id="eBanner" value="'+esc((c&&c.banner)||'')+'">'+
+              '</div>'+
+
+              /* Live2D：目前只有达妮娅接入了 rig。
+                 非达妮娅时控件隐藏但保留在 DOM 里 —— 保存逻辑会读 #eM3dOn/#eM3dFmt/#eM3dPath，
+                 删掉节点会让 danya 的保存抛错。 */
+              '<div class="sep" '+(onlyDanya?'':'style="display:none"')+'></div>'+
+              '<div class="m3d-row" '+(onlyDanya?'':'style="display:none"')+'>'+
+                '<label class="chk"><input type="checkbox" id="eM3dOn" '+(m3dOn?'checked':'')+'> Live2D 模型</label>'+
+                '<div class="form-row3">'+
+                  '<div class="fg"><label>格式</label><select id="eM3dFmt">'+m3dFmtOpts+'</select></div>'+
+                  '<div class="fg"><label>模型路径</label><input id="eM3dPath" value="'+esc(m3dPath)+'" placeholder="留空用默认 rig"></div>'+
+                  '<div class="fg"></div>'+
+                '</div>'+
+              '</div>'+
+              '<div class="ch-hint" '+(onlyDanya?'':'style="display:none"')+'>Live2D 暂只支持达妮娅（默认开启）；更多角色支持后再开放。</div>'+
+
+            '</div></div></div>'+
+          '</div>'+
+
+        '</div>'+
+      '</div>'+
+
+      '<div class="edit-foot">'+
+        '<button class="btn" data-try type="button">试聊一句</button>'+
+        '<span class="edit-try" id="eTry"></span>'+
+        '<span style="flex:1"></span>'+
+        (editing?'<button class="btn act-del" data-del type="button">删除</button>':'')+
+        '<button class="btn" data-cancel type="button">取消</button>'+
+        '<button class="btn primary" data-save type="button">保存</button>'+
+      '</div>'+
+    '</div>';
+
+  /* ===== 语音音色：只绑定音色档 =====
+     声音本身（引擎 / Key / voice_id / 参考音 / 本地模型）在「设置 → 声音」页管理，
+     角色这边只决定「用哪一个」。运行时 config.get_active_voice_config() 即音色档优先，
+     未绑档回退角色内联 voice（本页不再编辑内联 voice，只原样保留）。 */
+  const ctxP = (typeof Backend !== 'undefined' && Backend && typeof Backend.getRoleVoiceContext === 'function') ? Backend.getRoleVoiceContext((c&&c.id)||'') : Promise.resolve(null);
+
+  /* 2026-10-08（P2·音色档三源收口）：本页不再自带 setupVoiceSelector，
+     统一走 /redesign/voice_profile_picker.js 的唯一实现。
+     注意不传 esc / engineLabel —— 它们是模块的唯一真值，本页旧版与引导页旧版
+     对同一引擎显示名不一致（本页「微软小薇」vs 引导页「Edge 微软语音」），
+     允许注入等于保留分叉。只传 allProfiles 引用，使本页 voicePillText /
+     试听 doTest 仍读到最新档列表。 */
+  const V = VoiceProfilePicker.setup(Backend, m, c, ctxP, {
+    toastMsg: toastMsg, allProfiles: allProfiles
+  });
+
+  function applyRoleCtx(ctx){
+    const banner = m.querySelector('#eModeBanner');
+    if (banner && ctx){
+      let html = ctx.banner ? esc(ctx.banner) : '';
+      if (ctx.mode === 'local' && !ctx.voice_call_ready){
+        html += '<div style="margin-top:8px;color:#e0533d"> 本地双工未绑云端 TTS：可正常出声，但「语音电话」功能无法拨通。'
+          + '<button type="button" style="background:none;border:1px solid #e0533d;color:#e0533d;border-radius:6px;padding:2px 8px;margin-left:6px;cursor:pointer;font-size:12px" id="eCallBind">去绑定云端 TTS →</button></div>';
+      }
+      if (html){ banner.innerHTML = html; banner.style.display=''; } else { banner.style.display='none'; }
+      const cb = m.querySelector('#eCallBind');
+      if (cb) cb.addEventListener('click', ()=>{ toastMsg('正在前往「设置 → 声音」…'); if (window.spaGo) { window.spaGo('/redesign/ui_redesign_settings.html'); } else { window.location.href = '/redesign/ui_redesign_settings.html'; } });
+    }
+    /* 参考音字段已随音色档收口迁到设置页；此处只在旧 DOM 仍存在时做兼容处理。 */
+    const wrap = m.querySelector('#eRefWrap');
+    const info = m.querySelector('#eRefInfo');
+    if (wrap && info && ctx && ctx.mode && ctx.mode !== 'off'){
+      wrap.style.display='none';
+      info.textContent=' 此模式下声音已就绪，无需参考音（参考音只在「云端 TTS 克隆」音色档里用，去「设置 → 声音」页配置）。';
+      info.style.display='';
+    }
+  }
+  ctxP.then(applyRoleCtx).catch(()=>{});
+
+  /* ---- 角色头图 ---- 选图走后端 pick_character_banner（弹系统文件框 + 复制进 data/char_banners）；
+     预览用 /local_img?path= 只读路由取图（页面在 http 下不能直接 file:// 加载）。 */
+  const bannerInput = m.querySelector('#eBanner');
+  const bannerPrev = m.querySelector('#eBannerPrev');
+  function setBanner(path, themeUrl){
+    if (bannerInput) bannerInput.value = path || '';
+    if (!bannerPrev) return;
+    const src = path ? ('/local_img?path=' + encodeURIComponent(path)) : (themeUrl || '');
+    if (src) bannerPrev.innerHTML = '<img src="' + esc(src) + '" alt="头图预览">' +
+      (path ? '' : '<span class="prev-tag">主题封面</span>');
+    else bannerPrev.textContent = '未设置';
+  }
+  setBanner((c && c.banner) || '', (thArt.cover && thArt.cover.url) || '');
+  const bPick = m.querySelector('#eBannerPick');
+  if (bPick) bPick.addEventListener('click', ()=>{
+    if (typeof Backend === 'undefined' || !Backend || typeof Backend.pickCharacterBanner !== 'function'){
+      toastMsg('后端未连接，无法选择图片（预览模式）','err'); return;
+    }
+    bPick.disabled = true; bPick.textContent = '选择中…';
+    Backend.pickCharacterBanner().then(r=>{
+      bPick.disabled = false; bPick.textContent = '选择图片…';
+      if (r && r.success && r.path){ setBanner(r.path); Backend.toast('已选择头图（保存后生效）'); }
+      else if (r && r.error) Backend.toast('选择失败：'+r.error,'err');
+      // 用户主动取消：静默，不报错
+    }).catch(e=>{ bPick.disabled=false; bPick.textContent='选择图片…'; Backend.toast('选择失败: '+(e&&e.message),'err'); });
+  });
+  const bClear = m.querySelector('#eBannerClear');
+  if (bClear) bClear.addEventListener('click', ()=>{ setBanner(''); });
+
+  /* ---- 角色头像（2026-10-11）：1:1 方图，角色卡 + 聊天页 AI 头像共用 ----
+     与头图同一套交互（弹系统文件框 + 复制进 data/char_avatars + /local_img 预览）。 */
+  const avatarInput = m.querySelector('#eAvatar');
+  const avatarPrev = m.querySelector('#eAvatarPrev');
+  function setAvatar(path, themeUrl){
+    if (avatarInput) avatarInput.value = path || '';
+    if (!avatarPrev) return;
+    const src = path ? ('/local_img?path=' + encodeURIComponent(path)) : (themeUrl || '');
+    if (src) avatarPrev.innerHTML = '<img src="' + esc(src) + '" alt="头像预览">' +
+      (path ? '' : '<span class="prev-tag">主题头像</span>');
+    else avatarPrev.textContent = '未设置';
+  }
+  setAvatar((c && c.avatar) || '', (thArt.avatar && thArt.avatar.url) || '');
+  const aPick = m.querySelector('#eAvatarPick');
+  if (aPick) aPick.addEventListener('click', ()=>{
+    if (typeof Backend === 'undefined' || !Backend || typeof Backend.pickCharacterAvatar !== 'function'){
+      toastMsg('后端未连接，无法选择图片（预览模式）','err'); return;
+    }
+    aPick.disabled = true; aPick.textContent = '选择中…';
+    Backend.pickCharacterAvatar().then(r=>{
+      aPick.disabled = false; aPick.textContent = '选择图片…';
+      if (r && r.success && r.path){ setAvatar(r.path); Backend.toast('已选择头像（保存后生效）'); }
+      else if (r && r.error) Backend.toast('选择失败：'+r.error,'err');
+    }).catch(e=>{ aPick.disabled=false; aPick.textContent='选择图片…'; Backend.toast('选择失败: '+(e&&e.message),'err'); });
+  });
+  const aClear = m.querySelector('#eAvatarClear');
+  if (aClear) aClear.addEventListener('click', ()=>{ setAvatar(''); });
+
+  /* 复制提示词 + 粘贴自动回填（设计稿 v2 的内联交互；此前是弹独立 modal，已收进本段） */
+  bindCopyPaste(m, c);
+
+  /* 三段折叠：一次只展开一段（点击已展开段则收起），首段默认展开 */
+  const secs = m.querySelectorAll('.ch-sec');
+  m.querySelectorAll('.ch-sec-h').forEach(h => {
+    h.addEventListener('click', () => {
+      const sec = h.closest('.ch-sec'); if (!sec) return;
+      const willOpen = !sec.classList.contains('open');
+      secs.forEach(s => s.classList.remove('open'));
+      if (willOpen) sec.classList.add('open');
+    });
+  });
+
+  m.querySelector('[data-x]').addEventListener('click', ()=>m.classList.remove('show'));
+  m.querySelector('[data-cancel]').addEventListener('click', ()=>m.classList.remove('show'));
+  m.querySelector('[data-try]').addEventListener('click', ()=>{ const res=m.querySelector('#eTry'); res.textContent='生成中…'; Backend.call('test_persona',{ character:m.querySelector('#eChar').value, speaking_style:m.querySelector('#eStyle').value, background:m.querySelector('#eBg').value }).then(r=>{ res.textContent=(r&&r.success)?(r.reply||r.content||'已生成一句'):(r&&r.error?('失败：'+r.error):'后端未连接'); }); });
+
+  const del=m.querySelector('[data-del]');
+  if(del) del.addEventListener('click', async ()=>{ if(await uiConfirm('确定删除「'+c.name+'」？', { danger: true, okText: '删除' })){ Backend.deleteCharacter(c.id).then(r=>{ if(r&&r.success){ Backend.toast('已删除'); currentList=currentList.filter(x=>x.id!==c.id); renderChars(currentList,currentActive); m.classList.remove('show'); } else Backend.toast(r&&r.error?('删除失败：'+r.error):'后端未连接','err'); }); } });
+
+  m.querySelector('[data-save]').addEventListener('click', ()=>{
+    const id=m.querySelector('#eId').value.trim(), name=m.querySelector('#eName').value.trim();
+    if(!id||!name){ Backend.toast('角色 ID 和名称必填','err'); return; }
+    const btn = m.querySelector('[data-save]'); btn.disabled = true;
+
+    // 加载中进度条：贴在角色卡下沿（与双工切换一致）
+    const card = m.querySelector('.edit-card');
+    let prog = null;
+    if (card){
+      card.classList.add('sw-host');
+      prog = card.querySelector('.sw-prog');
+      if (!prog){ prog = document.createElement('div'); prog.className = 'sw-prog'; prog.innerHTML = '<i></i>'; card.appendChild(prog); }
+      prog.classList.add('on', 'indet');
+    }
+
+    const baseVoice = c ? (c.voice||{}) : {};
+    /* 内联 voice 已不由本页编辑，必须原样回传：后端是 char_data.get("voice", 默认)，
+       key 缺失会落回默认值、key 传成空对象会存成空 voice —— 两种都会破坏未绑档时的回退音色。
+       新增角色补一份 edge-tts 默认，保证 voice 永远是结构完整的对象。 */
+    const keepVoice = Object.assign({ engine:'edge-tts', voice:'zh-CN-XiaoyiNeural', rate:'+0%', pitch:'+0Hz', volume:'+0%' }, baseVoice);
+
+    const d0 = V.selected();
+
+    const buildData = (binding) => ({
+      id:id, name:name,
+      character:m.querySelector('#eChar').value,
+      speaking_style:m.querySelector('#eStyle').value,
+      background:m.querySelector('#eBg').value,
+      voice: keepVoice,
+      model_3d: (function(){
+        const onlyDanyaSave = id === 'danya';
+        if (!onlyDanyaSave) return { enabled: false, format: 'vrm', path: '' };
+        return { enabled: !!m.querySelector('#eM3dOn').checked, format: m.querySelector('#eM3dFmt').value, path: m.querySelector('#eM3dPath').value.trim() };
+      })(),
+      voice_profile: binding.voice_profile,
+      cloud_voice_id: binding.cloud_voice_id,
+      // 角色卡头图：只回传「相对原始值有变化」的内容。
+      // 未改动（含新建未选）传 undefined → 后端保留原值；主动清除（原值非空现空）传 ''。
+      banner: (function(){
+        const el = m.querySelector('#eBanner'); if (!el) return undefined;
+        const orig = (c && c.banner) || ''; const val = el.value || '';
+        return val === orig ? undefined : val;
+      })(),
+      // 角色头像：同上
+      avatar: (function(){
+        const el = m.querySelector('#eAvatar'); if (!el) return undefined;
+        const orig = (c && c.avatar) || ''; const val = el.value || '';
+        return val === orig ? undefined : val;
+      })()
+    });
+
+    const finishSave = (binding) => {
+      const data = buildData(binding);
+      Backend.saveCharacter(data).then(r=>{
+        if (prog){ prog.classList.remove('indet'); const bar = prog.querySelector('i'); if (bar) bar.style.width = '100%'; }
+        btn.disabled = false;
+        if(r&&r.success){
+          if (prog) setTimeout(()=>prog.classList.remove('on'), 420);
+          const reconnected = r.duplex_reconnected;
+          Backend.toast(editing ? ('已保存修改' + (reconnected ? '，双工已重连加载新人格' : '')) : '已新增角色');
+          justSavedId = id;
+          loadChars(); m.classList.remove('show');
+        }
+        else { if (prog) prog.classList.remove('on'); Backend.toast(r&&r.error?('保存失败：'+r.error):'后端未连接','err'); }
+      }).catch(e=>{ if(prog) prog.classList.remove('on'); btn.disabled = false; Backend.toast('保存失败: '+e.message,'err'); });
+    };
+
+    if (d0 && d0.kind === 'cloud_tts'){
+      V.ensureProfile().then(pid=>{ if(pid==null){ btn.disabled=false; Backend.toast('云端音色档创建失败（声音屏是否绑了 TTS Key？）','err'); return; } finishSave(V.getBinding(pid)); }).catch(()=>{ btn.disabled=false; Backend.toast('云端音色档创建失败','err'); });
+    } else finishSave(V.getBinding(null));
+  });
+
+  m.classList.add('show');
+}
+
+function showCharsSkeleton(){
+  let h='';
+  for(let i=0;i<3;i++){
+    h+='<article class="ccard skeleton" aria-hidden="true"><div class="sk-line" style="width:54%"></div><div class="sk-line" style="width:92%"></div><div class="sk-line" style="width:78%"></div><div class="sk-line" style="width:86%"></div></article>';
+  }
+  grid.innerHTML=h;
+}
+
+function loadChars(){
+  showCharsSkeleton();
+  /* 音色档要先于角色卡就绪：卡片标签显示的是「实际生效的音色档名」。
+     档可能比角色晚到，到了再补一次渲染（renderChars 幂等，重画无副作用）。 */
+  if (typeof Backend.listVoiceProfiles === 'function'){
+    Backend.listVoiceProfiles().then(r=>{
+      if (r && r.success){
+        allProfiles = r.profiles || []; profilesLoaded = true;
+        if (currentList.length) renderChars(currentList, currentActive);
+      }
+    }).catch(()=>{});
+  }
+  Backend.getCharacters().then(r=>{
+    if (r && r.success){ currentList=r.characters||[]; currentActive=r.active_id; renderChars(currentList, currentActive); }
+    else { showOffline(); Backend.toast('角色列表获取失败（后端未连接）','err'); }
+  });
+  /* 主题绑定数据就绪后补一次渲染：角色卡按「角色→绑定主题」的图位绘制，
+     而 ThemeManager.state.themes 可能在角色先到、主题后到时还没填充 ⇒ 等主题列表
+     就绪再重画一次（renderChars 幂等）。 */
+  if (typeof window.ThemeManager !== 'undefined' && window.ThemeManager.list){
+    Promise.resolve(window.ThemeManager.list()).then(()=>{
+      if (currentList.length) renderChars(currentList, currentActive);
+    }).catch(()=>{});
+  }
+}
+
+function showOffline(){
+  grid.innerHTML='<div class="empty" style="grid-column:1/-1"><div class="empty-face"><i data-icon="wifi"></i></div><div class="empty-tip">未连接后端（仅本地预览；启动软件后显示真实角色，可新增/编辑/删除）</div></div>';
+  grid.appendChild(makeNewCard());
+}
+
+Backend.getTemplates().then(r=>{ if(r&&r.success) templates=r.templates||[]; });
+
+/* 编辑器保存/应用主题后，绑定关系或图位可能变了 ⇒ 重画角色卡（同级页面即时刷新，
+   不用切走再切回）。host 在 theme_manager.js 关编辑器时已 dispatchEvent('themeSaved')。 */
+window.addEventListener('themeSaved', ()=>{ if (currentList.length) renderChars(currentList, currentActive); });
+
+loadChars();
+
+/* 密度切换：只淡入淡出 + 切换 grid gap，禁止重播逐卡升起导致跳动。
+   ⚠️ 必须同步按钮高亮，否则点了「紧凑」按钮仍是「大卡」亮着（观感像没生效）。 */
+function bindDensity(){
+  const seg = document.getElementById('chDensity'); if (!seg) return;
+  const gridEl = document.getElementById('charGrid'); if (!gridEl) return;
+  const btns = seg.querySelectorAll('button');
+  btns.forEach(b=>b.addEventListener('click', ()=>{
+    const mode = b.dataset.mode;
+    if (!mode || gridEl.classList.contains(mode)) return;
+    btns.forEach(x=>x.classList.toggle('on', x === b));
+    gridEl.style.opacity = '0';
+    setTimeout(()=>{
+      gridEl.classList.remove('big','tight');
+      gridEl.classList.add(mode);
+      gridEl.style.opacity = '1';
+    }, 190);
+  }));
+}
+function bindChNewChar(){
+  const btn = document.getElementById('chNewChar');
+  if (btn) btn.addEventListener('click', ()=>openEditor(null));
+}
+bindDensity();
+bindChNewChar();
+
+console.log('[v7-redesign] 角色页已加载（设计稿 v2 落地 · 20261011）');
+
+if (window.gsap && !reduce && !window.__SPA_NAV){
+  gsap.from('.top', { opacity:0, y:-6, duration:.4, ease:'power2.out' });
+  gsap.from('.kicker, .lead', { opacity:0, y:8, duration:.45, delay:.18, ease:'power2.out' });
+}
+</script>
+
+<script src="/redesign/theme_manager.js?v=20261013d"></script>
+</body>
+</html>

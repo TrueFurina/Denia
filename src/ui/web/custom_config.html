@@ -1,0 +1,304 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>达妮娅 · 自定义配置</title>
+<style>
+  :root{
+    --bg:#f6f7fb; --card:#ffffff; --ink:#1f2430; --muted:#6b7280;
+    --line:#e6e8ef; --accent:#6d5efc; --accent-soft:#efeaff;
+    --good:#0f9d6b; --good-soft:#e6f6ef; --warn:#b8730f; --warn-soft:#fbf0dd;
+    --bad:#c0392b; --bad-soft:#fbe9e7; --radius:16px;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:-apple-system,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;
+    background:var(--bg);color:var(--ink);line-height:1.6;padding:24px 16px 64px}
+  .wrap{max-width:880px;margin:0 auto}
+  h1{font-size:23px;font-weight:600}
+  .sub{color:var(--muted);margin-top:6px;font-size:14.5px;max-width:680px}
+  .back{display:inline-block;margin:14px 0 4px;color:var(--accent);font-size:13.5px;text-decoration:none}
+  .back:hover{text-decoration:underline}
+
+  /* 预算条 */
+  .barwrap{position:sticky;top:10px;z-index:5;background:var(--card);border:1px solid var(--line);
+    border-radius:var(--radius);padding:16px 18px;margin:18px 0 22px;box-shadow:0 4px 18px rgba(31,36,48,.06)}
+  .barhead{display:flex;flex-wrap:wrap;gap:12px;align-items:center;justify-content:space-between;margin-bottom:12px}
+  .barhead .left{font-size:14.5px;font-weight:600}
+  .barhead select{padding:7px 11px;border:1px solid var(--line);border-radius:10px;background:#fff;
+    font-size:14px;color:var(--ink);cursor:pointer}
+  .track{height:14px;background:#eef0f5;border-radius:999px;overflow:hidden;position:relative}
+  .fill{height:100%;width:0%;background:var(--good);border-radius:999px;transition:width .2s,background .2s}
+  .stat{margin-top:10px;font-size:14px;font-weight:600}
+  .stat.good{color:var(--good)} .stat.warn{color:var(--warn)} .stat.bad{color:var(--bad)}
+  .hint{margin-top:4px;font-size:12.5px;color:var(--muted)}
+  .over{display:none;margin-top:10px;background:var(--bad-soft);border:1px solid #f1c5bf;
+    color:var(--bad);border-radius:12px;padding:10px 14px;font-size:13.5px;font-weight:600}
+  .over.show{display:block}
+
+  /* 分组 */
+  .group{margin:22px 0}
+  .group h2{font-size:15px;font-weight:600;color:var(--accent);margin-bottom:10px;
+    display:flex;align-items:center;gap:8px}
+  .group h2 .pill{font-size:11px;font-weight:600;padding:2px 9px;border-radius:999px;
+    background:var(--accent-soft);color:var(--accent)}
+  .feat{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:14px 16px;
+    margin:10px 0;display:flex;align-items:flex-start;gap:14px;transition:.15s}
+  .feat:hover{border-color:#d9d3fb}
+  .feat .body{flex:1}
+  .feat .name{font-size:15px;font-weight:600;display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+  .cost{font-size:11px;font-weight:700;padding:2px 9px;border-radius:999px;background:#eef0f5;color:#475}
+  .cost.local{background:#fdeccf;color:#a8630c}
+  .cost.cloud{background:#e6f6ef;color:var(--good)}
+  .feat .note{font-size:12.8px;color:var(--muted);margin-top:4px}
+  .toggle{flex:0 0 auto;margin-top:3px}
+  .toggle input{width:20px;height:20px;cursor:pointer;accent-color:var(--accent)}
+
+  .actions{display:flex;gap:12px;margin-top:26px}
+  .btn{padding:12px 22px;border:none;border-radius:12px;background:var(--accent);color:#fff;
+    font-size:14.5px;font-weight:600;cursor:pointer}
+  .btn:hover{filter:brightness(1.05)}
+  .btn.ghost{background:#fff;border:1px solid var(--line);color:var(--ink)}
+  .saved{display:none;margin-top:16px;background:var(--good-soft);border:1px solid #bfe6d4;
+    color:var(--good);border-radius:12px;padding:12px 16px;font-size:14px;font-weight:600}
+  .saved.show{display:block}
+  .foot-note{margin-top:24px;font-size:12px;color:var(--muted);line-height:1.7}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>自定义配置 · 自己搭达妮娅</h1>
+  <p class="sub">勾选你想开的模块，每项都标了显存占用。顶部进度条实时累计——没超显存显绿/黄，超了显红字提醒。丰俭由你，别把显卡撑爆。</p>
+  <a class="back" href="first_launch_setup.html">← 返回引导页</a>
+
+  <!-- 预算 + 进度条 -->
+  <div class="barwrap">
+    <div class="barhead">
+      <span class="left">我的显卡显存预算</span>
+      <select id="budget">
+        <option value="8">8 GB（如 RTX 5070 / 4060）</option>
+        <option value="12">12 GB（如 RTX 5070 Ti / 4080）</option>
+        <option value="16" selected>16 GB（如 RTX 5080 / 4090）</option>
+        <option value="24">24 GB（如 RTX 4090 24G / 3090）</option>
+      </select>
+    </div>
+    <div class="track"><div class="fill" id="fill"></div></div>
+    <div class="stat good" id="stat">已用 0 / 16 GB · 0%</div>
+    <div class="hint" id="hint">还没选任何模块。本地双工很吃显存，优先保证它；语音克隆尽量走云端或本地千问。</div>
+    <div class="over" id="over"></div>
+  </div>
+
+  <!-- 本地模块 -->
+  <div class="group">
+    <h2>本地模块 <span class="pill">占显存</span></h2>
+
+    <div class="feat">
+      <div class="body">
+        <div class="name">本地双工 M1（真双工·免费但高延迟）<span class="cost local">最吃显存</span></div>
+        <div class="note">达妮娅常驻你电脑、永远在线、随时接话。语音<b>焊死固定音</b>——想换成达娅声需走云端克隆或挂 RVC 变声（轻量，可共存）。</div>
+        <div style="margin-top:10px;display:flex;gap:16px;flex-wrap:wrap;font-size:13.5px">
+          <label><input type="radio" name="duplex" data-vram="0" data-id="local_duplex_off" checked> 不开</label>
+          <label><input type="radio" name="duplex" data-vram="13" data-id="local_duplex" data-quant="Q4_K_M"> Q4 大脑（≈13 GB，12GB 卡可用）</label>
+          <label><input type="radio" name="duplex" data-vram="15.3" data-id="local_duplex" data-quant="Q6_K"> Q6 大脑（≈15.3 GB，16GB 卡最佳）</label>
+        </div>
+      </div>
+    </div>
+
+    <div class="feat">
+      <div class="body">
+        <div class="name">本地看屏 · 轻量多模态快照<span class="cost local">≈5.4 GB</span></div><!-- id:local_vision -->
+        <div class="note">不开双工时也能"看屏幕"：每几秒截一帧理解画面（非真双工）。8GB 卡也跑得动。</div>
+      </div>
+      <div class="toggle"><input type="checkbox" data-vram="5.4" data-id="local_vision"></div>
+    </div>
+
+    <div class="feat">
+      <div class="body">
+        <div class="name">本地语音克隆 · 千问 Qwen3-TTS（GPU）<span class="cost local">≈2.5 GB</span></div><!-- id:local_qwen_tts -->
+        <div class="note">零样本克隆达娅声，免费、零 key、零云。本地克隆<b>音色偏平、像真度一般</b>，要好听的达娅声建议走云端 TTS（百炼 / MiMo 克隆）；纯聊天时 GPU 空闲可共存，和双工同开建议用 Q4 档或让它走 CPU（会慢一点）。</div>
+      </div>
+      <div class="toggle"><input type="checkbox" data-vram="2.5" data-id="local_qwen_tts"></div>
+    </div>
+
+  </div>
+
+  <!-- 云端模块 -->
+  <div class="group">
+    <h2>云端模块 <span class="pill">0 显存·走网络</span></h2>
+
+    <div class="feat">
+      <div class="body">
+        <div class="name">云端双工 M2（MiniCPM-o 4.5）<span class="cost cloud">云端·0 显存</span></div><!-- id:cloud_duplex -->
+        <div class="note">真双工放到云端跑，<b>可克隆音色</b>。本地显卡零占用，但需联网、有少量延迟。</div>
+      </div>
+      <div class="toggle"><input type="checkbox" data-vram="0" data-cloud="1" data-id="cloud_duplex"></div>
+    </div>
+
+    <div class="feat">
+      <div class="body">
+        <div class="name">云端快照 M3（OCR 裁决 + 云 TTS）<span class="cost cloud">云端·0 显存</span></div><!-- id:cloud_snapshot -->
+        <div class="note">打游戏/看屏时的事件驱动模式，语音走云端 TTS，<b>可克隆音色</b>。本地几乎不占显存。</div>
+      </div>
+      <div class="toggle"><input type="checkbox" data-vram="0" data-cloud="1" data-id="cloud_snapshot"></div>
+    </div>
+
+    <div class="feat">
+      <div class="body">
+        <div class="name">云端语音合成（CosyVoice / MiMo 克隆）<span class="cost cloud">云端·0 显存</span></div><!-- id:cloud_tts -->
+        <div class="note">达娅声走阿里百炼 / 小米 MiMo 云端克隆。免费额度够轻度闲聊；不占本地显存。</div>
+      </div>
+      <div class="toggle"><input type="checkbox" data-vram="0" data-cloud="1" data-id="cloud_tts"></div>
+    </div>
+  </div>
+
+  <!-- 其它 -->
+  <div class="group">
+    <h2>其它能力 <span class="pill">按需</span></h2>
+
+    <div class="feat">
+      <div class="body">
+        <div class="name">听歌 / 音乐感知<span class="cost cloud">0 显存</span></div><!-- id:music -->
+        <div class="note">让达妮娅听懂你放的歌、跟着聊。需配合双工（本地或云端）使用。</div>
+      </div>
+      <div class="toggle"><input type="checkbox" data-vram="0" data-id="music"></div>
+    </div>
+
+    <div class="feat">
+      <div class="body">
+        <div class="name">长期记忆 / 上下文<span class="cost cloud">0 显存</span></div><!-- id:long_memory -->
+        <div class="note">达妮娅记得你说过的话、你的习惯。默认开，关掉会变"健忘"。</div>
+      </div>
+      <div class="toggle"><input type="checkbox" data-vram="0" data-id="long_memory" checked></div>
+    </div>
+  </div>
+
+  <div class="actions">
+    <button class="btn" id="saveBtn" type="button">保存并应用</button>
+    <button class="btn ghost" onclick="location.href='first_launch_setup.html?from=custom'" type="button">返回引导页</button>
+  </div>
+  <div class="saved" id="saved"></div>
+
+  <div class="foot-note">
+    说明：显存数值为估算（基于 5080 实测 + 模型权重字节核算）。本地双工 M1 与本地千问语音同开时，建议显卡 ≥16GB 且双工用 Q4 档；
+    8GB 卡本地只能跑"轻量多模态看屏 + 云端双工/快照"，语音克隆一律走云端。超预算会红字警告，但软件运行时仍可能因桌面/系统开销略超，请预留 0.5–1GB 余量。
+  </div>
+</div>
+
+<script>
+  const budgetSel = document.getElementById('budget');
+  const fill = document.getElementById('fill');
+  const stat = document.getElementById('stat');
+  const hint = document.getElementById('hint');
+  const over = document.getElementById('over');
+  const saved = document.getElementById('saved');
+  const toggles = Array.from(document.querySelectorAll('input[type=checkbox][data-vram], input[type=radio][data-vram]'));
+
+  function recompute(){
+    const budget = parseFloat(budgetSel.value);
+    let used = 0;
+    // 复选框
+    document.querySelectorAll('input[type=checkbox][data-vram]').forEach(c=>{ if(c.checked) used += parseFloat(c.dataset.vram)||0; });
+    // 单选（双工）：只算选中的
+    const dup = document.querySelector('input[name=duplex]:checked');
+    if(dup) used += parseFloat(dup.dataset.vram)||0;
+
+    const pct = used / budget * 100;
+    const shown = Math.min(pct, 100);
+    fill.style.width = shown + '%';
+
+    if(pct > 100){
+      fill.style.background = 'var(--bad)';
+      stat.className = 'stat bad';
+      stat.textContent = '已用 ' + used.toFixed(1) + ' / ' + budget + ' GB · ' + pct.toFixed(0) + '%（超限！）';
+      over.classList.add('show');
+      over.textContent = ' 显存超限 ' + (pct-100).toFixed(0) + '%：需要 ' + used.toFixed(1) + ' GB，但你的显卡只有 ' + budget + ' GB。请关掉一些本地模块，或把双工降到 Q4 / 改用云端。';
+      hint.textContent = '';
+    } else if(pct >= 70){
+      fill.style.background = 'var(--warn)';
+      stat.className = 'stat warn';
+      stat.textContent = '已用 ' + used.toFixed(1) + ' / ' + budget + ' GB · ' + pct.toFixed(0) + '%（偏紧）';
+      over.classList.remove('show');
+      hint.textContent = '已用到预算的 ' + pct.toFixed(0) + '%，留点余量给桌面和系统开销更稳。';
+    } else {
+      fill.style.background = 'var(--good)';
+      stat.className = 'stat good';
+      stat.textContent = '已用 ' + used.toFixed(1) + ' / ' + budget + ' GB · ' + pct.toFixed(0) + '%（安全）';
+      over.classList.remove('show');
+      hint.textContent = '占用健康。本地双工很吃显存，优先保证它；语音克隆尽量走云端或本地千问。';
+    }
+  }
+
+  toggles.forEach(t=> t.addEventListener('change', recompute));
+  budgetSel.addEventListener('change', recompute);
+  recompute();
+
+  // 进页面先探测真实显卡显存，预选预算档（探测失败保留手动选，§4.4）
+  (async function(){
+    try{
+      const B = window.Backend || (window.pywebview && window.pywebview.api) || null;
+      if(B && B.getOnboardingEnv){
+        const r = await B.getOnboardingEnv();
+        if(r && r.gpu && r.gpu.ok && r.gpu.vram_gb){
+          const v = r.gpu.vram_gb;
+          const pick = v>=24 ? 24 : (v>=16 ? 16 : (v>=12 ? 12 : 8));
+          budgetSel.value = String(pick);
+          recompute();
+        }
+      }
+    }catch(e){}
+  })();
+
+  document.getElementById('saveBtn').addEventListener('click', async ()=>{
+    const budget = parseFloat(budgetSel.value);
+    let used = 0;
+    const features = [];
+    document.querySelectorAll('input[type=checkbox][data-id]').forEach(c=>{
+      if(c.checked){
+        const vram = parseFloat(c.dataset.vram)||0;
+        used += vram;
+        features.push({
+          id: c.dataset.id,
+          label: c.closest('.feat').querySelector('.name').childNodes[0].textContent.trim(),
+          vram
+        });
+      }
+    });
+    const dup = document.querySelector('input[name=duplex]:checked');
+    if(dup && dup.dataset.id && dup.dataset.id!=='local_duplex_off'){
+      const vram = parseFloat(dup.dataset.vram)||0;
+      used += vram;
+      features.push({
+        id: 'local_duplex',
+        label: '本地双工 M1' + (dup.dataset.quant ? (' · ' + dup.dataset.quant) : ''),
+        vram,
+        opts: { quant: dup.dataset.quant || null }
+      });
+    }
+    const over_limit = used > budget;
+    // 超限二次确认（修 G2）
+    if(over_limit){
+      const yn = window.confirm('当前配置显存超限 '+((used/budget*100)-100).toFixed(0)+'%，运行时可能爆显存。仍要保存？点「确定」保存，点「取消」回去减重。');
+      if(!yn){ saved.classList.remove('show'); return; }
+    }
+    // 落盘到真实后端（修 G2）：由后端按真实显存覆盖 budget、归一功能集、apply
+    let backendWarn = '';
+    try{
+      const B = window.Backend || (window.pywebview && window.pywebview.api) || null;
+      if(B && B.saveCustomConfig){
+        const r = await B.saveCustomConfig({features, budget_gb:budget});
+        if(r && r.warnings && r.warnings.length) backendWarn = '\n' + r.warnings.join('\n');
+      }
+    }catch(e){ backendWarn = '\n（后端保存失败：'+(e&&e.message||e)+'）'; }
+    localStorage.setItem('daniya_custom_config', JSON.stringify({
+      features, vram_used: +used.toFixed(1), budget, over_limit
+    }));
+    saved.classList.add('show');
+    saved.textContent = (over_limit
+      ? ' 已保存，但显存超限 '+((used/budget*100)-100).toFixed(0)+'%，运行时可能爆显存，建议回引导页减重。'
+      : ' 已保存自定义配置（'+features.length+' 个模块，预估 '+used.toFixed(1)+' / '+budget+' GB）。进入软件后将按所选自动准备所需模型。')
+      + backendWarn;
+    saved.scrollIntoView({behavior:'smooth',block:'nearest'});
+  });
+</script>
+</body>
+</html>

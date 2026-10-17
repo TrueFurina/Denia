@@ -1,0 +1,235 @@
+<!DOCTYPE html>
+
+<html lang="zh-CN">
+
+<head>
+
+<meta charset="UTF-8" />
+
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+
+<title>软件专属陪伴 · 设计规范 · 桌面伴侣</title>
+
+<link rel="stylesheet" href="/redesign/design_tokens.css?v=20261013e" />
+
+<link rel="stylesheet" href="/redesign/ui_shared.css?v=20261013e" />
+
+<style>
+
+  body{ margin:0; padding:40px; background:var(--bg); color:var(--ink);
+
+    font-family:var(--font-ui, system-ui, "Microsoft YaHei UI", sans-serif); line-height:1.6; }
+
+  .wrap{ max-width:960px; margin:0 auto; }
+
+  h1{ font-family:var(--font-serif, serif); font-size:28px; margin:0 0 4px; }
+
+  .lead{ color:var(--ink-2); font-size:14px; margin:0 0 28px; }
+
+  .sec{ margin:34px 0 10px; font-size:13px; font-weight:700; letter-spacing:.06em; color:var(--accent-1); text-transform:uppercase; }
+
+  .sec:first-of-type{ margin-top:0; }
+
+  .note{ font-size:13px; color:var(--ink-2); background:var(--surface); border:1px solid var(--line); border-radius:12px; padding:14px 16px; }
+
+
+
+  /* ===== 重做后的卡片（与 kb.html .kb-card 一致） ===== */
+
+  .kb-card{ position:relative; background:var(--surface); border:1px solid var(--line); border-radius:var(--r-lg); box-shadow:var(--shadow-1);
+
+    padding:16px 18px; display:flex; flex-direction:column; gap:10px; overflow:hidden; max-width:560px;
+
+    transition:transform .25s var(--ease), border-color .25s, box-shadow .25s; }
+
+  .kb-card::before{ content:""; position:absolute; left:0; top:0; bottom:0; width:3px;
+
+    background:linear-gradient(180deg, var(--accent-1), var(--accent-2)); opacity:.55; }
+
+  .kb-card:hover{ transform:translateY(-2px); border-color:var(--line-strong); box-shadow:var(--shadow-2); }
+
+  .kb-head{ display:flex; align-items:center; gap:10px; }
+
+  .kb-name{ font-size:16px; font-weight:650; color:var(--ink); }
+
+  .badge.builtin{ color:var(--ink-3); border:1px solid var(--line); border-radius:99px; font-size:11px; padding:2px 9px; }
+
+  .kb-head .grow{ flex:1; }
+
+  .kb-id{ font-family:var(--font-mono); font-size:10px; color:var(--ink-3); }
+
+  .kb-kw{ display:flex; flex-wrap:wrap; gap:6px; }
+
+  .kb-kw .pill{ font-size:11px; color:var(--ink-2); border:1px solid var(--line); border-radius:99px; padding:4px 10px; background:var(--surface-2); }
+
+  .kb-text-cap{ display:flex; align-items:center; gap:6px; font-size:10px; font-weight:700; letter-spacing:.08em;
+
+    color:var(--accent-1); margin-top:2px; }
+
+  .kb-text-cap::before{ content:""; font-size:11px; }
+
+  .kb-text{ font-size:13px; color:var(--ink-2); line-height:1.62; white-space:pre-wrap; word-break:break-word; }
+
+  .kb-actions{ display:flex; gap:10px; margin-top:2px; }
+
+  .btn{ font-size:12px; padding:6px 14px; border-radius:10px; border:1px solid var(--line); background:var(--surface); color:var(--ink-2); cursor:pointer; }
+
+  .btn.primary{ background:var(--accent-1); color:#fff; border-color:var(--accent-1); }
+
+
+
+  /* ===== 前后对照表 ===== */
+
+  table{ width:100%; border-collapse:collapse; font-size:13px; margin-top:6px; }
+
+  th, td{ text-align:left; padding:10px 12px; border-bottom:1px solid var(--line); vertical-align:top; }
+
+  th{ color:var(--ink-3); font-weight:600; font-size:11px; letter-spacing:.04em; text-transform:uppercase; }
+
+  td.old{ color:var(--ink-3); }
+
+  td.new{ color:var(--ink); font-weight:600; }
+
+  .tag{ display:inline-block; font-size:10px; padding:1px 8px; border-radius:99px; background:var(--accent-soft-1); color:var(--accent-1); margin-right:6px; }
+
+  .grid{ display:grid; grid-template-columns:1fr 1fr; gap:18px; }
+
+  @media (max-width:680px){ .grid{ grid-template-columns:1fr; } }
+
+  code{ font-family:var(--font-mono); font-size:12px; background:var(--surface-2); padding:1px 6px; border-radius:6px; }
+
+</style>
+
+</head>
+
+<body>
+
+<div class="wrap">
+
+  <h1> 软件专属陪伴 · 设计规范</h1>
+
+  <p class="lead">把"知识库/专属陪伴提示词"这类工程师术语，统一改成达妮娅第一人称、普通人能秒懂的陪伴语言；卡片视觉贴合极光青紫设计语言。</p>
+
+
+
+  <div class="sec">一、重做后的档案卡片</div>
+
+  <div class="note">左侧新增极光渐变脊（青→紫，呼应品牌色）；每张卡片的陪伴文案上方加了 <code> 达妮娅陪你</code> 小标题，把"知识内容"框定为她的陪法，角色口吻更明确。</div>
+
+  <div style="margin-top:14px">
+
+    <div class="kb-card">
+
+      <div class="kb-head">
+
+        <div class="kb-name">抖音（短视频）</div>
+
+        <span class="badge builtin">内置</span>
+
+        <div class="grow"></div>
+
+        <div class="kb-id">douyin</div>
+
+      </div>
+
+      <div class="kb-kw"><span class="pill">douyin</span> <span class="pill">抖音</span> <span class="pill">短视频</span></div>
+
+      <div class="kb-text-cap">达妮娅陪你</div>
+
+      <div class="kb-text">刷短视频时像朋友一样看。快速下滑=不感兴趣别聊。直播时只做旁观点评。
+
+- 别每条视频都评论，挑有趣的偶尔说一句
+
+- 看到带货/广告：可以吐槽但别太啰嗦
+
+- 直播间：关注主播互动和弹幕氛围，不替你打字发弹幕</div>
+
+      <div class="kb-actions">
+
+        <button class="btn" type="button">编辑</button>
+
+        <button class="btn" type="button">删除</button>
+
+      </div>
+
+    </div>
+
+  </div>
+
+
+
+  <div class="sec">二、编辑弹窗 · 文案前后对照</div>
+
+  <table>
+
+    <thead><tr><th>字段</th><th class="old">改前（术语）</th><th class="new">改后（人话）</th></tr></thead>
+
+    <tbody>
+
+      <tr><td><span class="tag">弹窗</span>标题</td><td class="old">新增知识库 / 编辑知识库</td><td class="new">添加陪伴方案 / 编辑陪伴方案</td></tr>
+
+      <tr><td>分类</td><td class="old">分类</td><td class="new">这是（一款软件 / 一款游戏）</td></tr>
+
+      <tr><td>标识 ID</td><td class="old">与内置 ID 相同则覆盖默认条目</td><td class="new">和她已认识的内置条目同名会覆盖它；写新名字就新建一条</td></tr>
+
+      <tr><td>名称</td><td class="old">名称</td><td class="new">叫它什么</td></tr>
+
+      <tr><td>关键词</td><td class="old">关键词（逗号分隔）</td><td class="new">什么时候认出它（窗口标题里出现这些词就切换陪法）</td></tr>
+
+      <tr><td>核心字段</td><td class="old">知识内容</td><td class="new">达妮娅怎么陪你</td></tr>
+
+      <tr><td>画面关注</td><td class="old">画面关注</td><td class="new">重点看哪（可选）</td></tr>
+
+      <tr><td>表达风格</td><td class="old">表达风格</td><td class="new">陪聊语气（可选）</td></tr>
+
+      <tr><td>空状态提示</td><td class="old">为某个游戏配置专属陪伴提示词，双工模式下检测到该游戏自动生效（未配置 = 用通用开口原则）</td><td class="new">告诉达妮娅你玩某款游戏时她该怎么陪——下次她认出这款游戏就用你写的方式陪你（不填就按平时风格来）</td></tr>
+
+    </tbody>
+
+  </table>
+
+
+
+  <div class="sec">三、设置页「游戏陪伴方案」编辑器</div>
+
+  <div class="note">真实 app（<code>app.js</code>）里的游戏陪伴编辑器已同步人话化：占位「专属陪伴提示词：描述陪伴风格…（双工模式下注入模型上下文）」→「达妮娅怎么陪你：写写她该留意画面里的什么、用什么语气跟你聊、什么情况别打扰」。保存提示「双工立即生效」→「达妮娅下次陪你玩这个游戏就用新方式啦」。</div>
+
+
+
+  <div class="sec">四、设计令牌映射</div>
+
+  <div class="grid">
+
+    <div class="note">
+
+      <b>渐变脊</b><br>
+
+      <code>linear-gradient(180deg, var(--accent-1) #2DD4FF, var(--accent-2) #A06BFF)</code><br><br>
+
+      <b>卡片底 / 描边</b><br>
+
+      <code>var(--surface)</code> · <code>var(--line)</code>
+
+    </div>
+
+    <div class="note">
+
+      <b>小标题</b><br>
+
+      <code>var(--accent-1)</code> 青 +  前缀，字重 700<br><br>
+
+      <b>悬浮</b><br>
+
+      <code>translateY(-2px)</code> + <code>var(--shadow-2)</code>
+
+    </div>
+
+  </div>
+
+</div>
+
+<script src="/redesign/theme_manager.js?v=20261013d"></script>
+</body>
+
+</html>
+

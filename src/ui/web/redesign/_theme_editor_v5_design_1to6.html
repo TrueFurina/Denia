@@ -1,0 +1,341 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>主题编辑器 v5 · 设计稿(1-6) · 基于真身副本</title>
+<!-- 与软件内完全一致的 5 个样式表：保证外壳/比例/画风一模一样 -->
+<link rel="stylesheet" href="design_tokens.css?v=20261007g" />
+<link rel="stylesheet" href="ui_shared.css?v=20261006c" />
+<link rel="stylesheet" href="home.css?v=20261005h" />
+<link rel="stylesheet" href="pages.css?v=20261005h" />
+<link rel="stylesheet" href="_theme_editor_v5.css?v=20" />
+
+<!-- ===================== 仅本设计稿用到的「新增部件」样式（沿用真实令牌） ===================== -->
+<style>
+  /* —— ① 顶栏新增：导出/导入 JSON（复用 .tv5-btn） —— */
+  .tv5-bar-io{ display:flex; gap:8px; }
+
+  /* —— ④ 底部轨道：图位 / 页面壁纸 分段切换 —— */
+  .tv5x-mode{ display:inline-flex; gap:2px; padding:3px; border-radius:10px;
+    background:var(--surface-2); border:1px solid var(--line); flex:none; }
+  .tv5x-mode button{ border:0; background:transparent; color:var(--ink-3);
+    font-size:12px; padding:6px 12px; border-radius:8px; cursor:pointer; }
+  .tv5x-mode button.on{ background:var(--surface); color:var(--ink);
+    box-shadow:0 1px 3px rgba(0,0,0,.10); font-weight:500; }
+  .tv5x-rail-note{ font-size:11px; color:var(--ink-3); margin-left:4px; }
+
+  /* —— ④ 页面壁纸模式：子页卡片横排 —— */
+  .tv5x-pages{ display:flex; gap:10px; flex:1 1 auto; min-width:0; overflow-x:auto; padding-bottom:2px; }
+  .tv5x-page{ flex:0 0 150px; border:1px solid var(--line); border-radius:12px;
+    background:var(--surface-2); overflow:hidden; }
+  .tv5x-page.on{ border-color:var(--accent-1); box-shadow:0 0 0 2px var(--accent-soft-1); }
+  .tv5x-page-thumb{ height:74px; background-size:cover; background-position:center;
+    background-color:var(--surface-3); display:flex; align-items:center; justify-content:center;
+    font-size:11px; color:var(--ink-3); border-bottom:1px solid var(--line); position:relative; }
+  .tv5x-page-thumb.has{ color:transparent; }
+  .tv5x-page-b{ display:flex; align-items:center; gap:6px; padding:7px 8px; }
+  .tv5x-page-b b{ font-size:12px; font-weight:500; }
+  .tv5x-page-b .tv5-act-mini{ flex:1 1 auto; padding:5px 8px; font-size:11px; }
+  .tv5x-page-mov{ margin-left:auto; display:flex; align-items:center; gap:4px; font-size:10px; color:var(--ink-3); }
+  /* 动效开关（小） */
+  .tv5x-mini-sw{ width:30px; height:17px; border-radius:999px; background:var(--line-2);
+    position:relative; cursor:pointer; flex:none; transition:background .16s; }
+  .tv5x-mini-sw::after{ content:""; position:absolute; top:2px; left:2px; width:13px; height:13px;
+    border-radius:50%; background:#fff; transition:transform .16s; box-shadow:0 1px 2px rgba(0,0,0,.25); }
+  .tv5x-mini-sw.on{ background:var(--accent-1); }
+  .tv5x-mini-sw.on::after{ transform:translateX(13px); }
+
+  /* —— ② 高级选项面板（可折叠，放在「我的主题」段内） —— */
+  .tv5x-adv{ margin-top:10px; border:1px solid var(--line); border-radius:12px;
+    background:var(--surface); overflow:hidden; }
+  .tv5x-adv-h{ display:flex; align-items:center; gap:8px; padding:10px 12px; cursor:pointer;
+    font-size:13px; font-weight:500; }
+  .tv5x-adv-h .tv5x-caret{ margin-left:auto; transition:transform .2s; color:var(--ink-3); }
+  .tv5x-adv.open .tv5x-caret{ transform:rotate(90deg); }
+  .tv5x-adv-b{ display:none; padding:4px 12px 12px; border-top:1px solid var(--line); }
+  .tv5x-adv.open .tv5x-adv-b{ display:block; }
+  .tv5x-row{ display:flex; align-items:center; gap:10px; padding:8px 0; }
+  .tv5x-row > label{ flex:0 0 96px; font-size:12px; color:var(--ink-2); }
+  .tv5x-row .tv5x-val{ margin-left:auto; font-size:11px; color:var(--ink-3); min-width:42px; text-align:right; }
+  .tv5x-range{ flex:1 1 auto; accent-color:var(--accent-1); }
+  .tv5x-seg{ display:inline-flex; gap:2px; padding:2px; border-radius:8px; background:var(--surface-2); }
+  .tv5x-seg button{ border:0; background:transparent; color:var(--ink-3); font-size:11px;
+    padding:4px 9px; border-radius:6px; cursor:pointer; }
+  .tv5x-seg button.on{ background:var(--surface); color:var(--ink); box-shadow:0 1px 2px rgba(0,0,0,.10); }
+  .tv5x-switch{ width:38px; height:20px; border-radius:999px; background:var(--line-2);
+    position:relative; cursor:pointer; flex:none; transition:background .16s; }
+  .tv5x-switch::after{ content:""; position:absolute; top:2px; left:2px; width:16px; height:16px;
+    border-radius:50%; background:#fff; transition:transform .16s; box-shadow:0 1px 2px rgba(0,0,0,.25); }
+  .tv5x-switch.on{ background:var(--accent-1); }
+  .tv5x-switch.on::after{ transform:translateX(18px); }
+  .tv5x-select{ flex:1 1 auto; font-size:12px; padding:5px 8px; border-radius:8px;
+    border:1px solid var(--line); background:var(--surface-2); color:var(--ink); }
+
+  /* —— ③ 贴纸库（左栏新增第 4 段） —— */
+  .tv5x-stickers{ display:grid; grid-template-columns:repeat(4,1fr); gap:8px; margin-top:4px; }
+  .tv5x-sticker{ aspect-ratio:1/1; border-radius:10px; background:var(--surface-2);
+    border:1px solid var(--line); display:flex; align-items:center; justify-content:center;
+    font-size:24px; cursor:grab; }
+  .tv5x-sticker:hover{ border-color:var(--accent-1); }
+  .tv5x-up{ width:100%; margin-top:8px; }
+
+  /* —— 预览区：静态对话页示意（仅设计稿用，真实环境由 iframe 渲染） —— */
+  #tv5FrameHost{ transform:scale(.66); }   /* 模拟相机自适应，让 1080×740 页缩进舞台 */
+  .tv5x-chat{ position:absolute; left:0; top:0; width:1080px; height:740px;
+    border-radius:18px; overflow:hidden; background:var(--bg);
+    display:flex; box-shadow:0 18px 48px rgba(0,0,0,.16); font-family:var(--font); color:var(--ink); }
+  .tv5x-side{ width:260px; background:var(--bg-2); border-right:1px solid var(--line);
+    display:flex; flex-direction:column; padding:16px; gap:10px; }
+  .tv5x-brand{ display:flex; align-items:center; gap:10px; font-weight:600; font-size:15px; }
+  .tv5x-brand .av{ width:34px; height:34px; border-radius:10px; background:linear-gradient(135deg,var(--accent-1),var(--accent-2)); }
+  .tv5x-nav{ display:flex; flex-direction:column; gap:4px; margin-top:6px; }
+  .tv5x-nav span{ padding:8px 10px; border-radius:9px; font-size:13px; color:var(--ink-2); }
+  .tv5x-nav span.on{ background:var(--accent-soft-1); color:var(--accent-1); font-weight:500; }
+  .tv5x-side-foot{ margin-top:auto; height:70px; border:1px dashed var(--line-2); border-radius:10px;
+    display:flex; align-items:center; justify-content:center; font-size:11px; color:var(--ink-3); }
+  .tv5x-main{ flex:1 1 auto; display:flex; flex-direction:column; min-width:0; }
+  .tv5x-mhead{ height:56px; border-bottom:1px solid var(--line); display:flex; align-items:center;
+    padding:0 18px; gap:10px; font-weight:600; background:var(--surface); }
+  .tv5x-mbody{ flex:1 1 auto; display:flex; min-height:0; }
+  .tv5x-thread{ flex:1 1 auto; padding:20px; display:flex; flex-direction:column; gap:14px; overflow:hidden; }
+  .tv5x-bub{ max-width:62%; padding:11px 14px; border-radius:14px; font-size:14px; line-height:1.5;
+    background:var(--surface); border:1px solid var(--line); position:relative; }
+  .tv5x-bub.me{ align-self:flex-end; background:var(--accent-soft-1); border-color:transparent; }
+  .tv5x-stage{ width:330px; background:var(--bg-2); border-left:1px solid var(--line);
+    display:flex; align-items:center; justify-content:center; position:relative; }
+  .tv5x-stage .stagebox{ width:240px; height:430px; border-radius:18px;
+    background:linear-gradient(160deg, var(--accent-soft-1), var(--surface-3));
+    border:1px solid var(--line); display:flex; align-items:center; justify-content:center;
+    font-size:13px; color:var(--ink-3); }
+  .tv5x-mfoot{ border-top:1px solid var(--line); padding:14px 18px; background:var(--surface); }
+  .tv5x-input{ height:44px; border-radius:12px; border:1px solid var(--line);
+    background:var(--bg-2); display:flex; align-items:center; padding:0 14px; color:var(--ink-3); font-size:13px; }
+
+  /* —— ⑤ 贴纸落点（覆盖在对话页示意上，随相机一起缩放） —— */
+  .tv5x-on{ position:absolute; width:54px; height:54px; border-radius:14px;
+    background:var(--surface); border:1px solid var(--line-2); box-shadow:0 6px 18px rgba(0,0,0,.18);
+    display:flex; align-items:center; justify-content:center; font-size:28px; }
+  .tv5x-on .tag{ position:absolute; top:-9px; left:-9px; background:var(--accent-1); color:var(--on-accent);
+    font-size:10px; width:18px; height:18px; border-radius:50%; display:grid; place-items:center; }
+  .tv5x-on.a1{ left:14px; bottom:14px; }                 /* 侧栏底部 */
+  .tv5x-on.a2{ right:360px; top:120px; }                  /* 气泡角标 */
+  .tv5x-on.a3{ left:300px; bottom:78px; }                 /* 输入栏上方 */
+  .tv5x-on.a4{ right:36px; bottom:40px; }                 /* 舞台角落 */
+</style>
+</head>
+<body>
+<div id="tv5">
+
+  <!-- 顶栏 -->
+  <header id="tv5Bar">
+    <button class="tv5-btn tv5-back" id="tv5Back" title="返回" type="button">← 返回</button>
+    <div class="tv5-title" id="tv5Name">主题 · <b>我的主题</b></div>
+    <span class="tv5-state" id="tv5State">已保存</span>
+    <div class="tv5-sp"></div>
+    <!-- ① 新增：导出 / 导入 JSON -->
+    <div class="tv5-bar-io">
+      <button class="tv5-btn" id="tv5Export" type="button">导出 JSON</button>
+      <button class="tv5-btn" id="tv5Import" type="button">导入 JSON</button>
+    </div>
+    <button class="tv5-btn" id="tv5Undo" type="button">撤销</button>
+    <button class="tv5-btn" id="tv5Reset" type="button">全部清空</button>
+    <button class="tv5-btn primary" id="tv5Done" type="button">完成</button>
+  </header>
+
+  <div id="tv5Body">
+
+    <!-- 左栏 -->
+    <aside id="tv5Lib">
+      <section class="tv5-sec">
+        <h3><span class="tv5-step">1</span> 应用到角色</h3>
+        <div class="tv5-chars" id="tv5Bind">
+          <div class="tv5-char on"><span class="tv5-char-av">丹</span><b>丹妮亚</b><em>已绑定</em></div>
+        </div>
+        <p class="tv5-note" id="tv5BindNote">已绑定 1 个角色</p>
+      </section>
+
+      <section class="tv5-sec">
+        <h3><span class="tv5-step">2</span> 快速配色</h3>
+        <div class="tv5-cards" id="tv5Presets">
+          <div class="tv5-card on"><div class="tv5-card-prev" style="background:linear-gradient(135deg,#F6DDE6,#BFA7D6)"></div><div class="tv5-card-t"><b>蜜糖</b><em>预设</em></div></div>
+          <div class="tv5-card"><div class="tv5-card-prev" style="background:linear-gradient(160deg,#0E1A2B,#2B2A6B)"></div><div class="tv5-card-t"><b>夜航</b><em>预设</em></div></div>
+          <div class="tv5-card"><div class="tv5-card-prev" style="background:linear-gradient(135deg,#F2F5F8,#C6D2DC)"></div><div class="tv5-card-t"><b>霜白</b><em>预设</em></div></div>
+          <div class="tv5-card"><div class="tv5-card-prev" style="background:linear-gradient(135deg,#E7F0E4,#9FC3A6)"></div><div class="tv5-card-t"><b>森语</b><em>预设</em></div></div>
+        </div>
+        <div class="tv5-sws">
+          <span class="tv5-rail-t">AI 配色 · 看图取</span>
+          <div class="tv5-sw-row" id="tv5Sw">
+            <span class="tv5-sw on"><i style="background:#D9738F"></i><span>主色</span></span>
+            <span class="tv5-sw"><i style="background:#8B83B0"></i><span>辅色</span></span>
+          </div>
+        </div>
+        <p class="tv5-note" id="tv5PresetNote">只换配色，不动你的图。</p>
+      </section>
+
+      <section class="tv5-sec">
+        <h3><span class="tv5-step">3</span> 我的主题</h3>
+        <div class="tv5-mine on" id="tv5Mine">
+          <div class="tv5-card-t"><b>我的主题</b><em>4 张图 · 配色=蜜糖</em></div>
+          <div class="tv5-mine-src">背景 / 立绘 / 头像 / 角色卡背景 已设置</div>
+        </div>
+        <p class="tv5-note tv5-note-hero" id="tv5ColorNote">导入图片后，会自动按你的图算出配套主题色</p>
+
+        <!-- ② 高级选项面板（可折叠） -->
+        <div class="tv5x-adv open" id="tv5Adv">
+          <div class="tv5x-adv-h" onclick="document.getElementById('tv5Adv').classList.toggle('open')">
+            高级选项 <span class="tv5x-caret">▶</span>
+          </div>
+          <div class="tv5x-adv-b">
+            <div class="tv5x-row"><label>背景模糊度</label><input class="tv5x-range" type="range" min="0" max="30" value="0"><span class="tv5x-val">0px</span></div>
+            <div class="tv5x-row"><label>圆角半径</label><input class="tv5x-range" type="range" min="0" max="40" value="18"><span class="tv5x-val">18px</span></div>
+            <div class="tv5x-row"><label>不透明度</label><input class="tv5x-range" type="range" min="20" max="100" value="100"><span class="tv5x-val">100%</span></div>
+            <div class="tv5x-row"><label>填充模式</label>
+              <span class="tv5x-seg"><button class="on">cover</button><button>contain</button><button>repeat</button></span>
+            </div>
+            <div class="tv5x-row"><label>推近时长</label><input class="tv5x-range" type="range" min="0" max="100" value="58"><span class="tv5x-val">.58s</span></div>
+            <div class="tv5x-row"><label>过渡曲线</label>
+              <span class="tv5x-seg"><button class="on">标准</button><button>弹性</button><button>线性</button></span>
+            </div>
+            <div class="tv5x-row"><label>取色强度</label><input class="tv5x-range" type="range" min="0" max="100" value="70"><span class="tv5x-val">70%</span></div>
+            <div class="tv5x-row"><label>主色锁定</label><span class="tv5x-switch on"></span><span class="tv5x-val">开</span></div>
+            <div class="tv5x-row"><label>缺失图占位</label>
+              <select class="tv5x-select"><option>纯色占位</option><option>渐变占位</option><option>默认图</option></select>
+            </div>
+            <div class="tv5x-row"><label>暗亮分别定制</label><span class="tv5x-switch"></span><span class="tv5x-val">关</span></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ③ 贴纸库（新增第 4 段） -->
+      <section class="tv5-sec">
+        <h3><span class="tv5-step">4</span> 贴纸库</h3>
+        <p class="tv5-note">把表情包 / 贴纸拖到右侧预览的 A1–A4 落点。每张可独立调位置·缩放·透明度。</p>
+        <div class="tv5x-stickers">
+          <div class="tv5x-sticker">😊</div><div class="tv5x-sticker">🌸</div>
+          <div class="tv5x-sticker">⭐</div><div class="tv5x-sticker">🐱</div>
+          <div class="tv5x-sticker">💡</div><div class="tv5x-sticker">🍰</div>
+          <div class="tv5x-sticker">🔥</div><div class="tv5x-sticker">🌈</div>
+        </div>
+        <button class="tv5-btn tv5x-up" type="button">+ 上传贴纸 / 从贴纸包选</button>
+        <p class="tv5-note tv5-note-hero">纯本地档只显示本地贴纸；云端贴纸包需联网（受档位门控）。</p>
+      </section>
+    </aside>
+
+    <!-- 中栏：预览 -->
+    <main id="tv5Prev">
+      <div class="tv5-prevbar">
+        <!-- ⑥ 场景标签扩展为全部子页 -->
+        <span class="tv5-scenes">
+          <button class="tv5-scene on" type="button">对话页</button>
+          <button class="tv5-scene" type="button">角色页</button>
+          <button class="tv5-scene" type="button">日报周报</button>
+          <button class="tv5-scene" type="button">记忆库</button>
+          <button class="tv5-scene" type="button">设置</button>
+          <button class="tv5-scene" type="button">知识库</button>
+          <button class="tv5-scene" type="button">开发者</button>
+          <button class="tv5-scene" type="button">软件档案</button>
+        </span>
+        <button class="tv5-btn tv5-global" id="tv5Global" type="button">← 回到全局</button>
+        <span class="tv5-prevhint" id="tv5PrevHint">点下方任一项，预览会自动放大到那一块</span>
+      </div>
+      <div id="tv5Stage">
+        <div id="tv5FrameHost">
+          <!-- 静态对话页示意（设计稿用；真实环境此处为 iframe 渲染的对话页） -->
+          <div class="tv5x-chat">
+            <div class="tv5x-side">
+              <div class="tv5x-brand"><span class="av"></span>丹妮亚</div>
+              <div class="tv5x-nav">
+                <span class="on">对话</span><span>角色</span><span>记忆</span><span>设置</span>
+              </div>
+              <div class="tv5x-side-foot">侧栏底部（A1 贴纸落点）</div>
+            </div>
+            <div class="tv5x-main">
+              <div class="tv5x-mhead">今日对话</div>
+              <div class="tv5x-mbody">
+                <div class="tv5x-thread">
+                  <div class="tv5x-bub">今天天气真好，要不要出去走走？<span style="position:absolute;right:-10px;top:-10px;font-size:18px">😊</span></div>
+                  <div class="tv5x-bub me">好呀，正好想拍点照片～</div>
+                  <div class="tv5x-bub">那我们去公园吧，带上相机。</div>
+                </div>
+                <div class="tv5x-stage">
+                  <div class="stagebox">Live2D 舞台（A4 贴纸落点）</div>
+                </div>
+              </div>
+              <div class="tv5x-mfoot">
+                <div class="tv5x-input">输入消息…（A3 贴纸落点在此上方）</div>
+              </div>
+            </div>
+          </div>
+
+          <!-- ⑤ 贴纸落点（A1–A4），随相机缩放覆盖在对话页上 -->
+          <div class="tv5x-on a1"><span class="tag">A1</span>🌸</div>
+          <div class="tv5x-on a2"><span class="tag">A2</span>⭐</div>
+          <div class="tv5x-on a3"><span class="tag">A3</span>💡</div>
+          <div class="tv5x-on a4"><span class="tag">A4</span>🐱</div>
+        </div>
+        <div id="tv5Dim"></div>
+        <div id="tv5Hot"></div>
+        <div id="tv5Act"></div>
+      </div>
+    </main>
+  </div>
+
+  <!-- 底：部位轨（④ 页面壁纸模式展示） -->
+  <footer id="tv5Rail">
+    <div class="tv5x-mode">
+      <button type="button">图位</button>
+      <button class="on" type="button">页面壁纸</button>
+    </div>
+    <span class="tv5x-rail-note">（图位模式不变，此处展示新增的「页面壁纸」模式）</span>
+    <div class="tv5x-pages">
+      <div class="tv5x-page on">
+        <div class="tv5x-page-thumb has" style="background:linear-gradient(135deg,#F6DDE6,#BFA7D6)">对话页</div>
+        <div class="tv5x-page-b"><b>对话页</b></div>
+        <div class="tv5x-page-b"><button class="tv5-act-mini" type="button">选壁纸</button><span class="tv5x-mini-sw on"></span><span class="tv5x-page-mov">动态</span></div>
+      </div>
+      <div class="tv5x-page">
+        <div class="tv5x-page-thumb">角色页</div>
+        <div class="tv5x-page-b"><b>角色页</b></div>
+        <div class="tv5x-page-b"><button class="tv5-act-mini" type="button">选壁纸</button><span class="tv5x-mini-sw"></span><span class="tv5x-page-mov">动态</span></div>
+      </div>
+      <div class="tv5x-page">
+        <div class="tv5x-page-thumb">日报周报</div>
+        <div class="tv5x-page-b"><b>日报周报</b></div>
+        <div class="tv5x-page-b"><button class="tv5-act-mini" type="button">选壁纸</button><span class="tv5x-mini-sw"></span><span class="tv5x-page-mov">动态</span></div>
+      </div>
+      <div class="tv5x-page">
+        <div class="tv5x-page-thumb">记忆库</div>
+        <div class="tv5x-page-b"><b>记忆库</b></div>
+        <div class="tv5x-page-b"><button class="tv5-act-mini" type="button">选壁纸</button><span class="tv5x-mini-sw"></span><span class="tv5x-page-mov">动态</span></div>
+      </div>
+      <div class="tv5x-page">
+        <div class="tv5x-page-thumb">设置</div>
+        <div class="tv5x-page-b"><b>设置</b></div>
+        <div class="tv5x-page-b"><button class="tv5-act-mini" type="button">选壁纸</button><span class="tv5x-mini-sw"></span><span class="tv5x-page-mov">动态</span></div>
+      </div>
+      <div class="tv5x-page">
+        <div class="tv5x-page-thumb">知识库</div>
+        <div class="tv5x-page-b"><b>知识库</b></div>
+        <div class="tv5x-page-b"><button class="tv5-act-mini" type="button">选壁纸</button><span class="tv5x-mini-sw"></span><span class="tv5x-page-mov">动态</span></div>
+      </div>
+      <div class="tv5x-page">
+        <div class="tv5x-page-thumb">开发者</div>
+        <div class="tv5x-page-b"><b>开发者</b></div>
+        <div class="tv5x-page-b"><button class="tv5-act-mini" type="button">选壁纸</button><span class="tv5x-mini-sw"></span><span class="tv5x-page-mov">动态</span></div>
+      </div>
+      <div class="tv5x-page">
+        <div class="tv5x-page-thumb">软件档案</div>
+        <div class="tv5x-page-b"><b>软件档案</b></div>
+        <div class="tv5x-page-b"><button class="tv5-act-mini" type="button">选壁纸</button><span class="tv5x-mini-sw"></span><span class="tv5x-page-mov">动态</span></div>
+      </div>
+    </div>
+  </footer>
+</div>
+<div id="tv5Tip" role="status" aria-live="polite"></div>
+
+<!-- 注：本文件是 _theme_editor_v5.html 的设计稿副本，仅用于验收 ①–⑥ 六项改进；
+     外壳/比例/画风与软件内完全一致（复用真实 CSS），无后端脚本，纯静态可评审。
+     真实代码改动后续落到 _theme_editor_v5.html / .js / .css。 -->
+</body>
+</html>

@@ -1,0 +1,227 @@
+# -*- coding: utf-8 -*-
+"""CosyVoice2-0.5B 本地语音克隆服务（独立进程，供主程序 HTTP 调用）。
+
+启动: cosyvoice_venv/Scripts/python.exe -B src/voice/cosyvoice_server.py
+接口:
+  GET  /health                        -> 服务/模型状态
+  POST /tts  {"text": str, "ref_wav_path": str, "ref_text"?: str}
+                                     -> wav bytes（零样本克隆：参考音频 + 对应文本）
+说明:
+  - 参考音频任意采样率（内部自动重采样 16kHz），时长 <= 30s
+  - text_frontend=False：Windows 无 pynini/ttsfrd，跳过文本前端（音素级略有
+    差异但中文可接受），避免文本归一化报错
+  - 端口 9883，环境变量 COSYVOICE_PORT 可覆盖
+"""
+import glob
+import io
+import json
+import os
+import sys
+import wave
+
+import numpy as np
+
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))  # src/voice
+PROJECT_DIR = os.path.dirname(os.path.dirname(BASE_DIR))  # 项目根
+REPO_DIR = os.path.join(PROJECT_DIR, "cosyvoice_repo")  # CosyVoice 源码仓库
+MATCHA_DIR = os.path.join(REPO_DIR, "third_party", "Matcha-TTS")  # matcha 依赖
+for _p in (REPO_DIR, MATCHA_DIR):
+    if _p not in sys.path:
+        sys.path.insert(0, _p)
+
+def _find_model_dir() -> str:
+    """解析 CosyVoice2 本地模型目录（兼容 modelscope 缓存与已有 HF 缓存布局）。
+
+    modelscope 下载落到 <root>/models--iic--CosyVoice2-0.5B/snapshots/<rev>/；
+    早期手动布局为 <root>/models/iic--CosyVoice2-0.5B/snapshots/master。
+    两种都认，取最新 snapshot；都没有时回退原硬编码 master 路径。
+    """
+    cache_root = os.path.join(PROJECT_DIR, "cosyvoice_models")
+    for pattern in (
+        os.path.join(cache_root, "models--iic--CosyVoice2-0.5B", "snapshots", "*"),
+        os.path.join(cache_root, "models", "iic--CosyVoice2-0.5B", "snapshots", "*"),
+    ):
+        snaps = sorted(glob.glob(pattern))
+        if snaps:
+            return snaps[-1]
+    return os.path.join(
+        PROJECT_DIR, "cosyvoice_models", "models", "iic--CosyVoice2-0.5B", "snapshots", "master"
+    )
+
+
+MODEL_DIR = os.environ.get("COSYVOICE_MODEL_DIR", _find_model_dir())
+SAMPLE_RATE = 24000
+
+from ref_audio_util import ensure_usable_wav  # noqa: E402（sys.path[0] 为脚本目录）
+
+from fastapi import FastAPI
+from fastapi.responses import Response, StreamingResponse
+
+# torchaudio 2.11 移除 backend=soundfile 参数、强制走 torchcodec（未安装）。
+# monkey-patch load() 用 soundfile 读取，避免安装 torchcodec / 破坏 venv 共享。
+def _torchaudio_load_soundfile(path, backend=None):
+    import soundfile as sf
+    import torch
+
+    data, sr = sf.read(path, dtype="float32")
+    # torchaudio.load 语义返回 (channels, frames)；sf.read 单声道返回 1D
+    data = data[None, :] if data.ndim == 1 else data.T
+    return torch.from_numpy(data), sr
+
+
+try:
+    import torchaudio
+
+    if hasattr(torchaudio, "load") and not hasattr(torchaudio, "_cv_patched"):
+        torchaudio.load = _torchaudio_load_soundfile
+        torchaudio._cv_patched = True
+except ImportError:  # noqa: BLE001
+    pass
+
+app = FastAPI(title="CosyVoice2 Voice Clone Service")
+_tts = None
+
+
+def _get_tts():
+    global _tts
+    if _tts is None:
+        import torch
+        from cosyvoice.cli.cosyvoice import CosyVoice2
+
+        print(f"Loading CosyVoice2 from {MODEL_DIR} ...", file=sys.stderr, flush=True)
+        try:
+            _tts = CosyVoice2(MODEL_DIR, load_jit=False, load_trt=False, fp16=True)
+        except Exception as e:  # noqa: BLE001
+            print(f"fp16 load failed ({e}), fallback fp32", file=sys.stderr, flush=True)
+            _tts = CosyVoice2(MODEL_DIR, load_jit=False, load_trt=False, fp16=False)
+        _tts.sample_rate = SAMPLE_RATE
+        print("CosyVoice2 loaded", file=sys.stderr, flush=True)
+    return _tts
+
+
+def _wav_bytes(tensor) -> bytes:
+    data = np.asarray(tensor.detach().cpu().numpy(), dtype=np.float32).reshape(-1)
+    data = np.clip(data, -1.0, 1.0)
+    pcm = (data * 32767).astype(np.int16)
+    buf = io.BytesIO()
+    with wave.open(buf, "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(SAMPLE_RATE)
+        w.writeframes(pcm.tobytes())
+    return buf.getvalue()
+
+
+def _tensor_to_pcm(tensor) -> bytes:
+    """tensor(float32) → int16 PCM 字节（24kHz 单声道）。"""
+    data = np.asarray(tensor.detach().cpu().numpy(), dtype=np.float32).reshape(-1)
+    data = np.clip(data, -1.0, 1.0)
+    return (data * 32767).astype(np.int16).tobytes()
+
+
+def _pcm_stream(tts_model, text: str, ref_text: str, ref_wav: str, instruct: str = None):
+    """流式合成：逐块 yield int16 PCM（HTTP chunked），首块 1~2s 即可播放。
+
+    CosyVoice2 stream=True 走 LLM 逐 token 解码 + 逐块 flow/hift 出音频，
+    每块是完整可播的一段 PCM，客户端边收边播即可实现"边说边出"。
+    传 instruct（自然语言指令，如"用慵懒、慢悠悠的语气说"）则走 inference_instruct2
+    做情绪/风格控制（参考音仍用于克隆音色）。
+    """
+    try:
+        if instruct:
+            gen = tts_model.inference_instruct2(
+                text, instruct, ref_wav, stream=True, speed=1.0, text_frontend=False
+            )
+        else:
+            gen = tts_model.inference_zero_shot(
+                text, ref_text, ref_wav, stream=True, speed=1.0, text_frontend=False
+            )
+        for output in gen:
+            pcm = _tensor_to_pcm(output["tts_speech"])
+            if pcm:
+                yield pcm
+    except Exception:  # noqa: BLE001
+        import traceback
+
+        traceback.print_exc()
+        return
+
+
+def _err(msg: str, code: int) -> Response:
+    return Response(json.dumps({"error": msg}, ensure_ascii=False), status_code=code,
+                    media_type="application/json")
+
+
+@app.get("/health")
+def health():
+    return {
+        "status": "ok" if _tts is not None else "loading",
+        "model": "CosyVoice2-0.5B",
+        "loaded": _tts is not None,
+        "sample_rate": SAMPLE_RATE,
+    }
+
+
+@app.get("/load")
+def load():
+    """触发并等待模型加载完成（懒加载）。主程序切换角色时调用，用于 UI 加载提醒。"""
+    _get_tts()
+    return {"loaded": _tts is not None}
+
+
+@app.post("/tts")
+def tts(req: dict):
+    text = (req.get("text") or "").strip()
+    if not text:
+        return _err("text 不能为空", 400)
+    ref_wav = req.get("ref_wav_path") or None
+    ref_text = req.get("ref_text") or None
+    if not ref_wav or not os.path.exists(ref_wav):
+        return _err("CosyVoice2 克隆需要参考音频 ref_wav_path", 400)
+
+    converted = None
+    try:
+        converted = ensure_usable_wav(ref_wav)  # 无效参考音频直接报错，不再乱叫
+        tts_model = _get_tts()
+        instruct = req.get("instruct") or None  # 情绪/风格自然语言指令（可选）
+        if req.get("stream"):
+            # 流式：chunked PCM，客户端边收边播（首块延迟低）
+            return StreamingResponse(
+                _pcm_stream(tts_model, text, ref_text or "", converted, instruct),
+                media_type="application/octet-stream",
+                headers={"X-Cosy-Sample-Rate": str(SAMPLE_RATE)},
+            )
+        chunks = []
+        if instruct:
+            _gen = tts_model.inference_instruct2(
+                text, instruct, converted, stream=False, speed=1.0, text_frontend=False
+            )
+        else:
+            _gen = tts_model.inference_zero_shot(
+                text, ref_text or "", converted, stream=False, speed=1.0, text_frontend=False
+            )
+        for output in _gen:
+            chunks.append(output["tts_speech"])
+        if not chunks:
+            return _err("CosyVoice2 返回空音频", 500)
+        wav = chunks[0] if len(chunks) == 1 else __import__("torch").cat(chunks, dim=1)
+        return Response(_wav_bytes(wav), media_type="audio/wav")
+    except Exception as e:  # noqa: BLE001
+        import traceback
+
+        traceback.print_exc()
+        return _err(str(e), 500)
+    finally:
+        if converted is not None:
+            try:
+                os.unlink(converted)
+            except OSError:
+                pass
+
+
+if __name__ == "__main__":
+    import uvicorn
+
+    port = int(os.environ.get("COSYVOICE_PORT", "9883"))
+    print(f"CosyVoice2 server listening on 127.0.0.1:{port}", file=sys.stderr, flush=True)
+    uvicorn.run(app, host="127.0.0.1", port=port, log_level="warning")

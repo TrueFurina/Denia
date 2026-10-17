@@ -1,0 +1,19 @@
+<!DOCTYPE html><html><head><meta charset=utf-8>
+<style>body{margin:0;font:14px monospace} #o{padding:16px;white-space:pre} iframe{position:absolute;left:-9999px;width:1600px;height:900px;border:0}</style>
+</head><body><pre id=o>…</pre><iframe id=f src="/mood_demo.html"></iframe>
+<script>setTimeout(function(){
+var d=document.getElementById('f').contentDocument;
+var out=[];
+[['#live','立绘框'],['#live img','立绘图'],['#right','右栏']].forEach(function(p){
+ var e=d.querySelector(p[0]); if(!e){out.push(p[1]+' 缺失');return}
+ var r=e.getBoundingClientRect();
+ out.push(p[1]+': x='+Math.round(r.left)+' y='+Math.round(r.top)+' w='+Math.round(r.width)+' h='+Math.round(r.height)+' bottom='+Math.round(r.bottom));
+});
+var L=d.querySelector('#live').getBoundingClientRect();
+var I=d.querySelector('#live img').getBoundingClientRect();
+out.push('');
+out.push('溢出检查: 立绘 bottom='+Math.round(I.bottom)+' vs 框 bottom='+Math.round(L.bottom)+'  → '+(I.bottom<=L.bottom+1?'✓ 不溢出':'✗ 溢出'));
+out.push('        立绘 top='+Math.round(I.top)+' vs 框 top='+Math.round(L.top)+'  → '+(I.top>=L.top-1?'✓ 不溢出':'✗ 溢出'));
+document.getElementById('o').textContent=out.join('
+');
+},2600);</script></body></html>

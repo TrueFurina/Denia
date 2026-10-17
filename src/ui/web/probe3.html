@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head><meta charset="utf-8" /><title>probe3</title>
+<style>
+ body{margin:0;font:13px/1.6 ui-monospace,Consolas,monospace;background:#111;color:#eee}
+ #o{padding:14px;white-space:pre}
+ iframe{position:absolute;left:-99999px;width:430px;height:932px;border:0}
+</style></head>
+<body>
+<pre id="o">…</pre>
+<iframe id="f" src="/mood_demo.html"></iframe>
+<script>
+setTimeout(function () {
+  var d = document.getElementById('f').contentDocument;
+  var ow = document.getElementById('f').contentWindow;
+  var out = [];
+  out.push('window ' + ow.innerWidth + 'x' + ow.innerHeight +
+           '  竖屏=' + ow.document.body.classList.contains('portrait'));
+  var dm = d.querySelector('#demo');
+  var dr = dm.getBoundingClientRect();
+  out.push('#demo 显示 ' + Math.round(dr.width) + 'x' + Math.round(dr.height) +
+           '  左=' + Math.round(dr.left) + ' 右=' + Math.round(dr.right));
+  [['#right','右栏'],['#swRow','开关行'],['#sw','开关'],['#rows','节奏区'],
+   ['#rows .rrow .val','频次值']].forEach(function (p) {
+    var e = d.querySelector(p[0]);
+    if (!e) { out.push('  ' + p[1] + ' ✗缺失'); return; }
+    var r = e.getBoundingClientRect();
+    out.push('  ' + p[1].padEnd(6) + ' 左=' + Math.round(r.left) +
+             ' 右=' + Math.round(r.right) + ' 上=' + Math.round(r.top) +
+             ' 下=' + Math.round(r.bottom) + ' 宽=' + Math.round(r.width) +
+             ' 高=' + Math.round(r.height) +
+             (r.right > ow.innerWidth + 1 ? '  ← 超出右边界!' : ''));
+  });
+  document.getElementById('o').textContent = out.join('\n');
+}, 2600);
+</script>
+</body></html>

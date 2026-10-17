@@ -1,0 +1,3 @@
+# 把你的 Live2D 模型文件夹放到这个目录下（例如 my_danya/）
+# 然后在 live2d/live2d.js 的 MODELS 数组里登记入口文件路径：
+#   Cubism 4/5 导出的是 xxx.model3.json，Cubism 2 是 xxx.model.json

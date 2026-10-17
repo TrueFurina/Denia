@@ -1,0 +1,518 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-tm-pages="off">
+<head>
+<meta charset="utf-8" />
+<title>达妮娅 · 心情演示 v2</title>
+<!-- ★ 直接引用软件真实 CSS，不重写任何组件样式 -->
+<link rel="stylesheet" href="/redesign/design_tokens.css?v=20261013e" />
+<link rel="stylesheet" href="/redesign/ui_shared.css?v=20261013e" />
+<link rel="stylesheet" href="/redesign/home.css?v=4" />
+<link rel="stylesheet" href="/redesign/pages.css?v=14" />
+<link rel="stylesheet" href="/redesign/call_motion.css?v=1" />
+<style>
+/* ============================================================
+   仅做布局排版；组件样式全部来自软件真实 CSS
+   ★ 对齐规范（量过盒子后定的）：
+     · body 无外边距（否则整页缩 20px）
+     · 左右栏内边距统一 40px
+     · 右栏内部各块左缘 40px 对齐
+     · 右栏节奏：立绘 300 / 名字 / 心情块 / 开关 / 节奏频次贴底
+   ============================================================ */
+*{box-sizing:border-box}
+html,body{margin:0;padding:0;height:100%;overflow:hidden}
+body{font-family:var(--font-sans,"Microsoft YaHei",sans-serif);
+  background:var(--bg-1,#EEF1F7);color:var(--ink-1,#141B2B)}
+
+/* ---------- 左：聊天 ---------- */
+#left{flex:0 0 62%;display:flex;flex-direction:column;position:relative;overflow:hidden;
+  background:linear-gradient(180deg,#F8F9FD,#EFF2F8);
+  border-right:1px solid var(--line,rgba(15,22,40,.10))}
+#leftHead{padding:26px 40px 18px;border-bottom:1px solid var(--line,rgba(15,22,40,.10));
+  display:flex;align-items:baseline;gap:16px;flex:none}
+#leftHead h1{margin:0;font-size:34px;font-weight:750;letter-spacing:-.01em;line-height:1.2}
+#leftHead .sub{font-family:var(--font-mono,monospace);font-size:13px;letter-spacing:.18em;color:var(--ink-3,#98A1B4)}
+#scroll{flex:1;overflow:hidden;padding:34px 40px 26px;display:flex;flex-direction:column;gap:24px}
+
+.mrow{display:flex;gap:14px;align-items:flex-start}
+.mrow.me{flex-direction:row-reverse}
+.mav{width:56px;height:56px;border-radius:15px;flex:none;overflow:hidden;
+  background:var(--surface-3,rgba(15,22,40,.08));
+  border:1px solid var(--line-2,rgba(15,22,40,.13));display:grid;place-items:center}
+.mav img{width:100%;height:100%;object-fit:cover;object-position:50% 18%;display:block}
+.mav svg{width:30px;height:30px;fill:var(--ink-3,#98A1B4)}
+.mstack{display:flex;flex-direction:column;gap:9px;max-width:74%}
+.mrow.me .mstack{align-items:flex-end}
+.mmeta{display:flex;align-items:center;gap:10px;font-family:var(--font-mono,monospace);
+  font-size:14px;color:var(--ink-3,#98A1B4);line-height:1}
+.mmeta .nm{font-weight:700;color:var(--ink-2,#5A6478);font-family:var(--font-sans,sans-serif);font-size:16px}
+.mbub{padding:18px 24px;border-radius:20px;font-size:26px;line-height:1.5;background:#fff;
+  border:1px solid var(--line,rgba(15,22,40,.10));
+  box-shadow:0 18px 44px -24px rgba(20,27,43,.45);white-space:pre-wrap}
+.mrow.me .mbub{background:linear-gradient(120deg,rgba(160,107,255,.20),rgba(216,27,96,.16));
+  border-color:rgba(160,107,255,.40);box-shadow:0 20px 50px -24px rgba(160,107,255,.7)}
+.mbub.harsh{background:linear-gradient(120deg,rgba(224,53,90,.16),rgba(224,53,90,.10));
+  border-color:rgba(224,53,90,.42);box-shadow:0 22px 54px -24px rgba(224,53,90,.7)}
+.mbub.hurt{color:var(--ink-2,#5A6478)}
+.caret{display:inline-block;width:3px;height:26px;margin-left:4px;vertical-align:-4px;
+  border-radius:2px;background:var(--accent-1,#D81B60);animation:blink 1s steps(2,start) infinite}
+@keyframes blink{50%{opacity:0}}
+
+/* ---------- 右：心情 ---------- */
+#right{flex:1;position:relative;overflow:hidden;background:rgba(255,255,255,.98);
+  display:flex;flex-direction:column;padding:30px 40px 34px;
+  transition:background .7s ease,box-shadow .7s ease}
+#right.cold{background:linear-gradient(180deg,#FFF,#FFF0F3);
+  box-shadow:inset 0 0 120px rgba(224,53,90,.09)}
+
+/* ★ 辉光描边（动画定义；定位在 #moodWrap 那条规则里） */
+#focusRing.draw{animation:ringDraw 1.15s cubic-bezier(.4,0,.2,1) forwards}
+@keyframes ringDraw{
+  0%{opacity:0;clip-path:inset(100% 100% 0 0)}
+  18%{opacity:1;clip-path:inset(0 100% 0 0)}
+  55%{opacity:1;clip-path:inset(0 0 0 0)}
+  85%{opacity:1;clip-path:inset(0 0 0 0)}
+  100%{opacity:0;clip-path:inset(0 0 0 0)}}
+#focusRing.settle{animation:ringSettle .5s ease forwards}
+@keyframes ringSettle{
+  from{opacity:1;box-shadow:0 0 0 2px rgba(216,27,96,.75),0 0 30px rgba(216,27,96,.45)}
+  to{opacity:1;box-shadow:0 0 0 1px rgba(216,27,96,.35),0 0 12px rgba(216,27,96,.18)}}
+
+/* ★ flex:none —— 否则立绘区被压扁（实测 290 → 208） */
+#live{flex:none;height:262px;border-radius:20px;position:relative;overflow:hidden;
+  display:grid;place-items:center;
+  background:linear-gradient(150deg,rgba(45,212,255,.10),rgba(160,107,255,.10));
+  border:1px solid rgba(45,212,255,.24);transition:background .7s ease,border-color .7s ease}
+#right.cold #live{background:linear-gradient(150deg,rgba(224,53,90,.10),rgba(160,107,255,.08));
+  border-color:rgba(224,53,90,.26)}
+/* ★ 立绘图：完全装在框内（不裁、不溢出）
+   —— 用 max-height + max-width 双约束，等比缩放，站在框内底边 */
+#live{overflow:hidden}
+#live img{position:absolute;left:50%;bottom:6px;transform:translateX(-50%);
+  max-height:calc(100% - 12px);max-width:calc(100% - 40px);
+  width:auto;height:auto;display:block;
+  filter:drop-shadow(0 12px 30px rgba(20,27,43,.28));
+  animation:breathe 4.2s ease-in-out infinite}
+@keyframes breathe{
+  0%,100%{transform:translateX(-50%) scale(1) translateY(0)}
+  50%{transform:translateX(-50%) scale(1.012) translateY(-3px)}}
+
+#who{flex:none;display:flex;align-items:flex-start;justify-content:space-between;margin-top:20px}
+#who .nm{font-size:28px;font-weight:750;line-height:1.25}
+#who .on{font-family:var(--font-mono,monospace);font-size:13px;letter-spacing:.16em;font-weight:700;
+  color:#2DD4FF;display:flex;align-items:center;gap:7px;margin-top:7px;transition:color .6s ease}
+#who .on i{width:8px;height:8px;border-radius:4px;background:currentColor;
+  box-shadow:0 0 0 4px rgba(45,212,255,.2);animation:pulse 2s ease-in-out infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.45}}
+#right.cold #who .on{color:#E0355A}
+#right.cold #who .on i{box-shadow:0 0 0 4px rgba(224,53,90,.2)}
+#who .mem{font-size:17px;color:var(--ink-3,#98A1B4);line-height:1.6;padding-top:4px}
+#who .mem b{color:var(--ink-1,#141B2B);font-weight:700}
+
+/* ★ 辉光描边框：作为 #moodWrap 的子元素绝对定位 —— 结构上不可能错位 */
+#moodWrap{flex:none;margin-top:22px;position:relative}
+#focusRing{position:absolute;left:-14px;top:-14px;right:-14px;bottom:-14px;
+  border-radius:22px;pointer-events:none;opacity:0;
+  box-shadow:0 0 0 2px rgba(216,27,96,.75),0 0 30px rgba(216,27,96,.45),
+    inset 0 0 24px rgba(216,27,96,.12)}
+#moodTitle{display:flex;align-items:center;justify-content:space-between;font-size:17px;
+  color:var(--ink-3,#98A1B4);font-weight:600;line-height:1}
+#moodChip{display:inline-flex;align-items:center;gap:12px;margin-top:16px;padding:12px 28px;
+  border-radius:999px;background:rgba(45,212,255,.16);border:2px solid rgba(45,212,255,.55);
+  transition:background .5s ease,border-color .5s ease,box-shadow .5s ease,transform .5s ease}
+#moodChip .dot{width:13px;height:13px;border-radius:7px;background:#2DD4FF;flex:none;
+  box-shadow:0 0 0 6px rgba(45,212,255,.22);transition:background .5s ease,box-shadow .5s ease}
+#moodChip .lb{font-size:30px;font-weight:750;color:#2DD4FF;line-height:1.1;transition:color .5s ease}
+#moodChip.anger{background:rgba(224,53,90,.16);border-color:rgba(224,53,90,.6);
+  box-shadow:0 0 32px rgba(224,53,90,.4);animation:shake .5s ease}
+#moodChip.anger .dot{background:#E0355A;box-shadow:0 0 0 6px rgba(224,53,90,.24);animation:dotPop .6s ease}
+#moodChip.anger .lb{color:#E0355A}
+@keyframes shake{0%,100%{transform:translateX(0)}20%{transform:translateX(-6px)}
+  40%{transform:translateX(5px)}60%{transform:translateX(-4px)}80%{transform:translateX(2px)}}
+@keyframes dotPop{0%{transform:scale(1)}45%{transform:scale(1.5)}100%{transform:scale(1)}}
+
+#moodCard{margin-top:20px;font-size:21px;line-height:1.62;color:var(--ink-2,#5A6478);
+  min-height:68px;transition:color .6s ease}
+#right.cold #moodCard{color:#A8385A}
+#meta{margin-top:18px;font-size:19px;color:var(--ink-3,#98A1B4);line-height:1.5}
+#meta b,#progress b{font-weight:700;transition:color .6s ease;margin:0 2px}
+#meta .sep{color:var(--line,rgba(15,22,40,.14));margin:0 10px}
+#progress{margin-top:10px;font-size:19px;color:var(--ink-3,#98A1B4);line-height:1.5}
+#right.cold #meta b,#right.cold #progress b{color:#E0355A}
+
+/* ★ 开关行 */
+#swRow{flex:none;margin-top:28px;display:flex;align-items:center;justify-content:space-between}
+#swRow .lab{font-size:21px;font-weight:650;transition:color .5s ease}
+#right.cold #swRow .lab{color:var(--ink-3,#98A1B4)}
+.swWrap{position:relative;display:inline-block;width:84px;height:42px}
+#swTrail{position:absolute;top:0;left:0;width:84px;height:42px;border-radius:21px;
+  background:rgba(45,212,255,.55);filter:blur(10px);opacity:0;pointer-events:none}
+.rel-toggle{width:84px;height:42px;border-radius:21px;border:0;cursor:pointer;position:relative;
+  background:linear-gradient(120deg,#2DD4FF,#5BC8FF);padding:0;
+  box-shadow:0 8px 22px -8px rgba(45,212,255,.8);
+  transition:background .5s ease,box-shadow .5s ease}
+.rel-toggle::after{content:"";position:absolute;top:4px;left:4px;width:34px;height:34px;
+  border-radius:17px;background:#fff;box-shadow:0 3px 10px rgba(20,27,43,.3);
+  transition:left .62s cubic-bezier(.34,1.56,.64,1),width .18s ease}
+.rel-toggle.stretch::after{width:46px}
+.rel-toggle[aria-checked="false"]{background:rgba(15,22,40,.12);box-shadow:none}
+.rel-toggle[aria-checked="false"]::after{left:46px;width:34px}
+#swNote{margin-top:14px;font-size:18px;font-weight:650;color:#E0355A;min-height:0;
+  max-height:0;overflow:hidden;opacity:0;transition:opacity .5s ease,max-height .5s ease}
+#swNote.on{opacity:1;max-height:32px}
+
+/* ★ 节奏频次：贴底 */
+#rows{margin-top:auto;display:flex;flex-direction:column;gap:14px;
+  padding-top:22px;border-top:1px solid var(--line,rgba(15,22,40,.10));
+  transition:opacity .6s ease}
+#right.cold #rows{opacity:.5}
+.rrow{display:flex;align-items:center;justify-content:space-between;font-size:20px;
+  color:var(--ink-2,#5A6478);line-height:1.4}
+.rrow .val{padding:6px 18px;border-radius:999px;font-size:18px;color:var(--ink-1,#141B2B);
+  background:rgba(15,22,40,.06);border:1px solid var(--line,rgba(15,22,40,.10))}
+
+/* ★ 模板① 气泡群接管 */
+#swarm{position:absolute;inset:0;pointer-events:none;overflow:hidden;z-index:50;display:none}
+#swarm.on{display:block}
+#whiteout{position:absolute;inset:0;background:#fff;opacity:0;pointer-events:none;z-index:49}
+.bub{position:absolute;top:0;left:0;border-radius:50%;
+  background:radial-gradient(circle at 34% 30%,rgba(255,255,255,.95),rgba(226,208,255,.5) 55%,rgba(190,225,255,.34));
+  border:1px solid rgba(255,255,255,.85);
+  box-shadow:0 10px 40px rgba(150,120,220,.28),inset 0 2px 12px rgba(255,255,255,.9)}
+#glow{position:absolute;right:0;top:0;width:40%;height:100%;pointer-events:none;opacity:0;z-index:40;
+  background:radial-gradient(ellipse 70% 60% at 50% 46%,rgba(224,53,90,.16),transparent 72%);
+  transition:opacity .7s ease}
+#glow.on{opacity:1}
+
+/* ============================================================
+   ★ 舞台自适应（任何窗口 / 手机竖屏都完整显示、不变形）
+   ============================================================ */
+#stage{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;overflow:hidden;
+  background:#DDE3EF}
+#demo{display:flex;flex:none;position:absolute;left:50%;top:50%;width:1600px;height:900px;transform-origin:50% 50%;
+  border-radius:22px;overflow:hidden;
+  box-shadow:0 40px 110px -40px rgba(20,27,43,.45),0 0 0 1px rgba(15,22,40,.06)}
+
+/* 竖屏（9:16）：上下布局，紧凑排布不裁切 */
+body.portrait #demo{width:100vw;height:100vh;flex-direction:column;border-radius:0}
+body.portrait #left{flex:0 0 auto;height:42%;min-width:0;width:auto;box-sizing:border-box;border-right:0;
+  border-bottom:1px solid var(--line,rgba(15,22,40,.10))}
+body.portrait #right{flex:1 1 auto;min-width:0;width:auto;padding:18px 20px 18px;overflow:hidden;box-sizing:border-box}
+body.portrait #live{height:172px}
+body.portrait #who{margin-top:13px}
+body.portrait #who .nm{font-size:24px}
+body.portrait #moodWrap{margin-top:13px}
+body.portrait #moodTitle{font-size:15px}
+body.portrait #moodChip{padding:9px 22px;margin-top:11px;gap:10px}
+body.portrait #moodChip .lb{font-size:25px}
+body.portrait #moodChip .dot{width:11px;height:11px}
+body.portrait #moodCard{font-size:17px;min-height:0;line-height:1.45;margin-top:11px}
+body.portrait #meta{margin-top:12px;font-size:16px}
+body.portrait #progress{margin-top:7px;font-size:16px}
+body.portrait #swRow{margin-top:16px}
+body.portrait #swRow .lab{font-size:18px}
+body.portrait .rel-toggle{width:72px;height:36px;border-radius:18px}
+body.portrait .rel-toggle::after{width:28px;height:28px;top:4px;left:4px}
+body.portrait .rel-toggle[aria-checked="false"]::after{left:40px}
+body.portrait .swWrap{width:72px;height:36px}
+body.portrait #swNote{margin-top:8px;font-size:16px}
+body.portrait #rows{margin-top:12px;padding-top:12px;gap:8px;flex-direction:column;
+  align-items:stretch;justify-content:flex-start}
+body.portrait #rows .rrow{font-size:16px}
+body.portrait #rows .rrow .val{font-size:15px;padding:4px 12px}
+body.portrait #leftHead{padding:20px 30px 14px}
+body.portrait #leftHead h1{font-size:28px}
+body.portrait #scroll{padding:24px 30px 18px;gap:18px}
+body.portrait .mav{width:46px;height:46px;border-radius:12px}
+body.portrait .mav svg{width:25px;height:25px}
+body.portrait .mmeta{font-size:13px}
+body.portrait .mmeta .nm{font-size:15px}
+body.portrait .mbub{font-size:23px;padding:14px 19px;border-radius:16px}
+body.portrait .mstack{max-width:84%}
+
+/* ★ 禁止压缩：竖屏右栏子块全部 flex:none（否则被 flex 压扁） */
+body.portrait #right{overflow-y:auto;overflow-x:hidden}
+body.portrait #right > *{flex:none}
+body.portrait #rows{flex:none}
+
+/* 竖屏时辉光框内缩 */
+body.portrait #focusRing{left:-10px;top:-10px;right:-10px;bottom:-10px;border-radius:18px}
+
+
+/* ★ 舞台内临时层：绝对定位在 #demo 内，默认不可见/不吃事件 */
+#whiteout,#swarm,#glow{position:absolute;pointer-events:none}
+#whiteout{inset:0;background:#fff;opacity:0;z-index:49}
+#swarm{inset:0;z-index:50;display:none}
+#swarm.on{display:block}
+#glow{right:0;top:0;width:40%;height:100%;opacity:0;z-index:40;
+  background:radial-gradient(ellipse 70% 60% at 50% 46%,rgba(224,53,90,.16),transparent 72%);
+  transition:opacity .7s ease}
+#glow.on{opacity:1}
+</style>
+</head>
+<body>
+<div id="stage">
+<div id="demo">
+  <section id="left">
+    <div id="leftHead"><h1>对话</h1><span class="sub">SESSION · 按档位</span></div>
+    <div id="scroll"></div>
+  </section>
+
+  <aside id="right">
+    <div id="live"><img id="stand" src="/danya/av/stand.png" alt="" /></div>
+    <div id="who">
+      <div><div class="nm">达妮娅</div><div class="on"><i></i>ONLINE</div></div>
+      <div class="mem">记忆 <b>1.2k</b></div>
+    </div>
+    <div id="moodWrap">
+      <div id="focusRing"></div>
+      <div id="moodTitle"><span>她现在的心情</span><span>⌃</span></div>
+      <div id="moodChip"><span class="dot"></span><span class="lb">雀跃</span></div>
+      <div id="moodCard">她今天心情很好，话会比平时多一点。</div>
+      <div id="meta">阶段 <b>熟悉</b><span class="sep">|</span>原型 温柔</div>
+      <div id="progress">关系进展 <b>相熟</b></div>
+    </div>    <div id="swRow">
+      <span class="lab">主动搭话</span>
+      <span class="swWrap">
+        <span id="swTrail"></span>
+        <button class="rel-toggle" id="sw" role="switch" aria-checked="true"
+          title="她是否可以在你空闲时主动搭话"></button>
+      </span>
+    </div>
+    <div id="swNote">她不再主动找你了。</div>
+    <div id="rows">
+      <div class="rrow"><span>节奏</span><span class="val">疏淡</span></div>
+      <div class="rrow"><span>频次</span><span class="val">很频繁</span></div>
+    </div>
+    <div id="focusRing"></div>
+  </aside>
+      <!-- 舞台内的临时层（跟随 #demo 缩放） -->
+      <div id="whiteout"></div>
+      <div id="swarm"></div>
+      <div id="glow"></div>
+
+</div>
+
+      </div><!-- /#stage -->
+
+<script>
+const $ = s => document.querySelector(s);
+const scroll=$('#scroll'), right=$('#right'), chip=$('#moodChip'),
+      chipLb=chip.querySelector('.lb'), cardText=$('#moodCard'),
+      metaB=$('#meta b'), progB=$('#progress b'), sw=$('#sw'),
+      swNote=$('#swNote'), stand=$('#stand'), swarm=$('#swarm'),
+      whiteout=$('#whiteout'), swTrail=$('#swTrail');
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+const AV_HER = '/danya/av/danya_software.png';
+const SVG_ME = '<svg viewBox="0 0 24 24"><circle cx="12" cy="8.2" r="3.7"/><path d="M12 13.4c-3.6 0-6.5 2.3-6.5 5.1 0 .8.6 1.5 1.4 1.5h10.2c.8 0 1.4-.7 1.4-1.5 0-2.8-2.9-5.1-6.5-5.1z"/></svg>';
+
+function makeRow(who,time,mine){
+  const row=document.createElement('div');
+  row.className='mrow'+(mine?' me':'');
+  const av = mine ? `<div class="mav">${SVG_ME}</div>`
+                  : `<div class="mav"><img src="${AV_HER}" alt=""></div>`;
+  const stack = `<div class="mstack"><div class="mmeta"><span class="nm">${who}</span><span>${time}</span></div><div class="mbub"></div></div>`;
+  row.innerHTML = mine ? (stack+av) : (av+stack);
+  return row;
+}
+async function type(el,text,speed=46){
+  el.textContent='';
+  const c=document.createElement('span'); c.className='caret'; el.appendChild(c);
+  for(const ch of text){ c.insertAdjacentText('beforebegin',ch); await sleep(speed); }
+  c.remove();
+}
+function enter(row,{delay=0,from=26}={}){
+  row.style.transition='none'; row.style.opacity='0';
+  row.style.transform=`translateY(${from}px) scale(.97)`;
+  requestAnimationFrame(()=>{
+    row.style.transition=`opacity .38s ease ${delay}ms, transform .52s cubic-bezier(.34,1.42,.64,1) ${delay}ms`;
+    row.style.opacity='1'; row.style.transform='translateY(0) scale(1)';
+  });
+}
+function setMood(mood){
+  const anger = mood==='炸毛';
+  chip.classList.toggle('anger',anger);
+  chipLb.textContent=mood;
+  cardText.textContent = anger ? '她在气头上，语气会冲一点，先别顶。'
+                              : '她今天心情很好，话会比平时多一点。';
+  metaB.textContent = anger ? '萍水':'熟悉';
+  progB.textContent = anger ? '刚认识':'相熟';
+  right.classList.toggle('cold',anger);
+}
+
+/* ---------- 模板① 气泡群（BubbleSwarmTakeover 手法）---------- */
+function mulberry32(a){return function(){a|=0;a=a+0x6D2B79F5|0;let t=Math.imul(a^a>>>15,1|a);
+  t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296}}
+/* ★ 设计尺寸（舞台坐标）；竖屏时切 900×1600 */
+function isPortrait(){ return innerHeight > innerWidth; }
+let W = 1600, H = 900, CX = W/2, CY = H/2;
+function applyFit(){
+  const portrait = isPortrait();
+  document.body.classList.toggle('portrait', portrait);
+  W = portrait ? 900 : 1600;
+  H = portrait ? 1600 : 900;
+  CX = W/2; CY = H/2;
+  const demo = document.querySelector('#demo');
+  if (portrait) {
+    /* 竖屏：直接用视口真实尺寸，不缩放（避免右侧被裁） */
+    demo.style.width = '100vw';
+    demo.style.height = '100vh';
+    demo.style.borderRadius = '0';
+    demo.style.transform = 'translate(-50%,-50%)';
+  } else {
+    demo.style.width = W + 'px';
+    demo.style.height = H + 'px';
+    demo.style.borderRadius = '22px';
+    const sc = Math.min(innerWidth / W, innerHeight / H);
+    demo.style.transform = 'translate(-50%,-50%) scale(' + sc.toFixed(5) + ')';
+  }
+}
+applyFit();
+addEventListener('resize', applyFit);
+
+function buildSwarm(){
+  swarm.innerHTML='';
+  const rng=mulberry32(20261015);
+  const specs=[];
+  for(let i=0;i<34;i++){
+    const r2=mulberry32(1000+i*97);
+    const edge=Math.floor(r2()*4), along=r2();
+    let sx=0,sy=0;
+    if(edge===0){sx=along*W;sy=-320}
+    if(edge===1){sx=W+320;sy=along*H}
+    if(edge===2){sx=along*W;sy=H+320}
+    if(edge===3){sx=-320;sy=along*H}
+    const layer=i%3;
+    const r=layer===0?45+r2()*55:layer===1?100+r2()*90:210+r2()*150;
+    specs.push({sx,sy,tx:140+r2()*(W-280),ty:100+r2()*(H-200),r,
+      t0:8+r2()*420,blur:layer===0?7:layer===1?.5:9,ph:r2()*6.28,amp:10+r2()*22,z:layer});
+  }
+  for(let g=0;g<6;g++){
+    const gx=(g%3)*(W/3)+W/6, gy=Math.floor(g/3)*(H/2)+H/4;
+    specs.push({sx:gx+(rng()-.5)*300,sy:gy+(rng()-.5)*300,tx:gx,ty:gy,
+      r:300+rng()*160,t0:380+rng()*180,blur:0,ph:rng()*6.28,amp:16,z:1});
+  }
+  specs.forEach((b,i)=>{
+    const el=document.createElement('div');
+    el.className='bub';
+    el.style.width=el.style.height=(b.r*2)+'px';
+    el.style.filter=b.blur>.1?`blur(${b.blur}px)`:'';
+    el.style.zIndex=b.z===2?3:b.z===1?2:1;
+    swarm.appendChild(el);
+  });
+  return specs;
+}
+
+async function bubbleTakeover(onPeak){
+  const specs=buildSwarm();
+  swarm.classList.add('on');
+  const els=[...swarm.children];
+  const DUR=1600, PEAK=.52, t0=performance.now();
+  let fired=false;
+  await new Promise(resolve=>{
+    function tick(){
+      const p=Math.min(1,(performance.now()-t0)/DUR);
+      whiteout.style.opacity =
+        p<.32 ? String(p/.32*.92) : p<.55 ? '.92'
+        : String(Math.max(0,.92*(1-(p-.55)/.45)));
+      if(!fired && p>=PEAK){ fired=true; onPeak&&onPeak(); }
+      specs.forEach((b,i)=>{
+        const el=els[i];
+        const tn=b.t0/1000;
+        const pIn=Math.max(0,Math.min(1,(p-tn)/Math.max(.05,PEAK-tn)));
+        const dis=Math.max(0,Math.min(1,(p-PEAK-.02)/.42));
+        const wob=Math.sin(p*34+b.ph)*b.amp*(1-dis);
+        let x=b.sx+(b.tx-b.sx)*pIn+wob;
+        let y=b.sy+(b.ty-b.sy)*pIn;
+        const dx=b.tx-CX, dy=b.ty-CY, dl=Math.max(Math.hypot(dx,dy),60);
+        x+=(dx/dl)*dis*1800; y+=(dy/dl)*dis*1800;
+        const op=pIn*(dis>.5?Math.max(0,1-(dis-.5)/.5):1);
+        const sc=(.5+.5*pIn)*(1+.12*dis);
+        el.style.transform=`translate(${x-b.r}px, ${y-b.r}px) scale(${sc}) rotate(${wob*.2}deg)`;
+        el.style.opacity=String(Math.max(0,op));
+      });
+      if(p<1) requestAnimationFrame(tick); else resolve();
+    }
+    tick();
+  });
+  swarm.classList.remove('on');
+  whiteout.style.opacity='0';
+}
+
+/* ---------- 模板② 开关弹性 + 拖影（SegmentedThumbHero 手法）---------- */
+async function flipSwitch(){
+  sw.classList.add('stretch');                 // 前缘先走
+  swTrail.style.opacity='.85';
+  await sleep(120);
+  sw.setAttribute('aria-checked','false');
+  const t0=performance.now();
+  await new Promise(res=>{
+    function t(){
+      const p=Math.min(1,(performance.now()-t0)/640);
+      const k=1-Math.pow(2,-10*p)*Math.cos(p*Math.PI*1.6);
+      const left=4+42*Math.max(0,Math.min(1,k));
+      swTrail.style.transform=`translateX(${left-4}px)`;
+      swTrail.style.opacity=String(.85*(1-p));
+      if(p<1) requestAnimationFrame(t); else res();
+    }
+    t();
+  });
+  sw.classList.remove('stretch');
+  swTrail.style.opacity='0';
+}
+
+/* ---------- 剧本 ---------- */
+(async function play(){
+  await sleep(500);
+
+  /* ① 她开心迎接 */
+  const r1=makeRow('达妮娅','08:09',false);
+  scroll.appendChild(r1); enter(r1);
+  await sleep(420);
+  await type(r1.querySelector('.mbub'),'你终于回来啦！我还以为你把我忘了呢。',42);
+  await sleep(600);
+
+  /* ② ★ 模板③ 辉光描边聚焦心情 */
+  const ring=$('#focusRing');
+  ring.classList.add('draw');
+  await sleep(1150);
+  ring.classList.remove('draw');
+  ring.classList.add('settle');
+  await sleep(280);
+
+  /* ③ 你说重话 */
+  const r2=makeRow('我','08:10',true);
+  r2.querySelector('.mbub').classList.add('harsh');
+  scroll.appendChild(r2); enter(r2,{from:-44});
+  await sleep(420);
+  await type(r2.querySelector('.mbub'),'你太粘人了，能不能安静点啊',40);
+  await sleep(800);
+
+  /* ④ ★ 模板① 气泡群接管（峰值处硬切心情） */
+  await bubbleTakeover(()=>{
+    setMood('炸毛');
+    $('#glow').classList.add('on');
+    stand.style.animation='none';
+    stand.style.transition='transform .8s ease, opacity .8s ease, filter .8s ease';
+    stand.style.transform='scale(.965) translateY(6px)';
+    stand.style.opacity='.94';
+    stand.style.filter='drop-shadow(0 12px 30px rgba(20,27,43,.28)) saturate(.86)';
+  });
+  ring.classList.remove('settle');
+  await sleep(500);
+
+  /* ⑤ 她委屈地回一句 */
+  const r3=makeRow('达妮娅','08:11',false);
+  r3.querySelector('.mbub').classList.add('hurt');
+  scroll.appendChild(r3); enter(r3,{from:18});
+  await sleep(360);
+  await type(r3.querySelector('.mbub'),'那我不说了。',130);
+  await sleep(1000);
+
+  /* ⑥ ★ 模板② 开关弹性关掉 */
+  await flipSwitch();
+  await sleep(420);
+  swNote.classList.add('on');
+})();
+</script>
+</body>
+</html>

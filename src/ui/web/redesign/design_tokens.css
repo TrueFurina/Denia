@@ -1,0 +1,497 @@
+/* ============================================================
+   达妮娅桌面伴侣 · 设计令牌 v6
+   方向：二次元 × 科技感 · 大厂质感
+   变更：强调色可主题化（设置页切换渐变）；其余同 v5
+   ============================================================ */
+
+:root {
+  /* ---- 基底（深色科技） ---- */
+  --bg: #0A0C12;
+  --bg-2: #0D1018;
+  --surface: rgba(255, 255, 255, 0.035);
+  --surface-2: rgba(255, 255, 255, 0.06);
+  --surface-3: rgba(255, 255, 255, 0.09);
+  --line: rgba(255, 255, 255, 0.09);
+  --line-2: rgba(255, 255, 255, 0.16);
+
+  /* ---- 文字 ---- */
+  --ink: #E9EDF6;
+  --ink-2: #AEB7C9;
+  --ink-3: #6C7689;
+  --ink-4: #444C5C;
+
+  /* ---- 可主题化强调色（默认 = 极光青紫） ---- */
+  --accent-1: #2DD4FF;
+  --accent-2: #A06BFF;
+
+  /* 派生（color-mix 自动跟随强调色，换色即同步） */
+  --accent-grad: linear-gradient(90deg, var(--accent-1), var(--accent-2));
+  --accent-grad-soft: linear-gradient(120deg,
+      color-mix(in srgb, var(--accent-1) 18%, transparent),
+      color-mix(in srgb, var(--accent-2) 18%, transparent));
+  --accent-soft-1: color-mix(in srgb, var(--accent-1) 14%, transparent);
+  --accent-soft-2: color-mix(in srgb, var(--accent-2) 16%, transparent);
+  --line-strong: color-mix(in srgb, var(--accent-1) 55%, transparent);
+  --chara-glow: radial-gradient(circle at 50% 42%,
+      color-mix(in srgb, var(--accent-2) 28%, transparent),
+      color-mix(in srgb, var(--accent-1) 10%, transparent) 45%, transparent 70%);
+
+  /* 兼容别名（页面仍可用 --cyan / --violet） */
+  --cyan: var(--accent-1);
+  --violet: var(--accent-2);
+  --cyan-soft: var(--accent-soft-1);
+  --violet-soft: var(--accent-soft-2);
+
+  /* ---- 补齐「一直在用却从没定义」的变量 ----
+     这些名字散落在各页样式里，但本文件从未定义过，var() 只能回退到硬编码值：
+       · --surface-1 回退 #161a24 → 角色档案/编辑弹窗、抽屉全是突兀的深色块
+         （用户反馈「档案编辑里面配色背景是黑色的」）
+       · --accent / --accent-soft 回退空 → 语音回放条、情绪标签、记忆类型签没有底色
+     统一接到现有令牌上，从此自动跟随主题色与深浅模式。 */
+  --surface-1: var(--bg-2);              /* 弹层 / 抽屉这类「实心面板」底 */
+  --accent: var(--accent-1);
+  --accent-soft: var(--accent-soft-1);
+
+  /* ---- 补齐第二批「一直在用却从没定义」的变量 ----
+     ⚠️ 教训：var(--x, 兜底) 在 --x 未定义时**永远**落在兜底上，若兜底是为深色主题写死的
+     浅色文字/深色块，浅色主题下就会出现「文字看不见 / 面板变黑」。 */
+  --ink-1: var(--ink);                   /* 文字主色别名。曾漏定义 → 设置页弹窗输入框 var(--ink-1,#E9EDF6)
+                                            在浅色主题下变成近白字压在浅底上，不框选完全看不见。
+                                            （涉及 settings / voice / lib 三页） */
+  --bg-1: var(--bg-2);                   /* 面板底别名。曾漏定义 → 语音档案弹窗 var(--bg-1,#12121c)
+                                            在浅色主题下变突兀深色块。 */
+  /* 语义色（状态文字/进度条）。原先只有兜底值、无令牌，且各页兜底不一致，这里统一。 */
+  --ok: #2faa6a;
+  --good: #0f9d6b;
+  --warn: #d98a00;
+  --bad: #c0392b;
+  --err: #ff6363;
+  --info: #78c8ff;                       /* 信息色（知识库"世界观"标签等） */
+  /* 遮罩 / 蒙层：弹窗、抽屉背后那层。原先各页写死 rgba(0,0,0,.55)，
+     浅色主题下会糊成一块脏黑，这里统一成令牌，深浅各一套。 */
+  --mask: rgba(4, 7, 14, .55);
+  --mask-strong: rgba(6, 9, 15, .62);
+  /* 强调色底上的文字（按钮/标签）：全主题统一深色，保证对比度 */
+  --on-accent: #06121a;
+  /* 开关滑块：深色主题纯白；浅色主题也用白（靠阴影与轨道区分） */
+  --knob: #fff;
+  /* 装饰性网格线（舞台背景点阵） */
+  --grid: rgba(255, 255, 255, .04);
+  --mono: var(--font-mono);
+  --sans: var(--font);
+  --serif: var(--font);
+
+  /* ---- 角色辉光（仅 Live2D 舞台背后） ---- */
+
+  /* ---- 圆角 ---- */
+  --r-sm: 8px;
+  --r-md: 12px;
+  --r-lg: 16px;
+  --r-xl: 22px;
+
+  /* ---- 阴影 ---- */
+  --shadow-1: 0 1px 2px rgba(0,0,0,.4);
+  --shadow-2: 0 8px 24px rgba(0,0,0,.35);
+  --shadow-pop: 0 24px 70px rgba(0,0,0,.55);
+
+  /* ---- 字号 ---- */
+  --font: "Inter", -apple-system, "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", "SF Mono", ui-monospace, "Cascadia Code", monospace;
+  --fs-xs: 11px;
+  --fs-sm: 12.5px;
+  --fs-md: 14px;
+  --fs-lg: 16px;
+  --fs-xl: 20px;
+  --fs-2xl: 26px;
+
+  /* ---- 动效 ---- */
+  --ease: cubic-bezier(0.22, 0.61, 0.36, 1);
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --dur-1: 0.18s;
+  --dur-2: 0.32s;
+  --dur-3: 0.6s;
+
+  /* ---- 角色图片主题（2026-10-05，由 theme_manager.js 写入）----
+     单一真相源：所有页面只消费这几个变量，JS 换图 = 换变量值，
+     页面代码一行都不用改。
+     未配图时值是 none，各处渲染规则自动回退到原样式（不显示空洞）。 */
+  --tm-hero: none;
+  --tm-stand: none;
+  --tm-avatar: none;
+  --tm-cover: none;
+  --tm-hero-focus: 50% 30%;
+  --tm-stand-focus: 50% 100%;  /* 2026-10-15：立绘 contain 底部对齐（角色站在舞台底边）；theme_manager 同步此默认 */
+  --tm-avatar-focus: 50% 50%;
+  --tm-cover-focus: 50% 40%;
+  /* 页面壁纸逐页（2026-10-12 对齐真实侧栏 8 页；默认全 none = 不生效）。
+     theme_manager 按「当前所在页」把对应页的壁纸另写进 --tm-wall-cur，
+     CSS 单条规则消费它 —— 增删页只改 theme_manager 的 PAGES，CSS 零改动。 */
+  --tm-wall-chat: none;
+  --tm-wall-daily: none;
+  --tm-wall-calls: none;
+  --tm-wall-characters: none;
+  --tm-wall-memory: none;
+  --tm-wall-stickers: none;   /* 表情包管理（2026-10-13 新增页） */
+  --tm-wall-lib: none;
+  --tm-wall-settings: none;
+  --tm-wall-profiles: none;
+  --tm-wall-cur: none;
+
+  /* ---- 可读性纱罩（2026-10-13 P1 + Task #33 自适应）----
+     用户配的亮色动漫图直接铺满会把文字糊掉。蒙版用 var(--bg) 混色 ⇒
+     深浅主题各自自动适配。Task #33 起 theme_manager 会按背景图实测
+     亮度/细节度**重建这两条梯度**并写 --tm-panel-boost（面板加实系数），
+     这里的值是「未测量/测量失败」时的兜底默认。想手动调强度改这里即可。 */
+  --tm-wall-veil: linear-gradient(180deg,
+      color-mix(in srgb, var(--bg) 66%, transparent) 0%,
+      color-mix(in srgb, var(--bg) 38%, transparent) 42%,
+      color-mix(in srgb, var(--bg) 76%, transparent) 100%);
+  --tm-hero-veil: linear-gradient(180deg,
+      color-mix(in srgb, var(--bg) 60%, transparent) 0%,
+      color-mix(in srgb, var(--bg) 24%, transparent) 36%,
+      color-mix(in srgb, var(--bg) 32%, transparent) 64%,
+      color-mix(in srgb, var(--bg) 80%, transparent) 100%);
+  --tm-hero-opacity: 1;
+}
+
+/* ============ 2026-10-13 P1：换主题色全站平滑过渡 ============
+   未注册的自定义属性是不可过渡的 token——JS 换 accent 时全站瞬变。
+   用 @property 注册成 <color> 后，:root 上一条 transition 就能让所有
+   var() 消费方在 0.55s 内一起 morph。⚠️ initial-value 必须与 :root
+   默认值一致（极光青紫），否则首屏前会有一帧错误色。 */
+@property --accent-1 { syntax: '<color>'; inherits: true; initial-value: #2DD4FF; }
+@property --accent-2 { syntax: '<color>'; inherits: true; initial-value: #A06BFF; }
+:root { transition: --accent-1 .55s var(--ease), --accent-2 .55s var(--ease); }
+
+/* ============ 图位实际渲染 ============
+   hero：整个 app 背后的大图（通栏）。放在 ::before 上并用 z-index:-1，
+   避免遮挡内容；配了图时压一层暗色蒙版保证文字可读。 */
+body.has-hero::before {
+  /* ⭐ 2026-10-13 P1：hero 全幅铺。原实现继承基础 ::before 的径向 mask
+     （那是给网格底纹渐隐用的），把 hero 裁成视口中间一小块软圆——大图
+     壁纸的视觉冲击全没了（真机截图实锤：hero 只在左下一角可见）。
+     现在：显式关掉 mask 全幅铺 + 图上叠一层 --tm-hero-veil 可读性蒙版
+     （内容侧本就有卡片磨砂底，双保险；蒙版强度由 theme_manager 按图自适应）。 */
+  background-image: var(--tm-hero-veil), var(--tm-hero);
+  background-size: cover, cover;
+  background-position: center, var(--tm-hero-focus);
+  opacity: var(--tm-hero-opacity);
+  -webkit-mask-image: none;
+  mask-image: none;
+}
+body.has-hero::after { opacity: 1; }
+body.has-hero .app,
+body.has-hero .side,
+body.has-hero .main,
+body.has-hero .stage { position: relative; z-index: 1; }
+
+/* 页面壁纸：该页确实配了壁纸才铺。
+   ⚠️ 三处修正（2026-10-12）：
+   ① 原选择器写死 --tm-wall-daily ⇒ 只有日报页生效，其余 7 页配了也看不见；
+      现在读 --tm-wall-cur（theme_manager 按「当前所在页」写好）⇒ 一条规则全页通用。
+   ② 必须同时要求 [data-tm-wall="on"]：壁纸与 hero 抢同一个 body::before，
+      只靠 --tm-wall-cur=none 会把没配壁纸的页连 hero 一起抹掉。
+   ③ 属性此前挂在 <html> 上，而这里选的是 body ⇒ 永不命中；现已双写。 */
+body[data-tm-pages="on"][data-tm-wall="on"]::before {
+  /* ⭐ 2026-10-13 P1：壁纸上叠 --tm-wall-veil 可读性蒙版（两层背景，
+      纱罩在上、图在下）。Task #33：蒙版梯度由 theme_manager 按图实测重建。 */
+  background-image: var(--tm-wall-veil), var(--tm-wall-cur);
+  background-size: cover, cover;
+  background-position: center, center;
+  background-repeat: no-repeat;
+  /* ⭐ 2026-10-12：基础规则（下方 body::before）带的径向 mask 是给「网格底纹」
+     渐隐用的 —— 壁纸是「整页铺满」，被 mask 裁掉四边等于没铺满，必须显式关掉。 */
+  -webkit-mask-image: none;
+  mask-image: none;
+}
+
+/* stand：Live2D 舞台背后的角色立绘 */
+.stage.has-stand .panel { position: relative; overflow: hidden; }
+.stage.has-stand .panel::before {
+  content: ""; position: absolute; inset: 0; z-index: 0;
+  background-image: var(--tm-stand);
+  /* ⭐ 2026-10-15 改版：绑立绘后 Live2D 已隐藏（见下方 live2d-frame 规则），
+     立绘就是舞台主角 —— ① 去掉旧版「顶部渐隐」mask（那是给 Live2D 垫图时代
+     设计的，现在只会把角色头洗白 = 用户报的「褪色」）；
+     ② cover → contain：整张立绘跟随面板等比缩放、底部对齐 —— 面板折叠变矮
+     图跟着变小、展开变高图跟着变大（用户报的「锁死不跟缩放」）。
+     contain 在面板比图宽时左右留空，露出面板底纹，属预期效果。 */
+  background-size: contain;
+  background-position: var(--tm-stand-focus);
+  background-repeat: no-repeat;
+  pointer-events: none;
+}
+/* 🔴 2026-10-15 修「四角角标错位」根因：原选择器 .stage.has-stand .panel > *（特异性 0,3,0）
+   会盖过 home.css 的 .panel .tick{position:absolute}（0,2,0）乃至 .panel .tick.tl（0,3,0 平级靠后），
+   立绘一铺上舞台，四个取景角标就被改成 position:relative 掉进 grid 流，
+   全部挤到面板顶部中央（用户截图实证）。用 :not(.tick) 把装饰角标排除在外。 */
+.stage.has-stand .panel > *:not(.tick) { position: relative; z-index: 1; }
+/* 防御性再断言：无论谁以后加什么通配规则，tick 永远钉在四角。 */
+.stage.has-stand .panel .tick { position: absolute; }
+/* 立绘铺上舞台后，LIVE2D 占位（.placeholder 的圆环 + 提示）必须让位：
+   否则立绘图和占位环叠在一起，看起来像「两个模型」同时挂着（用户反馈的 bug）。 */
+.stage.has-stand .panel .placeholder { display: none; }
+/* ⭐ 2026-10-15 约定落地：角色绑定了立绘（stand 槽位）就隐藏 Live2D 舞台显示，
+   舞台只展示立绘；「移除 / 回全局」后 theme_manager 摘掉 has-stand，Live2D 自动恢复。
+   （此前只藏了 .placeholder 占位环，Live2D iframe 仍压在立绘上 —— 用户报的「没隐藏」。） */
+.stage.has-stand .panel .live2d-frame { display: none; }
+
+/* avatar：全局头像（侧栏/聊天卡/桌宠气泡/角色配置卡）
+   ⚠️ 选择器名必须与真实 DOM 对齐：角色页角色卡里的头像容器 class 是 .cav
+   （见 ui_redesign_characters.html 的 avatarHtml），聊天页是 .av。
+   写错类名 ⇒ 规则永不命中 ⇒ 图配了但看不见（静默失效）。 */
+.av.has-img, .cav.has-img {
+  background-image: var(--tm-avatar);
+  background-size: cover;
+  background-position: var(--tm-avatar-focus);
+  /* 🔴 2026-10-06：配了头像图就别再把「名字占位」压在图上。
+     .cav 早就有 `> * {display:none}`，但聊天头像 .av 的占位是**文本节点**（不是元素），
+     元素选择器管不到 ⇒ 一直是「头像图 + 一个大字叠着」（用户报的 bug）。
+     这里统一：图在 = 文字透明 + 占位元素隐藏。 */
+  color: transparent;
+}
+.av.has-img > .ph-av, .cav.has-img > .ph-av { display: none; }
+
+/* ⭐ 「我」的头像永远不套角色主题图 —— 否则用户和角色用同一张图、完全分不清谁是谁
+   （2026-10-06 用户实测反馈）。人形占位始终保留，和角色头像形成明确区分。 */
+.av.me, .av.me.has-img{
+  background-image: none !important;
+  background-color: var(--surface-3);
+  color: var(--ink-2);
+}
+.av.me > .ph-av{ display: grid !important; }
+
+/* ============ 无头像占位：中性圆 + 人形剪影（抖音式） ============
+   以前没配头像就画「姓名首字」，既丑又把名字糊在框里；现在统一成通用人形占位。
+   用法：<div class="av"><span class="ph-av"><i><svg…/></i></span></div> */
+.ph-av { width: 100%; height: 100%; display: grid; place-items: center; }
+.ph-av > i {
+  width: 100%; height: 100%; border-radius: 50%; display: grid; place-items: center;
+  background: color-mix(in srgb, var(--ink-3) 26%, var(--surface-3));
+}
+.ph-av svg { width: 56%; height: 56%; display: block; color: color-mix(in srgb, var(--bg) 94%, transparent); }
+/* 侧栏品牌（左上角）：不要把头像整块铺满（方形脸图裁到矮宽条上只剩一条眼睛，
+   且子页侧栏跟着铺图后看起来「又长出一个主页」）。改成左侧一个小圆角头像 +
+   品牌文字，跟随主题变化但不抢戏。 */
+/* ⚠️ 必须是 grid 而不是 flex-row：.brand 的子节点是 .wm + .wmsub 两个【平级】div，
+   flex 行会把「达妮娅」和「DESKTOP COMPANION」并排塞进 ~160px，两个都被挤到换行
+   （实测「达妮/娅」「DESKTOP/COMPANION」四行，像排版坏了）。grid 让 .wm/.wmsub 上下叠。 */
+.side .brand.has-img {
+  display: grid;
+  grid-template-columns: 36px minmax(0, 1fr);
+  column-gap: 10px; row-gap: 2px;
+  align-items: center;
+}
+.side .brand.has-img .wm { grid-column: 2; grid-row: 1; min-width: 0; }
+.side .brand.has-img .wmsub { grid-column: 2; grid-row: 2; min-width: 0; }
+.side .brand.has-img::before {
+  content: ""; grid-column: 1; grid-row: 1 / span 2; width: 36px; height: 36px; border-radius: var(--r-md);
+  background-image: var(--tm-avatar);
+  background-size: cover;
+  background-position: var(--tm-avatar-focus);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--line-2) 55%, transparent),
+              0 2px 8px rgba(0, 0, 0, .14);
+}
+/* 角色卡里 .cav 原本是渐变底 + 首字母，铺上头像图后要盖住那层渐变 */
+.cav.has-img { background-image: var(--tm-avatar); color: transparent; }
+.cav.has-img > * { display: none; }
+
+/* cover 图位（2026-10-12 用户裁决：头图与背景板【合二为一】）
+   旧方案（2026-10-05「整卡铺图」）已废弃：绑定主题的卡会同时出现
+   「顶部通栏头图 + 整卡封面背景」两张图叠在一起（用户截图实锤）。
+   现在唯一图像出口 = ui_redesign_characters.html 的 bannerHtml()：
+   角色自带头图 > 绑定主题封面 > 极光渐变占位，三选一，绝不再叠。
+   ⚠️ .has-cover 类仍会被编辑器锚点/兜底逻辑加上，但此处不再产生任何视觉。 */
+
+/* ============ 主题色预设（设置页切换） ============ */
+[data-accent="aurora"] { --accent-1:#2DD4FF; --accent-2:#A06BFF; }  /* 极光（默认） */
+[data-accent="neon"]   { --accent-1:#FF5FA2; --accent-2:#A855F7; }  /* 霓虹粉紫 */
+[data-accent="mint"]   { --accent-1:#22D3A6; --accent-2:#38BDF8; }  /* 森绿青 */
+[data-accent="lava"]   { --accent-1:#FF8A3D; --accent-2:#FF4D6D; }  /* 熔岩橙红 */
+[data-accent="abyss"]  { --accent-1:#5B8CFF; --accent-2:#22D3EE; }  /* 星海蓝青 */
+
+/* ============ 深浅模式（跟随系统 / 强制浅色 / 强制深色） ============
+   :root 里的默认是深色。JS（app_backend.js 的 Theme）会在首屏前按用户选择
+   明确写出 data-theme="light" 或 "dark"，下面 [data-theme] 规则优先级最高。
+   ① 媒体查询那份：给「跟随系统」且 JS 尚未接管时的首屏使用（:not 排除强制深色）。
+   ② [data-theme="light"] 那份：系统是深色、用户却选了浅色时必须靠它亮起来。
+   ⚠️ 浅色调色板有两份，改配色时这两处要同步。 */
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) {
+    --bg: #F4F6FA;
+    --bg-2: #EAEEF5;
+    --surface: rgba(15, 22, 40, 0.025);
+    --surface-2: rgba(15, 22, 40, 0.05);
+    --surface-3: rgba(15, 22, 40, 0.08);
+    --line: rgba(15, 22, 40, 0.13);   /* P2：浅色玻璃描边加深一档，面板边界在白底上更清晰 */
+    --line-2: rgba(15, 22, 40, 0.22);
+    --ink: #141B2B;
+    --ink-2: #4A5468;
+    --ink-3: #828DA3;
+    --ink-4: #B3BccB;
+    --shadow-1: 0 1px 2px rgba(20,30,60,.08);
+    --shadow-2: 0 8px 24px rgba(20,30,60,.10);
+    --shadow-pop: 0 24px 70px rgba(20,30,60,.18);
+    /* 与深色版同一批语义令牌的浅色取值（改配色时两处必须同步） */
+    --info: #1d6fa5;
+    --mask: rgba(20, 30, 60, .32);
+    --mask-strong: rgba(20, 30, 60, .42);
+    --on-accent: #06121a;
+    --knob: #fff;
+    --grid: rgba(15, 22, 40, .05);
+  }
+}
+/* 强制浅色（系统深色时也要亮） */
+:root[data-theme="light"] {
+  --bg: #F4F6FA;
+  --bg-2: #EAEEF5;
+  --surface: rgba(15, 22, 40, 0.025);
+  --surface-2: rgba(15, 22, 40, 0.05);
+  --surface-3: rgba(15, 22, 40, 0.08);
+  --line: rgba(15, 22, 40, 0.13);   /* P2：与媒体查询那份同步 */
+  --line-2: rgba(15, 22, 40, 0.22);
+  --ink: #141B2B;
+  --ink-2: #4A5468;
+  --ink-3: #828DA3;
+  --ink-4: #B3BccB;
+  --shadow-1: 0 1px 2px rgba(20,30,60,.08);
+  --shadow-2: 0 8px 24px rgba(20,30,60,.10);
+  --shadow-pop: 0 24px 70px rgba(20,30,60,.18);
+  /* 与媒体查询那份完全一致的浅色取值（系统是深色、用户选浅色时靠这一份） */
+  --info: #1d6fa5;
+  --mask: rgba(20, 30, 60, .32);
+  --mask-strong: rgba(20, 30, 60, .42);
+  --on-accent: #06121a;
+  --knob: #fff;
+  --grid: rgba(15, 22, 40, .05);
+}
+
+/* ============ 有整页背景图时的「可读磨砂」自适应（2026-10-07 / 2026-10-13 扩展）============
+   ⭐ 2026-10-13 扩展（Task #40「透明度铺开」）—— 三个变化：
+     ① 生效条件从「只有 hero」扩到「hero 或 任意整页壁纸」：壁纸页此前完全不套玻璃；
+     ② 面板底不再写死 80/87/93%，改为消费 --tm-panel-boost 自适应（图素净→更透、
+        图花/图暗→更实）；基准同时下移一档（80%→64%），因为用户反馈「很多地方是
+        纯底色、看不到背景」，希望背景图能透出来、各页观感统一；
+     ③ 把「实心面板」别名 --surface-1 / --bg-1（默认 = 不透明 --bg-2）纳入玻璃化 ——
+        知识库卡 / 软件档案卡 / 通话记录卡 / 各弹层此前是死色块，永远不随背景变。
+   面板底 --surface 常态只有 2.5~3.5% 不透明度：纯色底上是清爽的玻璃感，
+   但用户一旦配了 hero 通栏大图（JS 挂 body.has-hero），卡片就成了「几乎看不见的玻璃」——
+   文字压在花哨壁纸上完全读不清（用户反馈：透明度太高看不清字 / 一种透明度配不同背景太丑）。
+   一刀切把 --surface 调实又会毁掉「无图时」的通透感，所以这里按【是否真有背景图】自适应：
+     有图 → 换成基于 --bg 的实心磨砂底（深/浅主题各自从 --bg 取色，天然适配）；
+     没图 → 维持原来的淡玻璃。
+   ⚠️ 只覆盖 token、不动任何组件样式 ⇒ 所有消费 --surface 的面板/卡片一次性统一变清楚。 */
+body:is(.has-hero, [data-tm-wall="on"]) {
+  --surface:   color-mix(in srgb, var(--bg) calc(64% + var(--tm-panel-boost, 0) * 24%), transparent);
+  --surface-2: color-mix(in srgb, var(--bg) calc(74% + var(--tm-panel-boost, 0) * 20%), transparent);
+  --surface-3: color-mix(in srgb, var(--bg) calc(84% + var(--tm-panel-boost, 0) * 14%), transparent);
+  --surface-1: color-mix(in srgb, var(--bg) calc(78% + var(--tm-panel-boost, 0) * 18%), transparent);
+  --bg-1:      color-mix(in srgb, var(--bg) calc(78% + var(--tm-panel-boost, 0) * 18%), transparent);
+  --line:      color-mix(in srgb, var(--ink-3) 24%, transparent);
+  --line-2:    color-mix(in srgb, var(--ink-3) 38%, transparent);
+}
+/* 卡片本体再叠一层真·背景模糊，让磨砂底「有质感」而不是死板的纯色块。
+   只打在实际的卡片/面板类上（数量有限、静态，不会每帧重栅格化），
+   不碰 body::after 那种全屏动画层 ⇒ 不吃性能（对比 2026-10-06 的性能教训）。 */
+body:is(.has-hero, [data-tm-wall="on"]) :is(
+  .group, .card, .qk, .sc, .vcard, .eng-card, .slot, .daycard, .report,
+  .ccard, .model-card, .ov-note, .ov-card, .kb-card, .sp-card, .mstat) {
+  -webkit-backdrop-filter: blur(14px) saturate(1.08);
+  backdrop-filter: blur(14px) saturate(1.08);
+}
+
+/* ⭐ 2026-10-13 卡顿/卡退根治（二）：编辑器预览 iframe（data-tm-emb，见 theme_manager.js）
+   里玻璃模糊与换色过渡全关。预览是「真实产品页」整套跑在多个活 iframe 里，
+   每帧重模糊 × 镜头动画 × 换色过渡叠加会打满 GPU（实测卡顿甚至卡退）。
+   预览是缩略图，视觉差异不可辨，成本直接归零。 */
+html[data-tm-emb] { transition: none !important; }
+html[data-tm-emb] * {
+  -webkit-backdrop-filter: none !important;
+  backdrop-filter: none !important;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { height: 100%; }
+body {
+  font-family: var(--font); color: var(--ink); background: var(--bg);
+  font-size: var(--fs-md); line-height: 1.6; -webkit-font-smoothing: antialiased;
+  overflow: auto; position: relative;
+  display: grid; place-items: center; padding: 20px; min-height: 100vh;
+}
+/* ⭐ 全屏适配（2026-10-08）：含「顶层 .app」的文档（外壳 + 各子页 + 编辑器预览）去掉居中/留白，
+   让 .app 撑满整个窗口；引导页/配置页（无顶层 .app）保持居中卡片，不受影响。
+   - 只认 .app 是 body 直接子元素（> .app）⇒ 天然排除设置页里「嵌套在 .pv 内」的内嵌预览；
+   - #app 兜底（外壳 index.html / main.html），防止个别页 .app 被包一层。
+   配合 ui_shared.css 里 .app 去掉 1080×740 硬上限，实现「窗口拖多大就铺多大」。 */
+body:has(> .app), body:has(#app){
+  display: block; place-items: normal; padding: 0; height: 100%;
+}
+body::before {
+  content: ""; position: fixed; inset: 0; z-index: 0; pointer-events: none;
+  background-image:
+    linear-gradient(rgba(255,255,255,.022) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255,255,255,.022) 1px, transparent 1px);
+  background-size: 44px 44px;
+  mask-image: radial-gradient(circle at 50% 40%, #000 30%, transparent 85%);
+}
+body::after {
+  content: ""; position: fixed; inset: -20%; z-index: 0; pointer-events: none;
+  background:
+    radial-gradient(40% 38% at 22% 28%, color-mix(in srgb, var(--accent-1) 10%, transparent), transparent 60%),
+    radial-gradient(42% 40% at 80% 72%, color-mix(in srgb, var(--accent-2) 12%, transparent), transparent 62%);
+  /* ⭐ 2026-10-06 性能修复：原来这里有 filter:blur(20px) + 26s 无限 drift 动画。
+     body::after 是 position:fixed; inset:-20%（约 140% 视口）的全屏层，
+     每帧 transform 动画都会让这张模糊层重新栅格化一次 ⇒ 换角色/切页时整机掉帧。
+     现在：① 去掉 blur（两团 radial-gradient 本身就带 transparent 软过渡，
+     blur 视觉收益极小、代价极高）；② 动画只在用户没要求减少动效时启用，
+     且只做廉价的位移（不再叠加 scale，避免缩放引发重采样）。 */
+  will-change: transform;
+  animation: drift 34s var(--ease) infinite alternate;
+}
+@keyframes drift {
+  0%   { transform: translate3d(-2.2%, -1.4%, 0); }
+  100% { transform: translate3d(2.8%, 1.8%, 0); }
+}
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: .001ms !important; animation-iteration-count: 1 !important; transition-duration: .001ms !important; }
+  body::after { animation: none; }
+}
+
+a.nav{ text-decoration: none; }
+
+/* 状态徽标（主页运行状态 / 设置页通用） */
+.badge{ font-family: var(--font-mono); font-size: 11px; padding: 3px 10px; border-radius: 99px; white-space: nowrap; }
+.badge.on{ color: var(--accent-1); background: var(--accent-soft-1); }
+.badge.off{ color: var(--ink-3); background: transparent; border: 1px solid var(--line); }
+
+/* ============ 2026-10-13 P1：键盘焦点外圈（UI 审查 #36） ============
+   全站此前只有 2 条 :focus-visible —— 键盘用户根本不知道焦点在哪。
+   统一给所有可聚焦元素一圈主题色外环；:focus-visible 只在键盘导航时
+   出现，鼠标点击不触发，不影响正常观感。 */
+:focus-visible{
+  outline: 2px solid var(--accent-1);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+/* ============ 2026-10-13 P1：Live2D 舞台空框骨架（UI 审查 #36） ============
+   模型没加载时右栏是一块死黑空框。垫一层极淡的主题色氛围底 + 网格纹理：
+   空框有「这是舞台」的暗示；模型加载后 canvas 盖在上面，透出的部分反而
+   成为角色脚下的柔和地台。 */
+.stage .panel{
+  background:
+    radial-gradient(120% 90% at 50% 100%,
+      color-mix(in srgb, var(--accent-1) 10%, transparent) 0%,
+      color-mix(in srgb, var(--accent-2) 5%, transparent) 45%,
+      transparent 78%);
+}
+.stage .panel::after{
+  content: ""; position: absolute; inset: 0; z-index: 0; pointer-events: none;
+  background-image:
+    linear-gradient(color-mix(in srgb, var(--line) 55%, transparent) 1px, transparent 1px),
+    linear-gradient(90deg, color-mix(in srgb, var(--line) 55%, transparent) 1px, transparent 1px);
+  background-size: 28px 28px;
+  opacity: .35;
+  -webkit-mask-image: radial-gradient(120% 90% at 50% 100%, #000 0%, transparent 72%);
+  mask-image: radial-gradient(120% 90% at 50% 100%, #000 0%, transparent 72%);
+}

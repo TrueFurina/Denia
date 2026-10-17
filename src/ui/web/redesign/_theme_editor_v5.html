@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>主题编辑器 v5 · 设计稿</title>
+<link rel="stylesheet" href="design_tokens.css?v=20261007g" />
+<link rel="stylesheet" href="ui_shared.css?v=20261006c" />
+<link rel="stylesheet" href="home.css?v=20261005h" />
+<link rel="stylesheet" href="pages.css?v=20261005h" />
+<link rel="stylesheet" href="_theme_editor_v5.css?v=20" />
+</head>
+<body>
+<div id="tv5">
+
+  <!-- 顶栏：左「返回」· 中标题与状态 · 右三个动作 -->
+  <header id="tv5Bar">
+    <button class="tv5-btn tv5-back" id="tv5Back" title="返回 · 直接离开编辑器，不强制保存" type="button">← 返回</button>
+    <div class="tv5-title" id="tv5Name" title="点一下可以改这套主题的名字">主题 · <b>我的主题</b></div>
+    <span class="tv5-state" id="tv5State">读取中</span>
+    <div class="tv5-sp"></div>
+    <button class="tv5-btn" id="tv5AddSticker" title="贴纸 / 表情包：选一张小图贴到页面上，可拖动、可缩放；也支持把图片/视频/表情包直接拖进预览" type="button">贴纸</button>
+    <button class="tv5-btn" id="tv5Undo" disabled type="button">撤销</button>
+    <button class="tv5-btn" id="tv5Reset" type="button">全部清空</button>
+    <button class="tv5-btn primary" id="tv5Done" type="button">完成</button>
+  </header>
+
+  <div id="tv5Body">
+
+    <!-- 左：主题库。顺序 = 操作流程：先决定给谁用 → 选成套 → 自己的 -->
+    <aside id="tv5Lib">
+      <section class="tv5-sec">
+        <h3><span class="tv5-step">1</span> 应用到角色</h3>
+        <div class="tv5-chars" id="tv5Bind"></div>
+        <p class="tv5-note" id="tv5BindNote">未绑定</p>
+      </section>
+
+      <section class="tv5-sec">
+        <h3><span class="tv5-step">2</span> 快速配色</h3>
+        <div class="tv5-cards" id="tv5Presets"></div>
+        <div class="tv5-sws">
+          <span class="tv5-rail-t">AI 配色 · 看图取</span>
+          <div class="tv5-sw-row" id="tv5Sw"></div>
+          <p class="tv5-geonote" id="tv5Geo"></p>
+        </div>
+        <p class="tv5-note" id="tv5PresetNote">只换配色，不动你的图。点一下整套换上。</p>
+      </section>
+
+      <section class="tv5-sec">
+        <h3><span class="tv5-step">3</span> 我的主题</h3>
+        <div class="tv5-cards" id="tv5Mine"></div>
+        <p class="tv5-note" id="tv5MineNote">从零攒一套：点下面的部位 → 预览会自动放大到那一块 → 就地添加图片</p>
+        <p class="tv5-note tv5-note-hero" id="tv5ColorNote">导入图片后，会自动按你的图算出一份配套的主题色</p>
+      </section>
+    </aside>
+
+    <!-- 中：近 1:1 大预览 + 跟随聚焦 -->
+    <main id="tv5Prev">
+      <div class="tv5-prevbar">
+        <!-- ⭐ 2026-10-12 版面轨：内容版面（对话/角色）+ 各页「整页背景」都可点。
+             点哪个版面，下面的槽位轨就换成那个版面的图位 —— 由 renderScenes() 渲染。 -->
+        <span class="tv5-scenes" id="tv5Scenes"></span>
+        <button class="tv5-btn tv5-global" id="tv5Global" type="button">← 回到全局</button>
+        <span class="tv5-prevhint" id="tv5PrevHint">点下方任一项，预览会自动放大到那一块</span>
+      </div>
+      <div id="tv5Stage">
+        <div id="tv5FrameHost">
+          <!-- ⭐ 2026-10-06：两个常驻预览框（对话页 / 角色页），切页只切显隐，不再 iframe.src 重载。
+               原来只有一个 frame —— 点「角色卡背景」跨到角色页要整页重载（连页面里的
+               Live2D rig iframe 一起重建），切回对话页又重载一次 ⇒ 用户感到的
+               「一切到角色卡预览就卡一下、UI 过渡框也卡一下再刷新」。
+               隐藏页用 opacity 而不是 display:none —— 后者会让 iframe 视口变 0，
+               里面的 getBoundingClientRect 全为 0，小桥量不到坐标就画不出高亮框。 -->
+          <iframe id="tv5Frame" class="tv5-frame fg" data-page="chat" title="预览" scrolling="no"></iframe>
+          <iframe id="tv5FrameB" class="tv5-frame bg" data-page="chars" title="预览·角色页" scrolling="no"></iframe>
+          <div id="tv5Hot"></div>
+          <!-- ⭐ 2026-10-12 页面壁纸预览层：壁纸版面不是整页文档，直接把该页背景铺在这块画布上，
+               所见即生产里的「整页背景」效果。 -->
+          <div id="tv5WallPrev" hidden>
+            <div class="tv5-wall-bar">
+              <b id="tv5WallTag">页面背景</b>
+              <span>这张图会作为该页的整页背景铺满显示</span>
+            </div>
+          </div>
+        </div>
+        <!-- 压暗层：不随镜头缩放，几何由 JS 在聚焦目标确定时写一次（v5.6） -->
+        <div id="tv5Dim"></div>
+        <!-- 目标部位旁边飞出的操作面板：DOM 由 JS 建一次，动效交给 GSAP -->
+        <div id="tv5Act"></div>
+      </div>
+    </main>
+  </div>
+
+  <!-- 底：部位轨（配色已挪到左栏「快速配色」） -->
+  <footer id="tv5Rail">
+    <div class="tv5-slots" id="tv5Slots"></div>
+  </footer>
+</div>
+<div id="tv5Tip" role="status" aria-live="polite"></div>
+<!-- ⚠️ GSAP 必须先于本页脚本：面板飞入/飞出、微动效都靠它。
+     加载失败时 _theme_editor_v5.js 里有降级（直接落终态），不会把面板卡在透明态。 -->
+<script src="gsap.min.js?v=6"></script>
+<!-- ⚠️ 顺序有讲究：后端桥必须先于本页脚本，v5 启动时就要问它要主题包。 -->
+<script src="theme_backend_bridge.js?v=4"></script>
+<script src="_theme_editor_v5.js?v=25"></script>
+</body>
+</html>

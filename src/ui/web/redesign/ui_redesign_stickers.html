@@ -1,0 +1,1478 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<!-- 【2026-10-13 修】不声明这行 → spa.js 不会给 .app 加 .no-stage →
+     右侧 Live2D 舞台（320px）照旧占位，内容被挤成一条、观感全毁。
+     对齐 lib.html 的写法。 -->
+<meta name="stage" content="off" />
+<title>表情包管理 · 桌面伴侣</title>
+
+<link rel="stylesheet" href="/redesign/design_tokens.css?v=20261013e" />
+<link rel="stylesheet" href="/redesign/ui_shared.css?v=20261013e" />
+<link rel="stylesheet" href="/redesign/pages.css" />
+
+<style>
+  /* ===== 表情包管理页（2026-10-13 接入）=====
+     设计约束：只消费 design_tokens.css 的令牌，硬编码色值一律不写 ——
+     这样换主题色 / 切深浅模式都自动跟随，不会出现「只有这页颜色不对」。 */
+  *{ -webkit-user-select:none; user-select:none; -webkit-tap-highlight-color:transparent; }
+  input,textarea,select,[contenteditable="true"]{ -webkit-user-select:text; user-select:text; }
+  ::selection{ background:rgba(124,92,255,.25); }
+  img,svg{ -webkit-user-drag:none; }
+
+  /* ---------- 顶部统计条 ----------
+     ⚠️ 旧版用 auto-fit + minmax(126px,1fr)：内容区被右栏舞台挤窄时
+     自动降列 → 用户看到「只有一个空格子」。现改为**固定 5 等分**，
+     窄屏再降级，保证永远是整齐的一排。 */
+  .sk-stats{ display:grid; grid-template-columns:repeat(5,minmax(0,1fr)); gap:12px; }
+  @media (max-width:1180px){ .sk-stats{ grid-template-columns:repeat(3,minmax(0,1fr)); } }
+  @media (max-width:760px){ .sk-stats{ grid-template-columns:repeat(2,minmax(0,1fr)); } }
+  .sk-stat{
+    border:1px solid var(--line); border-radius:var(--r-md); background:var(--surface);
+    padding:12px 14px 12px 16px; position:relative; overflow:hidden; min-width:0;
+    transition:border-color var(--dur-1) var(--ease), transform var(--dur-1) var(--ease);
+  }
+  .sk-stat:hover{ border-color:var(--line-strong); transform:translateY(-1px); }
+  .sk-stat::after{
+    content:""; position:absolute; left:0; top:0; bottom:0; width:3px;
+    background:var(--accent-grad); opacity:.85;
+  }
+  .sk-stat .n{ font-size:var(--fs-xl); font-weight:650; font-variant-numeric:tabular-nums;
+    line-height:1.25; }
+  .sk-stat .l{ font-family:var(--font-mono); font-size:9.5px; letter-spacing:.14em;
+    text-transform:uppercase; color:var(--ink-2); margin-top:2px;
+    overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+
+  /* ---------- 主体两栏 ---------- */
+  .sk-body{ display:grid; grid-template-columns:236px minmax(0,1fr); gap:18px; align-items:start; }
+  @media (max-width:1080px){ .sk-body{ grid-template-columns:1fr; } }
+
+  /* ---------- 左侧：表情包列表 ---------- */
+  .sk-packs{ display:flex; flex-direction:column; gap:6px; }
+  .sk-pack{
+    display:flex; align-items:center; gap:10px; padding:9px 11px; cursor:pointer;
+    border:1px solid transparent; border-radius:var(--r-sm); position:relative;
+    transition:background var(--dur-1) var(--ease), border-color var(--dur-1) var(--ease);
+  }
+  .sk-pack:hover{ background:var(--surface-2); }
+  .sk-pack.on{ background:var(--accent-soft-1); border-color:var(--line-strong); color:var(--accent-ink); font-weight:600; }
+  .sk-pack .pn{ flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:var(--fs-sm); }
+  .sk-pack .pc{ font-family:var(--font-mono); font-size:10px; color:var(--ink-3); flex:none; }
+  .sk-pack .pd{
+    opacity:0; flex:none; border:none; background:transparent; color:var(--ink-3);
+    cursor:pointer; font-size:13px; padding:0 2px; transition:opacity var(--dur-1), color var(--dur-1);
+  }
+  .sk-pack:hover .pd{ opacity:1; }
+  .sk-pack .pd:hover{ color:var(--bad); }
+
+  /* ---------- 工具栏 ----------
+     ⚠️ 旧版用 flex-wrap，宽度一窄就各元素分散换行，
+     用户截图里「搜索框漂在中间一个孤立小卡里、自动标注单独一行」就是这么来的。
+     现在：**不换行** + 明确的左右分区，搜索框吃掉剩余宽度，按钮固定不缩。 */
+  .sk-tools{ display:flex; align-items:center; gap:10px; flex-wrap:nowrap; }
+  .sk-tools .ttl{
+    font-family:var(--font-mono); font-size:9.5px; letter-spacing:.14em;
+    text-transform:uppercase; color:var(--ink-3); white-space:nowrap; flex:none;
+  }
+  .sk-tools .spacer{ flex:1 1 auto; min-width:8px; }
+  .sk-search{
+    flex:1 1 200px; min-width:120px; max-width:360px;
+    padding:8px 12px; border-radius:var(--r-md);
+    border:1px solid var(--line); background:var(--surface); color:var(--ink);
+    font-size:var(--fs-sm); outline:none; transition:border-color var(--dur-1);
+  }
+  .sk-search:focus{ border-color:var(--line-strong); }
+  .sk-tools .btn, .sk-tools .badge{ flex:none; white-space:nowrap; }
+  /* 极窄时允许换行，但不留孤立小卡 */
+  @media (max-width:900px){ .sk-tools{ flex-wrap:wrap; } .sk-search{ max-width:none; } }
+
+  /* ---------- 网格 ---------- */
+  .sk-grid{ display:grid; grid-template-columns:repeat(auto-fill,minmax(188px,1fr)); gap:14px; }
+  .sk-card{
+    border:1px solid var(--line); border-radius:var(--r-md); background:var(--surface);
+    overflow:hidden; position:relative;
+    /* 动效：入场淡入上浮 + hover 抬升。用 --ease-out 让起手更快、手感更「跟手」 */
+    animation:skIn .38s var(--ease-out) both;
+    transition:transform var(--dur-2) var(--ease-out), border-color var(--dur-1), box-shadow var(--dur-2) var(--ease-out);
+  }
+  .sk-card:hover{ transform:translateY(-3px); border-color:var(--line-strong); box-shadow:var(--shadow-2); }
+  @keyframes skIn{ from{ opacity:0; transform:translateY(8px) scale(.985); } to{ opacity:1; transform:none; } }
+  .sk-thumb{
+    position:relative; width:100%; aspect-ratio:1/1; overflow:hidden; display:block;
+    background:
+      linear-gradient(180deg, var(--surface-2), transparent),
+      repeating-conic-gradient(var(--surface-2) 0% 25%, transparent 0% 50%) 0 0/18px 18px;
+  }
+  /* ⭐ 图片**铺满**缩略图（与设计稿一致）。
+     旧写法 max-width/max-height:100% 只在图片**大于**容器时才缩放 ——
+     实测表情图 240px、容器 200px 时看着没事，但容器变大（窄屏单列）就四周露棋盘格。
+     改 width/height:100% + object-fit:cover：任何尺寸都填满。
+     表情图多为 1:1 正方形，与容器同比例 ⇒ cover 不会裁掉内容。 */
+  .sk-thumb img{ width:100%; height:100%; display:block; object-fit:cover; object-position:center; }
+
+  /* ---------- 相机对焦加载 v2.1（模糊度回调）----------
+     开发者反馈"模糊度有点高"。调整：
+       blur 20px → 10px（保住轮廓，不再是"一坨色块"）
+       占位源 16px → 48px（主色分布更真实，不再透出棋盘格）
+       不透明度 .85 → 1（占位也要清楚，只是糊） */
+  .sk-thumb .sk-focus{ display:none; }
+  .sk-thumb img.sk-ph{
+    filter: blur(10px) saturate(1.05);
+    transform: scale(1.04);
+    opacity:1;
+    /* 模糊 → 清晰 的过渡：500ms，与缩放同步 */
+    transition: filter .5s cubic-bezier(.16,1,.3,1),
+                transform .5s cubic-bezier(.16,1,.3,1),
+                opacity .5s cubic-bezier(.16,1,.3,1);
+  }
+  /* 合焦：JS 取完主色底后加这个类 → 三个属性一起平滑过渡到最终值 */
+  .sk-thumb img.sk-ph.sk-focus-in{
+    filter: blur(0) saturate(1);
+    transform: scale(1);
+    opacity: 1;
+  }
+
+  /* 「下滑加载更多」提示条 */
+  .sk-more{
+    text-align:center; padding:14px 0 4px; color:var(--ink-3);
+    font-size:var(--fs-xs); font-family:var(--font-mono);
+  }
+  .sk-meta{ padding:9px 11px 11px; }
+  /* 徽标与描述**分成两行**：描述用 line-clamp 截断，徽标另起一行 flex，
+     避免「inline-block 徽标被 line-clamp 容器一起裁掉」的排版隐患。 */
+  .sk-badge-row{ display:flex; align-items:center; gap:4px; margin-bottom:4px; min-height:14px; }
+  .sk-desc{
+    font-size:var(--fs-xs); line-height:1.45; color:var(--ink-2); min-height:32px;
+    display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden;
+  }
+  .sk-tags{ display:flex; flex-wrap:wrap; gap:4px; margin-top:6px; }
+  .sk-tag{
+    font-size:10px; padding:1px 7px; border-radius:99px;
+    background:var(--accent-soft-1); color:var(--accent-ink); white-space:nowrap;
+  }
+  /* 标签来源徽标：让用户一眼看出「哪些是我改过的」 */
+  .sk-prov{ font-family:var(--font-mono); font-size:9px; padding:1px 6px; border-radius:99px; margin-right:5px; }
+  .sk-prov.ai{ background:var(--surface-3); color:var(--ink-2); }
+  .sk-prov.manual{ background:color-mix(in srgb, var(--good) 20%, transparent); color:var(--good); }
+  .sk-prov.none{ background:transparent; border:1px solid var(--line); color:var(--ink-3); }
+
+  /* 悬停操作条 */
+  .sk-acts{
+    position:absolute; top:7px; right:7px; display:flex; gap:5px;
+    opacity:0; transform:translateY(-4px);
+    transition:opacity var(--dur-1) var(--ease), transform var(--dur-1) var(--ease);
+  }
+  .sk-card:hover .sk-acts{ opacity:1; transform:none; }
+  .sk-ico{
+    width:26px; height:26px; border-radius:var(--r-sm); cursor:pointer;
+    border:1px solid var(--line); background:color-mix(in srgb, var(--bg) 82%, transparent);
+    color:var(--ink-2); display:grid; place-items:center; font-size:12px;
+    transition:color var(--dur-1), border-color var(--dur-1), background var(--dur-1);
+  }
+  .sk-ico:hover{ color:var(--accent-ink); border-color:var(--line-strong); }
+  .sk-ico.danger:hover{ color:var(--bad); border-color:var(--bad); }
+
+  /* 拖拽上传高亮 */
+  .sk-drop{ position:relative; border-radius:var(--r-md); transition:box-shadow var(--dur-1); }
+  .sk-drop.drag{ box-shadow:inset 0 0 0 2px var(--accent-1); }
+
+  /* ---------- 弹窗内的情绪词 chips ---------- */
+  .sk-chips{
+    display:flex; flex-wrap:wrap; gap:6px; max-height:170px; overflow-y:auto;
+    padding:9px; border:1px solid var(--line); border-radius:var(--r-sm); background:var(--surface);
+  }
+  .sk-chip{
+    font-size:var(--fs-xs); padding:3px 10px; border-radius:99px; cursor:pointer;
+    background:var(--surface-2); border:1px solid transparent; color:var(--ink-2);
+    transition:background var(--dur-1), color var(--dur-1), border-color var(--dur-1), transform var(--dur-1);
+  }
+  .sk-chip:hover{ border-color:var(--line-strong); color:var(--ink); }
+  .sk-chip.on{ background:var(--accent-grad); color:var(--on-accent); font-weight:600; }
+  .sk-chip:active{ transform:scale(.95); }
+
+  .sk-field{ margin-bottom:13px; }
+  .sk-field label{
+    display:block; font-family:var(--font-mono); font-size:9.5px; letter-spacing:.14em;
+    text-transform:uppercase; color:var(--ink-3); margin-bottom:6px;
+  }
+  .sk-field input[type=text]{
+    width:100%; padding:8px 11px; border-radius:var(--r-sm); border:1px solid var(--line);
+    background:var(--surface); color:var(--ink); font-size:var(--fs-sm); outline:none;
+    transition:border-color var(--dur-1);
+  }
+  .sk-field input[type=text]:focus{ border-color:var(--line-strong); }
+  .sk-hint{ font-size:var(--fs-xs); color:var(--ink-3); line-height:1.5; }
+
+  /* ---------- 自检面板 ---------- */
+  .sk-check{ display:flex; flex-direction:column; gap:7px; }
+  .sk-check-row{
+    display:flex; align-items:center; gap:9px; font-size:var(--fs-sm);
+    padding:7px 10px; border-radius:var(--r-sm); background:var(--surface-2);
+    animation:skIn .3s var(--ease-out) both;
+  }
+  .sk-dot{ width:7px; height:7px; border-radius:50%; flex:none; }
+  .sk-dot.ok{ background:var(--good); box-shadow:0 0 8px var(--good); }
+  .sk-dot.bad{ background:var(--bad); box-shadow:0 0 8px var(--bad); }
+  .sk-check-row .nm{ min-width:130px; }
+  .sk-check-row .dt{ color:var(--ink-3); font-size:var(--fs-xs); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+
+  /* ---------- 空态 ---------- */
+  .sk-empty{ text-align:center; padding:38px 16px; color:var(--ink-3); font-size:var(--fs-sm); }
+  .sk-empty .big{ font-size:26px; margin-bottom:8px; opacity:.6; }
+  /* 后端未连接 / 出错：与「空数据」区分开，文案更明确 */
+  .sk-offline{ text-align:center; padding:22px 12px; color:var(--ink-3); font-size:var(--fs-xs); line-height:1.6; }
+  .sk-offline .big{ font-size:22px; margin-bottom:8px; opacity:.7; }
+  .sk-offline .hint2{ margin-top:6px; color:var(--ink-4); font-size:11px; }
+
+  /* ⭐ 强调色文字（两套主题都要能读）
+     --accent-1 是**亮青色**，为深色底设计。直接拿它当文字色，
+     在浅色主题下会变成「浅青压浅灰」→ 实测对比度只有 1.1，几乎看不见。
+     这里用 color-mix 把它和 --ink 混：深色主题 --ink 是近白（保持亮青），
+     浅色主题 --ink 是深蓝黑（自动压暗成可读的青绿）⇒ 一套写法两套主题都对。
+     ⚠️ 仅用于**文字**；色块/描边/渐变仍可直接用 --accent-1。 */
+  :root{
+    --accent-ink: color-mix(in srgb, var(--accent-1) 42%, var(--ink));
+  }
+
+  /* ---------- 模态（实心面板，保证文字可读） ---------- */
+  .sk-modal-mask{
+    position:fixed; inset:0; z-index:900; display:none; place-items:center;
+    background:var(--mask); -webkit-backdrop-filter:blur(3px); backdrop-filter:blur(3px);
+  }
+  .sk-modal-mask.open{ display:grid; }
+  .sk-modal-panel{
+    /* ⭐ 关键：用 --surface-1（实心面板底）而非 --surface（仅 2.5% 透明的淡玻璃），
+       否则弹窗半透明、背后内容透上来，表单文字发虚读不清。 */
+    width:min(560px,92vw); max-height:86vh; overflow:auto;
+    padding:16px 18px; border:1px solid var(--line-2); border-radius:var(--r-lg);
+    background:var(--surface-1); box-shadow:var(--shadow-pop);
+    animation:skIn .3s var(--ease-out) both;
+  }
+  .sk-modal-head{ display:flex; align-items:center; margin-bottom:14px; }
+
+  /* ---------- Toast（JS 动态创建） ---------- */
+  .sk-toast{
+    position:fixed; left:50%; bottom:30px; transform:translateX(-50%) translateY(16px);
+    z-index:9999; max-width:min(560px,90vw);
+    padding:11px 20px; border-radius:var(--r-md);
+    background:var(--surface-1); color:var(--ink); border:1px solid var(--line-2);
+    box-shadow:var(--shadow-pop); font-size:var(--fs-sm); line-height:1.5;
+    opacity:0; pointer-events:none;
+    transition:opacity var(--dur-2) var(--ease-out), transform var(--dur-2) var(--ease-out);
+  }
+  .sk-toast.show{ opacity:1; transform:translateX(-50%) translateY(0); }
+
+  /* ---------- 角色卡（绑定角色用，头像 + 名字） ---------- */
+  .sk-chars{
+    display:grid; grid-template-columns:repeat(auto-fill,minmax(148px,1fr));
+    gap:9px; max-height:236px; overflow-y:auto; padding:3px;
+  }
+  .sk-char{
+    display:flex; align-items:center; gap:10px; padding:9px 11px; cursor:pointer;
+    border:1px solid var(--line); border-radius:var(--r-sm); background:var(--surface);
+    transition:border-color var(--dur-1) var(--ease), background var(--dur-1) var(--ease),
+               transform var(--dur-1) var(--ease);
+  }
+  .sk-char:hover{ border-color:var(--line-strong); background:var(--surface-2); }
+  .sk-char:active{ transform:scale(.98); }
+  .sk-char.on{ border-color:var(--accent-1); background:var(--accent-soft-1); }
+  .sk-char.on .sk-cn{ color:var(--accent-ink); font-weight:600; }
+  /* 方头像：⚠️ 用 avatar（头像）不是 banner（头图）——头图裁成方形只剩一条眼睛 */
+  .sk-cav{
+    width:34px; height:34px; flex:none; border-radius:var(--r-sm); overflow:hidden;
+    display:grid; place-items:center; background:var(--surface-3);
+  }
+  .sk-cav img{ width:100%; height:100%; object-fit:cover; display:block; }
+  .sk-cav.ph svg{ width:60%; height:60%; color:var(--ink-3); }
+  .sk-cn{ font-size:var(--fs-sm); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .sk-tick{
+    margin-left:auto; flex:none; width:17px; height:17px; border-radius:50%;
+    border:1.5px solid var(--line-2); display:grid; place-items:center;
+    font-size:10px; color:transparent; transition:all var(--dur-1) var(--ease);
+  }
+  .sk-char.on .sk-tick{ background:var(--accent-grad); border-color:transparent; color:var(--on-accent); }
+
+  /* ---------- 标注结果（成功 / 失败 + 原因） ---------- */
+  .sk-res{ display:flex; flex-direction:column; gap:6px; max-height:300px; overflow-y:auto; }
+  .sk-res-row{
+    display:flex; align-items:flex-start; gap:9px; padding:8px 11px; border-radius:var(--r-sm);
+    background:var(--surface-2); font-size:var(--fs-xs); line-height:1.5;
+    animation:skIn .28s var(--ease-out) both;
+  }
+  .sk-res-row .st{ flex:none; font-weight:600; }
+  .sk-res-row.ok .st{ color:var(--good); }
+  .sk-res-row.bad .st{ color:var(--err); }
+  .sk-res-row .fl{ font-family:var(--font-mono); font-size:10px; color:var(--ink-3); flex:none; }
+  .sk-res-row .rs{ flex:1; min-width:0; word-break:break-word; }
+  .sk-res-row .rs .why{ color:var(--err); }
+  .sk-sum{
+    display:flex; gap:16px; padding:11px 14px; margin-bottom:12px;
+    border-radius:var(--r-sm); background:var(--surface-2);
+  }
+  .sk-sum b{ font-size:var(--fs-title); font-variant-numeric:tabular-nums; }
+  .sk-sum .k{ font-size:10.5px; color:var(--ink-3); }
+  /* 进度条 */
+  .sk-prog{ height:4px; border-radius:99px; background:var(--surface-3); overflow:hidden; margin:10px 0 4px; }
+  .sk-prog i{ display:block; height:100%; width:0; background:var(--accent-grad);
+    transition:width var(--dur-2) var(--ease-out); }
+
+  /* 下载管理常驻浮层：已统一到 download_tray.js（与模型下载小窗同一套样式/同一位置）。
+     本页 renderDownloadTray() 仅负责把贴纸任务 upsert 进 DownloadTray，样式不再在此定义。 */
+
+  /* 骨架屏（加载中） */
+  .sk-skel{ border:1px solid var(--line); border-radius:var(--r-md); overflow:hidden; background:var(--surface); }
+  .sk-skel .b{ aspect-ratio:1/1; background:linear-gradient(90deg,var(--surface-2),var(--surface-3),var(--surface-2));
+    background-size:200% 100%; animation:skShim 1.25s var(--ease) infinite; }
+  .sk-skel .t{ height:42px; background:var(--surface); }
+  @keyframes skShim{ from{ background-position:200% 0; } to{ background-position:-200% 0; } }
+
+  /* 资源广场条目 */
+  .sk-pickrow{
+    padding:9px 11px; margin-bottom:8px; border-radius:var(--r-sm);
+    background:var(--surface-2); font-size:var(--fs-xs); line-height:1.6;
+  }
+  .sk-pickrow .k{ color:var(--ink-3); }
+  /* 资源广场：卡片网格（替代旧的单行列表） */
+  .sk-mk{
+    display:grid; grid-template-columns:repeat(auto-fill,minmax(248px,1fr));
+    gap:9px; max-height:56vh; overflow-y:auto; padding-right:4px;
+  }
+  .sk-mk-card{
+    display:flex; flex-direction:column; gap:8px; padding:11px 13px;
+    border:1px solid var(--line); border-radius:var(--r-sm); background:var(--surface);
+    animation:skIn .32s var(--ease-out) both;
+    transition:border-color var(--dur-1) var(--ease), background var(--dur-1) var(--ease),
+               transform var(--dur-2) var(--ease-out), box-shadow var(--dur-2) var(--ease-out);
+  }
+  .sk-mk-card:hover{ border-color:var(--line-strong); background:var(--surface-2);
+    transform:translateY(-2px); box-shadow:var(--shadow-2); }
+  .sk-mk-top{ display:flex; align-items:center; gap:9px; }
+  .sk-mk-ico{
+    width:32px; height:32px; flex:none; border-radius:var(--r-sm); display:grid;
+    place-items:center; font-size:14px; font-weight:700;
+    background:var(--accent-grad); color:var(--on-accent);
+  }
+  .sk-mk-ttl{ flex:1; min-width:0; display:flex; flex-direction:column; }
+  .sk-mk-ttl b{ font-size:var(--fs-sm); font-weight:600; overflow:hidden;
+    text-overflow:ellipsis; white-space:nowrap; }
+  .sk-mk-n{ font-family:var(--font-mono); font-size:9.5px; color:var(--ink-3);
+    overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .sk-mk-desc{
+    font-size:var(--fs-xs); line-height:1.5; color:var(--ink-2); flex:1; min-height:30px;
+    display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden;
+  }
+  .sk-mk-foot{ display:flex; align-items:center; gap:8px; }
+  .sk-mk-tags{ display:flex; gap:4px; flex:1; flex-wrap:wrap; }
+  .sk-mk-foot .btn{ padding:6px 13px; font-size:var(--fs-xs); flex:none; }
+  .sk-mk-prog{ margin-top:2px; }
+</style>
+</head>
+
+<body>
+
+<div class="app no-stage">
+  <aside class="side">
+    <div class="brand"><div class="wm">达妮娅</div><div class="wmsub">DESKTOP COMPANION</div></div>
+
+    <div class="grp">
+      <div class="gt">日常</div>
+      <a class="nav" href="/index.html"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>对话</a>
+      <a class="nav" href="/redesign/ui_redesign_daily.html"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M4 4h16v16H4z"/><path d="M8 9h8M8 13h5"/></svg>日报周报</a>
+    </div>
+    <div class="grp">
+      <div class="gt">通话</div>
+      <a class="nav" href="/redesign/ui_redesign_calls.html"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M22 16.9v3a2 2 0 0 1-2.2 2 19.8 19.8 0 0 1-8.6-3.1 19.5 19.5 0 0 1-6-6A19.8 19.8 0 0 1 2.1 4.2 2 2 0 0 1 4.1 2h3a2 2 0 0 1 2 1.7c.1 1 .4 2 .7 2.9a2 2 0 0 1-.5 2.1L8.1 9.9a16 16 0 0 0 6 6l1.2-1.2a2 2 0 0 1 2.1-.5c.9.3 1.9.6 2.9.7a2 2 0 0 1 1.7 2z"/></svg>通话记录</a>
+    </div>
+    <div class="grp">
+      <div class="gt">伴侣</div>
+      <a class="nav" href="/redesign/ui_redesign_characters.html"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/></svg>角色</a>
+      <a class="nav" href="/redesign/ui_redesign_memory.html"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M5 4h12a2 2 0 0 1 2 2v14H7a2 2 0 0 1-2-2z"/></svg>记忆库</a>
+      <a class="nav on" href="/redesign/ui_redesign_stickers.html"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="3"/><circle cx="9" cy="9" r="1.4"/><path d="M21 15l-4.5-4.5L7 20"/></svg>表情包管理</a>
+    </div>
+    <div class="grp">
+      <div class="gt">系统</div>
+      <a class="nav" href="/redesign/ui_redesign_settings.html"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/></svg>设置</a>
+      <a class="nav" href="/redesign/ui_redesign_software_profiles.html"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>软件档案</a>
+      <a class="nav" href="/redesign/lib.html"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M5 4h11a2 2 0 0 1 2 2v14H7a2 2 0 0 1-2-2z M4 9h11 M4 13h11"/></svg>知识库</a>
+      <a class="nav" href="/redesign/ui_redesign_developer.html"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M4 6h16M7 12h10M10 18h4"/></svg>开发者</a>
+    </div>
+    <div class="spacer"></div>
+  </aside>
+
+  <main class="main">
+    <header class="top">
+      <div>
+        <div class="who">表情包管理</div>
+        <div class="sub">STICKER PACKS · 本地图库 / 云端广场 / 自动标注</div>
+      </div>
+      <div class="right">
+        <span class="badge" id="skBadge">检测中…</span>
+        <button class="btn ghost" id="skCheck">功能自检</button>
+        <button class="btn ghost" id="skMarket">🛒 资源广场</button>
+        <button class="btn primary" id="skNewPack">＋ 新建表情包</button>
+      </div>
+    </header>
+
+    <section class="content">
+      <div><div class="kicker">Stickers</div><div class="lead">表情包</div></div>
+
+      <!-- 统计 -->
+      <div class="sk-stats" id="skStats">
+        <div class="sk-stat"><div class="n" id="stPacks">—</div><div class="l">表情包</div></div>
+        <div class="sk-stat"><div class="n" id="stMemes">—</div><div class="l">表情总数</div></div>
+        <div class="sk-stat"><div class="n" id="stManual">—</div><div class="l">已手动校对</div></div>
+        <div class="sk-stat"><div class="n" id="stAuto">—</div><div class="l">AI 标注</div></div>
+        <div class="sk-stat"><div class="n" id="stNone">—</div><div class="l">待标注</div></div>
+      </div>
+
+      <div class="sk-body">
+        <!-- 左：包列表 -->
+        <article class="card" style="padding:12px">
+          <div class="ct">表情包</div>
+          <div class="sk-packs" id="skPacks"><div class="sk-hint">加载中…</div></div>
+        </article>
+
+        <!-- 右：表情网格 -->
+        <article class="card" style="display:flex;flex-direction:column;gap:13px">
+          <div class="sk-tools">
+            <span class="ttl" id="skCurPack">未选择</span>
+            <span class="badge" id="skBind">—</span>
+            <span class="spacer"></span>
+            <input class="sk-search" id="skSearch" placeholder="按情绪 / 场景 / 描述筛选…" />
+            <button class="btn ghost" id="skBindBtn">绑定角色</button>
+            <button class="btn ghost" id="skPickBtn">🎯 模拟选贴</button>
+            <button class="btn" id="skAutoPack">✨ 自动标注</button>
+          </div>
+          <div class="sk-drop" id="skDrop">
+            <div class="sk-grid" id="skGrid"></div>
+          </div>
+        </article>
+      </div>
+    </section>
+  </main>
+</div>
+
+<!-- ============================================================================
+     ⚠️⚠️ 这里**故意不写**弹窗 / Toast 的 HTML 节点！⚠️⚠️
+     ----------------------------------------------------------------------------
+     原因（2026-10-13 实锤的「UI 是死的」根因）：
+       SPA 切栏只注入 `doc.querySelector('.app > .main')`（见 spa.js），
+       **`.main` 之外的元素一律被丢弃**。
+     旧版把 #skModal / #skToast 写在这里（.main 之外），于是：
+       切到本页 → 弹窗节点不存在 → 脚本第一句 $("skModalX").addEventListener 抛 null
+       → 整个脚本中断 → **所有按钮都没绑上事件** → 页面看起来"死的"、点哪都没反应。
+     正确做法（对齐 characters.html）：弹窗与 Toast 由 JS **动态 createElement + appendChild(body)**，
+     这样 SPA 注入后它们才真实存在。
+     ============================================================================ -->
+
+<script src="/redesign/app_backend.js?v=20261015f"></script>
+<script src="/redesign/download_tray.js?v=20261015e"></script>
+<script>
+/* ============================================================
+   表情包管理页 前端控制器（2026-10-13）
+   后端：Backend.sticker*() → src/ui/sticker_bridge.py → 技能包
+   设计：全部走 design_tokens 变量；动效统一用 --ease / --ease-out
+   ============================================================ */
+(function () {
+  var S = { packs: [], cur: null, memes: [], vocab: [], filter: "", chars: [] };
+  var $ = function (id) { return document.getElementById(id); };
+
+  /* ---------- 下载任务：全局常驻进度浮层 + 跨重启恢复 ----------
+     【2026-10-15 修复】旧版 stickerInstall 同步阻塞 + 假进度条 + 退出丢状态。
+     现改为异步安装（后端 stickerInstallStart / Progress）：真实进度显示在右下角常驻浮层，
+     任务列表持久化到 localStorage；页面重开 / 软件重启都能恢复显示，中断的下载可一键重试。 */
+  var DL = { tasks: {}, timer: null };
+  var DL_KEY = "daniya_sticker_downloads";
+  function dlList() { return Object.keys(DL.tasks); }
+  function persistDownloads() {
+    try {
+      var snap = {};
+      dlList().forEach(function (k) {
+        var t = DL.tasks[k];
+        snap[k] = { name: t.name, status: t.status, done: t.done, total: t.total,
+                    error: t.error, started_at: t.started_at || 0,
+                    finished_at: t.finished_at || 0, entry: t.entry };
+      });
+      localStorage.setItem(DL_KEY, JSON.stringify(snap));
+    } catch (e) {}
+  }
+  function loadDownloads() {
+    try {
+      var raw = localStorage.getItem(DL_KEY);
+      if (!raw) return;
+      var snap = JSON.parse(raw) || {};
+      dlList().forEach(function (k) { delete DL.tasks[k]; });
+      Object.keys(snap).forEach(function (k) {
+        var t = snap[k];
+        DL.tasks[k] = { id: k, name: t.name || "表情包", status: t.status || "running",
+                        done: t.done || 0, total: t.total || 0, error: t.error || "",
+                        entry: t.entry, started_at: t.started_at || 0, finished_at: t.finished_at || 0 };
+      });
+    } catch (e) {}
+  }
+  /* 统一下载浮层：把贴纸任务推给 DownloadTray（与模型下载小窗同一面板/样式/位置）。
+     浮层何时显示、长啥样、重试按钮，全由 download_tray.js 负责；这里只喂数据 + 接重试。 */
+  function renderDownloadTray() {
+    var T = window.DownloadTray;
+    if (!T) return;   /* 统一浮层脚本未加载（预览模式等）：本页自有逻辑不崩 */
+    dlList().forEach(function (k) {
+      var t = DL.tasks[k];
+      if (!t) return;
+      var pct = t.total ? Math.round((t.done / t.total) * 100) : 0;
+      var st = t.status || "running";
+      var cur = "";
+      if (st === "running") cur = (t.current ? t.current : "");
+      else if (st === "error") cur = String(t.error || "");
+      else if (st === "paused") cur = "已暂停，可从断点继续";
+      var acts = null;
+      if (st === "running") {
+        acts = [{ label: "暂停", fn: function () { call("stickerInstallCancel", k, true); } }];
+      } else if (st === "paused") {
+        acts = [{ label: "继续", fn: function () {
+          call("stickerInstallContinue", k).then(function (r) {
+            if (!r || r.ok === false) { toast(failMsg(r, "无法继续下载"), "err"); return; }
+            t.status = "running"; t._done = false;
+            renderDownloadTray(); persistDownloads(); ensurePoll();
+          });
+        }}];
+      }
+      var act = null;
+      if (st === "error" || st === "interrupted") {
+        act = { label: "重试", fn: function () { retryDownload(k); } };
+      }
+      T.upsert({
+        id: "sk:" + k, kind: "sticker", name: t.name || "表情包",
+        pct: pct, status: st, current: cur, error: t.error || "",
+        actions: acts, action: act,
+        onDelete: function () {
+          /* 删除 = 真停：下载中/暂停中的任务先让后端停掉并丢弃部分包 */
+          if (st === "running" || st === "paused") call("stickerInstallCancel", k, false);
+          delete DL.tasks[k]; persistDownloads();
+        },
+        onDismiss: function () { delete DL.tasks[k]; persistDownloads(); }
+      });
+    });
+    /* 清掉 tray 里已不存在的贴纸任务（如被重试替换 / 被用户隐藏） */
+    T.list().forEach(function (x) {
+      if (x.kind !== "sticker") return;
+      var k = x.id.slice(3);
+      if (!DL.tasks[k]) T.remove(x.id);
+    });
+  }
+  function updateMarketCard(tid) {
+    var t = DL.tasks[tid]; if (!t) return;
+    var card = document.querySelector('[data-tid="' + tid + '"]');
+    if (!card) return;
+    var pb = card.closest(".sk-mk-card"); if (!pb) return;
+    var prog = pb.querySelector(".sk-mk-prog"); var bar = pb.querySelector(".sk-mk-prog i");
+    var pt = pb.querySelector("[data-progtxt]");
+    if (prog) prog.style.display = "block";
+    if (bar) bar.style.width = (t.total ? Math.round((t.done / t.total) * 100) : (t.status === "running" ? 8 : 0)) + "%";
+      if (pt) {
+        if (t.status === "running") pt.textContent = "下载中 " + t.done + "/" + t.total + (t.current ? (" · " + t.current) : "");
+        else if (t.status === "paused") pt.textContent = "已暂停 " + t.done + "/" + t.total + "（断点保留，浮层里可继续）";
+        else if (t.status === "canceled") pt.textContent = "已取消";
+        else if (t.status === "done") pt.textContent = "已装入 " + t.done + " 张";
+        else if (t.status === "error") pt.textContent = "失败：" + (t.error || "");
+        else if (t.status === "interrupted") pt.textContent = "中断（未完成）";
+      }
+      var btn = pb.querySelector("[data-mk]");
+      if (btn && (t.status === "done" || t.status === "error" || t.status === "interrupted")) {
+        btn.disabled = false; btn.textContent = (t.status === "done") ? "已安装" : "重试";
+      } else if (btn && t.status === "paused") {
+        btn.disabled = true; btn.textContent = "已暂停";
+      }
+  }
+  function pollDownload() {
+    var running = dlList().filter(function (k) { return DL.tasks[k].status === "running"; });
+    if (!running.length) { if (DL.timer != null) { clearInterval(DL.timer); DL.timer = null; } persistDownloads(); return; }
+    running.forEach(function (k) {
+      var t = DL.tasks[k];
+      call("stickerInstallProgress", k).then(function (p) {
+        if (!p || p.found === false) {
+          if (t.status === "running") { t.status = "interrupted"; t.error = t.error || "任务已不存在"; }
+          renderDownloadTray(); persistDownloads(); return;
+        }
+        t.status = p.status; t.done = p.done; t.total = p.total;
+        t.current = p.current || ""; t.error = p.error || ""; if (p.name) t.name = p.name;
+        updateMarketCard(k);
+        if ((p.status === "done" || p.status === "error" || p.status === "interrupted") && !t._done) {
+          t._done = true; t.finished_at = Date.now();
+          renderDownloadTray(); persistDownloads();
+          if (t.onDone) t.onDone(p);
+        }
+      });
+    });
+    persistDownloads();
+  }
+  function ensurePoll() {
+    if (DL.timer != null) return;
+    DL.timer = setInterval(pollDownload, 600);
+  }
+  function startInstall(entry, limit, onDone, cardBtn) {
+    call("stickerInstallStart", entry, limit).then(function (st) {
+      if (!st || st.ok === false) {
+        toast(failMsg(st, "启动安装失败"), "err");
+        if (cardBtn) { cardBtn.disabled = false; cardBtn.textContent = "安装"; }
+        if (onDone) onDone(null);
+        return;
+      }
+      var tid = st.task_id;
+      DL.tasks[tid] = { id: tid, name: entry.name || entry.id || "表情包", status: "running",
+                        done: 0, total: 0, current: "", error: "", entry: entry,
+                        started_at: Date.now(), onDone: onDone };
+      if (cardBtn) cardBtn.setAttribute("data-tid", tid);
+      persistDownloads(); renderDownloadTray(); ensurePoll();
+    });
+  }
+  function retryDownload(tid) {
+    var t = DL.tasks[tid];
+    if (!t || !t.entry) { toast("无法重试：缺少安装信息", "err"); return; }
+    delete DL.tasks[tid];
+    startInstall(t.entry, 120, t.onDone);
+  }
+  function initDownloads() {
+    loadDownloads();
+    dlList().forEach(function (k) {
+      call("stickerInstallProgress", k).then(function (p) {
+        var t = DL.tasks[k]; if (!t) return;
+        if (!p || p.found === false) return;
+        t.status = p.status; t.done = p.done; t.total = p.total; t.error = p.error || "";
+        if (p.name) t.name = p.name;
+        if ((p.status === "done" || p.status === "error" || p.status === "interrupted") && !t._done) {
+          t._done = true; t.finished_at = t.finished_at || Date.now();
+        }
+        renderDownloadTray(); persistDownloads();
+      });
+    });
+    renderDownloadTray();
+    if (dlList().some(function (k) { return DL.tasks[k].status === "running"; })) ensurePoll();
+  }
+
+  /* ---------------- Toast（动态创建，理由见 HTML 顶部注释） ---------------- */
+  function toast(msg, kind) {
+    var t = document.querySelector(".sk-toast");
+    if (!t) {
+      t = document.createElement("div");
+      t.className = "sk-toast";
+      document.body.appendChild(t);
+    }
+    t.textContent = msg;
+    t.style.borderColor = kind === "err" ? "var(--bad)" : (kind === "ok" ? "var(--good)" : "var(--line-2)");
+    t.classList.add("show");
+    clearTimeout(t._h);
+    t._h = setTimeout(function () { t.classList.remove("show"); }, 2800);
+  }
+
+  /* ---------------- 弹窗（动态创建） ---------------- */
+  function dialog(title, html) {
+    var mask = document.querySelector(".sk-modal-mask");
+    if (!mask) {
+      mask = document.createElement("div");
+      mask.className = "sk-modal-mask";
+      mask.innerHTML =
+        '<div class="sk-modal-panel">' +
+          '<div class="sk-modal-head">' +
+            '<div class="ct" style="margin:0" data-dt></div>' +
+            '<button class="sk-ico" data-close style="margin-left:auto">✕</button>' +
+          '</div>' +
+          '<div data-dbody></div>' +
+        '</div>';
+      document.body.appendChild(mask);
+      mask.addEventListener("click", function (e) {
+        if (e.target === mask || e.target.closest("[data-close]")) closeDialog();
+      });
+      document.addEventListener("keydown", function (e) {
+        if (e.key === "Escape") closeDialog();
+      });
+    }
+    mask.querySelector("[data-dt]").textContent = title;
+    mask.querySelector("[data-dbody]").innerHTML = html;
+    mask.classList.add("open");
+  }
+  function closeDialog() {
+    var m = document.querySelector(".sk-modal-mask");
+    if (m) m.classList.remove("open");
+  }
+  /* 取当前弹窗的正文容器（弹窗是动态创建的，没有固定 id） */
+  function dbody() {
+    var m = document.querySelector(".sk-modal-mask");
+    return m ? m.querySelector("[data-dbody]") : null;
+  }
+
+  function esc(s) {
+    return String(s == null ? "" : s).replace(/[&<>"']/g, function (c) {
+      return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
+    });
+  }
+  /* 角色头像 URL：avatar 是**方头像**（不是 banner 头图），走 /local_img 取图 */
+  function avatarUrl(c) {
+    if (c && c.avatar) return "/local_img?path=" + encodeURIComponent(c.avatar);
+    return "";
+  }
+  function avatarHtml(c) {
+    var u = avatarUrl(c);
+    if (u) return '<span class="sk-cav"><img src="' + esc(u) + '" alt=""></span>';
+    // 无头像：中性人形剪影（与角色页占位一致，不用姓名首字）
+    return '<span class="sk-cav ph"><svg viewBox="0 0 24 24" fill="currentColor">' +
+      '<circle cx="12" cy="8.2" r="3.7"/>' +
+      '<path d="M12 13.7c-4.15 0-7.5 2.34-7.5 5.23 0 .63.53 1.14 1.18 1.14h12.64c.65 0 1.18-.51 1.18-1.14 0-2.89-3.35-5.23-7.5-5.23z"/>' +
+      '</svg></span>';
+  }
+  function call(m) {
+    var args = Array.prototype.slice.call(arguments, 1);
+    if (!window.Backend || !Backend[m]) {
+      /* Backend 包装层在但缺这个方法 = 前端比 app_backend.js 新（缓存旧桥）；整层没有 = 预览模式 */
+      return Promise.resolve({ ok: false, offline: true, stale: !!window.Backend, error: "后端未连接（" + m + "）" });
+    }
+    /* ⚠️【2026-10-13 关键修复】app_backend.js 的 call() 有**两套返回约定**：
+         成功 → 原样返回后端 dict（本项目后端用 {ok:true,...}）
+         失败 → { success:false, offline:true|error:'xxx' }
+       旧版这里只判断 `r.ok === false`，于是：
+         r.ok 是 undefined（离线/异常）≠ false → **被当成成功** →
+         接着读 r.packs 得到 undefined → 渲染空列表 → 且不报错。
+       表现就是用户看到的「永远加载中、点什么都没反应」。
+       现在统一收敛成 { ok, offline, error, ... }。 */
+    return Promise.resolve(Backend[m].apply(null, args)).then(function (r) {
+      if (r && r.success === false) {
+        return {
+          ok: false,
+          offline: !!r.offline,
+          stale: !!r.stale,
+          error: r.offline ? (r.stale ? ("后端缺少接口 " + m + "（达妮娅是改动前的旧进程）") : "后端未连接（页面在预览模式或桥未就绪）") : (r.error || "调用失败")
+        };
+      }
+      if (!r || typeof r !== "object") return { ok: true, value: r };
+      // 后端显式 ok:false 也算失败
+      if (r.ok === false) return r;
+      return r;
+    }).catch(function (e) {
+      return { ok: false, error: "调用异常：" + ((e && e.message) || e) };
+    });
+  }
+  /* 统一的失败提示：区分「后端没连」与「后端报错」，两者文案不同。 */
+  function failMsg(r, fallback) {
+    if (!r) return fallback || "失败";
+    if (r.offline) {
+      /* stale = 桥在但缺新接口：后端是旧进程，重启软件即可；别再误导成「预览模式」 */
+      if (r.stale) return "达妮娅后端是旧进程（还没有这个新接口），请完全退出并重启软件后重试";
+      return "后端未连接：请从达妮娅界面进入本页（当前是预览模式）";
+    }
+    return r.error || fallback || "失败";
+  }
+
+  /* 兼容别名：旧代码里写的是 modal()/closeModal()，现在统一走动态创建的 dialog()。
+     （留着别名可少改调用点，也避免漏改导致 undefined 报错把整页脚本打断。） */
+  var modal = dialog;
+  var closeModal = closeDialog;
+
+  /* ---------- 渲染：包列表 ---------- */
+  function renderPacks() {
+    var el = $("skPacks");
+    if (!S.packs.length) {
+      el.innerHTML = '<div class="sk-hint">还没有表情包。<br/>点右上「＋ 新建表情包」开始。</div>';
+      return;
+    }
+    el.innerHTML = S.packs.map(function (p) {
+      return '<div class="sk-pack' + (S.cur === p.id ? " on" : "") + '" data-id="' + p.id + '">' +
+        '<span class="pn">' + esc(p.name) + '</span>' +
+        '<span class="pc">' + (p.meme_count || 0) + '</span>' +
+        '<button class="pd" data-del="' + p.id + '" title="删除">🗑</button></div>';
+    }).join("");
+  }
+  $("skPacks").addEventListener("click", function (e) {
+    var d = e.target.closest("[data-del]");
+    if (d) {
+      e.stopPropagation();
+      var pid = d.getAttribute("data-del");
+      if (!confirm("删除这个表情包？里面的表情会一起删掉。")) return;
+      call("stickerDeletePack", pid).then(function (r) {
+        if (r && r.ok === false) return toast(failMsg(r, "删除失败"), "err");
+        toast("已删除", "ok"); refreshPacks();
+      });
+      return;
+    }
+    var row = e.target.closest(".sk-pack");
+    if (row) selectPack(row.getAttribute("data-id"));
+  });
+
+  /* ---------- 渲染：表情网格 ---------- */
+  function provBadge(p) {
+    if (p === "manual") return '<span class="sk-prov manual">手动</span>';
+    if (p === "ai") return '<span class="sk-prov ai">AI</span>';
+    return '<span class="sk-prov none">未标注</span>';
+  }
+  /* ---------- 分批渲染（不一次拉完）----------
+     表情包可能有几百张，一次性全渲染会卡。
+     每批 BATCH 张，渲染完一批等 1 帧再渲染下一批（浏览器有机会画出来）。
+     滚动到底自动加载下一批（ Infinite Scroll）。 */
+  var BATCH = 24;
+  var renderCursor = 0;      // 已渲染到第几条
+  var renderList = [];       // 当前过滤后的完整列表
+  var loadingMore = false;
+
+  function loadMore() {
+    if (loadingMore || renderCursor >= renderList.length) return;
+    loadingMore = true;
+    var grid = $("skGrid");
+    var slice = renderList.slice(renderCursor, renderCursor + BATCH);
+    renderCursor += BATCH;
+    var base = renderCursor - slice.length;
+    var frag = document.createDocumentFragment();
+    slice.forEach(function (m, i) {
+      var wrap = document.createElement("div");
+      wrap.innerHTML = cardHtml(m, base + i);
+      var card = wrap.firstElementChild;
+      // 瀑布流交错入场
+      card.style.animationDelay = Math.min(i * 22, 260) + "ms";
+      frag.appendChild(card);
+      /* 首批（前 12 张，必然在视口内）立即加载；后续批走 300px 预加载距离 */
+      loadThumb(m, card, base + i >= 12);
+    });
+    grid.appendChild(frag);
+    loadingMore = false;
+    // 更新「还有多少」提示
+    var more = $("skMore");
+    if (more) {
+      var left = renderList.length - renderCursor;
+      more.hidden = left <= 0;
+      more.textContent = left > 0 ? "下滑加载更多（还有 " + left + " 张）…" : "";
+    }
+  }
+
+  function cardHtml(m, i) {
+    return '<div class="sk-card" data-mid="' + m.id + '" style="animation-delay:' +
+      Math.min(i * 22, 260) + 'ms">' +
+      '<div class="sk-acts">' +
+        '<button class="sk-ico" data-act="edit" title="编辑标签">✎</button>' +
+        '<button class="sk-ico" data-act="tag" title="重新 AI 标注">✨</button>' +
+        '<button class="sk-ico danger" data-act="del" title="删除">🗑</button>' +
+      '</div>' +
+      '<div class="sk-thumb" data-thumb="' + m.id + '"><div class="sk-focus"></div></div>' +
+      '<div class="sk-meta">' +
+        '<div class="sk-badge-row">' + provBadge(m.provenance) +
+          (m.category ? '<span class="sk-tag" style="font-size:9px">' + esc(m.category) + '</span>' : '') +
+        '</div>' +
+        '<div class="sk-desc">' + esc(m.description || "（未描述）") + '</div>' +
+        '<div class="sk-tags">' + (m.tags || []).slice(0, 4).map(function (t) {
+          return '<span class="sk-tag">' + esc(t) + '</span>';
+        }).join("") + '</div>' +
+      '</div></div>';
+  }
+
+  /* ---------- 相机对焦加载 v2 ----------
+     你的描述拆成 6 个硬指标，逐条落实：
+     ① 占位 = **主色底**（不是随便一张糊图）：从 16px 微图取平均色涂进容器背景
+     ② 占位图本身 blur(20px) 高斯模糊
+     ③ 原图到了 → 从模糊**慢慢变清晰**（filter 过渡，不是 class 硬切）
+     ④ 同时 transform: scale(1.04) → 1，约 500ms
+     ⑤ 图片框尺寸提前固定（aspect-ratio:1/1 已定）⇒ 加载前后布局不跳
+     ⑥ **离进入屏幕还有 300px 才开始加载**（v1 是一渲染就全请求，没这条） */
+  var PRELOAD_DIST = 300;
+
+  function loadThumb(m, card, defer) {
+    var box = card.querySelector(".sk-thumb");
+    if (!box) return;
+    /* ⑥ 距进入视口 300px 才加载（IntersectionObserver + rootMargin=300px）。
+       ⚠️ 但**首屏可见的卡片必须立即加载**（defer=false），否则第一批全空、
+          用户看到的就是一整屏灰框（实测踩到：IO 回调在部分时序下不触发）。 */
+    if (defer) {
+      if (!loadThumb._io) {
+        loadThumb._io = new IntersectionObserver(function (ents) {
+          ents.forEach(function (en) {
+            if (!en.isIntersecting) return;
+            var fn = en.target.__skLoad;
+            if (fn) { en.target.__skLoad = null; loadThumb._io.unobserve(en.target); fn(); }
+          });
+        }, { rootMargin: PRELOAD_DIST + "px 0px" });
+      }
+      box.__skLoad = function () { doLoadThumb(m, box); };
+      loadThumb._io.observe(box);
+      return;
+    }
+    doLoadThumb(m, box);
+  }
+
+  function doLoadThumb(m, box) {
+    call("stickerImageUrl", S.cur, m.id).then(function (r) {
+      if (!box.parentNode) return;
+      if (!r || !r.ok || !r.url) {
+        box.innerHTML = '<span class="sk-hint">图不可读</span>';
+        return;
+      }
+      var thumbUrl = r.url + "&thumb=1";   // 16px 微图（约 1KB）
+      var img = document.createElement("img");
+      img.decoding = "async";
+      img.alt = "";
+      img.className = "sk-ph";             // ② 20px 高斯模糊
+      img.src = thumbUrl;
+      box.appendChild(img);
+      var swap = function () {
+        var paint = function (color) {
+          if (color) box.style.backgroundColor = color;   // ① 主色底
+          img.classList.add("sk-focus-in");               // ③④ 模糊→清晰 + 1.04→1.0
+        };
+        try {                                             // 平均色 = 主色近似
+          var c2 = document.createElement("canvas"); c2.width = c2.height = 12;
+          var x2 = c2.getContext("2d");
+          x2.drawImage(img, 0, 0, 12, 12);
+          var px = x2.getImageData(0, 0, 12, 12).data;
+          var rr = 0, gg = 0, bb = 0, n = 0;
+          for (var i = 0; i < px.length; i += 4) {
+            if (px[i + 3] < 40) continue;                 // 跳过透明像素
+            rr += px[i]; gg += px[i + 1]; bb += px[i + 2]; n++;
+          }
+          paint(n ? ("rgb(" + Math.round(rr / n) + "," + Math.round(gg / n) + "," +
+                     Math.round(bb / n) + ")") : null);
+        } catch (e) { paint(null); }
+        setTimeout(function () {                          // ③ 全清晰后换真实动图
+          var live = box.querySelector("img");
+          if (live === img) img.src = r.url;              // GIF 会自动播放
+        }, 560);
+      };
+      // ⚠️ 不要用 img.decode()：它在部分环境（headless/特定缓存态）会**永远挂起**。
+      //    用 onload/onerror 推进对焦；兜底 300ms 只是防图片事件丢失，
+      //    正常情况 onload 到达即对焦（**加载完成立刻清晰**，不人为拖时间）。
+      var done = false;
+      var go = function () { if (done) return; done = true; swap(); };
+      img.onload = go;
+      img.onerror = go;
+      setTimeout(go, 300);
+    });
+  }
+
+  function renderMemes() {
+    var grid = $("skGrid");
+    var list = S.memes.filter(function (m) {
+      if (!S.filter) return true;
+      var hay = ((m.description || "") + " " + (m.trigger || "") + " " + (m.tags || []).join(" ")).toLowerCase();
+      return hay.indexOf(S.filter.toLowerCase()) >= 0;
+    });
+    renderList = list;
+    renderCursor = 0;
+    if (!S.cur) {
+      grid.innerHTML = '<div class="sk-empty" style="grid-column:1/-1"><div class="big">🖼️</div>先从左边选一个表情包</div>';
+      return;
+    }
+    if (!list.length) {
+      grid.innerHTML = '<div class="sk-empty" style="grid-column:1/-1"><div class="big">' +
+        (S.filter ? "🔍" : "📥") + '</div>' +
+        (S.filter ? "没有匹配的表情" : "这个表情包还是空的<br/>把 GIF / PNG 拖到这里即可上传（会自动标注）") +
+        '</div>';
+      return;
+    }
+    grid.innerHTML = "";
+    // 追加「下滑加载更多」提示条
+    if (!document.getElementById("skMore")) {
+      var more = document.createElement("div");
+      more.id = "skMore";
+      more.className = "sk-more";
+      more.hidden = true;
+      grid.insertAdjacentElement("afterend", more);
+    }
+    loadMore();          // 先出第一批
+  }
+
+  /* 滚动到底 → 加载下一批 */
+  function bindInfiniteScroll() {
+    var sc = document.querySelector(".content");
+    if (!sc || sc.__skInf) return;
+    sc.__skInf = true;
+    sc.addEventListener("scroll", function () {
+      if (renderCursor >= renderList.length || loadingMore) return;
+      if (sc.scrollTop + sc.clientHeight >= sc.scrollHeight - 160) loadMore();
+    }, { passive: true });
+  }
+  $("skGrid").addEventListener("click", function (e) {
+    var card = e.target.closest("[data-mid]");
+    if (!card) return;
+    var mid = card.getAttribute("data-mid");
+    var m = S.memes.filter(function (x) { return x.id === mid; })[0];
+    var btn = e.target.closest("[data-act]");
+    if (!btn) return;
+    var act = btn.getAttribute("data-act");
+    if (act === "edit") openEdit(m);
+    else if (act === "tag") {
+      toast("AI 标注中…");
+      call("stickerAutotagOne", S.cur, mid, true).then(function (r) {
+        if (r && r.ok === false) return toast(failMsg(r, "标注失败"), "err");
+        toast("已重新标注", "ok"); loadMemes();
+      });
+    } else if (act === "del") {
+      if (!confirm("删除这张表情？")) return;
+      call("stickerDeleteMeme", S.cur, mid).then(function () { toast("已删除", "ok"); loadMemes(); });
+    }
+  });
+
+  /* ---------- 标签编辑（自动标注 + 用户可改） ---------- */
+  function openEdit(m) {
+    var isManual = m.provenance === "manual";
+    var cur = {}; (m.tags || []).forEach(function (t) { cur[t] = 1; });
+    var sv = m.style_variants || {}, com = sv.community || {}, auto = m.auto || {};
+    var chips = S.vocab.map(function (w) {
+      return '<span class="sk-chip' + (cur[w] ? " on" : "") + '" data-w="' + esc(w) + '">' + esc(w) + '</span>';
+    }).join("");
+    modal("编辑标签", '' +
+      '<div class="sk-field"><label>当前来源</label><div class="sk-hint">' +
+        (isManual ? "✅ 已手动校对过，自动标注不会覆盖它。"
+                  : "由 AI 自动标注。改完会固定为「手动」，之后不再被覆盖。") + '</div></div>' +
+      '<div class="sk-field"><label>画面描述</label>' +
+        '<input type="text" id="fDesc" value="' + esc(m.description || "") + '" /></div>' +
+      '<div class="sk-field"><label>情绪词（点选，可多选）</label>' +
+        '<div class="sk-chips" id="fChips">' + (chips || '<span class="sk-hint">词表未加载</span>') + '</div>' +
+        '<input type="text" id="fTags" style="margin-top:7px" placeholder="也可直接输入，逗号分隔" value="' +
+          esc((m.tags || []).join("、")) + '" /></div>' +
+      '<div class="sk-field"><label>适用场景（选贴最关键）</label>' +
+        '<input type="text" id="fTrigger" placeholder="用于…时" value="' +
+          esc(m.trigger || com.trigger || "") + '" /></div>' +
+      '<div class="sk-field"><label>不该用于（防误发）</label>' +
+        '<input type="text" id="fAnti" placeholder="不该用于…时" value="' + esc(com.anti_trigger || "") + '" /></div>' +
+      '<div class="sk-field"><label>分类</label>' +
+        '<input type="text" id="fCat" value="' + esc(m.category || "") + '" /></div>' +
+      (auto.description ? '<div class="sk-field"><label>AI 原始结果（对照）</label><div class="sk-hint">' +
+        esc(auto.description) + '<br/>' + esc((auto.tags || []).join("、")) + '</div></div>' : "") +
+      '<div style="display:flex;gap:9px;margin-top:16px">' +
+        '<button class="btn primary" id="fSave">保存</button>' +
+        '<button class="btn ghost" id="fRetag">重新 AI 标注</button></div>');
+
+    $("fChips").addEventListener("click", function (e) {
+      var c = e.target.closest(".sk-chip");
+      if (!c) return;
+      c.classList.toggle("on");
+      $("fTags").value = Array.prototype.map.call(
+        document.querySelectorAll("#fChips .sk-chip.on"), function (x) { return x.dataset.w; }).join("、");
+    });
+    $("fSave").addEventListener("click", function () {
+      var tags = $("fTags").value.split(/[,，、]/).map(function (s) { return s.trim(); }).filter(Boolean);
+      call("stickerUpdateLabels", S.cur, m.id, {
+        description: $("fDesc").value.trim(),
+        tags: tags,
+        trigger: $("fTrigger").value.trim(),
+        anti_trigger: $("fAnti").value.trim(),
+        category: $("fCat").value.trim()
+      }).then(function (r) {
+        if (r && r.ok === false) return toast(failMsg(r, "保存失败"), "err");
+        toast("已保存（固定为手动标签）", "ok"); closeModal(); loadMemes();
+      });
+    });
+    $("fRetag").addEventListener("click", function () {
+      if (!confirm("用 AI 重新标注并覆盖当前标签？")) return;
+      toast("AI 标注中…");
+      call("stickerAutotagOne", S.cur, m.id, true).then(function (r) {
+        if (r && r.ok === false) return toast(failMsg(r, "标注失败"), "err");
+        toast("已重新标注", "ok"); closeModal(); loadMemes();
+      });
+    });
+  }
+
+  /* ---------- 数据加载 ---------- */
+  /* 角色名册（含头像）—— 供绑定角色用。失败不阻塞页面，只是绑定弹窗里提示"读不到"。 */
+  function loadCharacters() {
+    return call("stickerCharacters").then(function (r) {
+      S.chars = (r && r.characters) || [];
+      return S.chars;
+    }).catch(function () { S.chars = []; return []; });
+  }
+
+  function refreshPacks() {
+    $("skPacks").innerHTML = '<div class="sk-hint">加载中…</div>';
+    return call("stickerPacks").then(function (r) {
+      if (!r || r.ok === false) {
+        var msg = failMsg(r, "读取失败");
+        $("skPacks").innerHTML =
+          '<div class="sk-offline"><div class="big">' + (r && r.offline ? "🔌" : "⚠️") + '</div>' +
+          esc(msg) + '<div class="hint2">重试可点右上「功能自检」</div></div>';
+        $("skBadge").textContent = (r && r.offline) ? "未连接" : "出错";
+        $("skBadge").className = "badge off";
+        $("skGrid").innerHTML = '<div class="sk-empty" style="grid-column:1/-1">' +
+          '<div class="big">🔌</div>' + esc(msg) + '</div>';
+        return;
+      }
+      S.packs = r.packs || [];
+      $("skBadge").textContent = "已连接";
+      $("skBadge").className = "badge on";
+      if (!S.cur && S.packs.length) S.cur = S.packs[0].id;
+      renderPacks();
+      if (S.cur) return loadMemes();
+      renderMemes();
+    });
+  }
+  function selectPack(pid) {
+    S.cur = pid;
+    S.filter = ""; $("skSearch").value = "";
+    renderPacks();
+    loadMemes();
+  }
+  /* 绑定状态文案：统一成「所有角色通用 / N 个角色专属」两种（不再提黑白名单） */
+  function bindText(b) {
+    b = b || { mode: "none", characters: [] };
+    var cs = (b.characters || []).filter(Boolean);
+    if (b.mode === "none" || !cs.length) return "所有角色通用";
+    if (b.mode === "blacklist") return "除 " + cs.join("、") + " 外通用";
+    return (cs.length === 1 ? cs[0] + " 专属" : cs.length + " 个角色专属");
+  }
+  function loadMemes() {
+    if (!S.cur) return Promise.resolve();
+    var p = S.packs.filter(function (x) { return x.id === S.cur; })[0];
+    $("skCurPack").textContent = p ? p.name : "未选择";
+    var b = (p && p.bindings) || { mode: "none", characters: [] };
+    var txt = bindText(b);
+    $("skBind").textContent = txt;
+    $("skBind").className = "badge " + ((b.mode === "none" || !(b.characters || []).length) ? "off" : "on");
+    return call("stickerMemes", S.cur).then(function (r) {
+      if (!r || r.ok === false) {
+        S.memes = [];
+        updateStats();
+        $("skGrid").innerHTML = '<div class="sk-empty" style="grid-column:1/-1">' +
+          '<div class="big">⚠️</div>' + esc(failMsg(r, "读取表情失败")) + '</div>';
+        return;
+      }
+      S.memes = r.memes || [];
+      updateStats();
+      renderMemes();
+    });
+  }
+  function updateStats() {
+    var manual = 0, auto = 0, none = 0;
+    S.memes.forEach(function (m) {
+      if (m.provenance === "manual") manual++;
+      else if (m.provenance === "ai") auto++;
+      else none++;
+    });
+    $("stPacks").textContent = S.packs.length;
+    $("stMemes").textContent = S.memes.length;
+    $("stManual").textContent = manual;
+    $("stAuto").textContent = auto;
+    $("stNone").textContent = none;
+  }
+
+  /* ---------- 顶部操作 ---------- */
+  $("skNewPack").addEventListener("click", function () {
+    modal("新建表情包", '<div class="sk-field"><label>名称</label>' +
+      '<input type="text" id="npName" placeholder="例如：达妮娅日常" /></div>' +
+      '<button class="btn primary" id="npOk">创建</button>');
+    $("npName").focus();
+    $("npOk").addEventListener("click", function () {
+      var n = $("npName").value.trim();
+      if (!n) return toast("请输入名称", "err");
+      call("stickerCreatePack", n).then(function (r) {
+        if (r && r.ok === false) return toast(failMsg(r, "创建失败"), "err");
+        toast("已创建", "ok"); closeModal();
+        return refreshPacks().then(function () {
+          if (r && r.pack) selectPack(r.pack.id);
+        });
+      });
+    });
+  });
+
+  $("skSearch").addEventListener("input", function (e) { S.filter = e.target.value.trim(); renderMemes(); });
+
+  /* ---------- 整包自动标注：带进度 + 成功/失败明细 ---------- */
+  $("skAutoPack").addEventListener("click", function () {
+    if (!S.cur) return toast("先选一个表情包", "err");
+    dialog("自动标注", '<div class="sk-hint" id="atHint">正在准备…</div>' +
+      '<div class="sk-prog"><i id="atBar"></i></div>' +
+      '<div class="sk-hint" id="atNow" style="font-family:var(--font-mono);font-size:10px"></div>' +
+      '<div id="atBody" style="margin-top:12px"></div>' +
+      '<div class="dfoot"><button class="btn ghost" data-close>关闭</button></div>');
+
+    // 轮询进度（后端是同步方法，无法流式返回，故用进度字段）
+    var timer = setInterval(function () {
+      call("stickerAutotagProgress").then(function (p) {
+        if (!p || !p.total) return;
+        var pct = Math.round((p.done / p.total) * 100);
+        var bar = $("atBar");
+        if (bar) bar.style.width = pct + "%";
+        var now = $("atNow");
+        if (now) now.textContent = p.current ? ("处理中：" + p.current) : "";
+        var hint = $("atHint");
+        if (hint) hint.textContent = "进度 " + p.done + "/" + p.total +
+          "　成功 " + (p.ok || 0) + "　失败 " + (p.fail || 0);
+      });
+    }, 400);
+
+    call("stickerAutotagPack", S.cur, 30, true).then(function (r) {
+      clearInterval(timer);
+      var bar = $("atBar"); if (bar) bar.style.width = "100%";
+      if (!r || r.ok === false) {
+        var h = $("atHint"); if (h) h.textContent = failMsg(r, "标注失败");
+        return toast(failMsg(r, "标注失败"), "err");
+      }
+      var results = r.results || [];
+      var oks = results.filter(function (x) { return x.ok; });
+      var bads = results.filter(function (x) { return !x.ok; });
+      var body = $("atBody");
+      if (body) {
+        body.innerHTML =
+          '<div class="sk-sum">' +
+            '<div><b style="color:var(--good)">' + oks.length + '</b><div class="k">成功</div></div>' +
+            '<div><b style="color:var(--err)">' + bads.length + '</b><div class="k">失败</div></div>' +
+            '<div><b>' + (r.skipped || 0) + '</b><div class="k">跳过（已标/手改）</div></div>' +
+            '<div><b>' + (r.total || 0) + '</b><div class="k">总数</div></div>' +
+          '</div>' +
+          '<div class="sk-res">' +
+            results.map(function (x, i) {
+              return '<div class="sk-res-row ' + (x.ok ? "ok" : "bad") +
+                '" style="animation-delay:' + Math.min(i * 18, 220) + 'ms">' +
+                '<span class="st">' + (x.ok ? "✓ 成功" : "✗ 失败") + '</span>' +
+                '<span class="fl">' + esc(String(x.file || "").slice(0, 14)) + '</span>' +
+                '<span class="rs">' + (x.ok
+                  ? esc((x.tags || []).join("、") || "（已写入标签）")
+                  : '<span class="why">' + esc(x.reason || "未知原因") + '</span>') + '</span>' +
+                '</div>';
+            }).join("") +
+          '</div>';
+      }
+      var h2 = $("atHint");
+      if (h2) h2.textContent = "完成：成功 " + oks.length + "，失败 " + bads.length +
+        "，跳过 " + (r.skipped || 0);
+      toast("标注完成：成功 " + oks.length + "，失败 " + bads.length, bads.length ? "err" : "ok");
+      loadMemes();
+    });
+  });
+
+  /* ---------- 绑定角色：默认全角色 / 绑定后专属（头像卡片选择，不用逗号） ---------- */
+  function renderCharPicker(selected) {
+    var sel = {};
+    (selected || []).forEach(function (c) { sel[c] = 1; });
+    if (!S.chars.length) {
+      return '<div class="sk-hint">没有读到角色名册（可在「角色」页先创建角色）。' +
+        '<br/>不选任何角色 = 所有角色通用。</div>';
+    }
+    return '<div class="sk-chars" id="bdChars">' + S.chars.map(function (c) {
+      var on = sel[c.name] || sel[c.id];
+      return '<div class="sk-char' + (on ? " on" : "") + '" data-name="' + esc(c.name) + '">' +
+        avatarHtml(c) +
+        '<span class="sk-cn">' + esc(c.name) + '</span>' +
+        '<span class="sk-tick">✓</span></div>';
+    }).join("") + '</div>';
+  }
+
+  $("skBindBtn").addEventListener("click", function () {
+    if (!S.cur) return toast("先选一个表情包", "err");
+    var p = S.packs.filter(function (x) { return x.id === S.cur; })[0] || {};
+    var b = p.bindings || { mode: "none", characters: [] };
+    var isExclusive = (b.mode === "whitelist" || b.mode === "blacklist") &&
+      (b.characters || []).length > 0;
+
+    // 先确保角色名册已加载（首次点开才拉，避免每次进页都请求）
+    var ensure = S.chars.length ? Promise.resolve() : loadCharacters();
+    ensure.then(function () {
+      dialog("绑定角色", '' +
+        '<div class="sk-field"><label>使用范围</label>' +
+          '<div class="hint" id="bdDesc">' + (isExclusive
+            ? "当前：<b>专属</b> —— 只有选中的角色会用它。"
+            : "当前：<b>所有角色通用</b>（默认）。勾选角色后即变为该角色专属。") + '</div></div>' +
+        '<div class="sk-field"><label>勾选专属角色（不勾 = 所有角色通用）</label>' +
+          renderCharPicker(b.characters) + '</div>' +
+        '<div class="dfoot">' +
+          '<button class="btn primary" id="bdOk">保存</button>' +
+          '<button class="btn ghost" id="bdClear">设为所有角色通用</button>' +
+          '<button class="btn ghost" data-close>取消</button>' +
+        '</div>');
+
+      // 点卡片切换勾选
+      var box = $("bdChars");
+      if (box) box.addEventListener("click", function (e) {
+        var it = e.target.closest(".sk-char");
+        if (!it) return;
+        it.classList.toggle("on");
+        var n = box.querySelectorAll(".sk-char.on").length;
+        var d = $("bdDesc");
+        if (d) d.innerHTML = n
+          ? ("已选 <b>" + n + "</b> 个角色 → 保存后为<b>专属</b>（只有它们会用它）。")
+          : "未选角色 → 保存后<b>所有角色通用</b>。";
+      });
+
+      function doSave(names) {
+        call("stickerBindings", S.cur, names.length ? "whitelist" : "none", names)
+          .then(function (r) {
+            if (r && r.ok === false) return toast(failMsg(r, "保存失败"), "err");
+            toast(names.length ? ("已设为 " + names.length + " 个角色专属") : "已设为所有角色通用", "ok");
+            closeDialog(); refreshPacks();
+          });
+      }
+      $("bdOk").addEventListener("click", function () {
+        var names = box
+          ? Array.prototype.map.call(box.querySelectorAll(".sk-char.on"),
+              function (x) { return x.getAttribute("data-name"); })
+          : [];
+        doSave(names);
+      });
+      $("bdClear").addEventListener("click", function () { doSave([]); });
+    });
+  });
+
+  /* ---------- 资源广场（真实索引 + 真实安装） ---------- */
+  var MARKET = [];   // 缓存本次拉到的条目，安装时按索引取
+  $("skMarket").addEventListener("click", function () {
+    dialog("资源广场", '<div class="sk-hint" id="mkHint">正在拉取社区表情包索引…</div>' +
+      '<div id="mkBody"></div>' +
+      '<div class="dfoot"><button class="btn ghost" data-close>关闭</button></div>');
+    call("stickerMarketplace").then(function (r) {
+      var entries = (r && r.entries) || [];
+      MARKET = entries;
+      var hint = $("mkHint"), body = $("mkBody");
+      if (!r || r.ok === false) {
+        if (body) body.innerHTML = '<div class="sk-offline"><div class="big">🛒</div>' +
+          esc(failMsg(r, "索引不可达")) + '<div class="hint2">' +
+          '资源广场需要联网；装本地包不受影响。</div></div>';
+        if (hint) hint.textContent = "";
+        return;
+      }
+      if (hint) hint.textContent = "共 " + entries.length +
+        " 个社区表情包（来自 astrbot meme-pack-index）· 点「安装」直接入库（含分类语义）";
+      if (!body) return;
+      body.innerHTML = '<div class="sk-mk">' + entries.map(function (e, i) {
+        var src = e.source || {};
+        var n = e.meme_count || e.count || "";
+        return '<article class="sk-mk-card" style="animation-delay:' + Math.min(i * 26, 260) + 'ms">' +
+          '<div class="sk-mk-top">' +
+            '<div class="sk-mk-ico">' + esc(String(e.name || e.id || "?").slice(0, 1)) + '</div>' +
+            '<div class="sk-mk-ttl"><b>' + esc(e.name || e.id) + '</b>' +
+              '<span class="sk-mk-n">' + esc(src.repo || "") + (n ? (" · " + n + " 张") : "") + '</span>' +
+            '</div>' +
+            (e.verified ? '<span class="badge on">已验证</span>' : '<span class="badge off">社区</span>') +
+          '</div>' +
+          '<p class="sk-mk-desc">' + esc(e.description || "") + '</p>' +
+          '<div class="sk-mk-foot">' +
+            '<div class="sk-mk-tags">' + (e.tags || []).slice(0, 3).map(function (t) {
+              return '<span class="sk-tag">' + esc(t) + '</span>';
+            }).join("") + '</div>' +
+            '<button class="btn primary" data-mk="' + i + '">安装</button>' +
+          '</div>' +
+          '<div class="sk-mk-prog" data-prog="' + i + '" style="display:none">' +
+            '<div class="sk-prog"><i></i></div>' +
+            '<div class="sk-hint" data-progtxt="' + i + '"></div>' +
+          '</div>' +
+          '</article>';
+      }).join("") + '</div>';
+
+      body.addEventListener("click", function (ev) {
+        var b = ev.target.closest("[data-mk]");
+        if (!b || b._busy) return;
+        var idx = parseInt(b.getAttribute("data-mk"), 10);
+        var e = MARKET[idx];
+        if (!e) return;
+        b._busy = true;
+        b.disabled = true;
+        b.textContent = "后台下载中";
+        // 真实进度显示在右下角常驻浮层（全局），卡片也同步（见 updateMarketCard）；
+        // 不再卡 UI、进度真实、退出不丢（持久化 + 恢复）。
+        startInstall(e, 120, function (rr) {
+          b._busy = false;
+          if (rr && rr.status === "done") {
+            b.textContent = "已安装";
+            toast("已安装「" + (e.name || e.id) + "」" + (rr.imported || 0) + " 张", "ok");
+          } else if (rr && rr.status === "error") {
+            b.textContent = "重试";
+            toast(failMsg(rr, "安装失败"), "err");
+          } else {
+            b.textContent = "重试";
+          }
+          refreshPacks();
+        }, b);
+      });
+    });
+  });
+
+  $("skCheck").addEventListener("click", function () {
+    dialog("功能自检", '<div class="sk-hint">检测中…</div>');
+    call("stickerSelfcheck").then(function (r) {
+      var items = (r && r.items) || [];
+      var body = dbody();
+      if (!body) return;
+      body.innerHTML = '<div class="sk-check">' + items.map(function (it, i) {
+        return '<div class="sk-check-row" style="animation-delay:' + (i * 45) + 'ms">' +
+          '<span class="sk-dot ' + (it.ok ? "ok" : "bad") + '"></span>' +
+          '<span class="nm">' + esc(it.name) + '</span>' +
+          '<span class="dt">' + esc(it.detail || "") + '</span></div>';
+      }).join("") + '</div>' +
+        '<div class="sk-hint" style="margin-top:12px">技能包目录：' + esc((r && r.skill_dir) || "未找到") + '</div>' +
+        '<div class="dfoot"><button class="btn ghost" data-close>关闭</button></div>';
+    });
+  });
+
+  /* ---------- 模拟选贴（调选贴效果用） ---------- */
+  $("skPickBtn").addEventListener("click", function () {
+    var chars = window.__SK_CHARS || [];
+    modal("模拟选贴", '' +
+      '<div class="sk-field"><label>角色</label>' +
+        '<input type="text" id="pkChar" value="' + esc(chars[0] || "达妮娅") + '" /></div>' +
+      '<div class="sk-field"><label>用户说（每行一句，逐句测）</label>' +
+        '<input type="text" id="pkSay" placeholder="例如：没事，我自己能搞定，不用你管" /></div>' +
+      '<div class="hint" id="pkOut" style="margin-top:10px"></div>' +
+      '<button class="btn primary" style="margin-top:12px" id="pkGo">开始选贴</button>');
+    $("pkSay").focus();
+    $("pkGo").addEventListener("click", function () {
+      var ch = $("pkChar").value.trim() || "达妮娅";
+      var lines = $("pkSay").value.split("\n").map(function (s) { return s.trim(); }).filter(Boolean);
+      if (!lines.length) { $("pkOut").textContent = "请先输入一句话"; return; }
+      $("pkOut").innerHTML = '选贴中…（走真实模型，几秒）';
+      var out = [];
+      var chain = Promise.resolve();
+      lines.forEach(function (say) {
+        chain = chain.then(function () {
+          return call("stickerPick", ch, [{ role: "user", content: say }]).then(function (r) {
+            if (!r || r.ok === false) {
+              out.push('<div class="sk-pickrow"><b>' + esc(say) + '</b><br/>' +
+                '<span style="color:var(--bad)">' + esc(failMsg(r, "失败")) + '</span></div>');
+              return;
+            }
+            var res = r.result || {};
+            var hit = res.found ? (res.description || res.file || "") : "（决定不发）";
+            out.push('<div class="sk-pickrow">' +
+              '<b>' + esc(say) + '</b><br/>' +
+              '<span class="k">选中：</span>' + esc(String(hit).slice(0, 60)) + '<br/>' +
+              '<span class="k">理由：</span>' + esc(String(res.reason || "").slice(0, 70)) +
+              (r.candidates ? ' <span class="k">（候选 ' + r.candidates + ' 张）</span>' : '') +
+              '</div>');
+          });
+        });
+      });
+      chain.then(function () {
+        $("pkOut").innerHTML = out.join("") || "无结果";
+      });
+    });
+  });
+
+  /* ---------- 拖拽上传 ---------- */
+  var dz = $("skDrop");
+  ["dragenter", "dragover"].forEach(function (ev) {
+    dz.addEventListener(ev, function (e) { e.preventDefault(); dz.classList.add("drag"); });
+  });
+  ["dragleave", "drop"].forEach(function (ev) {
+    dz.addEventListener(ev, function (e) { e.preventDefault(); dz.classList.remove("drag"); });
+  });
+  dz.addEventListener("drop", function (e) {
+    if (!S.cur) return toast("先选一个表情包", "err");
+    var fs = Array.prototype.slice.call((e.dataTransfer && e.dataTransfer.files) || [])
+      .filter(function (f) { return /^image\//.test(f.type) || /\.(gif|png|jpe?g|webp)$/i.test(f.name); });
+    if (!fs.length) return toast("没有可上传的图片", "err");
+    toast("上传 " + fs.length + " 张并自动标注…");
+    var done = 0;
+    fs.forEach(function (f) {
+      var rd = new FileReader();
+      rd.onload = function () {
+        call("stickerUpload", S.cur, f.name, String(rd.result || "").split(",").pop()).then(function () {
+          if (++done === fs.length) { toast("已上传 " + done + " 张", "ok"); loadMemes(); }
+        });
+      };
+      rd.readAsDataURL(f);
+    });
+  });
+
+  /* ---------- 初始化 ---------- */
+  call("stickerVocab").then(function (r) { S.vocab = (r && r.vocab) || []; });
+  loadCharacters();
+  bindInfiniteScroll();      /* 表情包分批加载：滚到底自动补下一批 */
+  initDownloads();           /* 恢复下载浮层（跨重启显示未完成任务） */
+  refreshPacks();
+})();
+</script>
+
+<script src="/redesign/theme_manager.js?v=20261013d"></script>
+</body>
+</html>

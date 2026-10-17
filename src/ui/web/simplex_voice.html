@@ -1,0 +1,192 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+<title>流畅语音通话 · 达妮娅</title>
+<style>
+  :root{
+    --bg:#0f1115; --panel:#171a21; --panel2:#1f232c; --line:#2a2f3a;
+    --txt:#e8eaed; --sub:#9aa3b2; --accent:#7F77DD; --accent2:#1D9E75;
+    --danger:#E24B4A; --warn:#BA7517;
+  }
+  *{box-sizing:border-box; -webkit-tap-highlight-color:transparent;}
+  html,body{margin:0; height:100%; background:var(--bg); color:var(--txt);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;}
+  .wrap{max-width:520px; margin:0 auto; height:100%; display:flex; flex-direction:column;}
+  header{padding:14px 18px; border-bottom:1px solid var(--line); display:flex; align-items:center; gap:12px;}
+  .avatar{width:40px; height:40px; border-radius:50%; background:linear-gradient(135deg,#7F77DD,#1D9E75);
+    display:grid; place-items:center; font-weight:600; color:#fff; font-size:18px;}
+  .htext b{font-size:15px;} .htext span{display:block; font-size:12px; color:var(--sub);}
+  .badge{margin-left:auto; font-size:11px; padding:3px 8px; border-radius:999px; background:var(--panel2); color:var(--sub); border:1px solid var(--line);}
+  #status{padding:8px 18px; font-size:12px; color:var(--sub); border-bottom:1px solid var(--line);}
+  #status.err{color:var(--danger);} #status.ok{color:var(--accent2);}
+  #log{flex:1; overflow-y:auto; padding:16px 18px; display:flex; flex-direction:column; gap:12px;}
+  .row{display:flex; gap:8px; align-items:flex-end;}
+  .row.me{flex-direction:row-reverse;}
+  .bubble{max-width:78%; padding:9px 13px; border-radius:14px; line-height:1.5; font-size:14px; white-space:pre-wrap; word-break:break-word;}
+  .row.me .bubble{background:var(--accent); color:#fff; border-bottom-right-radius:4px;}
+  .row.her .bubble{background:var(--panel2); border-bottom-left-radius:4px;}
+  .meta{font-size:10px; color:var(--sub); margin-top:3px;}
+  .lat{display:flex; gap:10px; padding:8px 18px; font-size:11px; color:var(--sub); border-top:1px solid var(--line); flex-wrap:wrap;}
+  .lat b{color:var(--txt); font-weight:600;}
+  .ring{width:64px;height:64px;border-radius:50%;margin:14px auto 4px;display:grid;place-items:center;
+    font-size:12px;color:#0f1115;font-weight:600;transition:.2s;}
+  .ring.listen{background:var(--accent2);animation:breath 1.6s infinite;}
+  .ring.think{background:#E2B04A;}
+  .ring.speak{background:var(--accent);animation:breath 1.2s infinite;}
+  @keyframes breath{0%{box-shadow:0 0 0 0 rgba(29,158,117,.45);}70%{box-shadow:0 0 0 14px rgba(29,158,117,0);}100%{box-shadow:0 0 0 0 rgba(29,158,117,0);}}
+  .hint{font-size:11px; color:var(--sub); padding:0 18px 14px; text-align:center;}
+  #end{position:absolute; top:14px; right:14px; font-size:12px; color:var(--sub); background:none; border:1px solid var(--line); border-radius:8px; padding:5px 10px; cursor:pointer;}
+</style>
+<script src="/assets/companion.js?v=1"></script>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="avatar">妮</div>
+    <div class="htext"><b id="charName">达妮娅</b><span>流畅语音通话 · 云端百炼</span></div>
+    <div class="badge" id="modeBadge">SIMPLEX</div>
+    <button id="end" type="button">结束</button>
+  </header>
+  <div id="status">正在连接服务…</div>
+  <div class="ring listen" id="ring"><span id="ringTxt">聆听中</span></div>
+  <div id="log"></div>
+  <div class="lat">
+    <span>ASR <b id="mAsr">–</b></span>
+    <span>LLM <b id="mLlm">–</b></span>
+    <span>TTS <b id="mTts">–</b></span>
+    <span>端到端 <b id="mTot">–</b></span>
+    <span id="mStream"></span>
+  </div>
+  <div class="hint" id="hint">麦克风常开 · 说完停顿自动发送 · 说话可打断达妮娅</div>
+</div>
+
+<script>
+(function(){
+  const statusEl=document.getElementById('status');
+  const logEl=document.getElementById('log');
+  const ring=document.getElementById('ring');
+  const ringTxt=document.getElementById('ringTxt');
+  const endBtn=document.getElementById('end');
+  const charNameEl=document.getElementById('charName');
+
+  let micStream=null, audioCtx=null, proc=null, sink=null;
+  let buff=[], state='idle', hasVoice=false, silenceMs=0, abort=null;
+  let sources=[], nextStart=0, speakStart=0, herBubble=null, healthTries=0;
+
+  function setStatus(msg,cls){ statusEl.textContent=msg; statusEl.className=cls||''; }
+  function setRing(s,t){ ring.className='ring '+s; ringTxt.textContent=t; }
+  function scroll(){ logEl.scrollTop=logEl.scrollHeight; }
+  function addBubble(side,text,meta){
+    const row=document.createElement('div'); row.className='row '+(side==='me'?'me':'her');
+    const b=document.createElement('div'); b.className='bubble'; b.textContent=text;
+    const m=document.createElement('div'); m.className='meta'; m.textContent=meta||'';
+    const col=document.createElement('div'); col.style.cssText='display:flex;flex-direction:column;';
+    col.appendChild(b); col.appendChild(m); row.appendChild(col); logEl.appendChild(row); scroll();
+    if(side==='her') herBubble=b; else herBubble=null;
+  }
+  function updateHer(t){ if(herBubble){ herBubble.textContent=t; scroll(); } }
+  function updateLatency(d){
+    document.getElementById('mAsr').textContent=(d.asr_ms||0)+'ms';
+    document.getElementById('mLlm').textContent=(d.llm_ms||0)+'ms';
+    document.getElementById('mTts').textContent=(d.tts_ms||0)+'ms';
+    document.getElementById('mTot').textContent=(d.total_ms||0)+'ms';
+    document.getElementById('mStream').textContent=d.tts_used_stream?'流式WS':'整句';
+  }
+  async function checkHealth(){
+    try{
+      const r=await fetch('/api/health'); const d=await r.json();
+      if(d.ok){
+        charNameEl.textContent=d.char_name||'达妮娅';
+        const tts=d.tts_ok?'百炼已配置':'百炼未配置(请到设置加阿里云百炼音色档)';
+        const llm=d.llm_ok?'LLM 已配置':'LLM 未配置';
+        setStatus('就绪 · '+tts+' · '+llm, d.tts_ok?'ok':'err');
+      } else setStatus('服务异常：'+(d.error||''),'err');
+    }catch(e){
+      if(healthTries>=3){ setStatus('无法连接单工服务（请先启动 tools\\simplex_voice_server.py）','err'); return; }
+      healthTries++; setStatus('无法连接，2 秒后重试（'+healthTries+'/3）…','err');
+      setTimeout(checkHealth,2000);
+    }
+  }
+  function resample(input,from,to){ if(from===to) return input; const ratio=from/to, outLen=Math.floor(input.length/ratio), out=new Float32Array(outLen); for(let i=0;i<outLen;i++){ const pos=i*ratio,i0=Math.floor(pos),i1=Math.min(i0+1,input.length-1),frac=pos-i0; out[i]=input[i0]*(1-frac)+input[i1]*frac; } return out; }
+  function encodePCM(f32){ const n=f32.length,buf=new ArrayBuffer(n*2),v=new DataView(buf); for(let i=0;i<n;i++){ let s=Math.max(-1,Math.min(1,f32[i])); v.setInt16(i*2,s<0?s*0x8000:s*0x7FFF,true);} return buf; }
+  function base64FromBytes(ab){ const bytes=new Uint8Array(ab); let bin=''; const ch=0x8000; for(let i=0;i<bytes.length;i+=ch) bin+=String.fromCharCode.apply(null,bytes.subarray(i,i+ch)); return btoa(bin); }
+  function pcm24ToBuffer(b64){ const bin=atob(b64),bytes=new Uint8Array(bin.length); for(let i=0;i<bin.length;i++) bytes[i]=bin.charCodeAt(i); const n=bytes.length/2,f=new Float32Array(n),dv=new DataView(bytes.buffer); for(let i=0;i<n;i++) f[i]=dv.getInt16(i*2,true)/32768; const b=audioCtx.createBuffer(1,n,24000); b.copyToChannel(f,0); return b; }
+  function playBuffer(buf){ const src=audioCtx.createBufferSource(); src.buffer=buf; src.connect(audioCtx.destination); const at=Math.max(nextStart,audioCtx.currentTime+0.02); src.start(at); nextStart=at+buf.duration; sources.push(src); src.onended=()=>{ const i=sources.indexOf(src); if(i>=0) sources.splice(i,1); if(sources.length===0&&state==='speak'){ state='listening'; setRing('listen','聆听中'); setStatus('就绪','ok'); } }; }
+  function stopPlayback(){ sources.forEach(s=>{try{s.stop();}catch(e){}}); sources=[]; if(audioCtx) nextStart=audioCtx.currentTime; }
+  function startMic(){
+    if(audioCtx) return;
+    navigator.mediaDevices.getUserMedia({audio:{echoCancellation:true,noiseSuppression:false,autoGainControl:false}})
+      .then(stream=>{
+        micStream=stream; audioCtx=new (window.AudioContext||window.webkitAudioContext)();
+        if(audioCtx.state==='suspended') audioCtx.resume();
+        const srcN=audioCtx.createMediaStreamSource(stream);
+        proc=audioCtx.createScriptProcessor(4096,1,1); sink=audioCtx.createGain(); sink.gain.value=0;
+        proc.onaudioprocess=(e)=>{ const ch=e.inputBuffer.getChannelData(0); let sum=0; for(let i=0;i<ch.length;i++) sum+=ch[i]*ch[i]; const rms=Math.sqrt(sum/ch.length); for(let i=0;i<ch.length;i++) buff.push(ch[i]); vad(rms); };
+        srcN.connect(proc); proc.connect(sink); sink.connect(audioCtx.destination);
+        state='listening'; setRing('listen','聆听中');
+      }).catch(err=>{ setStatus('麦克风权限失败：'+err.message,'err'); });
+  }
+  function vad(rms){
+    if(state==='listening'){
+      if(rms>0.012){ hasVoice=true; silenceMs=0; setRing('listen','聆听中…'); }
+      else if(hasVoice){ silenceMs+=(4096/((audioCtx&&audioCtx.sampleRate)||44100))*1000; if(silenceMs>700) sendTurn(); }
+      if(hasVoice && buff.length/((audioCtx&&audioCtx.sampleRate)||44100)>18) sendTurn();
+    } else if(state==='speak'){
+      if(sources.length>0 && (speakStart?(performance.now()-speakStart)>350:true)){ if(rms>0.02) bargeIn(); }
+    }
+  }
+  function sendTurn(){
+    if(state!=='listening'||!hasVoice) return;
+    const dur=buff.length/((audioCtx&&audioCtx.sampleRate)||44100);
+    if(dur<0.4){ hasVoice=false; silenceMs=0; buff=[]; return; }
+    state='think'; setRing('think','思考中');
+    const pcm16=encodePCM(resample(buff,(audioCtx&&audioCtx.sampleRate)||44100,16000)); buff=[]; hasVoice=false; silenceMs=0;
+    streamTurn(base64FromBytes(pcm16));
+  }
+  async function streamTurn(b64){
+    stopPlayback();
+    try{
+      const ctrl=new AbortController(); abort=ctrl;
+      const r=await fetch('/api/turn',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({pcm:b64}),signal:ctrl.signal});
+      if(!r.ok){ setStatus('请求失败：HTTP '+r.status,'err'); state='listening'; setRing('listen','聆听中'); return; }
+      const reader=r.body.getReader(),dec=new TextDecoder(); let buf='',herText='',lat={};
+      state='think';
+      while(true){
+        const {value,done}=await reader.read(); if(done) break;
+        buf+=dec.decode(value,{stream:true});
+        let idx;
+        while((idx=buf.indexOf('\n\n'))>=0){
+          const raw=buf.slice(0,idx); buf=buf.slice(idx+2);
+          if(!raw.startsWith('data:')) continue;
+          let ev; try{ ev=JSON.parse(raw.slice(5).trim()); }catch(e){ continue; }
+          if(ev.type==='asr'){ addBubble('me',ev.text||'(空)',(ev.asr_ms||0)+'ms'); lat.asr_ms=ev.asr_ms; }
+          else if(ev.type==='llm'){ herText+=ev.text||''; if(!herBubble) addBubble('her',herText,'生成中…'); else updateHer(herText); }
+          else if(ev.type==='audio'){ if(state!=='speak'){ state='speak'; setRing('speak','说话中'); } if(!speakStart) speakStart=performance.now(); playBuffer(pcm24ToBuffer(ev.data)); }
+          else if(ev.type==='done'){ updateLatency(Object.assign(lat,ev)); herBubble=null; }
+          else if(ev.type==='empty'){ if(ev.reason==='asr_empty') setStatus('没听清，再说一次',''); }
+          else if(ev.type==='error'){ setStatus('出错：'+(ev.error||''),'err'); }
+        }
+      }
+    }catch(e){ if(e.name!=='AbortError') setStatus('请求失败：'+e.message,'err'); }
+    finally{
+      abort=null;
+      if(sources.length>0){} else if(state!=='speak'){ state='listening'; setRing('listen','聆听中'); }
+      buff=[]; hasVoice=false; silenceMs=0;
+    }
+  }
+  function bargeIn(){
+    if(abort){ try{abort.abort();}catch(e){} abort=null; }
+    try{ fetch('/api/turn_cancel',{method:'POST'}).catch(()=>{}); }catch(e){}
+    stopPlayback(); speakStart=0; state='listening'; setRing('listen','聆听中'); setStatus('已打断','ok');
+  }
+  function cleanup(){ if(abort){ try{abort.abort();}catch(e){} } try{ fetch('/api/turn_cancel',{method:'POST'}).catch(()=>{}); }catch(e){} stopPlayback(); try{ if(micStream) micStream.getTracks().forEach(t=>t.stop()); }catch(e){} }
+  endBtn.addEventListener('click',()=>{ cleanup(); window.close(); });
+  window.addEventListener('beforeunload',cleanup);
+  checkHealth();
+  startMic();
+})();
+</script>
+</body>
+</html>

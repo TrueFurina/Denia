@@ -1,0 +1,612 @@
+/* ============================================================
+   主题编辑器 v5 · 设计稿样式（2026-10-05）
+   ------------------------------------------------------------
+   v4 被判定「丑且难用」的六点，本版逐条对应：
+   ① 满屏虚线编号框  → 只画一个高亮框，且只在选中槽位时出现（其余用扩散阴影压暗）
+   ② 「图位/槽位」黑话 → 文案改成 背景 / 立绘 / 头像 / 角色卡头图
+   ③ 预览缩放太小    → 砍掉右侧属性栏，预览区吃满中间，缩放从 0.55 提到 0.8+
+   ④ 要自己凑 4 张图 → 左栏加「成套主题」预设卡，一键整套换上
+   ⑤ 无撤销/恢复默认 → 顶栏常驻 撤销 / 恢复默认
+   ⑥ 五层带状 UI    → 三层：顶栏 / 主体（左库 + 中预览）/ 底部槽位轨
+   ============================================================ */
+
+/* ⭐ 坑：design_tokens.css 把 body 设成 display:grid;place-items:center;padding:20px
+   （为了居中原版 .app）。编辑器外壳是 body 子元素，会被这个 grid 压成内容尺寸，
+   实测全屏层 getBoundingClientRect 为 0×0 ⇒ 所有定位全乱。必须恢复成块级流。 */
+body{
+  display:block !important;
+  place-items:normal !important;
+  padding:0 !important;
+  margin:0 !important;
+  min-height:100vh !important;
+  overflow:hidden !important;
+}
+
+:root{
+  --v5-lib-w: 276px;     /* 左栏宽 */
+  --v5-rail-h: 136px;    /* 底部槽位轨高 */
+  --v5-bar-h: 54px;      /* 顶栏高 */
+}
+
+/* ⚠️ 不能用 inset:0 —— grid 容器里的 fixed inset:0 会被算成 0 尺寸，
+   必须显式四边 + 视口尺寸。 */
+#tv5{
+  position:fixed; left:0; top:0; right:0; bottom:0;
+  width:100vw; height:100vh; z-index:2147483000;
+  display:flex; flex-direction:column;
+  background:var(--bg); color:var(--ink); font-family:var(--font);
+}
+
+/* ---------- 顶栏：只留三个动作，不再堆按钮 ---------- */
+#tv5Bar{
+  flex:none; height:var(--v5-bar-h);
+  display:flex; align-items:center; gap:12px; padding:0 18px;
+  background:var(--surface); border-bottom:1px solid var(--line);
+}
+/* 可点击改名的标题：给一点"能点"的暗示，但别做成按钮那么重 */
+#tv5Name{ cursor:text; border-radius:6px; padding:2px 6px; margin-left:-6px;
+  transition:background .16s; }
+#tv5Name:hover{ background:var(--surface-2); }
+.tv5-title{ font-size:15px; font-weight:500; }
+.tv5-title b{ font-weight:500; color:var(--accent-1); }
+.tv5-state{
+  font-size:12px; color:var(--ink-3); padding:3px 10px; border-radius:999px;
+  background:var(--surface-2); border:1px solid var(--line);
+}
+.tv5-state.dirty{ color:var(--accent-1); border-color:color-mix(in srgb,var(--accent-1) 40%,transparent); background:var(--accent-soft-1); }
+/* ⭐ 保存失败必须与"还在改"视觉上分开：用户看到橙色会以为再等等就行，
+   看到红色才知道"没存上，得重来"。这是两种完全不同的下一步动作。 */
+.tv5-state.err{ color:#E5484D; border-color:color-mix(in srgb,#E5484D 45%,transparent);
+  background:color-mix(in srgb,#E5484D 12%,transparent); }
+.tv5-sp{ flex:1; }
+
+.tv5-btn{
+  padding:7px 14px; border-radius:9px; font-size:13px; cursor:pointer;
+  border:1px solid var(--line-2); background:var(--surface-2); color:var(--ink);
+  transition:background .16s, border-color .16s, color .16s, opacity .16s;
+}
+.tv5-btn:hover:not(:disabled){ background:var(--surface-3); border-color:var(--ink-4); }
+.tv5-btn:disabled{ opacity:.42; cursor:default; }
+.tv5-btn.primary{ background:var(--accent-grad); color:var(--on-accent); border-color:transparent; font-weight:500; }
+.tv5-btn.primary:hover{ filter:brightness(1.06); }
+/* 返回键（问题④）：顶栏最左，跟右侧三个动作拉开距离，并用强调色暗示「离开」 */
+.tv5-back{ font-weight:500; border-color:var(--line-2); }
+.tv5-back:hover:not(:disabled){ background:var(--surface-3); border-color:var(--accent-1); color:var(--accent-1); }
+
+/* ---------- 主体 ---------- */
+#tv5Body{ flex:1 1 auto; display:flex; min-height:0; min-width:0; }
+
+/* 左栏：主题库（预设 + 我的 + 绑定角色） */
+#tv5Lib{
+  flex:none; width:var(--v5-lib-w); height:100%; overflow-y:auto;
+  padding:16px; background:var(--bg-2); border-right:1px solid var(--line);
+}
+.tv5-sec{ margin-bottom:20px; }
+.tv5-sec > h3{
+  font-size:12px; font-weight:500; color:var(--ink-3);
+  margin:0 0 9px; letter-spacing:.04em;
+  display:flex; align-items:center; gap:6px;
+}
+/* 流程编号：把「先做什么后做什么」写出来，别让用户自己猜 */
+.tv5-step{
+  width:16px; height:16px; border-radius:50%; flex:none;
+  display:grid; place-items:center; font-size:10px; line-height:1;
+  background:var(--accent-1); color:var(--on-accent);
+}
+.tv5-note{ font-size:11px; color:var(--ink-3); line-height:1.6; margin:8px 2px 0; }
+/* 「导入图片会自动算主题色」这条要显眼一点，否则用户不知道有这个好处 */
+.tv5-note-hero{
+  color:var(--accent-1); margin-top:6px;
+  background:var(--accent-soft-1); border-radius:8px; padding:7px 9px;
+}
+
+/* 主题卡：2 列网格，卡面自带「这套长什么样」的缩略 */
+.tv5-cards{ display:grid; grid-template-columns:1fr 1fr; gap:9px; }
+.tv5-card{
+  border:1px solid var(--line); border-radius:12px; padding:0; overflow:hidden;
+  background:var(--surface); cursor:pointer; text-align:left;
+  transition:border-color .16s, transform .12s, box-shadow .16s;
+}
+.tv5-card:hover{ border-color:var(--line-2); transform:translateY(-1px); }
+.tv5-card.on{ border-color:var(--accent-1); box-shadow:0 0 0 2px var(--accent-soft-1); }
+.tv5-card-prev{ position:relative; height:54px; background-size:cover; background-position:center; }
+/* 卡面右下角放头像圆点，暗示「这套包含头像」 */
+.tv5-card-dot{
+  position:absolute; right:7px; bottom:7px; width:18px; height:18px; border-radius:50%;
+  border:1.5px solid rgba(255,255,255,.85); background-size:cover; background-position:center;
+}
+.tv5-card-t{ font-size:12px; padding:7px 9px 8px; display:flex; align-items:center; gap:5px; }
+.tv5-card-t b{ font-weight:500; font-size:12px; }
+.tv5-card-t em{ font-style:normal; font-size:11px; color:var(--ink-3); margin-left:auto; }
+/* 「在用」小角标：只标状态，不承担操作 */
+.tv5-card-tag{
+  font-style:normal; font-size:10px; color:var(--on-accent);
+  background:var(--accent-1); border-radius:999px; padding:1px 6px; margin-left:auto;
+}
+
+/* ---------- ③ 我的主题：纯展示，不是可点入口 ----------
+   它以前是 button，点一下走 resetAll()（清空全部图与配色）。
+   破坏性操作绝不能藏在"选择另一个主题"里 —— 用户点它是期待切换。
+   现在改成不可点的状态卡：图数 + 配色来源。 */
+.tv5-mine{
+  grid-column:1 / -1;                 /* 独占整行：它是"当前状态"，不是第 5 个选项 */
+  border:1px solid var(--line); border-radius:12px; overflow:hidden;
+  background:var(--surface); cursor:default;
+  transition:border-color .16s, box-shadow .16s;
+}
+.tv5-mine.on{ border-color:var(--accent-1); box-shadow:0 0 0 2px var(--accent-soft-1); }
+.tv5-mine .tv5-card-t em{ color:var(--ink-2); }
+.tv5-mine-src{
+  font-size:11px; color:var(--ink-3); line-height:1.5;
+  padding:0 9px 9px; border-top:1px solid var(--line); padding-top:7px; margin-top:2px;
+}
+
+/* 绑定角色：chip 组，不是横条 */
+.tv5-chars{ display:flex; flex-direction:column; gap:6px; }
+.tv5-char{
+  display:flex; align-items:center; gap:8px; padding:7px 9px; border-radius:10px;
+  border:1px solid var(--line); background:var(--surface); cursor:pointer; text-align:left;
+  transition:border-color .16s, background .16s;
+}
+.tv5-char:hover{ border-color:var(--line-2); }
+.tv5-char.on{ border-color:var(--accent-1); background:var(--accent-soft-1); }
+.tv5-char-av{
+  width:26px; height:26px; border-radius:8px; flex:none; display:grid; place-items:center;
+  font-size:12px; color:#fff; background:linear-gradient(135deg,var(--accent-1),var(--accent-2));
+}
+.tv5-char-av.none{ background:var(--surface-3); color:var(--ink-3); border:1px dashed var(--line-2); }
+.tv5-char b{ font-size:12px; font-weight:500; }
+.tv5-char em{ font-style:normal; font-size:11px; color:var(--ink-3); margin-left:auto; }
+.tv5-note.warn{ color:var(--accent-2); }
+
+/* 角色读不到时的重试区：给一次"再试"，而不是让用户干等 */
+.tv5-char-retry{ display:flex; flex-direction:column; gap:7px; }
+.tv5-char-retry .tv5-note{ margin:0; }
+.tv5-char-retry .tv5-btn{ align-self:flex-start; }
+
+/* 中：预览 */
+#tv5Prev{ flex:1 1 auto; display:flex; flex-direction:column; min-width:0; min-height:0; }
+
+.tv5-prevbar{
+  flex:none; height:42px; display:flex; align-items:center; gap:12px; padding:0 18px;
+  border-bottom:1px solid var(--line); background:var(--bg-2);
+}
+/* 场景切换：手机主题商店的「锁屏 / 桌面」切换。这里是「内容版面」（对话页 / 角色页）
+   + 各子页的「整页背景」版面（2026-10-12 扩容）。 */
+.tv5-scenes{ display:inline-flex; gap:2px; padding:2px; border-radius:9px; background:var(--surface-2); }
+/* ⭐ 2026-10-12：版面从 2 项扩到「全部侧栏页 + 内容页」，一多就必须能横滚 ——
+   与底部槽位轨同一原则：宁可滚动，也不要把按钮挤成竖排或压掉预览区。 */
+#tv5Scenes{
+  min-width:0; max-width:min(60%, 660px); overflow-x:auto; scrollbar-width:thin;
+}
+#tv5Scenes::-webkit-scrollbar{ height:4px; }
+#tv5Scenes::-webkit-scrollbar-thumb{ background:var(--line-2); border-radius:2px; }
+#tv5Scenes .tv5-scene{ white-space:nowrap; flex:0 0 auto; }
+/* 壁纸版面：同是可点项，但用途是「配这页的背景」，用一个小圆点区分，避免与内容版面混淆 */
+#tv5Scenes .tv5-scene[data-kind="wall"]::before{
+  content:""; display:inline-block; width:5px; height:5px; border-radius:50%;
+  margin-right:5px; vertical-align:1px; background:currentColor; opacity:.45;
+}
+#tv5Scenes .tv5-scene[data-kind="wall"].on::before{ opacity:.9; }
+.tv5-scene{
+  padding:5px 13px; border-radius:7px; font-size:12px; cursor:pointer; border:0;
+  background:transparent; color:var(--ink-3);
+  /* 【2026-10-12 过渡动画】选中态三连（底色/字色/浮起阴影）都补间；
+     :active 轻微下压，给"点到了"的即时触觉反馈。 */
+  transition:background .16s, color .16s, box-shadow .16s, transform .1s;
+}
+.tv5-scene:active{ transform:scale(.96); }
+.tv5-scene.on{ background:var(--surface); color:var(--ink); box-shadow:0 1px 3px rgba(0,0,0,.10); }
+.tv5-prevhint{ font-size:12px; color:var(--ink-3); margin-left:auto; }
+/* 只在「已放大」时出现，避免平时多一个没用的按钮 */
+.tv5-global{ padding:5px 12px; font-size:12px; opacity:0; pointer-events:none; transition:opacity .18s; }
+.tv5-global.show{ opacity:1; pointer-events:auto; }
+
+#tv5Stage{
+  flex:1 1 auto; position:relative; overflow:hidden;
+  display:flex; align-items:center; justify-content:center; padding:20px;
+  background:
+    radial-gradient(120% 90% at 50% 0%, color-mix(in srgb, var(--accent-1) 8%, transparent), transparent 70%),
+    linear-gradient(var(--bg-2), var(--bg));
+}
+/* ⭐ 缩放放外层 host（给 iframe 本身加 transform 会牵连内部布局计算，
+   实测坐标就不可信了）；#tv5Hot 与它同尺寸同位置，高亮框才对得上。 */
+/* ⭐ 跟随聚焦的「镜头」就落在这里：transform 由 JS 写成 translate + scale，
+   这条 transition 负责【线性运动】——点哪个部位就平滑推近到那一块，而不是瞬移。 */
+#tv5FrameHost{
+  position:relative; flex:none; width:1080px; height:740px;
+  transform-origin:center center;
+  /* ⭐ v5.6：镜头动画改由 CSS transition 驱动 —— 这是「缩放视角看起来巨卡」的正解。
+     transform 属于 compositor-animatable 属性：交给 CSS 后整段补间在**合成线程**跑，
+     主线程全程零参与，也不会因为逐帧写 style 让浏览器把 1080×740 的层（里面是完整页面）
+     反复重新光栅。JS 只在点击的那一瞬间写一次终值。
+     ⚠️ 与 v5.1 那次「transition 不跑」不是同一件事：那次是 fit()/measure() 在同一帧
+     按**起点**重算覆盖了 transform，导致 transition 每次都从当前值重启、看着像瞬移。
+     现在 fit() 在聚焦动画期间只更新 baseScale 这个变量，绝不碰 host 的 transform。 */
+  transition:transform .58s cubic-bezier(.4,0,.2,1);
+  will-change:transform;
+}
+@media (prefers-reduced-motion: reduce){
+  #tv5FrameHost{ will-change:auto; }
+}
+/* ⭐ 预览帧统一类（2026-10-12）：内容帧（#tv5Frame/#tv5FrameB）与壁纸版面的
+   产品页帧（.tv5-wallf）同池 —— 同尺寸、同圆角、同阴影；选择器必须用类，
+   只写两个 id 会把后加进来的壁纸帧漏掉（尺寸/定位全丢，预览直接散架）。 */
+.tv5-frame{
+  position:absolute; left:0; top:0;
+  width:1080px; height:740px; border:0; display:block; border-radius:18px;
+  background:var(--surface); box-shadow:0 18px 48px rgba(0,0,0,.16);
+  pointer-events:none;   /* 预览像图片一样不可交互 */
+  /* 切版面的过渡：0.3s 淡入淡出（合成器跑，不碰 transform —— transform 属于镜头） */
+  transition:opacity .3s var(--ease);
+}
+/* 活动页在上且不透明；另一页保留布局（尺寸不能变 0，否则量不到坐标）但透明并压到下层。
+   于是切页是一次纯合成器上的淡入淡出，不再重载文档 —— 也就没有那一下卡顿。 */
+.tv5-frame.fg{ opacity:1; z-index:1; }
+.tv5-frame.bg{ opacity:0; z-index:0; }
+#tv5Hot{ position:absolute; left:0; top:0; width:100%; height:100%; pointer-events:none; z-index:5; }
+
+/* ⭐ 2026-10-12 壁纸版面占位层（#tv5WallPrev）
+   真页 iframe 未就绪时的过渡画布：先铺草稿壁纸（视觉零空窗），
+   真页载入完成后 0.3s 淡出（.off），真页从下面透出 —— 过渡动画就发生在这里。 */
+#tv5WallPrev{
+  position:absolute; inset:0; z-index:2; border-radius:18px; overflow:hidden;
+  background-color:var(--surface-3); background-size:cover; background-position:center;
+  background-repeat:no-repeat; box-shadow:0 18px 48px rgba(0,0,0,.16);
+  display:flex; align-items:flex-end;
+  transition:opacity .3s var(--ease);
+}
+#tv5WallPrev[hidden]{ display:none; }
+#tv5WallPrev.off{ opacity:0; pointer-events:none; }
+/* 载入提示：真实页面正在进来（右上角小胶囊，不挡内容） */
+#tv5WallPrev[data-loading="on"]::before{
+  content:"正在载入真实页面预览…"; position:absolute; top:14px; right:16px;
+  font-size:11.5px; color:#fff; opacity:.88; pointer-events:none;
+  background:rgba(0,0,0,.38); padding:4px 11px; border-radius:99px;
+}
+#tv5WallPrev .tv5-wall-bar{
+  width:100%; padding:12px 18px; display:flex; gap:10px; align-items:baseline; flex-wrap:wrap;
+  background:linear-gradient(to top, rgba(0,0,0,.66), rgba(0,0,0,0));
+  color:#fff; font-size:12px;
+}
+#tv5WallPrev .tv5-wall-bar b{ font-size:13px; font-weight:600; }
+#tv5WallPrev .tv5-wall-bar span{ opacity:.84; }
+/* 空态：别给一块莫名其妙的纯色板，直接说清该干什么（并跟随深浅主题，不硬编码颜色） */
+#tv5WallPrev[data-empty="on"]::after{
+  content:"这一页还没配背景 · 点下面「整页背景」传一张"; position:absolute; inset:0;
+  display:grid; place-items:center; pointer-events:none;
+  color:color-mix(in srgb, var(--ink-3) 80%, transparent); font-size:13px;
+}
+
+/* ⭐ v5.6 压暗层：从「跟着缩放的 .tv5-hi 上挂 box-shadow:0 0 0 2000px」搬到这里。
+   为什么必须搬：那条扩散阴影待在缩放层里，host 每变一次 scale 就要把整块预览
+   连阴影一起重新光栅 —— 这才是「镜头推近巨卡」的另一半原因（DOM 重建只是小头）。
+   现在压暗是**不缩放**的独立层，几何只在聚焦目标确定时写一次，
+   动画期间它连一个像素都不动，只有 opacity 在跑（同样走合成器）。
+   用 clip-path 挖出目标洞（inset + round 支持圆角），比 mask 便宜且不触发 layout。 */
+#tv5Dim{
+  position:absolute; z-index:3; pointer-events:none; opacity:0;
+  inset:-60px;                    /* 大一圈，边缘才不会露出预览外的底色 */
+  background:color-mix(in srgb, var(--bg) 58%, transparent);
+  clip-path:inset(50% 50% 50% 50% round 0px);
+  /* ⭐ v5.7：洞的几何也跟着补间。inset+round 在「同构字符串」之间是可插值的，
+     换部位时洞会跟着高亮框一起长过去，而不是"啪"一下换位置（那正是最生硬的那一下）。
+     ⚠️ 曲线/时长必须与 #tv5FrameHost 完全一致，否则洞和框会越走越开、中途对不上。 */
+  transition:opacity .28s ease-out, clip-path .58s cubic-bezier(.4,0,.2,1);
+}
+#tv5Dim.on{ opacity:1; }
+
+/* ⭐ 高亮框（v5.7 重做：位置 + 大小都自带过渡，不再生硬跳变）
+   拆成两层，各只做一件事：
+     .tv5-hi   = 【几何层】translate + scale(w,h)，负责「框到哪儿、多大」；
+     .tv5-hi-in = 【视觉层】反向 scale(1/w, 1/h)，把上面那次缩放抵掉。
+   两层倒数 ⇒ 内层视觉尺寸恒等于 b.w×b.h，于是 border 粗细 / border-radius
+   天然是设计值，**不需要任何 JS 补偿**；框在镜头里长多大，边框就还是 2px。
+   ⚠️ 为什么不用 left/top/width/height 做过渡：那四个是 layout 属性，
+   每帧改会触发重排 + 重绘整块预览（就是 v5.5 那次「添加文件一出来就卡」的成因）。
+   transform 走合成线程，580ms 全程主线程零参与。 */
+.tv5-hi{
+  position:absolute; left:0; top:0; width:1px; height:1px;
+  transform-origin:0 0; pointer-events:auto; cursor:pointer;
+  /* ⭐ v5.7：位置和大小都自带 0.58s 补间（曲线/时长与镜头完全一致），
+     于是框是「平滑长到」目标块的，不再是瞬移——这就是之前说的「生硬」。
+     ⚠️ 为什么这里用 left/top/width/height 而不是 transform：
+       · 几何只在「点击那一下 / 坐标变了」时写一次，**不是每帧写**（每帧写才是 v5.5 那次卡顿的成因）；
+         layout 代价只作用于这一个绝对定位元素，而 stage 是 overflow:hidden 的隔离容器。
+       · transform 方案要再叠一层反向缩放去抵消边框粗细（--hi-bw 得改成 2/(cam.s·w)），
+         这种「半截改写」本项目栽过：CSS 等在 transform、JS 却写 left ⇒ transform 恒 none
+         ⇒ 看起来毫无过渡（本次就是这么发现的）。少一层数学就少一个静默失效点。 */
+  transition:left .58s cubic-bezier(.4,0,.2,1), top .58s cubic-bezier(.4,0,.2,1),
+             width .58s cubic-bezier(.4,0,.2,1), height .58s cubic-bezier(.4,0,.2,1),
+             border-color .2s;
+}
+.tv5-hi-in{
+  position:absolute; left:0; top:0;
+  /* ⭐ 必须铺满外层几何层（inset:0），不能只写 left/top。
+     少了宽高 ⇒ 这一层塌成 0×0（浏览器给绝对定位元素的最小内容尺寸），
+     一个 border-radius:10px 的 4×4 方块，四条边各只画得出 2px 长的截角 ——
+     叠在正确的框上，看起来就是「四个角标散在框的四角、对不齐」。
+     JS 从没给这一层写过 width/height，所以 bug 从引入两层结构起就一直在，
+     而且不报错、边框色还随主题变，看着像「主题色不统一」。 */
+  inset:0;
+  border-radius:var(--hi-r,10px);
+  border:var(--hi-bw,2px) solid var(--accent-1);
+  box-sizing:border-box;
+  /* JS 不写它的 transform —— 边框只由 host 上的 --hi-bw 做镜头反向补偿，别在这里加过渡 */
+}
+.tv5-hi.round .tv5-hi-in{ border-radius:50%; }
+/* ⭐ 标签贴在框**内**左上角，不放框外。
+   为什么：框的几何是过渡的（left/top/width/height 各自补间），
+   而标签在框的坐标系里是绝对定位的 —— 放框外（top:-26px）时，
+   过渡期间框在往目标长、标签却已经在最终位置等着，看起来就是
+   "一个角标孤零零飘在框外面"。放框内则天然跟着框一起长。 */
+.tv5-hi-tag{
+  position:absolute; left:0; top:0; white-space:nowrap;
+  font-size:12px; padding:3px 8px; border-radius:7px;
+  background:var(--accent-1); color:var(--on-accent);
+  /* 反向缩放，让标签在任意放大倍数下都是 12px。
+     ⭐ v5.6：补偿值由 JS 在点击时写**一次终值**，补间交给这条 transition
+     （时长/曲线跟镜头完全一致 ⇒ 标签全程与预览同步收放，主线程零参与）。
+     这里绝不能再声明 transform，否则会跟 inline style 抢同一个属性。 */
+  transform-origin:left top;
+  transition:transform .58s cubic-bezier(.4,0,.2,1);
+  will-change:transform;
+}
+/* 框太小（头像）时标签会盖满整块 ⇒ 缩成一行细条 */
+.tv5-hi.tiny .tv5-hi-tag{ font-size:10px; padding:2px 6px; }
+
+/* ⭐ 放大后浮出的操作条：挂在未缩放的 #tv5Act 里，字号不随镜头变大
+   ⚠️ 性能：这一层的 DOM 只建一次、之后永不重建；位置每帧走 transform（GPU 合成），
+   绝不写 left/top（那会触发 layout）。CSS 里也不要声明 transform，由 JS 独占。 */
+#tv5Act{ position:absolute; inset:0; z-index:9; pointer-events:none; contain:layout paint; }
+
+/* ⭐ 面板实底：不要沿用 --surface（那玩意是 3.5% 白，贴在任何预览图上都 ≈ 隐形）。
+   从 --bg 派生 94% 实底 —— 深浅两套主题自动跟对，面板在亮壁纸/暗壁纸上都读得清。 */
+.tv5-panel{
+  --panel-bg: color-mix(in srgb, var(--bg) 94%, transparent);
+  --panel-bd: color-mix(in srgb, var(--ink) 22%, transparent);
+  position:absolute; left:0; top:0; width:236px; padding:12px;
+  border-radius:14px; pointer-events:auto; text-align:left;
+  background:var(--panel-bg); border:1px solid var(--panel-bd);
+  box-shadow:0 16px 44px rgba(0,0,0,.30), 0 1px 0 0 rgba(255,255,255,.07) inset;
+  /* ⭐ 面板的「飞入」整体由 CSS 合成器驱动（和镜头同一套路），不碰 GSAP：
+     GSAP 的 ticker 依赖 rAF，弱 WebView / 后台标签 / 无头环境里会被饿死 —— 实测
+     整个入场只产出 1 个 transform 值（面板永远停在起始 scale .87、位移 0），
+     就是「闪两帧」的另一半来源。CSS transition 的 transform/opacity 走合成线程，饿不饿都完成。
+     ⚠️ 属性所有权：transform 只归 CSS 这条 transition，JS 只负责写起止值，别两边都写。 */
+  opacity:0;
+  transform:translate3d(0,0,0) scale(1);
+  /* 缩放锚在底边中点：面板像是「从底部轨道那一项长出来」，而不是原地等比例膨胀 */
+  transform-origin:50% 100%;
+  transition:opacity .26s ease-out,
+             transform .52s cubic-bezier(.34,1.24,.52,1),
+             left .34s cubic-bezier(.33,.72,.28,1), top .34s cubic-bezier(.33,.72,.28,1);
+  will-change:transform, opacity;
+}
+.tv5-panel.in{ opacity:1; }
+/* 收起态：位移 + 缩一点，配合 .in 的移除淡出 */
+.tv5-panel.out{ transform:translate3d(0,22px,0) scale(.94); }
+/* ⚠️ 收起后必须放行点击：pointer-events 会被 .tv5Act 的 inset:0 容器继承，
+    opacity:0 的面板照样挡在预览上，点「回全局」像没反应。 */
+.tv5-panel:not(.in){ pointer-events:none; }
+.tv5-panel-head{ display:flex; align-items:center; gap:7px; padding-bottom:9px; border-bottom:1px solid var(--panel-bd); }
+.tv5-panel-dot{ width:7px; height:7px; border-radius:50%; background:var(--accent-1); flex:none; }
+.tv5-panel-name{ font-size:13px; font-weight:600; }
+.tv5-panel-size{ margin-left:auto; font-style:normal; font-size:11px; color:color-mix(in srgb, var(--ink) 62%, transparent); }
+
+.tv5-panel-body{ display:flex; gap:10px; align-items:center; padding:10px 0; }
+.tv5-panel-thumb{
+  width:56px; height:56px; flex:none; border-radius:10px; overflow:hidden;
+  /* 占位态要「看得是个空位」：比面板底暗一档 + 更实的边 + 更清晰的占位字 */
+  background:color-mix(in srgb, var(--bg) 62%, transparent);
+  border:1px solid var(--panel-bd);
+  background-size:cover; background-position:center;
+  display:flex; align-items:center; justify-content:center;
+  font-size:12px; color:color-mix(in srgb, var(--ink) 78%, transparent);
+}
+.tv5-panel-desc{ margin:0; font-size:11px; line-height:1.55; color:color-mix(in srgb, var(--ink) 72%, transparent); }
+
+.tv5-panel-acts{ display:flex; gap:6px; flex-wrap:wrap; }
+.tv5-panel-acts .tv5-act-add,
+.tv5-panel-acts .tv5-act-mini{ pointer-events:auto; }
+.tv5-act-add{
+  flex:1 1 100%; display:flex; align-items:center; justify-content:center; gap:6px;
+  padding:8px 12px; border-radius:9px;
+  font-size:13px; cursor:pointer; border:0; font-weight:600;
+  background:var(--accent-grad); color:var(--on-accent);
+  box-shadow:0 4px 14px color-mix(in srgb, var(--accent-1) 26%, transparent);
+  transition:filter .16s, transform .16s;
+}
+.tv5-act-add:hover{ filter:brightness(1.07); transform:translateY(-1px); }
+.tv5-act-plus{ font-size:15px; line-height:1; }
+.tv5-act-mini{
+  flex:1 1 auto; padding:7px 10px; border-radius:9px; font-size:12px; cursor:pointer;
+  border:1px solid var(--panel-bd); background:color-mix(in srgb, var(--bg) 78%, transparent);
+  color:color-mix(in srgb, var(--ink) 88%, transparent);
+  transition:background .16s;
+}
+.tv5-act-mini:hover{ background:color-mix(in srgb, var(--bg) 92%, transparent); }
+
+/* 指向目标部位的小箭头：贴着面板朝向预览的那一侧 */
+.tv5-panel-arrow{
+  position:absolute; width:9px; height:9px; background:var(--panel-bg);
+  border:1px solid var(--panel-bd); transform:rotate(45deg);
+}
+/* 面板在目标右侧 ⇒ 箭头在面板左缘；反之在右缘；上下情形走横条 */
+.tv5-panel.ar-l .tv5-panel-arrow{ left:-5px; top:calc(50% - 4px); border-right:0; border-top:0; }
+.tv5-panel.ar-r .tv5-panel-arrow{ right:-5px; top:calc(50% - 4px); border-left:0; border-bottom:0; }
+.tv5-panel.ar-t .tv5-panel-arrow{ left:calc(50% - 4px); top:-5px; border-right:0; border-bottom:0; }
+.tv5-panel.ar-b .tv5-panel-arrow{ left:calc(50% - 4px); bottom:-5px; border-left:0; border-top:0; }
+@media (prefers-reduced-motion: reduce){
+  #tv5FrameHost, .tv5-hi-tag{ transition:none; }
+  .tv5-hi{ transition:border-color .2s; }
+  #tv5Dim{ transition:none; }
+  .tv5-panel{ transition:none; }
+}
+
+/* ---------- 底部：槽位轨 + 配色方案轨 ---------- */
+#tv5Rail{
+  flex:none; min-height:var(--v5-rail-h);
+  display:flex; align-items:center; gap:16px; padding:14px 18px;
+  background:var(--surface); border-top:1px solid var(--line);
+}
+/* ⭐ v5.4：轨道「宁可横向滚，也别把中文挤成竖排」。
+   旧版 flex:1 1 0 无下限 ⇒ 窗口一窄，五项互相挤，
+   「建议 1200×800 椭圆」被逐字断行成一根竖条（用户看到的就是「挤爆了」）。
+   现在：给每项一个硬下限，真放不下就整条横向滚动（手机主题设置也是这个做法）。 */
+.tv5-slots{
+  display:flex; gap:10px; flex:1 1 auto; min-width:0;
+  overflow-x:auto; overflow-y:hidden; scrollbar-width:thin;
+}
+.tv5-slots::-webkit-scrollbar{ height:6px; }
+.tv5-slots::-webkit-scrollbar-thumb{ background:var(--line-2); border-radius:3px; }
+.tv5-slot{
+  display:flex; align-items:center; gap:10px; padding:10px;
+  flex:1 1 auto; min-width:152px; max-width:230px; flex-shrink:1;
+  border:1px solid var(--line); border-radius:13px; background:var(--surface-2);
+  cursor:pointer; text-align:left; transition:border-color .16s, background .16s, transform .12s;
+  /* ⭐ 保住横排：窄容器里中文会被逐字断行成竖排（截图里那根怪条就是这个） */
+  writing-mode:horizontal-tb; word-break:keep-all;
+}
+.tv5-slot:hover{ border-color:var(--line-2); transform:translateY(-1px); }
+.tv5-slot.on{ border-color:var(--accent-1); background:var(--accent-soft-1); }
+/* 正在被放大的那一项：描边加粗一点，跟「只是选中」区分开 */
+.tv5-slot.focusing{
+  border-color:var(--accent-1);
+  box-shadow:0 0 0 2px var(--accent-soft-1);
+}
+.tv5-slot.locked{ opacity:.45; }
+/* 「全局视图」是复位键，窄一点 */
+.tv5-slot-all{ flex:0 0 clamp(92px,10.5%,120px); }
+.tv5-thumb-all{
+  background:linear-gradient(135deg,var(--accent-soft-1),var(--surface-3));
+  color:var(--accent-1); font-size:13px; font-weight:500;
+}
+/* 缩略图：有图显图，无图显示渐变占位 —— 不再是一句「点选择图片填入」 */
+.tv5-thumb{
+  width:64px; height:64px; border-radius:10px; flex:none;
+  background-size:cover; background-position:center;
+  background-color:var(--surface-3);
+  border:1px solid var(--line);
+  display:grid; place-items:center; font-size:11px; color:var(--ink-3);
+}
+.tv5-slot-meta{ min-width:0; display:flex; flex-direction:column; gap:3px; }
+/* 单行截断：说明文字宁可显示不全走省略号，也绝不折行成竖排 */
+.tv5-slot-meta b{ font-size:13px; font-weight:500; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.tv5-slot-meta em{ font-style:normal; font-size:11px; color:var(--ink-3); line-height:1.45;
+  white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.tv5-slot.on .tv5-slot-meta em{ color:var(--accent-1); }
+
+.tv5-sep{ width:1px; align-self:stretch; background:var(--line); }
+.tv5-sws{ display:flex; flex-direction:column; gap:8px; min-width:0; margin-top:12px; }
+/* 挪进左栏「快速配色」后：色板在窄列里换行排，空态用一句人话提示 */
+.tv5-sws .tv5-sw{ padding:6px 8px; }
+.tv5-sws .tv5-sw-row{ gap:7px; }
+.tv5-sws .tv5-sw span{ font-size:11px; }
+.tv5-sws .tv5-sw-empty{ line-height:1.6; }
+.tv5-rail-t{ font-size:12px; color:var(--ink-3); }
+.tv5-sw-row{ display:flex; gap:8px; flex-wrap:wrap; }
+.tv5-sw{
+  display:flex; align-items:center; gap:7px; padding:7px 10px; border-radius:10px;
+  border:1px solid var(--line); background:var(--surface-2); cursor:pointer;
+  transition:border-color .16s, background .16s;
+}
+.tv5-sw:hover{ border-color:var(--line-2); }
+.tv5-sw.on{ border-color:var(--accent-1); background:var(--accent-soft-1); }
+.tv5-sw i{ width:16px; height:16px; border-radius:5px; flex:none; }
+.tv5-sw span{ font-size:12px; }
+.tv5-sw-empty{ font-size:12px; color:var(--ink-3); }
+
+/* ---------- 比例适配：窄一点就收窄，绝不让中文逐字断行 ---------- */
+/* 只留缩略图 + 标题：宽度实在不够时退化成「图标轨」，靠横滚兜底 */
+@media (max-width: 980px){
+  .tv5-thumb{ width:46px; height:46px; }
+  .tv5-slot{ gap:8px; padding:7px; min-width:132px; }
+}
+@media (max-width: 1240px){
+  .tv5-thumb{ width:54px; height:54px; }
+  .tv5-slot{ gap:8px; padding:8px; }
+  .tv5-slot-meta b{ font-size:12px; }
+}
+@media (max-width: 1040px){
+  /* 只剩标题也够用：说明文字先让位，优先保住四项并排 */
+  .tv5-slot-meta em{ display:none; }
+}
+@media (max-width: 860px){
+  #tv5Rail{ flex-wrap:wrap; row-gap:10px; }
+  .tv5-slot-all{ flex:0 0 100%; max-width:none; }
+  .tv5-sep{ display:none; }
+  .tv5-sws{ width:100%; }
+}
+
+/* ---------- 一次性轻提示 ---------- */
+#tv5Tip{
+  position:fixed; left:50%; bottom:calc(var(--v5-rail-h) + 18px);
+  transform:translate(-50%,10px);
+  padding:9px 16px; border-radius:999px; font-size:12.5px;
+  background:var(--surface); color:var(--ink);
+  border:1px solid var(--line-2); box-shadow:0 8px 26px rgba(0,0,0,.18);
+  opacity:0; pointer-events:none; z-index:2147483200;
+  transition:opacity .2s, transform .2s;
+}
+#tv5Tip.show{ opacity:1; transform:translate(-50%,0); }
+
+/* 深色下把预览台面压暗一点，避免大块白底刺眼 */
+@media (prefers-color-scheme: dark){
+  #tv5Stage{ background:linear-gradient(var(--bg), var(--bg-2)); }
+}
+
+/* AI 主题助手：图片比例提醒（几何体检结果） */
+.tv5-geonote{ display:none; margin:6px 2px 0; max-width:none;
+  font-size:11.5px; line-height:1.55; color:var(--ink-3); }
+.tv5-geonote.show{ display:block; }
+.tv5-geonote.warn{ color:var(--bad); }
+
+/* ============================================================
+   贴纸 / 表情包（2026-10-12）
+   ------------------------------------------------------------
+   #tv5Stickers 在 host 内（随镜头一起缩放，贴纸是「页面的一部分」）；
+   .tv5-stkbar 挂在 stage 上（不缩放，工具条字号恒定）。
+   ============================================================ */
+.tv5-stickers{ position:absolute; inset:0; z-index:6; pointer-events:none; }
+.tv5-stk{
+  position:absolute; transform:translate(-50%,-50%);
+  pointer-events:auto; cursor:move; border-radius:8px;
+  filter:drop-shadow(0 3px 8px rgba(0,0,0,.22));
+  touch-action:none;                       /* 触屏拖动不被浏览器手势抢走 */
+}
+.tv5-stk img, .tv5-stk video{ display:block; width:100%; height:auto;
+  user-select:none; -webkit-user-drag:none; }
+.tv5-stk video{ object-fit:contain; }
+.tv5-stk.sel{ outline:2px solid var(--accent-1); outline-offset:3px; }
+/* ★ 2026-10-13：缩放手柄（选中态右下角）。拖它 = 按中心等比缩放；
+   ＋／－按钮已删，缩放只走「手柄拖动 + 滚轮」两条鼠标路径。 */
+.tv5-stk-hd{
+  position:absolute; right:-11px; bottom:-11px; width:18px; height:18px;
+  border-radius:50%; background:var(--accent-1); border:2.5px solid #fff;
+  box-shadow:0 2px 8px rgba(0,0,0,.35); cursor:nwse-resize; z-index:3;
+  touch-action:none;
+}
+.tv5-stk-hd:hover{ transform:scale(1.15); }
+.tv5-stkbar{
+  position:absolute; z-index:20; display:flex; gap:2px; padding:4px;
+  border-radius:9px; background:var(--surface);
+  box-shadow:0 6px 20px rgba(0,0,0,.20);
+}
+.tv5-stkbar button{
+  border:0; background:transparent; cursor:pointer; font-size:12px; line-height:1;
+  padding:4px 9px; border-radius:6px; color:var(--ink); font-family:inherit;
+  transition:background .15s;
+}
+.tv5-stkbar button:hover{ background:var(--surface-2); }
+.tv5-stkbar button.del:hover{ background:color-mix(in srgb, var(--bad) 14%, transparent); color:var(--bad); }
+/* 拖入反馈：整个预览蒙一层「松手贴到这里」 */
+#tv5Stage.tv5-dropping::after{
+  content:'松手贴到这里（图片 / 视频 / 表情包）';
+  position:absolute; inset:0; z-index:30;
+  display:flex; align-items:center; justify-content:center;
+  font-size:15px; letter-spacing:.05em; color:#fff;
+  background:color-mix(in srgb, var(--accent-1) 30%, rgba(0,0,0,.18));
+  border:2px dashed rgba(255,255,255,.85); border-radius:18px;
+  pointer-events:none;
+}

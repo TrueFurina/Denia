@@ -1,0 +1,8 @@
+﻿Parsec Virtual Display Adapter | RAM=0GB
+OrayIddDriver Device | RAM=0GB
+Todesk Virtual Display Adapter | RAM=0GB
+GameViewer Virtual Display Adapter | RAM=0GB
+MuMu Virtual Display Adapter | RAM=0GB
+AMD Radeon(TM) Graphics | RAM=0.5GB
+NVIDIA GeForce RTX 5080 | RAM=4GB
+NVSMI: NVIDIA GeForce RTX 5080, 16303 MiB, 2981 MiB

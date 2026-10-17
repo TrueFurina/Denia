@@ -1,0 +1,254 @@
+/* ============================================================
+   主题编辑器 · 设计稿样式（2026-10-05）
+   只负责编辑器外壳：顶栏 / 图位条 / 指示框 / 属性栏。
+   预览区里跑的是**真界面**（复用 ui_shared.css / home.css 的原始类名），
+   所以指示框可以按 getBoundingClientRect 实测，不需要任何写死坐标。
+   ============================================================ */
+
+/* ⭐⭐⭐ 关键前置：design_tokens.css 把 body 设成了
+     `display:grid; place-items:center; padding:20px`（为了居中原版 .app）。
+     编辑器外壳是 body 的子元素，会被这个 grid 布局**压成内容尺寸**：
+   实测 #teRoot 明明写了 width:100vw/height:100vh，getBoundingClientRect 却是 0×0；
+     #app 同样被压成 0×0 ⇒ 所有指示框实测坐标全为 0（这正是"框全乱"的真因）。
+   ⇒ 这里把 body 恢复成普通块级流，编辑器自己内部再用 flex 排版。
+   预览里的真页面由 #teFrameHost 显式给 1080×740，不依赖 body 的居中。 */
+body{
+  display:block !important;
+  place-items:normal !important;
+  padding:0 !important;
+  min-height:100vh !important;
+  overflow:hidden !important;
+}
+
+:root{
+  --te-h: 46px;            /* 顶栏高 */
+  --te-strip-h: 40px;      /* 图位条高 */
+  --te-side-w: 258px;      /* 属性栏宽 */
+  --c-hero:   #378ADD;
+  --c-stand:  #7F77DD;
+  --c-avatar: #D85A30;
+  --c-cover:  #1D9E75;
+  --c-off:    #888780;
+}
+
+/* ⚠️ 不能用 inset:0：design_tokens.css 的 body{display:grid;place-items:center}
+   会让 fixed 定位的 inset:0 在 grid 容器里算成 0 尺寸（实测 teRoot h=0）。
+   改用显式四边 + 视口尺寸，稳定拿到全屏。 */
+#teRoot{
+  position:fixed; left:0; top:0; right:0; bottom:0;
+  width:100vw; height:100vh; z-index:2147483000;
+  display:flex; flex-direction:column;
+  background:var(--bg);
+  font-family:var(--font);
+  color:var(--ink);
+}
+
+/* ---------- 顶栏 ---------- */
+#teBar{
+  flex:none; height:var(--te-h);
+  display:flex; align-items:center; gap:10px; padding:0 14px;
+  background:var(--bg-2);
+  border-bottom:1px solid var(--line);
+}
+.te-title{ font-size:15px; font-weight:500; color:var(--ink); }
+.te-state{ font-size:12px; color:var(--ink-3); }
+.te-sp{ flex:1; }
+
+/* ---------- 绑定条（第四版新增） ----------
+   位置在顶栏之下、图位条之上：它是"这套主题给谁"的前置条件，
+   必须在用户点 ④ 之前就看到，而不是选到 ④ 才发现图填不了。 */
+#teBind{
+  flex:none; min-height:58px;
+  display:flex; align-items:center; gap:10px; padding:8px 14px;
+  background:var(--bg-2);
+  border-bottom:1px solid var(--line);
+}
+.te-bind-label{ font-size:12px; color:var(--ink-3); flex:none; }
+.te-bind-pick{ display:flex; gap:8px; flex-wrap:wrap; }
+.te-char{
+  display:flex; align-items:center; gap:8px;
+  padding:5px 11px 5px 5px; border-radius:10px; cursor:pointer; text-align:left;
+  border:1px solid var(--line); background:var(--surface-2); color:var(--ink);
+  transition:border-color .16s, background .16s;
+}
+.te-char:hover{ border-color:var(--line-2); }
+.te-char.on{ border-color:var(--accent-1); background:var(--accent-soft-1); }
+.te-char-av{
+  width:28px; height:28px; border-radius:9px; flex:none;
+  display:grid; place-items:center; font-size:13px; font-weight:500; color:#fff;
+  background:linear-gradient(135deg, var(--accent-1), var(--accent-2));
+}
+.te-char-av.ghost{ background:var(--surface-3); color:var(--ink-3); }
+.te-char-av.none{ background:var(--surface-2); color:var(--ink-3); border:1px dashed var(--line-2); }
+.te-char-txt{ display:flex; flex-direction:column; gap:2px; min-width:0; }
+.te-char-txt b{ font-size:13px; font-weight:500; color:var(--ink); line-height:1.2; }
+.te-char-txt em{ font-size:11px; font-style:normal; color:var(--ink-3); line-height:1.2; }
+.te-bind-note{ font-size:12px; color:var(--ink-3); margin-left:auto; }
+.te-bind-note.warn{ color:var(--accent-2); }
+
+/* ④ 未绑定角色时：置灰 + 不可点（提示写在这里，不用 alert） */
+.te-slot.locked{ opacity:.5; }
+.te-slot.locked .dot{ background:var(--c-off) !important; }
+
+/* 属性栏里选到 ④ 但没绑角色时的拦截提示 */
+.te-lockhint{
+  margin-top:8px; padding:9px 11px; border-radius:9px; font-size:12px; line-height:1.55;
+  color:var(--accent-2); background:var(--accent-soft-2, var(--accent-soft-1));
+  border:1px solid color-mix(in srgb, var(--accent-2) 34%, transparent);
+}
+
+.te-btn{
+  padding:6px 13px; border-radius:8px; font-size:13px; cursor:pointer;
+  border:1px solid var(--line-2); background:var(--surface-2); color:var(--ink);
+  transition:background .16s, border-color .16s, color .16s;
+}
+.te-btn:hover{ background:var(--surface-3); border-color:var(--ink-4); }
+.te-btn.primary{ background:var(--accent-grad); color:var(--on-accent); border-color:transparent; }
+.te-btn.primary:hover{ filter:brightness(1.06); }
+.te-btn.block{ display:block; width:100%; margin-top:6px; }
+
+/* ---------- 图位条 ---------- */
+#teStrip{
+  flex:none; min-height:var(--te-strip-h);
+  display:flex; align-items:center; gap:6px; padding:6px 14px; flex-wrap:wrap;
+  background:var(--surface); border-bottom:1px solid var(--line);
+}
+.te-strip-label{ font-size:12px; color:var(--ink-3); margin-right:2px; }
+/* 当前预览的是哪个真实页面（由 iframe 的真实 src 决定，不是自造的标签） */
+.te-where{
+  display:inline-flex; align-items:center; gap:6px;
+  padding:5px 12px; border-radius:7px; font-size:12px; font-weight:500;
+  background:var(--accent-soft-1); color:var(--accent-1);
+  border:0.5px solid var(--accent-1);
+}
+.te-jump{
+  padding:5px 10px; border-radius:7px; font-size:12px; cursor:pointer;
+  border:1px dashed var(--line-2); background:transparent; color:var(--ink-3);
+  transition:border-color .16s, color .16s, background .16s;
+}
+.te-jump:hover{ border-style:solid; color:var(--ink-2); background:var(--surface-2); }
+.te-jump.hot{ border-color:var(--accent-1); color:var(--accent-1); background:var(--accent-soft-1); border-style:solid; }
+.te-strip-sep{ width:1px; height:18px; background:var(--line-2); margin:0 6px; }
+
+.te-page, .te-slot{
+  display:inline-flex; align-items:center; gap:6px;
+  padding:5px 11px; border-radius:7px; font-size:12px; cursor:pointer;
+  border:1px solid var(--line); background:var(--surface-2); color:var(--ink-2);
+  transition:background .16s, border-color .16s, color .16s;
+}
+.te-page:hover, .te-slot:hover{ border-color:var(--line-2); color:var(--ink); }
+.te-page.on, .te-slot.on{
+  background:var(--accent-soft-1); border-color:var(--accent-1); color:var(--accent-1);
+}
+.te-slot .dot{ width:8px; height:8px; border-radius:50%; flex:none; }
+.te-slot em{ font-style:normal; font-size:11px; color:var(--ink-3); }
+.te-slot.has em{ color:var(--accent-1); }
+.te-slot.off{ opacity:.42; }
+.te-slot.off .dot{ background:var(--c-off) !important; }
+
+/* ---------- 主体 ---------- */
+#teBody{ flex:1 1 auto; display:flex; min-height:0; min-width:0; }
+
+#teStage{
+  flex:1 1 auto; position:relative; min-width:0;
+  display:flex; align-items:center; justify-content:center;
+  padding:18px; overflow:hidden;
+  background:
+    linear-gradient(var(--bg-2), var(--bg));
+}
+
+/* 真界面容器：iframe 加载**真实页面**（对话页 / 角色页），JS 换 src 切换。
+   ⚠️ 缩放必须放外层 #teFrameHost（不能给 iframe 本身 transform，
+      否则 iframe 内部页面的布局计算会被牵连、实测坐标不可信）；
+      #teHot 与它同尺寸同位置，指示框坐标才对得上。 */
+#teFrameHost{
+  position:relative; transform-origin:center center; flex:none;
+  width:1080px; height:740px;
+}
+#teFrame{
+  width:1080px; height:740px; border:0; display:block;
+  background:var(--bg);
+  pointer-events:none;   /* 预览不可交互：像图片一样 */
+}
+
+/* 指示框层：append 在 #teFrameHost 内（同一坐标系） */
+#teHot{ position:absolute; left:0; top:0; width:100%; height:100%;
+        pointer-events:none; z-index:5; }
+
+#teHint{
+  position:absolute; left:50%; top:50%; transform:translate(-50%,-50%);
+  font-size:13px; color:var(--ink-3); z-index:6;
+  background:var(--surface-1); border:1px solid var(--line);
+  padding:8px 14px; border-radius:8px;
+}
+
+/* ---------- 指示框（全部由 JS 实测定位，这里只管外观） ---------- */
+.te-hs{
+  position:absolute; pointer-events:auto; cursor:pointer;
+  border:2px dashed var(--hs-c); border-radius:var(--hs-r, 8px);
+  background:color-mix(in srgb, var(--hs-c) 7%, transparent);
+  transition:background .16s;
+}
+.te-hs:hover{ background:color-mix(in srgb, var(--hs-c) 14%, transparent); }
+.te-hs.round{ border-radius:50%; }
+/* 已配图时用图片做底，直接看到效果 */
+.te-hs.has{ background-size:cover; background-position:center;
+  background-image:var(--hs-img); }
+/* 不带标签（标签用独立元素，避免被内容遮住） */
+.te-hs-tag{
+  position:absolute; white-space:nowrap; pointer-events:none;
+  font-size:12px; font-weight:500; line-height:1;
+  padding:5px 9px; border-radius:6px;
+  background:var(--hs-c); color:#fff;
+  box-shadow:0 3px 10px rgba(0,0,0,.28);
+}
+.te-hs-tag.off{ background:var(--c-off); }
+/* 标签定位：默认左上，四个图位各自避让到不遮内容的一侧 */
+.te-hs[data-tag="left"]   { right:8px; top:8px; }
+.te-hs[data-tag="top"]    { left:50%; transform:translateX(-50%); bottom:calc(100% + 6px); }
+.te-hs[data-tag="bottom"] { left:50%; transform:translateX(-50%); top:calc(100% + 6px); }
+.te-hs[data-tag="inside"] { left:8px; top:8px; }
+/* 头像框小，标签放框外左侧，避免压住"达妮娅"这类文字 */
+.te-hs[data-tag="outleft"] { right:calc(100% + 8px); top:50%; transform:translateY(-50%); }
+
+/* ---------- 右侧属性栏 ---------- */
+#teSide{
+  flex:none; width:var(--te-side-w); height:100%;
+  border-left:1px solid var(--line);
+  background:var(--bg-2);
+  overflow-y:auto; padding:12px;
+}
+.te-card{
+  background:var(--surface); border:1px solid var(--line);
+  border-radius:10px; padding:11px; margin-bottom:10px;
+}
+.te-card-t{ font-size:13px; font-weight:500; margin-bottom:2px; }
+.te-card-s{ font-size:11px; color:var(--ink-3); }
+.te-thumb{
+  height:78px; margin:9px 0; border-radius:8px;
+  background:var(--surface-2); border:1px dashed var(--line-2);
+  display:flex; align-items:center; justify-content:center;
+  font-size:11px; color:var(--ink-3);
+  background-size:cover; background-position:center;
+}
+.te-thumb.filled{ border-style:solid; border-color:var(--line); }
+.te-spec{ font-size:11px; color:var(--ink-2); line-height:1.65; }
+.te-spec.dim{ color:var(--ink-3); margin-top:1px; }
+
+.te-sw-row{ display:flex; align-items:center; gap:7px; margin:8px 0 6px; }
+.te-sw{ width:26px; height:26px; border-radius:7px; border:1px solid var(--line-2); flex:none; }
+
+.te-pagerow{ display:flex; flex-wrap:wrap; gap:5px; }
+.te-pagechip{
+  display:inline-flex; align-items:center; gap:5px;
+  padding:4px 9px; border-radius:6px; font-size:11px; cursor:pointer;
+  border:1px solid var(--line); background:var(--surface-2); color:var(--ink-3);
+}
+.te-pagechip.on{ background:var(--accent-soft-1); border-color:var(--accent-1); color:var(--accent-1); }
+.te-pagechip .mk{ width:12px; height:12px; border-radius:3px; border:1px solid var(--line-2); }
+
+/* 深色下属性栏的次级面不要发白 */
+@media (prefers-color-scheme: dark){
+  .te-hs-tag{ color:#06121a; }
+}
+

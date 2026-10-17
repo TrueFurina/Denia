@@ -1,0 +1,1135 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<meta name="stage" content="off" />
+<title>模型与 API · 能力槽</title>
+<link rel="stylesheet" href="/redesign/design_tokens.css?v=20261013e" />
+<link rel="stylesheet" href="/redesign/ui_shared.css?v=20261013e" />
+<link rel="stylesheet" href="/redesign/pages.css?v=20261007l" />
+<style id="capSlotsStyle">
+/* 本页样式全部 scope 到 .cap-wrap，避免与共享样式表里的同名类互相覆盖。 */
+.cap-wrap{max-width:1120px;margin:0 auto;padding:22px 24px 80px}
+
+/* ---------- 划屏（SPA 外壳） ----------
+   外壳里 #app 是 height:100%+overflow:hidden，注入的 .main 高度被锁死；
+   本页内容比一屏高，若不指定滚动容器 → 超出部分被裁掉、滚轮完全没反应
+   （独立打开本页时 <body> 不锁高，由文档滚动，所以只有 SPA 里才暴露）。
+   这里让 .main 自己成为滚动容器：只用 `.app > .main` 前缀，避免影响其它子页；
+   spa.js 会随页面切走移除本页 <style>，不会串味。 */
+.app > .main{overflow-y:auto;overflow-x:hidden}
+.app > .main > .cap-wrap{flex:0 0 auto}
+.app > .main::-webkit-scrollbar{width:10px}
+.app > .main::-webkit-scrollbar-thumb{background:var(--line-2);border-radius:99px}
+.app > .main::-webkit-scrollbar-track{background:transparent}
+
+.cap-head{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;flex-wrap:wrap}
+.cap-kicker{font:600 11px/1 var(--font-mono,ui-monospace);letter-spacing:.16em;text-transform:uppercase;color:var(--accent-1)}
+.cap-h1{font-size:23px;margin:5px 0 7px;
+  background:linear-gradient(90deg,var(--accent-1),var(--accent-2));
+  -webkit-background-clip:text;background-clip:text;color:transparent;width:max-content}
+.cap-lead{color:var(--ink-3);font-size:12.5px;max-width:780px;margin:0}
+.cap-lead b{color:var(--ink-2)}
+.cap-actions{display:flex;gap:8px;align-items:center;padding-top:4px}
+
+.cap-wrap .btn{display:inline-flex;align-items:center;gap:7px;border:1px solid var(--line);
+  background:var(--surface-2);color:var(--ink);border-radius:9px;padding:8px 13px;font-size:12.5px;
+  font-weight:600;cursor:pointer;white-space:nowrap;transition:border-color .16s,background .16s,transform .16s}
+.cap-wrap .btn:hover{border-color:var(--line-2);background:var(--surface-3)}
+.cap-wrap .btn:active{transform:translateY(1px)}
+.cap-wrap .btn:focus-visible{outline:2px solid var(--accent-1);outline-offset:2px}
+.cap-wrap .btn.primary{background:linear-gradient(135deg,var(--accent-1),var(--accent-2));border:none;color:#06121a}
+.cap-wrap .btn.primary:hover{filter:brightness(1.06)}
+.cap-wrap .btn.sm{padding:6px 11px;font-size:11.5px}
+.cap-iconbtn{width:34px;height:34px;flex:none;display:grid;place-items:center;border:1px solid var(--line);
+  background:var(--surface-2);color:var(--ink-2);border-radius:9px;cursor:pointer;transition:border-color .16s,color .16s}
+.cap-iconbtn:hover{border-color:var(--line-2);color:var(--ink)}
+.cap-iconbtn:focus-visible{outline:2px solid var(--accent-1);outline-offset:2px}
+.cap-flip{transform:scaleX(-1)}
+
+/* 状态条 */
+.cap-status{display:flex;gap:8px;flex-wrap:wrap;align-items:center;background:var(--surface-2);
+  border:1px solid var(--line);border-radius:14px;padding:10px 13px;margin:16px 0 18px}
+.cap-status .lbl{color:var(--ink-3);font-size:12px}
+.cap-chip{display:inline-flex;align-items:center;gap:7px;font-size:12.5px;border:1px solid var(--line);
+  border-radius:99px;padding:5px 12px;background:var(--surface-3);cursor:pointer;
+  transition:border-color .16s,transform .16s}
+.cap-chip:hover{border-color:var(--line-2);transform:translateY(-1px)}
+.cap-dot{width:8px;height:8px;border-radius:50%;flex:none}
+.cap-dot.ok{background:var(--ok);box-shadow:0 0 0 3px color-mix(in srgb,var(--ok) 22%,transparent)}
+.cap-dot.warn{background:var(--warn);box-shadow:0 0 0 3px color-mix(in srgb,var(--warn) 22%,transparent)}
+.cap-dot.bad{background:var(--bad);box-shadow:0 0 0 3px color-mix(in srgb,var(--bad) 22%,transparent)}
+.cap-dot.none{background:var(--ink-3)}
+.cap-chip.ok{border-color:color-mix(in srgb,var(--ok) 45%,transparent)}
+.cap-chip.warn{border-color:color-mix(in srgb,var(--warn) 45%,transparent)}
+.cap-chip.bad{border-color:color-mix(in srgb,var(--bad) 45%,transparent)}
+.cap-status .rf{margin-left:auto}
+
+.cap-off{color:var(--warn);font-size:12px;width:100%}
+
+/* 能力槽网格：· align-items:start 必须保留（默认 stretch 会让同排卡片互相拉伸、
+   形成"点一个旁边也展开"的错觉）；min-width:0 防长 URL/模型名撑破列。 */
+.cap-caps{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px;align-items:start}
+@media(max-width:860px){.cap-caps{grid-template-columns:1fr}}
+.cap-card{position:relative;display:flex;flex-direction:column;gap:12px;text-align:left;width:100%;
+  font:inherit;color:inherit;min-width:0;background:var(--surface-2);border:1px solid var(--line);
+  border-radius:15px;padding:15px;cursor:pointer;overflow:hidden;
+  transition:border-color .3s var(--ease,cubic-bezier(.22,.61,.36,1)),transform .3s var(--ease),box-shadow .3s var(--ease)}
+.cap-card:hover{border-color:var(--line-2);transform:translateY(-2px);box-shadow:var(--shadow-2,0 8px 24px rgba(0,0,0,.35))}
+.cap-card:focus-visible{outline:2px solid var(--accent-1);outline-offset:3px}
+.cap-card .hd{display:flex;align-items:center;gap:12px}
+.cap-ico{position:relative;width:44px;height:44px;flex:none;border-radius:12px;display:grid;place-items:center;
+  color:var(--accent-1);background:linear-gradient(120deg,color-mix(in srgb,var(--accent-1) 18%,transparent),
+  color-mix(in srgb,var(--accent-2) 18%,transparent));border:1px solid var(--line-2)}
+/* ⚠️ 类名必须是 .cap-sub，不能用 .sub！
+   pages.css 有一条**全局** `.sub{ padding:14px; border:1px solid; background:var(--surface) }`
+   （全局 reset 是 `*{box-sizing:border-box}`）。`padding:14px` 会让 19px 的方框在 border-box
+   下被撑到 14*2+1*2=30px —— 徽标反而比 44px 的图标还抢眼、把 brain 盖住（实测 30×30）。
+   这是本项目的老坑：跨页复用的通用类名必须带页面前缀。 */
+.cap-ico .cap-sub,.cap-sico .cap-sub{position:absolute;right:-4px;bottom:-4px;width:18px;height:18px;
+  min-width:18px;min-height:18px;max-width:18px;max-height:18px;box-sizing:border-box;padding:0;margin:0;
+  border:1px solid var(--line-2);border-radius:6px;display:grid;place-items:center;line-height:0;
+  background:var(--bg-2);color:var(--accent-2);cursor:default;pointer-events:none;
+  box-shadow:0 0 0 2px var(--surface-2)}
+.cap-sico .cap-sub{right:-3px;bottom:-3px;width:17px;height:17px;min-width:17px;min-height:17px;
+  max-width:17px;max-height:17px}
+.cap-ico .cap-sub svg,.cap-sico .cap-sub svg{width:11px;height:11px;display:block}
+.cap-nm{font-weight:700;font-size:14.5px}
+.cap-ds{color:var(--ink-3);font-size:11.5px;margin-top:1px}
+.cap-st{margin-left:auto;align-self:flex-start;display:inline-flex;align-items:center;gap:5px;font-size:11px;
+  font-weight:600;padding:4px 10px;border-radius:99px;white-space:nowrap}
+.cap-st.ok{color:var(--ok);background:color-mix(in srgb,var(--ok) 14%,transparent)}
+.cap-st.warn{color:var(--warn);background:color-mix(in srgb,var(--warn) 14%,transparent)}
+.cap-st.bad{color:var(--bad);background:color-mix(in srgb,var(--bad) 14%,transparent)}
+.cap-st.none{color:var(--ink-3);background:var(--surface-3)}
+.cap-cur{border-top:1px dashed var(--line);padding-top:10px}
+.cap-cur .k{color:var(--ink-3);font-size:11px;display:flex;align-items:center;gap:5px}
+.cap-cur .v{font-family:var(--font-mono,ui-monospace);font-size:12px;margin-top:3px;word-break:break-all;
+  display:flex;align-items:center;gap:6px}
+.cap-cur .v.empty{color:var(--ink-3);font-family:inherit}
+.cap-tags{display:flex;gap:5px;flex-wrap:wrap;margin-top:7px}
+.cap-tag{display:inline-flex;align-items:center;gap:4px;font-size:10.5px;padding:2px 7px;border-radius:99px;
+  border:1px solid var(--line);color:var(--ink-3);white-space:nowrap}
+.cap-tag.vision{color:var(--accent-1);border-color:color-mix(in srgb,var(--accent-1) 42%,transparent);
+  background:color-mix(in srgb,var(--accent-1) 12%,transparent)}
+.cap-tag.reason{color:var(--accent-2);border-color:color-mix(in srgb,var(--accent-2) 38%,transparent);
+  background:color-mix(in srgb,var(--accent-2) 12%,transparent)}
+.cap-tag.tool{color:var(--ink-2);background:var(--surface-3)}
+.cap-tag.no{color:var(--warn);border-color:color-mix(in srgb,var(--warn) 40%,transparent);
+  background:color-mix(in srgb,var(--warn) 12%,transparent)}
+.cap-provline{display:flex;align-items:center;gap:5px}
+.cap-provline .more{font-size:11px;color:var(--ink-3)}
+.cap-go{display:flex;align-items:center;justify-content:space-between;gap:8px;border:1px solid var(--line);
+  border-radius:9px;padding:8px 12px;color:var(--ink-2);font-size:12px;font-weight:600;
+  transition:color .16s,border-color .16s,background .16s}
+.cap-card:hover .cap-go{color:var(--accent-1);border-color:color-mix(in srgb,var(--accent-1) 45%,transparent);
+  background:color-mix(in srgb,var(--accent-1) 10%,transparent)}
+
+/* · 阿里云一键：全宽大横栏（做最大），置顶 */
+.cap-hero{grid-column:1/-1;position:relative;display:flex;align-items:center;gap:18px;width:100%;
+  text-align:left;font:inherit;color:inherit;cursor:pointer;overflow:hidden;
+  padding:20px 22px;border-radius:18px;border:1px solid color-mix(in srgb,var(--accent-1) 40%,var(--line));
+  background:
+    radial-gradient(120% 160% at 100% 0%,color-mix(in srgb,var(--accent-2) 20%,transparent),transparent 58%),
+    radial-gradient(120% 160% at 0% 100%,color-mix(in srgb,var(--accent-1) 18%,transparent),transparent 58%),
+    var(--surface-2);
+  box-shadow:0 1px 0 rgba(255,255,255,.03) inset;
+  transition:border-color .3s var(--ease),transform .3s var(--ease),box-shadow .3s var(--ease)}
+.cap-hero:hover{border-color:color-mix(in srgb,var(--accent-1) 70%,transparent);transform:translateY(-2px);
+  box-shadow:var(--shadow-pop,0 24px 70px rgba(0,0,0,.55))}
+.cap-hero:focus-visible{outline:2px solid var(--accent-1);outline-offset:3px}
+.cap-hero-ic{width:56px;height:56px;flex:none;border-radius:16px;display:grid;place-items:center;color:#06121a;
+  background:linear-gradient(135deg,var(--accent-1),var(--accent-2));box-shadow:0 8px 22px color-mix(in srgb,var(--accent-1) 28%,transparent)}
+.cap-hero-tx{min-width:0;flex:1}
+.cap-hero-t{font-weight:800;font-size:18px;display:flex;align-items:center;gap:9px;flex-wrap:wrap}
+.cap-hero-badge{font-size:10.5px;font-weight:700;padding:3px 9px;border-radius:99px;letter-spacing:.02em;
+  color:var(--accent-1);background:color-mix(in srgb,var(--accent-1) 14%,transparent);
+  border:1px solid color-mix(in srgb,var(--accent-1) 42%,transparent)}
+.cap-hero-d{color:var(--ink-2);font-size:12.5px;margin-top:4px;max-width:640px}
+.cap-hero-parts{display:flex;gap:8px;flex-wrap:wrap;flex:none}
+.cap-part{display:inline-flex;align-items:center;gap:6px;font-size:11.5px;padding:5px 11px;border-radius:99px;
+  border:1px solid var(--line);background:var(--surface-3);white-space:nowrap}
+.cap-part.ok{border-color:color-mix(in srgb,var(--ok) 45%,transparent);color:var(--ok)}
+.cap-part.warn{border-color:color-mix(in srgb,var(--warn) 45%,transparent);color:var(--warn)}
+.cap-part.none{color:var(--ink-3)}
+.cap-hero-cta{flex:none;display:inline-flex;align-items:center;gap:9px;font-weight:700;font-size:13.5px;
+  color:#06121a;background:linear-gradient(135deg,var(--accent-1),var(--accent-2));border-radius:11px;padding:11px 18px;
+  transition:filter .16s,transform .16s}
+.cap-hero:hover .cap-hero-cta{filter:brightness(1.07);transform:translateX(2px)}
+@media(max-width:820px){
+  .cap-hero{flex-wrap:wrap}
+  .cap-hero-cta{width:100%;justify-content:center}
+}
+
+/* 弹出配置卡片 */
+.cap-mask{position:fixed;inset:0;z-index:150;background:rgba(4,7,14,.58);display:grid;place-items:center;
+  padding:24px;backdrop-filter:blur(4px)}
+:root[data-theme="light"] .cap-mask{background:rgba(20,30,60,.34)}
+.cap-mask[hidden]{display:none}
+/* 2026-10-12：宽度基准从 96vw 改为 100%（=mask 扣掉左右 padding 后的净宽）。
+   旧算法 96vw + 48px padding 必然 > 容器宽 ⇒ 弹层左右被裁切
+   （用户实测「比例左右被卡死」，引导页窄 iframe 里尤其明显）。 */
+.cap-sheet{width:min(1000px,100%);max-height:88vh;display:flex;flex-direction:column;background:var(--surface-1);
+  border:1px solid var(--line-2);border-radius:20px;box-shadow:var(--shadow-pop,0 24px 70px rgba(0,0,0,.55));overflow:hidden}
+.cap-sheet.narrow{width:min(780px,100%)}
+.cap-sheet-h{display:flex;align-items:center;gap:13px;padding:15px 17px;border-bottom:1px solid var(--line);
+  background:color-mix(in srgb,var(--surface-1) 92%,transparent)}
+.cap-sico{position:relative;width:40px;height:40px;flex:none;border-radius:11px;display:grid;place-items:center;
+  color:var(--accent-1);background:linear-gradient(120deg,color-mix(in srgb,var(--accent-1) 18%,transparent),
+  color-mix(in srgb,var(--accent-2) 18%,transparent));border:1px solid var(--line-2)}
+.cap-sname{font-weight:700;font-size:15px}
+.cap-sdesc{color:var(--ink-3);font-size:11.5px}
+.cap-sheet-h .cap-iconbtn{margin-left:auto}
+.cap-sheet-sub{display:flex;align-items:center;gap:10px;padding:9px 17px;color:var(--ink-2);font-size:12.5px;
+  border-bottom:1px solid var(--line);background:var(--surface)}
+.cap-sheet-sub .v{font-family:var(--font-mono,ui-monospace);color:var(--ink);display:inline-flex;align-items:center;gap:7px}
+.cap-sheet-sub .cap-iconbtn{margin-left:auto;width:30px;height:30px}
+.cap-sheet-b{padding:15px 17px;overflow:auto}
+
+/* 服务商卡片网格：默认 2 列（不再纵向一列） */
+.cap-pgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(340px,1fr));gap:12px}
+.cap-prov{background:var(--surface-2);border:1px solid var(--line);border-radius:12px;padding:13px;
+  display:flex;flex-direction:column;gap:10px}
+.cap-prov.rec{border-color:color-mix(in srgb,var(--ok) 32%,transparent)}
+.cap-prov.active{border-color:color-mix(in srgb,var(--accent-1) 55%,transparent);
+  box-shadow:0 0 0 1px color-mix(in srgb,var(--accent-1) 14%,transparent) inset}
+.cap-prov.off{opacity:.58;filter:grayscale(.25)}
+.cap-prov .ph{display:flex;align-items:center;gap:10px}
+.cap-prov .pnw{min-width:0;flex:1}
+.cap-prov .pn{font-weight:700;font-size:13.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.cap-prov .pc{color:var(--ink-3);font-size:11px}
+.cap-badges{display:flex;gap:5px;flex-wrap:wrap;justify-content:flex-end}
+.cap-badge{display:inline-flex;align-items:center;gap:4px;font-size:10.5px;padding:2px 8px;border-radius:99px;
+  border:1px solid var(--line);color:var(--ink-3);white-space:nowrap}
+.cap-badge.rank{color:var(--accent-1);border-color:color-mix(in srgb,var(--accent-1) 40%,transparent);
+  background:color-mix(in srgb,var(--accent-1) 12%,transparent)}
+.cap-badge.set{color:var(--ok);border-color:color-mix(in srgb,var(--ok) 40%,transparent);
+  background:color-mix(in srgb,var(--ok) 12%,transparent)}
+.cap-badge.adapt{color:var(--accent-2);border-color:color-mix(in srgb,var(--accent-2) 40%,transparent);
+  background:color-mix(in srgb,var(--accent-2) 12%,transparent)}
+.cap-badge.cy{color:var(--ok);border-color:color-mix(in srgb,var(--ok) 40%,transparent)}
+.cap-badge.cw{color:var(--warn);border-color:color-mix(in srgb,var(--warn) 40%,transparent)}
+.cap-badge.cn{color:var(--bad);border-color:color-mix(in srgb,var(--bad) 40%,transparent)}
+.cap-fld{min-width:0}
+.cap-fld.wide{grid-column:1/-1}
+.cap-fld label{display:block;color:var(--ink-3);font-size:11px;margin-bottom:4px}
+.cap-fld input,.cap-fld select{width:100%;background:var(--surface);border:1px solid var(--line);
+  border-radius:8px;color:var(--ink);padding:7px 9px;font-size:12.5px;font-family:var(--font-mono,ui-monospace);
+  transition:border-color .16s}
+.cap-fld input:focus,.cap-fld select:focus{outline:none;border-color:var(--accent-1)}
+.cap-fld select{font-family:inherit;cursor:pointer}
+.cap-fld input:disabled{color:var(--accent-1);opacity:.9;background:var(--surface-2)}
+/* 同样避开全局 .sub 的 padding/border/背景泄漏（否则服务商卡内会被垫出 14px 内边距） */
+.cap-prov .cap-sub{display:grid;grid-template-columns:1fr;gap:9px;padding:0;border:0;background:transparent;margin:0}
+.cap-prov .ft{display:flex;gap:9px;align-items:flex-end}
+.cap-prov .ft .cap-fld{flex:1}
+.cap-use{flex:none;display:inline-flex;align-items:center;gap:6px;background:linear-gradient(135deg,var(--accent-1),var(--accent-2));
+  border:none;color:#06121a;border-radius:9px;padding:8px 15px;font-weight:700;font-size:12.5px;cursor:pointer;
+  transition:filter .16s,transform .16s}
+.cap-use:hover{filter:brightness(1.06);transform:translateY(-1px)}
+.cap-use:disabled{background:var(--surface-3);color:var(--ink-3);cursor:not-allowed;transform:none}
+.cap-prov .hint{color:var(--ink-3);font-size:11px;line-height:1.5;display:flex;gap:6px}
+.cap-prov.add{border-style:dashed;background:color-mix(in srgb,var(--accent-2) 5%,transparent);cursor:pointer;
+  align-items:center;justify-content:center;min-height:150px;gap:8px;color:var(--accent-2);text-align:center;
+  transition:border-color .16s,background .16s,transform .16s}
+.cap-prov.add:hover{border-color:color-mix(in srgb,var(--accent-2) 55%,transparent);
+  background:color-mix(in srgb,var(--accent-2) 12%,transparent);transform:translateY(-2px)}
+.cap-prov .at{font-weight:700;font-size:13px}
+.cap-prov .as{font-size:11px;color:var(--ink-3)}
+.cap-tags .cap-tag .dicon{vertical-align:-1px}
+
+/* 克隆 / 合并提示行（整行） */
+.cap-note{grid-column:1/-1;font-size:12px;color:var(--ink-2);display:flex;gap:9px;
+  background:color-mix(in srgb,var(--accent-1) 8%,transparent);
+  border:1px solid color-mix(in srgb,var(--accent-1) 26%,transparent);border-radius:12px;padding:11px 13px}
+.cap-note b{color:var(--accent-1)}
+.cap-caveat{font-size:11.5px;color:var(--warn);background:color-mix(in srgb,var(--warn) 8%,transparent);
+  border:1px solid color-mix(in srgb,var(--warn) 30%,transparent);border-radius:9px;padding:8px 10px;display:flex;gap:7px}
+
+/* 阿里云一键表单 */
+.cap-one{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+@media(max-width:720px){.cap-one{grid-template-columns:1fr}}
+.cap-hero-empty{color:var(--ink-3);font-size:12.5px;padding:14px;text-align:center;border:1px dashed var(--line);
+  border-radius:12px}
+
+/* 添加卡片流程 */
+.cap-psteps{display:flex;align-items:center;gap:8px;padding:10px 17px;border-bottom:1px solid var(--line);
+  background:var(--surface);font-size:12.5px}
+.cap-step{display:inline-flex;align-items:center;gap:7px;color:var(--ink-3)}
+.cap-step .n{width:20px;height:20px;border-radius:50%;display:grid;place-items:center;font-size:11px;font-weight:700;
+  border:1px solid var(--line);background:var(--surface-2)}
+.cap-step.on{color:var(--ink)}
+.cap-step.on .n{background:linear-gradient(135deg,var(--accent-1),var(--accent-2));color:#06121a;border:none}
+.cap-step.done .n{background:color-mix(in srgb,var(--accent-1) 16%,transparent);color:var(--accent-1);
+  border-color:color-mix(in srgb,var(--accent-1) 40%,transparent)}
+.cap-psteps .sep{color:var(--ink-3)}
+.cap-pbody{padding:15px 17px;overflow:auto}
+.cap-search{display:flex;align-items:center;gap:8px;background:var(--surface-2);border:1px solid var(--line);
+  border-radius:9px;padding:8px 11px;margin-bottom:12px}
+.cap-search input{flex:1;background:none;border:none;color:var(--ink);font-size:12.5px;outline:none;font-family:inherit}
+.cap-gal{display:grid;grid-template-columns:repeat(auto-fill,minmax(152px,1fr));gap:10px}
+.cap-gi{display:flex;align-items:center;gap:10px;text-align:left;background:var(--surface-2);border:1px solid var(--line);
+  border-radius:12px;padding:10px 12px;cursor:pointer;color:var(--ink);font:inherit;
+  transition:border-color .16s,transform .16s,background .16s}
+.cap-gi:hover{border-color:var(--line-2);transform:translateY(-2px);background:var(--surface-3)}
+.cap-gi:focus-visible{outline:2px solid var(--accent-1);outline-offset:2px}
+.cap-gi .gw{min-width:0}
+.cap-gi .gn{font-weight:600;font-size:12.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.cap-gi .gc{font-size:11px;color:var(--ink-3)}
+.cap-mchips{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:8px}
+.cap-mchip{display:flex;align-items:center;gap:9px;background:var(--surface-2);border:1px solid var(--line);
+  border-radius:9px;padding:9px 11px;cursor:pointer;font-size:12.5px;transition:border-color .16s,background .16s}
+.cap-mchip:hover{border-color:var(--line-2)}
+.cap-mchip .box{width:17px;height:17px;border-radius:5px;border:1.6px solid var(--line-2);display:grid;
+  place-items:center;flex:none;color:transparent;transition:.15s}
+.cap-mchip.sel{border-color:color-mix(in srgb,var(--accent-1) 55%,transparent);background:color-mix(in srgb,var(--accent-1) 10%,transparent)}
+.cap-mchip.sel .box{background:linear-gradient(135deg,var(--accent-1),var(--accent-2));border-color:transparent;color:#06121a}
+.cap-mchip .mn{min-width:0;flex:1}
+.cap-mchip .mid{font-family:var(--font-mono,ui-monospace);font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.cap-pfoot{display:flex;gap:9px;align-items:center;padding:12px 17px;border-top:1px solid var(--line);background:var(--surface)}
+.cap-pfoot .sp{margin-left:auto;display:flex;gap:9px}
+.cap-pickhead{display:flex;align-items:center;gap:11px;margin-bottom:12px}
+.cap-pickhead .pt{font-weight:700;font-size:15px}
+.cap-pickhead .ps{color:var(--ink-3);font-size:11px}
+.cap-empty{color:var(--ink-3);font-size:13px;padding:22px;text-align:center}
+
+/* 入场动画（仅整页加载时；SPA 切栏立即显示） */
+@keyframes capRise{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:none}}
+.cap-anim .cap-hero,.cap-anim .cap-card,.cap-anim .cap-status,.cap-anim .cap-head{animation:capRise .42s cubic-bezier(.16,1,.3,1) both}
+.cap-anim .cap-hero{animation-delay:.02s}
+.cap-anim .cap-card:nth-child(2){animation-delay:.06s}
+.cap-anim .cap-card:nth-child(3){animation-delay:.10s}
+.cap-anim .cap-card:nth-child(4){animation-delay:.14s}
+@media (prefers-reduced-motion:reduce){*{animation-duration:.001ms!important;transition-duration:.001ms!important}}
+</style>
+<script>
+/* ===== B4（2026-10-12）embed 模式：被引导页 iframe 嵌入时（?embed=onboard）=====
+   1) 隐藏「返回设置」按钮（引导页有自己的上下一步导航）；
+   2) 收紧页头留白、隐藏页内长导语（引导页屏头已有说明）；
+   3) 主题跟随父文档（引导页已同步主程序 data-theme/data-accent，这里再跟一层）。 */
+(function(){
+  try{
+    var q = new URLSearchParams(location.search);
+    if(q.get('embed') !== 'onboard') return;
+    document.addEventListener('DOMContentLoaded', function(){
+      try{ document.body.classList.add('embed-onboard'); }catch(e){}
+      try{
+        var p = window.parent && window.parent.document && window.parent.document.documentElement;
+        if(p){
+          var t = p.getAttribute('data-theme'), a = p.getAttribute('data-accent');
+          if(t) document.documentElement.setAttribute('data-theme', t);
+          if(a) document.documentElement.setAttribute('data-accent', a);
+        }
+      }catch(e){}
+    });
+  }catch(e){}
+})();
+</script>
+<style>
+  .embed-onboard #capBack{ display:none !important; }
+  .embed-onboard .cap-wrap{ padding-top:4px; }
+  .embed-onboard .cap-lead{ display:none; }
+  /* v8（2026-10-12）：
+     ① 弹层打开时锁外层滚动 —— 否则 iframe 内外两条滚动条一起出现，看着像"卡住了"；
+     ② 弹层贴合 iframe 视口，内部滚动，不再被夹住；
+     ③ 预览态（未连后端、渲染的是 STATIC 布局）→ 禁用一切「写入」按钮，只读看布局，
+        绝不把预览里的假模型写进配置（用户实测「还在胡扯 / 没对应真实数据」）。 */
+  .embed-onboard{ overflow:auto; }
+  .embed-onboard.modal-open{ overflow:hidden; }
+  .embed-onboard .cap-mask{ padding:10px; }
+  .embed-onboard .cap-sheet{ max-height:calc(100% - 4px); }
+  .cap-preview .cap-use{ pointer-events:none; opacity:.42; filter:grayscale(.35); }
+  .cap-preview .cap-hero{ opacity:.86; }
+  .cap-preview .cap-hero-cta span::after{ content:"（预览 · 不可保存）"; margin-left:6px; opacity:.85; }
+  .cap-preview #capStatus .lbl::after{ content:" · 后端未连接，以下为布局预览（不可保存）"; color:var(--warn); }
+</style>
+<style>
+/* ===== 看图能力（VLM 总闸）——2026-10-13 从设置页死区上收到能力槽主页外显 =====
+   语义：它管的是 VLM（发图 / 看图提问 / 看屏取色），**不是**「看屏陪伴」，也不是双工。
+   真相源：后端 get_settings_health().switches.vision（= vision_models.enabled 且
+   perception.vision.enabled）；这里只读/写，不自己推断。 */
+.cap-vision{display:flex;align-items:center;gap:14px;margin-top:14px;padding:14px 16px;
+  border:1px solid var(--line);border-radius:14px;background:var(--surface-2)}
+.cap-vision-ico{width:36px;height:36px;flex:none;display:grid;place-items:center;border-radius:10px;
+  background:color-mix(in srgb,var(--accent-1) 14%,transparent);color:var(--accent-1)}
+.cap-vision-tx{flex:1;min-width:0}
+.cap-vision-t{font-weight:700;color:var(--ink-1);display:flex;align-items:center;gap:8px}
+.cap-vision-badge{font-size:10.5px;font-weight:600;letter-spacing:.06em;padding:1px 7px;border-radius:99px;
+  background:color-mix(in srgb,var(--accent-1) 16%,transparent);color:var(--accent-1)}
+.cap-vision-d{font-size:12px;color:var(--ink-3);margin-top:3px;line-height:1.55}
+.cap-vision.blocked{border-color:color-mix(in srgb,var(--warn) 45%,transparent)}
+.cap-vision.blocked .cap-vision-d{color:var(--warn)}
+.cap-anim .cap-vision{animation:capRise .42s cubic-bezier(.16,1,.3,1) both;animation-delay:.18s}
+.embed-onboard .cap-vision{margin-top:10px}
+</style>
+</head>
+<body>
+<div class="main">
+<div class="cap-wrap" id="capRoot">
+  <header class="cap-head">
+    <div>
+      <div class="cap-kicker">模型与 API</div>
+      <h1 class="cap-h1">能力槽</h1>
+      <p class="cap-lead">按「能力」把模型分成 4 个槽：<b>对话模型</b>（文字聊天 + 看屏合并成一个）、<b>TTS 语音合成</b>、<b>双工实时通话</b>，以及最上面的<b>阿里云一键</b>。大多数在售模型本身就能看图，所以聊天和看屏合并——选一个带「视觉」的模型，两件事一起搞定。想最省事，就在最上面填一个阿里云百炼 Key，下面三个槽一次配齐。</p>
+    </div>
+    <div class="cap-actions">
+      <button class="btn" id="capLocalMdl" type="button"><i data-icon="download" data-icon-size="15" style="display:inline-flex"></i>本地模型</button>
+      <button class="btn" id="capBack" type="button"><i data-icon="arrow-right" data-icon-size="15" class="cap-flip" style="display:inline-flex"></i>返回设置</button>
+    </div>
+  </header>
+
+  <div class="cap-status" id="capStatus">
+    <span class="lbl">通道状态（点击卡片或下方标签可配置）</span>
+    <span class="cap-off" id="capOff"></span>
+    <button class="btn sm rf" id="capRefresh" type="button"><i data-icon="refresh-cw" data-icon-size="14" style="display:inline-flex"></i>刷新</button>
+  </div>
+
+  <div class="cap-caps" id="capCaps">
+    <div class="cap-empty">正在读取配置…</div>
+  </div>
+
+  <!-- 看图能力（VLM 总闸）：发图 / 看图提问 / 看屏取色都走它。放在能力槽主页外显，
+       与「看屏陪伴」（设置页 · 通话与双工）区分开 —— 关掉它不影响看屏陪伴。 -->
+  <div class="cap-vision" id="capVision">
+    <div class="cap-vision-ico"><i data-icon="eye" data-icon-size="18" style="display:inline-flex"></i></div>
+    <div class="cap-vision-tx">
+      <div class="cap-vision-t">看图能力<span class="cap-vision-badge">VLM</span></div>
+      <div class="cap-vision-d" id="capVisionDesc">发图 / 看图提问 —— 关掉它，你发图给她也不看了。它不影响「看屏陪伴」。</div>
+    </div>
+    <button class="switch" id="capVisionSw" role="switch" aria-checked="false" type="button" title="开启 / 关闭看图能力"><i></i></button>
+  </div>
+</div>
+
+<!-- 槽配置弹卡（阿里云一键槽复用同一外壳，内部表单不同） -->
+<div class="cap-mask" id="capMask" hidden>
+  <div class="cap-sheet" role="dialog" aria-modal="true" aria-label="能力槽配置">
+    <div class="cap-sheet-h">
+      <div class="cap-sico" id="csIco"></div>
+      <div><div class="cap-sname" id="csName"></div><div class="cap-sdesc" id="csDesc"></div></div>
+      <span class="cap-st none" id="csSt"></span>
+      <button class="cap-iconbtn" id="csClose" type="button" title="关闭"><i data-icon="x" data-icon-size="16" style="display:inline-flex"></i></button>
+    </div>
+    <div class="cap-sheet-sub"><span>当前生效</span><span class="v" id="csCur"></span>
+      <button class="cap-iconbtn" id="csTest" type="button" title="测试连通"><i data-icon="refresh-cw" data-icon-size="14" style="display:inline-flex"></i></button>
+    </div>
+    <div class="cap-sheet-b"><div class="cap-pgrid" id="csGrid"></div></div>
+  </div>
+</div>
+
+<!-- 添加卡片流程 -->
+<div class="cap-mask" id="capMask2" hidden>
+  <div class="cap-sheet narrow" role="dialog" aria-modal="true" aria-label="添加模型配置">
+    <div class="cap-sheet-h">
+      <div class="cap-sico"><i data-icon="plus" data-icon-size="19" style="display:inline-flex"></i></div>
+      <div><div class="cap-sname">添加模型配置</div><div class="cap-sdesc" id="cpDesc"></div></div>
+      <button class="cap-iconbtn" id="cpClose" type="button" title="关闭"><i data-icon="x" data-icon-size="16" style="display:inline-flex"></i></button>
+    </div>
+    <div class="cap-psteps" id="cpSteps"></div>
+    <div class="cap-pbody" id="cpBody"></div>
+    <div class="cap-pfoot" id="cpFoot"></div>
+  </div>
+</div>
+</div>
+
+<script src="/redesign/gsap.min.js?v=20261007h"></script>
+<script src="/redesign/provider_logos.js?v=20261010a"></script>
+<script src="/redesign/app_backend.js?v=20261015f"></script>
+<script src="/redesign/model_downloader.js?v=20261013a"></script>
+<script>
+(function(){
+  "use strict";
+  var B = window.Backend;
+  var ORDER = ["aliyun","chat","tts","duplex"];
+  var CAPCLS = {"视觉":"vision","视频":"vision","听":"vision","说":"vision","PDF":"vision","推理":"reason","工具":"tool"};
+
+  function esc(s){ return String(s==null?"":s).replace(/[&<>"']/g,function(c){return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c];}); }
+
+  /* ---------- 图标（优先用软件自带 Lucide 图标库 DIcon；自带一份兜底，防"图标静默变空"） ---------- */
+  var ICON_FB = {
+    "sparkles":'<path d="M11.017 2.814a1 1 0 0 1 1.966 0l1.051 5.558a2 2 0 0 0 1.594 1.594l5.558 1.051a1 1 0 0 1 0 1.966l-5.558 1.051a2 2 0 0 0-1.594 1.594l-1.051 5.558a1 1 0 0 1-1.966 0l-1.051-5.558a2 2 0 0 0-1.594-1.594l-5.558-1.051a1 1 0 0 1 0-1.966l5.558-1.051a2 2 0 0 0 1.594-1.594z"/>',
+    "brain":'<path d="M12 18V5"/><path d="M15 13a4.17 4.17 0 0 1-3-4 4.17 4.17 0 0 1-3 4"/><path d="M17.998 5.125a4 4 0 0 1 2.526 5.77"/><path d="M18 18a4 4 0 0 0 2-7.464"/><path d="M19.967 17.483A4 4 0 1 1 12 18a4 4 0 1 1-7.967-.517"/><path d="M6 18a4 4 0 0 1-2-7.464"/><path d="M6.003 5.125A4 4 0 0 0 3.477 10.9"/>',
+    "eye":'<path d="M2.062 12.348a1 1 0 0 1 0-.696 10.75 10.75 0 0 1 19.876 0 1 1 0 0 1 0 .696 10.75 10.75 0 0 1-19.876 0"/><circle cx="12" cy="12" r="3"/>',
+    "volume-2":'<path d="M11 4.702a.705.705 0 0 0-1.203-.498L6.413 7.587A1.4 1.4 0 0 1 5.416 8H3a1 1 0 0 0-1 1v6a1 1 0 0 0 1 1h2.416a1.4 1.4 0 0 1 .997.413l3.383 3.384A.705.705 0 0 0 11 19.298z"/><path d="M16 9a5 5 0 0 1 0 6"/><path d="M19.364 18.364a9 9 0 0 0 0-12.728"/>',
+    "phone":'<path d="M13.832 16.568a1 1 0 0 0 1.213-.303l.355-.465A2 2 0 0 1 17 15h3a2 2 0 0 1 2 2v3a2 2 0 0 1-2 2A18 18 0 0 1 2 4a2 2 0 0 1 2-2h3a2 2 0 0 1 2 2v3a2 2 0 0 1-.8 1.6l-.468.351a1 1 0 0 0-.292 1.233 14 14 0 0 0 6.392 6.384"/>',
+    "settings":'<path d="M9.671 4.136a2.34 2.34 0 0 1 4.659 0 2.34 2.34 0 0 0 3.319 1.915 2.34 2.34 0 0 1 2.33 4.033 2.34 2.34 0 0 0 0 3.831 2.34 2.34 0 0 1-2.33 4.033 2.34 2.34 0 0 0-3.319 1.915 2.34 2.34 0 0 1-4.659 0 2.34 2.34 0 0 0-3.32-1.915 2.34 2.34 0 0 1-2.33-4.033 2.34 2.34 0 0 0 0-3.831A2.34 2.34 0 0 1 6.35 6.051a2.34 2.34 0 0 0 3.319-1.915"/><circle cx="12" cy="12" r="3"/>',
+    "circle-check":'<circle cx="12" cy="12" r="10"/><path d="m16 9-5.5 5.5L8 12"/>',
+    "circle-alert":'<circle cx="12" cy="12" r="10"/><line x1="12" x2="12" y1="8" y2="12"/><line x1="12" x2="12.01" y1="16" y2="16"/>',
+    "triangle-alert":'<path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3"/><path d="M12 9v4"/><path d="M12 17h.01"/>',
+    "circle-x":'<circle cx="12" cy="12" r="10"/><path d="m15 9-6 6"/><path d="m9 9 6 6"/>',
+    "minus":'<path d="M5 12h14"/>',
+    "chevron-right":'<path d="m9 18 6-6-6-6"/>',
+    "arrow-right":'<path d="M5 12h14"/><path d="m12 5 7 7-7 7"/>',
+    "external-link":'<path d="M15 3h6v6"/><path d="M10 14 21 3"/><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>',
+    "refresh-cw":'<path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/>',
+    "plus":'<path d="M5 12h14"/><path d="M12 5v14"/>',
+    "x":'<path d="M18 6 6 18"/><path d="m6 6 12 12"/>',
+    "check":'<path d="M20 6 9 17l-5-5"/>',
+    "search":'<path d="m21 21-4.34-4.34"/><circle cx="11" cy="11" r="8"/>',
+    "download":'<path d="M12 15V3"/><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m7 10 5 5 5-5"/>'
+  };
+  function ic(name, size){
+    try { if (window.DIcon && DIcon.has && DIcon.has(name)) return DIcon.svg(name, {size: size||16}); } catch(e){}
+    var p = ICON_FB[name]; if (!p) return "";
+    return '<svg width="'+(size||16)+'" height="'+(size||16)+'" viewBox="0 0 24 24" fill="none" stroke="currentColor" '+
+      'stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'+p+'</svg>';
+  }
+  var FALLBACK_ICON = {
+    "aliyun":"sparkles","chat":"brain","tts":"volume-2","duplex":"phone",
+    "ok":"circle-check","warn":"triangle-alert","bad":"circle-x","none":"minus"
+  };
+
+  /* ---------- 品牌 logo ---------- */
+  function logo(id, size){
+    try {
+      if (window.ProviderLogo) return ProviderLogo.html(id, {size:size||26});
+    } catch(e){}
+    var m = (id||"?").slice(0,1).toUpperCase();
+    return '<span class="plogo plogo-letter" style="width:'+(size||26)+'px;height:'+(size||26)+'px;display:inline-grid;place-items:center;border-radius:9px;border:1px solid var(--line);font-weight:800">'+esc(m)+'</span>';
+  }
+
+  function capsRow(caps, ctx){
+    var h = "";
+    (caps||[]).forEach(function(c){ h += '<span class="cap-tag '+(CAPCLS[c]||"")+'">'+esc(c)+'</span>'; });
+    if ((caps||[]).indexOf("视觉")<0 && (caps||[]).indexOf("视频")<0 && (caps||[]).indexOf("听")<0)
+      h += '<span class="cap-tag no">不支持看图</span>';
+    if (ctx && ctx !== "—") h += '<span class="cap-tag">'+esc(ctx)+'</span>';
+    return h;
+  }
+
+  function hasB(){ return !!(window.Backend && typeof Backend.getCapabilitySlots === "function"); }
+
+  /* ================= 主渲染 ================= */
+  function render(data){
+    var slots = (data && data.slots) || {};
+    var order = (data && data.order) || ORDER;
+    /* v8（2026-10-12）：后端没读到时渲染的是 STATIC —— 那是**布局预览，不是你真实的配置**
+       （用户实测「这个模型都没对应真实的数据…还在胡扯」）。加 cap-preview：
+       ① 明确标注；② 禁用「一键启用 / 启用 / 测试连接」等写操作，绝不把预览值写进配置。 */
+    try{
+      var isPreview = (typeof STATIC !== "undefined") && (data === STATIC);
+      document.getElementById("capRoot").classList.toggle("cap-preview", !!isPreview);
+      /* ★ 配置弹层（#capMask / #capMask2）是 #capRoot 的**兄弟**节点，不在其内部 ——
+         预览态必须同时挂到 body，否则 `.cap-preview .cap-use` 匹配不到弹层里的
+         「一键启用 / 启用」按钮，禁写就形同虚设（实测踩到）。 */
+      document.body.classList.toggle("cap-preview", !!isPreview);
+    }catch(e){}
+
+    var sb = document.getElementById("capStatus");
+    Array.prototype.slice.call(sb.querySelectorAll(".cap-chip")).forEach(function(n){ n.remove(); });
+    order.forEach(function(id){
+      var s = slots[id] || {state:"none",state_text:"未配置",title:id};
+      var chip = document.createElement("span");
+      chip.className = "cap-chip " + s.state;
+      chip.setAttribute("role","button"); chip.tabIndex = 0;
+      chip.innerHTML = '<span class="cap-dot '+s.state+'"></span>'+esc(s.title)+' '+esc(s.state_text);
+      chip.onclick = function(){ openSlot(id); };
+      sb.insertBefore(chip, document.getElementById("capRefresh"));
+    });
+
+    var wrap = document.getElementById("capCaps");
+    wrap.innerHTML = "";
+    order.forEach(function(id){
+      var s = slots[id];
+      if (!s) return;
+      if (id === "aliyun" || s.width === "full") wrap.appendChild(renderHero(s));
+      else wrap.appendChild(renderCard(id, s));
+    });
+  }
+
+  function stateIcon(state){
+    var d = ic(FALLBACK_ICON[state] || "circle-alert", 12);
+    return d || "";
+  }
+
+  function renderCard(id, s){
+    var card = document.createElement("button");
+    card.type = "button"; card.className = "cap-card"; card.id = "cap_"+id;
+    var iconName = FALLBACK_ICON[id] || "settings";
+    var subIcon = (id==="chat") ? '<span class="cap-sub">'+ic("eye",12)+'</span>' : "";
+    var provRow = (s.providers||[]).slice(0,6).map(function(p){ return logo(p.logo||p.id, 22); }).join("");
+    var more = (s.providers||[]).length>6 ? '<span class="more">+'+(s.providers.length-6)+'</span>' : "";
+    var curHtml;
+    if (s.active && s.active.model){
+      curHtml = '<div class="v">'+logo(s.active.provider||"",16)+' <span>'+esc(s.active.model)+'</span></div>';
+      if (id==="chat" && !s.active.vision_ready)
+        curHtml += '<div class="cap-tags"><span class="cap-tag no">看屏未配</span></div>';
+    } else {
+      curHtml = '<div class="v empty">'+esc(s.state_text||"未配置")+'</div>';
+    }
+    card.innerHTML =
+      '<div class="hd"><div class="cap-ico">'+ic(iconName,23)+subIcon+'</div>'+
+        '<div style="min-width:0"><div class="cap-nm">'+esc(s.title)+'</div><div class="cap-ds">'+esc(s.desc)+'</div></div>'+
+        '<span class="cap-st '+s.state+'">'+stateIcon(s.state)+esc(s.state_text)+'</span></div>'+
+      '<div class="cap-cur"><div class="k">'+ic("chevron-right",12)+'当前生效</div>'+curHtml+'</div>'+
+      '<div class="cap-provline" title="已支持 '+(s.providers||[]).length+' 家服务商">'+provRow+more+'</div>'+
+      '<div class="cap-go"><span>配置这个能力槽</span>'+ic("arrow-right",15)+'</div>';
+    card.addEventListener("click", function(){ openSlot(id); });
+    return card;
+  }
+
+  function renderHero(s){
+    var hero = document.createElement("button");
+    hero.type = "button"; hero.className = "cap-hero"; hero.id = "cap_aliyun";
+    var parts = s.parts || {};
+    function part(key, label){
+      var ok = !!parts[key];
+      return '<span class="cap-part '+(ok?"ok":"none")+'">'+
+        '<span class="cap-dot '+(ok?"ok":"none")+'"></span>'+esc(label)+'</span>';
+    }
+    hero.innerHTML =
+      '<div class="cap-hero-ic">'+ic("sparkles",28)+'</div>'+
+      '<div class="cap-hero-tx">'+
+        '<div class="cap-hero-t">'+esc(s.title)+'<span class="cap-hero-badge">填一个 Key，全齐</span></div>'+
+        '<div class="cap-hero-d">'+esc(s.desc)+'　同一个百炼 Key 同时喂给对话模型（LLM/VLM）、TTS 语音合成、语音视频双工——不用三个槽各填一遍。</div>'+
+      '</div>'+
+      '<div class="cap-hero-parts">'+part("chat","对话模型")+part("tts","TTS 语音合成")+part("duplex","语音视频双工")+'</div>'+
+      '<div class="cap-hero-cta"><span>'+(s.state==="ok"?"已配置 · 去调整":"一键配置")+'</span>'+ic("arrow-right",16)+'</div>';
+    hero.addEventListener("click", function(){ openSlot("aliyun"); });
+    return hero;
+  }
+
+  /* ================= 弹卡：槽配置 ================= */
+  var mask = document.getElementById("capMask");
+  var mask2 = document.getElementById("capMask2");
+  var curCap = null;
+
+  function openSlot(id){
+    curCap = id;
+    var s = (LAST && LAST.slots && LAST.slots[id]) || null;
+    if (!s){ if (B && B.toast) B.toast("配置未就绪，请稍后重试","warn"); return; }
+    document.getElementById("csIco").innerHTML = ic(FALLBACK_ICON[id]||"settings",22) +
+      (id==="chat" ? '<span class="cap-sub">'+ic("eye",12)+'</span>' : "");
+    document.getElementById("csName").textContent = s.title;
+    document.getElementById("csDesc").textContent = s.desc;
+    var st = document.getElementById("csSt"); st.className = "cap-st "+s.state; st.textContent = s.state_text;
+    var cur = document.getElementById("csCur");
+    if (s.active && s.active.model){
+      cur.innerHTML = logo(s.active.provider||"",16)+' '+esc(s.active.model);
+    } else {
+      cur.innerHTML = '<span style="color:var(--ink-3)">'+esc(s.state_text)+'</span>';
+    }
+    var grid = document.getElementById("csGrid");
+    if (id === "aliyun") grid.innerHTML = renderAliyunForm(s);
+    else grid.innerHTML = renderProviders(id, s);
+    wireGrid(id);
+    mask.hidden = false; showMask(mask);
+    notifyEmbed(true);
+    var close = document.getElementById("csClose"); if (close) close.focus();
+  }
+  function closeSlot(){ mask.hidden = true; notifyEmbed(false); }
+  /* v8（2026-10-12）：embed 模式下把「弹层开/关」告诉引导页 → 引导页放大/回落 iframe，
+     解决弹层被 iframe 高度夹住、内外双滚动条（用户实测「卡在里面、比例不对」）。
+     同时锁掉外层滚动，避免出现两条滚动条。 */
+  function notifyEmbed(open){
+    try{
+      if(new URLSearchParams(location.search).get("embed") !== "onboard") return;
+      document.body.classList.toggle("modal-open", !!open);
+      if(window.parent && window.parent !== window)
+        window.parent.postMessage({ type: open ? "onboard-capslot-open" : "onboard-capslot-close" }, "*");
+    }catch(e){}
+  }
+
+  function renderAliyunForm(s){
+    var p = (s.providers && s.providers[0]) || {};
+    var chatModels = (p.chat_models||[]).filter(function(m){
+      var _id = (m.id||"").toLowerCase();
+      return !((_id.indexOf("omni")>=0) || ((m.caps||[]).indexOf("说")>=0));
+    }).map(function(m){
+      return '<option value="'+esc(m.id)+'" data-caps="'+esc((m.caps||[]).join("|"))+'" data-ctx="'+esc(m.ctx||"")+'">'+esc(m.id+(m.note?"（"+m.note+"）":""))+'</option>';
+    }).join("");
+    var ttsModels = (p.tts_models||[]).map(function(m){
+      return '<option value="'+esc(m.id)+'" data-caps="'+esc((m.caps||[]).join("|"))+'">'+esc(m.id)+'</option>';
+    }).join("");
+    var dupModels = (p.duplex_models||[]).map(function(m){
+      return '<option value="'+esc(m.id)+'" data-caps="'+esc((m.caps||[]).join("|"))+'">'+esc(m.id)+'</option>';
+    }).join("");
+    var parts = s.parts || {};
+    /* 2026-10-12：三处能力的叫法与软件内「模型与API」能力槽页完全一致
+       （对话模型=LLM/VLM 合并、TTS 语音合成、双工 实时通话），用户实测指出
+       引导页自创的「对话 / 看屏模型」「实时通话（双工）」与软件内对不上。 */
+    return '<div class="cap-one" style="grid-column:1/-1">'+
+      '<div class="cap-fld wide"><label>阿里云百炼 API Key（一个 Key 通吃三处）</label>'+
+        '<input id="capAk" type="password" placeholder="sk-... 填入即连" autocomplete="off"></div>'+
+      '<div class="cap-fld"><label>对话模型（LLM / VLM · 文字对话 + 看屏理解）</label><select id="capChatM">'+chatModels+'</select>'+
+        '<div class="cap-tags" id="capChatTags"></div></div>'+
+      '<div class="cap-fld"><label>TTS 语音合成</label><select id="capTtsM">'+ttsModels+'</select></div>'+
+      '<div class="cap-fld"><label>语音视频双工（实时通话）</label><select id="capDupM">'+dupModels+'</select></div>'+
+      '<div class="cap-fld wide"><button class="cap-use" id="capOneBtn" type="button">'+ic("check",15)+'一键启用（写入 3 处能力）</button></div>'+
+      '<div class="cap-note" style="grid-column:1/-1">'+ic("circle-alert",15)+
+        '<div><b>说明：</b>一个 Key 写入 <code>对话模型</code>、<code>TTS 语音合成</code>、<code>语音视频双工</code> 3 处能力（对话模型含看屏视觉，底层落 4 个配置节点）。'+
+        (parts.tts?' 语音克隆走百炼 voice-enrollment，<b>复刻音色有有效期</b>，过期会自动回落默认音。':'')+
+        ' 已配的其它服务商不会被清除。</div></div></div>';
+  }
+
+  function renderProviders(cap, s){
+    var html = "";
+    (s.providers||[]).forEach(function(p,i){ html += provCard(cap, p, i+1); });
+    if (s.allows_custom){
+      html += '<div class="cap-prov"><div class="ph">'+logo("custom",28)+
+        '<div class="pnw"><div class="pn" style="color:var(--accent-2)">自定义 OpenAI 兼容接口</div>'+
+        '<div class="pc">自建网关 / One-API</div></div></div>'+
+        '<div class="cap-sub"><div class="cap-fld wide"><label>Base URL</label><input class="cu_url" placeholder="https://your-gateway/v1"></div>'+
+        '<div class="cap-fld wide"><label>模型名（单）</label><input class="cu_model" placeholder="model-id"></div></div>'+
+        '<div class="ft"><div class="cap-fld"><label>API Key</label><input class="cu_key" type="password" placeholder="sk-..."></div>'+
+        '<button class="cap-use cu_btn" type="button">'+ic("external-link",14)+'测试连接</button></div>'+
+        (cap==="tts" ? '<div class="cap-caveat">'+ic("triangle-alert",13)+'<span>自定义 TTS 只保证「基础合成」；语音克隆各家机制不同，无法克隆。</span></div>' : '')+
+        '</div>';
+    }
+    html += '<button class="cap-prov add" id="cpAdd" type="button" style="flex-direction:column">'+
+      '<span style="display:grid;place-items:center;width:38px;height:38px;border-radius:11px;border:1px dashed currentColor">'+ic("plus",20)+'</span>'+
+      '<span class="at">添加卡片</span><span class="as">接入新的服务商 / 自定义接口</span></button>';
+    html += mergeNote(cap) + cloneNote(cap);
+    return html;
+  }
+
+  function badge(cls, iconName, text){
+    return '<span class="cap-badge '+cls+'">'+ic(iconName,11)+esc(text)+'</span>';
+  }
+  function cloneBadge(c){
+    if (c==="y") return badge("cy","circle-check","可克隆");
+    if (c==="w") return badge("cw","triangle-alert","克隆待验证");
+    if (c==="n") return badge("cn","circle-x","不可克隆");
+    return "";
+  }
+
+  function provCard(cap, p, rank){
+    var adapted = (p.adapted !== false);
+    var cls = "cap-prov" + (p.configured?" rec":"") + (p.active?" active":"") + (adapted?"":" off");
+    var bs = "";
+    if (rank != null && rank <= 3) bs += badge("rank","sparkles","第"+rank+ (rank===1?"·首选":""));
+    bs += cloneBadge(p.clone);
+    if (p.adapted === false) bs += badge("adapt","refresh-cw","适配中·暂不可选");
+    if (p.configured) bs += badge("set","circle-check","已配置");
+    var _models = (p.models||[]);
+    /* 2026-10-12 修（反馈①）：「对话模型(LLM/VLM)」下拉只列 纯文本+视觉 模型，
+       剔除音频类（id 含 omni 或 caps 含「说」=语音输出，属于双工/语音领地），
+       避免与「语音视频双工」的 -realtime 模型混淆（用户实测：omni-flash 与 omni-flash-realtime 像同一类）。 */
+    if (cap === "chat") _models = _models.filter(function(m){
+      var _id = (typeof m==="string") ? m : (m.id||"");
+      var _c  = (typeof m==="string") ? [] : (m.caps||[]);
+      return !((_id.toLowerCase().indexOf("omni")>=0) || (_c.indexOf("说")>=0));
+    });
+    var opts = _models.map(function(m){
+      var id = (typeof m==="string") ? m : m.id;
+      var caps = (typeof m==="string") ? [] : (m.caps||[]);
+      var isText = caps.length && caps.indexOf("视觉")<0 && caps.indexOf("视频")<0 && caps.indexOf("听")<0;
+      var sfx = caps.length ? (isText?" · 纯文本":" · 视觉") : "";
+      return '<option value="'+esc(id)+'" data-caps="'+esc(caps.join("|"))+'" data-ctx="'+esc((m&&m.ctx)||"")+'">'+esc(id+sfx)+'</option>';
+    }).join("");
+    var keyFld = p.local ? "" :
+      '<div class="cap-fld"><label>API Key'+(p.needs_group?" / GroupId":"")+'</label>'+
+      '<input class="ck_'+esc(p.id)+'" type="password" placeholder="'+(p.needs_group?"Key + GroupId":"sk-... 填入即连")+'" autocomplete="off"></div>';
+    var use = adapted
+      ? '<button class="cap-use ce_btn" data-pid="'+esc(p.id)+'" type="button">'+ic("check",14)+esc(p.configured?"更新":"启用")+'</button>'
+      : '<button class="cap-use" type="button" disabled>适配中</button>';
+    return '<div class="'+cls+'">'+
+      '<div class="ph">'+logo(p.logo||p.id,28)+'<div class="pnw"><div class="pn">'+esc(p.name)+'</div><div class="pc">'+esc(p.cn||"")+'</div></div>'+
+        '<div class="cap-badges">'+bs+'</div></div>'+
+      '<div class="cap-sub">'+
+        '<div class="cap-fld wide"><label>接口地址（按服务商预填）</label><input disabled value="'+esc(p.base_url||"")+'"></div>'+
+        '<div class="cap-fld wide"><label>模型（同 Key 任选）</label><select class="cm_'+esc(p.id)+'">'+opts+'</select>'+
+          '<div class="cap-tags"></div></div>'+
+      '</div>'+
+      '<div class="ft">'+keyFld+use+'</div>'+
+      (p.hint ? '<div class="hint">'+ic("circle-alert",13)+'<span>'+esc(p.hint)+'</span></div>' : '')+
+      '</div>';
+  }
+
+  function mergeNote(cap){
+    if (cap !== "chat") return "";
+    return '<div class="cap-note">'+ic("circle-check",15)+
+      '<div><b>对话与看屏已合并：</b>这里选的模型若带「视觉」，会<b>同时</b>用于文字聊天与看屏/图像理解；'+
+      '选了纯文本模型时，看屏会沿用原来的视觉模型并在卡上提示「看屏未配」。</div></div>';
+  }
+  function cloneNote(cap){
+    if (cap === "tts") return '<div class="cap-note">'+ic("triangle-alert",15)+
+      '<div><b>双工克隆 ≠ TTS 克隆，二者分开决断：</b>TTS 克隆 = 消息播报 / 非通话场景音色（走预设克隆：CosyVoice / MiniMax / Fish Audio）。</div></div>';
+    if (cap === "duplex") return '<div class="cap-note">'+ic("triangle-alert",15)+
+      '<div><b>双工克隆 ≠ TTS 克隆，二者分开决断：</b>双工克隆 = 实时通话里角色的音色（走本槽选中的实时模型复刻 voice）。</div></div>';
+    return "";
+  }
+
+  function wireGrid(cap){
+    var grid = document.getElementById("csGrid");
+    Array.prototype.forEach.call(grid.querySelectorAll("select"), function(sel){
+      var row = sel.parentNode.querySelector(".cap-tags");
+      function upd(){
+        var o = sel.options[sel.selectedIndex]; if (!o || !row) return;
+        row.innerHTML = capsRow((o.getAttribute("data-caps")||"").split("|").filter(Boolean), o.getAttribute("data-ctx"));
+      }
+      sel.addEventListener("change", upd); upd();
+    });
+    Array.prototype.forEach.call(grid.querySelectorAll(".ce_btn"), function(btn){
+      btn.addEventListener("click", function(){
+        var pid = btn.getAttribute("data-pid");
+        var sel = grid.querySelector(".cm_"+pid);
+        var key = grid.querySelector(".ck_"+pid);
+        doSet({cap: cap, provider: pid, model: sel?sel.value:"", api_key: key?key.value:"", base_url:""});
+      });
+    });
+    var cu = grid.querySelector(".cu_btn");
+    if (cu) cu.addEventListener("click", function(){
+      var url = grid.querySelector(".cu_url"), model = grid.querySelector(".cu_model"), key = grid.querySelector(".cu_key");
+      if (!url.value || !model.value){ if (B&&B.toast) B.toast("自定义需填 Base URL + 单模型名","warn"); return; }
+      /* 【2026-10-16】这个按钮写着「测试连接」，此前实际执行的却是**保存**（调 doSet）：
+         既不测试、也不告诉用户能不能用 —— 名不副实。现在改成真的发一次探测请求。 */
+      setOff("正在真实探测「" + model.value + "」…");
+      if (B&&B.toast) B.toast("正在检测…","warn");
+      Backend.testLlm("openai", {base_url: url.value, api_key: key.value, model: model.value,
+                                 vision: true, timeout_s: 25})
+        .then(function(t){
+          if (t && t.success){
+            setOff("✅ 探测通过：" + (t.message || "模型可用"));
+            if (B&&B.toast) B.toast("✅ 探测通过：" + (t.message||""), "ok");
+          } else {
+            var m = String((t && (t.message || t.error)) || "失败");
+            setOff("❌ 探测未通过：" + m.slice(0,120));
+            if (B&&B.toast) B.toast("❌ 探测未通过：" + m.slice(0,80), "err");
+          }
+        })
+        .catch(function(e){ setOff("❌ 探测异常：" + (e&&e.message||e)); });
+    });
+    var add = document.getElementById("cpAdd");
+    if (add) add.addEventListener("click", function(){ openPicker(cap); });
+    var one = document.getElementById("capOneBtn");
+    if (one) one.addEventListener("click", function(){
+      var ak = document.getElementById("capAk");
+      var payload = {
+        cap: "aliyun",
+        api_key: ak ? ak.value : "",
+        chat_model: (document.getElementById("capChatM")||{}).value || "",
+        tts_model: (document.getElementById("capTtsM")||{}).value || "",
+        duplex_model: (document.getElementById("capDupM")||{}).value || ""
+      };
+      if (!payload.api_key){ if (B&&B.toast) B.toast("请先填入阿里云百炼 API Key","warn"); return; }
+      doSet(payload);
+    });
+  }
+
+  /* ================= 添加卡片流程 ================= */
+  var pick = {cap:null, step:1, vendor:null};
+  function openPicker(cap){ pick = {cap:cap, step:1, vendor:null}; renderPicker(); mask2.hidden = false; showMask(mask2); }
+  function closePicker(){ mask2.hidden = true; }
+  function pickVendor(pid){ pick.vendor = pid; pick.step = 2; renderPicker(); }
+
+  function renderPicker(){
+    var s = (LAST && LAST.slots && LAST.slots[pick.cap]) || {title:"", providers:[]};
+    document.getElementById("cpDesc").textContent = s.title + " · 选服务商 → 选模型 → 填 Key";
+    document.getElementById("cpSteps").innerHTML =
+      '<span class="cap-step '+(pick.step===1?"on":"done")+'"><span class="n">'+(pick.step>1?ic("check",12):"1")+'</span>选服务商</span>'+
+      '<span class="sep">'+ic("chevron-right",13)+'</span>'+
+      '<span class="cap-step '+(pick.step===2?"on":"")+'"><span class="n">2</span>选模型 · 填 Key</span>';
+    var body = document.getElementById("cpBody"), foot = document.getElementById("cpFoot");
+    if (pick.step === 1){
+      body.innerHTML = '<div class="cap-search">'+ic("search",16)+'<input id="cpSearch" placeholder="搜索服务商（DeepSeek / 智谱 / 阿里云…）"></div><div class="cap-gal" id="cpGal"></div>';
+      var draw = function(q){
+        q = (q||"").trim().toLowerCase();
+        var html = "";
+        (s.providers||[]).forEach(function(p){
+          if (q && ((p.name||"")+(p.cn||"")+(p.base_url||"")).toLowerCase().indexOf(q) < 0) return;
+          html += '<button class="cap-gi" data-pid="'+esc(p.id)+'" type="button">'+logo(p.logo||p.id,28)+
+            '<div class="gw"><div class="gn">'+esc(p.name)+'</div><div class="gc">'+esc(p.cn||((p.models&&p.models[0]&&(p.models[0].id||p.models[0]))||""))+'</div></div></button>';
+        });
+        html += '<button class="cap-gi" data-pid="__custom" type="button">'+logo("custom",28)+
+          '<div class="gw"><div class="gn">自定义接口</div><div class="gc">OpenAI 兼容 / 自建网关</div></div></button>';
+        document.getElementById("cpGal").innerHTML = html;
+        Array.prototype.forEach.call(document.querySelectorAll("#cpGal .cap-gi"), function(b){
+          b.addEventListener("click", function(){ pickVendor(b.getAttribute("data-pid")); });
+        });
+      };
+      draw("");
+      document.getElementById("cpSearch").addEventListener("input", function(e){ draw(e.target.value); });
+      foot.innerHTML = '<span style="font-size:11.5px;color:var(--ink-3);margin-right:auto">共 '+(s.providers||[]).length+' 家可选</span><div class="sp"><button class="btn" id="cpCancel" type="button">取消</button></div>';
+      document.getElementById("cpCancel").addEventListener("click", closePicker);
+    } else {
+      var pid = pick.vendor, custom = pid === "__custom";
+      var p = custom ? {logo:"custom", name:"自定义接口", cn:"OpenAI 兼容", base_url:"", models:[{id:"（手填）",caps:[],ctx:""}]}
+                     : (s.providers||[]).filter(function(x){return x.id===pid;})[0] || {models:[]};
+      body.innerHTML =
+        '<div class="cap-pickhead">'+logo(p.logo||p.id,32)+'<div><div class="pt">'+esc(p.name)+'</div><div class="ps">'+esc(p.cn||"")+'</div></div>'+
+          '<button class="btn sm" id="cpBack" type="button" style="margin-left:auto">换服务商</button></div>'+
+        (custom ? '<div class="cap-fld wide" style="margin-bottom:12px"><label>Base URL</label><input id="cpUrl" placeholder="https://your-gateway/v1"></div>'
+                : '<div class="cap-fld wide" style="margin-bottom:12px"><label>接口地址（按服务商预填）</label><input disabled value="'+esc(p.base_url||"")+'"></div>')+
+        '<div class="cap-fld wide" style="margin-bottom:6px"><label>选择要启用的模型（可多选，标签＝该模型能力）</label></div>'+
+        '<div class="cap-mchips" id="cpChips"></div>'+
+        '<div class="ft" style="margin-top:12px;display:flex;gap:9px;align-items:flex-end">'+
+          '<div class="cap-fld" style="flex:1"><label>API Key</label><input id="cpKey" type="password" placeholder="sk-..." autocomplete="off"></div>'+
+          '<button class="btn" type="button" id="cpFetch">'+ic("download",14)+'拉取模型列表</button></div>';
+      document.getElementById("cpChips").innerHTML = (p.models||[]).map(function(m,i){
+        var id = (typeof m==="string")?m:m.id;
+        var caps = (typeof m==="string")?[]:(m.caps||[]);
+        return '<div class="cap-mchip'+(i===0?" sel":"")+'" data-m="'+esc(id)+'"><span class="box">'+ic("check",12)+'</span>'+
+          '<span class="mn"><span class="mid">'+esc(id)+'</span><div class="cap-tags">'+capsRow(caps,(m&&m.ctx)||"")+'</div></span></div>';
+      }).join("");
+      Array.prototype.forEach.call(document.querySelectorAll("#cpChips .cap-mchip"), function(c){
+        c.addEventListener("click", function(){ c.classList.toggle("sel"); });
+      });
+      document.getElementById("cpBack").addEventListener("click", function(){ pick.step = 1; renderPicker(); });
+      document.getElementById("cpFetch").addEventListener("click", function(){ if (B&&B.toast) B.toast("已按目录列出可选模型（联网拉取列表将在后续接入）","ok"); });
+      foot.innerHTML = '<div class="sp"><button class="btn" id="cpCancel2" type="button">取消</button>'+
+        '<button class="btn primary" id="cpAdd2" type="button">'+ic("check",14)+'添加并启用</button></div>';
+      document.getElementById("cpCancel2").addEventListener("click", closePicker);
+      document.getElementById("cpAdd2").addEventListener("click", function(){
+        var sel = Array.prototype.slice.call(document.querySelectorAll("#cpChips .cap-mchip.sel"))
+          .map(function(c){ return c.getAttribute("data-m"); });
+        var key = (document.getElementById("cpKey")||{}).value || "";
+        var url = custom ? ((document.getElementById("cpUrl")||{}).value||"") : "";
+        if (!sel.length){ if (B&&B.toast) B.toast("请至少选一个模型","warn"); return; }
+        closePicker();
+        doSet({cap: pick.cap, provider: custom?"custom":pid, model: sel[0], api_key: key,
+               base_url: url, is_custom: custom, custom_url: url, custom_model: sel[0], custom_key: key});
+      });
+    }
+  }
+
+  /* ================= 与后端交互 ================= */
+  function setOff(txt){ var el = document.getElementById("capOff"); if (el) el.textContent = txt || ""; }
+
+  /* 【2026-10-16·补真实探测】取该服务商在目录里的 base_url（探测用） */
+  function providerBaseUrl(cap, pid){
+    try{
+      var s = (LAST && LAST.slots && LAST.slots[cap]) || null;
+      var p = ((s && s.providers) || []).filter(function(x){ return x.id === pid; })[0];
+      return (p && p.base_url) || "";
+    }catch(e){ return ""; }
+  }
+
+  /* 只负责"写"（原 doSet 的保存部分，原样保留） */
+  function saveNow(payload){
+    if (!hasB()){ if (B&&B.toast) B.toast("后端未连接，无法保存","err"); return; }
+    Backend.setCapabilitySlot(payload).then(function(r){
+      if (r && r.success){
+        if (B&&B.toast) B.toast("已保存：" + (r.message||""), "ok");
+        closeSlot(); closePicker(); load();
+      } else if (r && r.offline){
+        if (B&&B.toast) B.toast("后端未连接，无法保存","err");
+      } else {
+        if (B&&B.toast) B.toast("保存失败：" + ((r&&r.error)||""), "err");
+      }
+    }).catch(function(){ if (B&&B.toast) B.toast("保存异常","err"); });
+  }
+
+  /* 【2026-10-16·核心修复：点「启用」先做真实探测，通过才保存】
+     修复前的行为（实测）：保存只校验"有没有填 Key"（configured = Key 非空），
+     于是写一把**假 Key** 进去，槽位照样显示"已连通 / 已配置"，还直接把它抢占为
+     当前聊天端口（active=true）；而同一把假 Key 走真实 testLlm 立刻返回 HTTP 401。
+     结论：引导页的"绿"只代表"填了东西"，不代表能用 —— 用户看到的是"配好了却聊不了天"。
+     现在改成：真发一次请求探测 → 通过才落盘；不通过就明确报错、不保存（可由用户确认强存）。 */
+  function doSet(payload, opts){
+    opts = opts || {};
+    if (!hasB()){ if (B&&B.toast) B.toast("后端未连接，无法保存","err"); return; }
+    var cap = payload.cap;
+    var key = payload.api_key || payload.custom_key || "";
+    var model = payload.model || payload.custom_model || payload.chat_model || "";
+    /* 只对「对话模型 / 阿里云一键」做真实文本探测；TTS/双工槽位走各自链路 */
+    if (opts.skipProbe || (cap !== "chat" && cap !== "aliyun") || !key || !model){
+      saveNow(payload); return;
+    }
+    var base = payload.base_url || payload.custom_url || providerBaseUrl(cap, payload.provider)
+               || "https://dashscope.aliyuncs.com/compatible-mode/v1";
+    setOff("正在真实探测「" + model + "」…");
+    if (B&&B.toast) B.toast("正在检测该模型是否真的可用…","warn");
+    Backend.testLlm("openai", {base_url: base, api_key: key, model: model, vision: true, timeout_s: 25})
+      .then(function(t){
+        if (t && t.success){
+          setOff("✅ 探测通过：" + (t.message || "模型可用"));
+          if (B&&B.toast) B.toast("✅ 探测通过，已保存：" + (t.message||""), "ok");
+          saveNow(payload);
+        } else {
+          var msg = String((t && (t.message || t.error)) || "检测失败");
+          /* 离线 / 自建网关 / 走代理等场景仍允许强存，但必须让用户明确知道风险。
+             ⚠️ 绝不能用 window.confirm：本程序 WebView2 已加固**禁用原生弹窗**
+             （日志可见"禁右键/DevTools/快捷键/弹窗"），confirm 会被吞或卡住渲染进程
+             —— 2026-10-16 实测：用了 confirm 后 CDP 连接被重置、页面失去响应。
+             改为"两步点击确认"：第一次只报错并提示再点一次，第二次才强存。 */
+          setOff("❌ 探测未通过：" + msg.slice(0,110) + "　—— 若确认要保存，请再点一次「启用」");
+          if (B&&B.toast) B.toast("❌ 探测未通过，未保存（再点一次可强制保存）", "err");
+          if (_forceSavePending){
+            _forceSavePending = false;
+            if (B&&B.toast) B.toast("已按你的确认强制保存（该模型可能不可用）","warn");
+            saveNow(payload);
+          } else {
+            _forceSavePending = true;
+            setTimeout(function(){ _forceSavePending = false; }, 15000);
+          }
+        }
+      })
+      .catch(function(e){
+        setOff("❌ 探测异常（未保存）：" + (e && e.message || e));
+        if (B&&B.toast) B.toast("探测异常，未保存","err");
+      });
+  }
+
+  var LAST = null, tries = 0, _capRetry = 0;
+  /* 「探测未通过 → 再点一次强存」的两步确认标志（避免使用被禁用的原生 confirm） */
+  var _forceSavePending = false;
+  /* v8：回落到「布局预览」(STATIC) 时，最多自动重试 3 次 —— 桥可能只是晚一点才就绪
+     （用户实测「刷新不了真实的」；现在既会自己再试，也把预览标成不可保存）。 */
+  function fallback(msg){
+    setOff(msg + "（布局预览 · 不可保存）"); LAST = STATIC; render(STATIC);
+    if (_capRetry++ < 3) setTimeout(function(){ load(); }, 2500);
+  }
+  function load(){
+    if (!hasB()){
+      if (tries++ < 20){ setOff("（正在连接后端…）"); setTimeout(load, 150); return; }
+      fallback("（后端未连接）"); return;
+    }
+    setOff("");
+    /* ★ 必须带超时兜底：无 pywebview 时 Backend.getCapabilitySlots() 的 Promise 会一直挂着
+       （桥层等 pywebview 就绪，实测 12s 才回）；这里给足 15s（原 4s 会必然超时 → 永远显示假数据）。 */
+    var settled = false;
+    var timer = setTimeout(function(){
+      if (settled) return; settled = true;
+      fallback("（后端响应超时）");
+    }, 15000);
+    Backend.getCapabilitySlots().then(function(r){
+      if (settled) return; settled = true; clearTimeout(timer);
+      if (r && r.success){ _capRetry = 0; LAST = r; render(r); }
+      else if (r && r.offline){ fallback("（后端未连接）"); }
+      else { fallback("（读取失败："+((r&&r.error)||"")+"）"); }
+    }).catch(function(){
+      if (settled) return; settled = true; clearTimeout(timer);
+      fallback("（读取异常）");
+    });
+  }
+
+  /* 离线静态预览（结构与后端 read_capability_slots 一致，仅无后端时展示布局） */
+  var STATIC = {order:["aliyun","chat","tts","duplex"], slots:{
+    aliyun:{id:"aliyun",title:"阿里云一键",desc:"一个百炼 Key，一次配齐 对话 / 看屏 / 语音合成 / 实时通话",state:"none",state_text:"未配置",width:"full",oneclick:true,
+      parts:{chat:false,tts:false,duplex:false},clone:{supported:false},
+      providers:[{id:"bailian",name:"阿里云百炼",cn:"通义千问 Qwen（一个 Key 全通）",logo:"alibaba",base_url:"https://dashscope.aliyuncs.com/compatible-mode/v1",
+        configured:false,active:false,rank:1,
+        /* 2026-10-12：镜像后端 ALIYUN_ONECLICK 真实目录（chat 3 / tts 3 / duplex 2）。
+           旧预览是 2/2/1，与真实下拉对不上，被用户当成"胡扯的假数据"。 */
+        chat_models:[{id:"qwen3.8-omni-flash",caps:["视觉","视频","听","推理","工具"],ctx:"1M",note:"推荐：能说话能看图"},{id:"qwen3.8-max",caps:["视觉","视频","推理","工具"],ctx:"1M"},{id:"qwen3-vl-plus",caps:["视觉","视频","推理","工具"],ctx:"1M",note:"看屏专用"}],
+        tts_models:[{id:"qwen3-tts-flash",caps:["说"],ctx:"—",note:"推荐"},{id:"cosyvoice-v3.5-plus",caps:["说"],ctx:"—"},{id:"cosyvoice-v3.5-flash",caps:["说"],ctx:"—",note:"快省"}],
+        duplex_models:[{id:"qwen3.8-omni-flash-realtime",caps:["听","说","视觉","克隆"],ctx:"—",note:"推荐"},{id:"qwen3.5-omni-plus-realtime",caps:["听","说","视觉","克隆"],ctx:"—",note:"均衡"},{id:"qwen3.5-omni-flash-realtime",caps:["听","说","视觉","克隆"],ctx:"—"}]}]},
+    chat:{id:"chat",title:"对话模型",desc:"文字对话 · 看屏 / 图像理解（LLM + VLM 合并）",state:"none",state_text:"未配置",allows_custom:true,active:{},clone:{supported:false},
+      providers:[
+        {id:"deepseek",name:"DeepSeek",cn:"深度求索",logo:"deepseek",base_url:"https://api.deepseek.com/v1",configured:false,active:false,rank:1,hint:"现行是 deepseek-flash（V4.1 Flash，已支持看图）",
+          models:[{id:"deepseek-flash",caps:["视觉","推理","工具"],ctx:"1M"},{id:"deepseek-v4-pro",caps:["推理","工具"],ctx:"1M"}]},
+        {id:"bailian",name:"阿里云百炼 Qwen",cn:"通义千问",logo:"alibaba",base_url:"https://dashscope.aliyuncs.com/compatible-mode/v1",configured:false,active:false,rank:2,
+          models:[{id:"qwen3.8-omni-flash",caps:["视觉","视频","听","推理","工具"],ctx:"1M"},{id:"qwen3.8-max",caps:["视觉","视频","推理","工具"],ctx:"1M"}]},
+        {id:"zhipu",name:"智谱 AI",cn:"GLM",logo:"zhipuai",base_url:"https://open.bigmodel.cn/api/paas/v4",configured:false,active:false,rank:3,
+          models:[{id:"glm-5.3-flash",caps:["视觉","视频","推理","工具"],ctx:"1M"},{id:"glm-4.7-flash",caps:["推理","工具"],ctx:"200K"}]}]},
+    tts:{id:"tts",title:"TTS 语音合成",desc:"消息播报 · 克隆音色",state:"none",state_text:"未配置",allows_custom:true,active:{},clone:{supported:true,cloned_count:0},
+      providers:[
+        {id:"dashscope_cosy",name:"阿里云 CosyVoice",logo:"alibaba",base_url:"https://dashscope.aliyuncs.com/api-ws/v1/inference",configured:false,active:false,rank:1,clone:"y",models:[{id:"qwen-audio-3.0-tts-plus",caps:["说"],ctx:"—"},{id:"cosyvoice-v3.5-plus",caps:["说"],ctx:"—"}]},
+        {id:"minimax",name:"MiniMax Speech",logo:"minimax",base_url:"https://api.minimaxi.com/v1/t2a_v2",configured:false,active:false,rank:2,clone:"y",needs_group:true,models:[{id:"speech-02-hd",caps:["说"],ctx:"—"}]},
+        {id:"fish_audio",name:"Fish Audio",logo:"fishaudio",base_url:"https://api.fish.audio/v1/tts",configured:false,active:false,rank:3,clone:"y",models:[{id:"(克隆模型 _id)",caps:["说"],ctx:"—"}]}]},
+    duplex:{id:"duplex",title:"双工 实时通话",desc:"全双工语音 · 角色通话音色",state:"none",state_text:"未配置",allows_custom:false,active:{},clone:{supported:true},
+      providers:[
+        {id:"bailian_qwen_omni",name:"阿里云 百炼 Qwen-Omni Realtime",logo:"alibaba",base_url:"https://dashscope.aliyuncs.com",configured:false,active:false,rank:1,clone:"y",adapted:true,models:[{id:"qwen3.5-omni-flash-realtime",caps:["听","说","视觉"],ctx:"—"}]},
+        {id:"local_comni",name:"本地 Comni（llama.cpp-omni）",logo:"comni",base_url:"https://localhost:8006",configured:false,active:false,rank:2,clone:"n",adapted:true,local:true,models:[{id:"MiniCPM-o 4.5 (Q4_K_M)",caps:["听","说","视觉"],ctx:"—"}]},
+        {id:"volcano",name:"火山引擎 豆包 Realtime",logo:"volcengine",base_url:"https://openspeech.bytedance.com",configured:false,active:false,rank:3,clone:"y",adapted:false,models:[{id:"doubao-realtime-sc-2.0",caps:["听","说"],ctx:"—"}]}]}
+  }};
+
+  /* ================= 动效 & 交互绑定 ================= */
+  function showMask(m){
+    if (window.__SPA_NAV) return;               // SPA 切栏时不重播入场动画
+    var gs = window.gsap;
+    var reduce = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    if (gs && !reduce){
+      var sh = m.querySelector(".cap-sheet");
+      gs.fromTo(m, {opacity:0}, {opacity:1, duration:.2, ease:"power2.out"});
+      if (sh) gs.fromTo(sh, {opacity:0, y:14, scale:.99}, {opacity:1, y:0, scale:1, duration:.34, ease:"power3.out"});
+    }
+  }
+
+  document.getElementById("capRefresh").addEventListener("click", function(){
+    var s = this.querySelector("svg");
+    if (s && window.gsap){
+      window.gsap.fromTo(s, {rotate:0}, {rotate:360, duration:.5, ease:"power2.out", clearProps:"rotate"});
+    }
+    setOff(""); load();
+  });
+  document.getElementById("capBack").addEventListener("click", function(){
+    try { if (window.spaGo) { window.spaGo("/redesign/ui_redesign_settings.html"); return; } } catch(e){}
+    try { window.location.assign("/redesign/ui_redesign_settings.html"); } catch(e2){}
+  });
+  document.getElementById("csClose").addEventListener("click", closeSlot);
+  document.getElementById("cpClose").addEventListener("click", closePicker);
+  mask.addEventListener("click", function(e){ if (e.target === mask) closeSlot(); });
+  mask2.addEventListener("click", function(e){ if (e.target === mask2) closePicker(); });
+  document.addEventListener("keydown", function(e){
+    if (e.key !== "Escape") return;
+    if (!mask2.hidden) closePicker(); else if (!mask.hidden) closeSlot();
+  });
+  document.getElementById("csTest").addEventListener("click", function(){
+    if (B && B.toast) B.toast("正在测试连通…（结果会显示在通道状态里）","ok");
+  });
+
+  /* 本地模型下载器（2026-10-12 · B2）：能力槽页入口，弹层打开，与设置页共用后端任务状态 */
+  (function () {
+    var btn = document.getElementById("capLocalMdl");
+    if (!btn) return;
+    btn.addEventListener("click", function () {
+      try {
+        if (window.ModelDownloader && window.ModelDownloader.open) { window.ModelDownloader.open(); return; }
+        if (window.Backend && Backend.toast) Backend.toast("下载器模块未加载", "warn");
+      } catch (e) { console.warn("[modelapi] 打开本地模型下载器失败:", e); }
+    });
+  })();
+
+  try { if (window.DIcon && DIcon.mount) DIcon.mount(document.getElementById("capRoot")); } catch(e){}
+  /* B4 修（2026-10-12）：本页未引入图标库（只有 gsap/provider_logos/app_backend/model_downloader），
+     window.DIcon 不存在 → 静态 <i data-icon> 永远不渲染，表现为「灰色空按钮」（用户实测：
+     关闭 / 测试连通 / 刷新等按钮白块无图标）。用页内 ICON_FB 兜底水合：已带 svg 的跳过，
+     没有的原地补成内联 SVG。不依赖外部库，离线也成立。 */
+  try {
+    Array.prototype.forEach.call(document.querySelectorAll("[data-icon]"), function(el){
+      if (!el || el.querySelector("svg")) return;
+      var nm = el.getAttribute("data-icon");
+      var sz = parseInt(el.getAttribute("data-icon-size") || "16", 10) || 16;
+      var svg = ic(nm, sz);
+      if (svg) { el.innerHTML = svg; el.style.display = "inline-flex"; }
+    });
+  } catch(e){}
+
+  /* ===== 看图能力（VLM 总闸）开关：唯一真相源 = 后端 get_settings_health().switches.vision =====
+     为什么在能力槽页：它决定「发图 / 看图提问 / 看屏取色」能不能用，是模型能力的一部分，
+     和「看屏陪伴」（设置页 · 通话与双工）是两件事。这里只读/写后端，不自己推断。 */
+  (function(){
+    var box = document.getElementById("capVision");
+    var sw  = document.getElementById("capVisionSw");
+    var desc= document.getElementById("capVisionDesc");
+    if (!box || !sw) return;
+    var BASE = "发图 / 看图提问 —— 关掉它，你发图给她也不看了。它不影响「看屏陪伴」。";
+    function paint(on, eff, reason){
+      sw.classList.toggle("on", !!on);
+      sw.setAttribute("aria-checked", on ? "true" : "false");
+      var blocked = (on === true) && (eff === false);
+      box.classList.toggle("blocked", blocked);
+      desc.textContent = blocked ? (BASE + "　⚠ " + (reason || "当前未真正生效")) : BASE;
+    }
+    function read(){
+      if (!B || typeof B.getSettingsHealth !== "function"){ paint(false, false, ""); return; }
+      Promise.resolve(B.getSettingsHealth()).then(function(r){
+        var h = r && r.switches && r.switches.vision;
+        if (h) paint(h.on, h.effective, h.reason); else paint(false, false, "");
+      }).catch(function(){});
+    }
+    sw.addEventListener("click", function(){
+      if (!B || typeof B.setVisionEnabled !== "function"){ if (B && B.toast) B.toast("后端未连接","err"); return; }
+      var next = !sw.classList.contains("on");
+      sw.classList.toggle("on", next);
+      sw.setAttribute("aria-checked", next ? "true" : "false");
+      Promise.resolve(B.setVisionEnabled(next)).then(function(r){
+        if (r && !r.success){
+          if (B && B.toast) B.toast((r && r.error) || "切换失败", "err");
+          read(); return;
+        }
+        if (B && B.toast) B.toast(next ? "已开启看图能力" : "已关闭看图能力（发图 / 取色将不可用）");
+        read();
+        load();     /* 对话模型卡里的「看屏未配」随总闸变化 */
+      }).catch(function(){ if (B && B.toast) B.toast("切换失败","err"); read(); });
+    });
+    read();
+  })();
+
+  load();
+})();
+</script>
+</body>
+</html>

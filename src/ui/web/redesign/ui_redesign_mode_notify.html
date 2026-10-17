@@ -1,0 +1,973 @@
+<!DOCTYPE html>
+
+<html lang="zh-CN">
+
+<head>
+
+<meta charset="UTF-8">
+
+<title>切换提醒 · 设计稿｜达妮娅桌面伴侣</title>
+
+<link rel="stylesheet" href="design_tokens.css?v=20261013e">
+
+<style>
+
+/* ============================================================
+
+   切换提醒（mode_notify）设计稿
+
+   —— 与 src/ui/mode_notify.py 的 Tk canvas 实现 1:1 对齐
+
+   —— 令牌全部取自 design_tokens.css，不硬编码新色
+
+   ============================================================ */
+
+*{box-sizing:border-box;margin:0;padding:0}
+
+body{
+
+  background:var(--bg);color:var(--ink);
+
+  font-family:"Microsoft YaHei UI","PingFang SC",system-ui,sans-serif;
+
+  padding:48px 40px 80px;line-height:1.6;
+
+  background-image:
+
+    radial-gradient(900px 500px at 12% -8%,rgba(45,212,255,.10),transparent 62%),
+
+    radial-gradient(760px 460px at 92% 4%,rgba(160,107,255,.12),transparent 62%);
+
+  background-attachment:fixed;
+
+}
+
+.wrap{max-width:1180px;margin:0 auto}
+
+
+
+/* —— 页头 —— */
+
+.hd{margin-bottom:40px}
+
+.hd .eyebrow{
+
+  font-size:11px;letter-spacing:.22em;text-transform:uppercase;
+
+  color:var(--accent-1);font-weight:700;margin-bottom:10px;
+
+}
+
+.hd h1{
+
+  font-family:Georgia,"Songti SC","Source Han Serif SC",serif;
+
+  font-size:34px;font-weight:600;letter-spacing:.02em;margin-bottom:10px;
+
+}
+
+.hd h1 em{
+
+  font-style:normal;
+
+  background:linear-gradient(92deg,var(--accent-1),var(--accent-2));
+
+  -webkit-background-clip:text;background-clip:text;color:transparent;
+
+}
+
+.hd p{color:var(--ink-2);font-size:14px;max-width:760px}
+
+
+
+/* —— 分节 —— */
+
+.sec{margin-top:52px}
+
+.sec>h2{
+
+  font-size:15px;font-weight:700;margin-bottom:6px;
+
+  display:flex;align-items:center;gap:10px;
+
+}
+
+.sec>h2::before{
+
+  content:"";width:3px;height:15px;border-radius:2px;
+
+  background:linear-gradient(180deg,var(--accent-1),var(--accent-2));
+
+}
+
+.sec>.sub{color:var(--ink-3);font-size:13px;margin-bottom:22px}
+
+
+
+/* ============ 卡片本体（1:1 复刻 Tk 绘制）============ */
+
+.stage{
+
+  display:grid;grid-template-columns:repeat(auto-fit,minmax(470px,1fr));
+
+  gap:26px;
+
+}
+
+.slot{position:relative}
+
+.slot>.meta{
+
+  font-size:11px;color:var(--ink-3);margin-bottom:10px;
+
+  font-family:"Consolas","JetBrains Mono",monospace;letter-spacing:.06em;
+
+}
+
+.slot>.meta b{color:var(--ink-2);font-weight:700}
+
+
+
+.card{
+
+  position:relative;width:460px;max-width:100%;
+
+  background:var(--bg-2);border-radius:18px;
+
+  padding:22px 22px 22px 22px;overflow:hidden;
+
+  box-shadow:0 18px 48px rgba(0,0,0,.42),0 0 0 2px var(--hue);
+
+}
+
+/* 顶部受光微晕（对应 _grad_v 的 13% 混色） */
+
+.card::before{
+
+  content:"";position:absolute;inset:2px 2px auto 2px;height:46px;
+
+  background:linear-gradient(180deg,
+
+    color-mix(in srgb,var(--hue) 13%,var(--bg-2)),transparent);
+
+  pointer-events:none;
+
+}
+
+/* 左侧渐变脊（hue → hue2） */
+
+.card::after{
+
+  content:"";position:absolute;left:2px;top:16px;bottom:16px;width:4px;
+
+  border-radius:2px;
+
+  background:linear-gradient(180deg,var(--hue),var(--hue2));
+
+}
+
+.card>*{position:relative;z-index:1}
+
+
+
+.row{display:flex;align-items:flex-start;gap:14px}
+
+
+
+/* 徽章 */
+
+.badge{
+
+  flex:0 0 38px;width:38px;height:38px;border-radius:50%;
+
+  background:var(--hue);display:grid;place-items:center;margin-top:4px;
+
+}
+
+.badge i{
+
+  width:34px;height:34px;border-radius:50%;
+
+  background:color-mix(in srgb,var(--hue) 14%,var(--bg-2));
+
+  display:grid;place-items:center;
+
+}
+
+.badge svg{width:19px;height:19px;display:block}
+
+
+
+.col{flex:1;min-width:0}
+
+.kicker{
+
+  font-size:11px;font-weight:700;color:var(--hue);
+
+  letter-spacing:.06em;margin-bottom:5px;
+
+}
+
+.title{font-size:16px;font-weight:700;color:var(--ink);margin-bottom:9px}
+
+.body{font-size:12.5px;color:var(--ink-2);margin-bottom:15px}
+
+
+
+.pill{
+
+  position:absolute;top:18px;right:22px;z-index:2;
+
+  font-size:11px;font-weight:700;color:var(--hue);
+
+  padding:5px 12px;border-radius:999px;
+
+  background:var(--pillbg);border:1px solid var(--hue);
+
+  white-space:nowrap;
+
+}
+
+
+
+.status{font-size:12px;font-weight:700;color:var(--hue);margin-bottom:7px}
+
+.bar{height:7px;border-radius:4px;background:#1B2230;overflow:hidden}
+
+.bar>i{
+
+  display:block;height:100%;border-radius:4px;
+
+  background:linear-gradient(90deg,var(--hue),var(--hue2));
+
+}
+
+
+
+/* 四种场景变体：颜色令牌映射（对应 mode_notify._SCENES）*/
+
+.v-game {--hue:#FFB84D;--hue2:var(--accent-2);--pillbg:#3A2A10}
+
+.v-back {--hue:var(--accent-1);--hue2:var(--accent-2);--pillbg:#0E2F3F}
+
+.v-focus{--hue:var(--accent-2);--hue2:var(--accent-1);--pillbg:#231A3A}
+
+.v-ok   {--hue:#36D399;--hue2:var(--accent-1);--pillbg:#0E2E24}
+
+.v-err  {--hue:#E5484D;--hue2:#FFB84D;--pillbg:#3A1416}
+
+
+
+/* ============ 文案对照表 ============ */
+
+table{
+
+  width:100%;border-collapse:separate;border-spacing:0;
+
+  font-size:13px;background:var(--bg-2);border-radius:14px;overflow:hidden;
+
+  border:1px solid var(--line);
+
+}
+
+th,td{padding:13px 16px;text-align:left;vertical-align:top}
+
+thead th{
+
+  font-size:11px;letter-spacing:.1em;text-transform:uppercase;
+
+  color:var(--ink-3);background:rgba(255,255,255,.03);font-weight:700;
+
+}
+
+tbody tr+tr td{border-top:1px solid var(--line)}
+
+td.old{color:var(--ink-3);width:38%}
+
+td.old code{
+
+  color:#E5484D;background:rgba(229,72,77,.09);
+
+  padding:1px 6px;border-radius:5px;font-size:12px;
+
+  font-family:"Consolas",monospace;
+
+}
+
+td.arrow{width:36px;color:var(--accent-1);text-align:center;font-size:15px}
+
+td.new{color:var(--ink);font-weight:600}
+
+td.why{color:var(--ink-3);font-size:12px;width:24%}
+
+
+
+/* ============ 令牌映射 ============ */
+
+.tokens{display:grid;grid-template-columns:repeat(auto-fit,minmax(228px,1fr));gap:14px}
+
+.tk{
+
+  background:var(--bg-2);border:1px solid var(--line);border-radius:12px;
+
+  padding:15px 16px;
+
+}
+
+.tk .sw{
+
+  height:34px;border-radius:8px;margin-bottom:11px;
+
+  background:linear-gradient(92deg,var(--hue),var(--hue2));
+
+}
+
+.tk b{display:block;font-size:13px;margin-bottom:5px}
+
+.tk code{
+
+  display:block;font-size:11px;color:var(--ink-3);
+
+  font-family:"Consolas",monospace;line-height:1.8;
+
+}
+
+
+
+/* ============ 原则清单 ============ */
+
+.rules{display:grid;grid-template-columns:repeat(auto-fit,minmax(268px,1fr));gap:14px}
+
+.rule{
+
+  background:var(--bg-2);border:1px solid var(--line);border-radius:12px;
+
+  padding:16px 18px;position:relative;overflow:hidden;
+
+}
+
+.rule::before{
+
+  content:"";position:absolute;left:0;top:0;bottom:0;width:3px;
+
+  background:linear-gradient(180deg,var(--accent-1),var(--accent-2));
+
+}
+
+.rule b{display:block;font-size:13px;margin-bottom:6px;color:var(--ink)}
+
+.rule p{font-size:12px;color:var(--ink-2)}
+
+.rule .no{color:#E5484D;font-weight:700}
+
+.rule .yes{color:#36D399;font-weight:700}
+
+</style>
+
+</head>
+
+<body>
+
+<div class="wrap">
+
+
+
+  <header class="hd">
+
+    <div class="eyebrow">Mode Notify · Redesign</div>
+
+    <h1>切换提醒的 <em>四种心情</em></h1>
+
+    <p>达妮娅换用云端 / 回到本机 / 为某个软件换上专属陪法时，屏幕右上角滑入的那张卡。
+
+       原来只有"锁 / 解锁"两种长相，说的还是"已切换快照模式""正在下发专属提示词"——
+
+       用户看不懂，也分不清发生了什么。现在按<b>四种场景</b>各给一套长相和一句人话。</p>
+
+  </header>
+
+
+
+  <!-- ===== 1. 四种场景变体 ===== -->
+
+  <section class="sec">
+
+    <h2>四种场景变体</h2>
+
+    <div class="sub">配色 / 徽章 / 小标 / pill 四件套一起变，用户扫一眼就知道是哪类事。</div>
+
+    <div class="stage">
+
+
+
+      <!-- game -->
+
+      <div class="slot">
+
+        <div class="meta">scene=<b>"game"</b> · 让路给游戏 · 触发：reason=game_lock</div>
+
+        <div class="card v-game">
+
+          <div class="pill">省显卡模式</div>
+
+          <div class="row">
+
+            <div class="badge"><i>
+
+              <svg viewBox="0 0 24 24" fill="none">
+
+                <rect x="3" y="9" width="18" height="8" rx="4" fill="#FFB84D"/>
+
+                <path d="M7.2 13h2.4M8.4 11.8v2.4" stroke="#0D1018"
+
+                      stroke-width="1.5" stroke-linecap="round"/>
+
+                <circle cx="15.4" cy="12.1" r="1.05" fill="#0D1018"/>
+
+                <circle cx="17.6" cy="14" r="1.05" fill="#0D1018"/>
+
+              </svg>
+
+            </i></div>
+
+            <div class="col">
+
+              <div class="kicker">让路给游戏</div>
+
+              <div class="title">我先退到云端啦</div>
+
+              <div class="body">看到你开了「三角洲行动」，我把显卡让给游戏，改用云端陪你，
+
+                这样游戏不会卡。反应会慢一点点，别介意～</div>
+
+              <div class="status">云端排队中，前面还有 2 位…</div>
+
+              <div class="bar"><i style="width:78%"></i></div>
+
+            </div>
+
+          </div>
+
+        </div>
+
+      </div>
+
+
+
+      <!-- focus -->
+
+      <div class="slot">
+
+        <div class="meta">scene=<b>"focus"</b> · 软件专属陪伴 · 触发：知识库注入</div>
+
+        <div class="card v-focus">
+
+          <div class="pill">换个陪法</div>
+
+          <div class="row">
+
+            <div class="badge"><i>
+
+              <svg viewBox="0 0 24 24" fill="none">
+
+                <path d="M11 3.6l1.5 4.4 4.4 1.5-4.4 1.5L11 15.4 9.5 11 5.1 9.5 9.5 8z"
+
+                      fill="#A06BFF"/>
+
+                <path d="M17.6 14.2l.7 2 2 .7-2 .7-.7 2-.7-2-2-.7 2-.7z" fill="#2DD4FF"/>
+
+              </svg>
+
+            </i></div>
+
+            <div class="col">
+
+              <div class="kicker">专属陪伴</div>
+
+              <div class="title">换成抖音的陪法</div>
+
+              <div class="body">我认出这是抖音，正在换上更懂它的陪伴方式，
+
+                连好之后就能一起玩了～</div>
+
+              <div class="status">连上啦，正在换成这个软件的陪法…</div>
+
+              <div class="bar"><i style="width:45%"></i></div>
+
+            </div>
+
+          </div>
+
+        </div>
+
+      </div>
+
+
+
+      <!-- ok -->
+
+      <div class="slot">
+
+        <div class="meta">scene=<b>"ok"</b> · 完成态 · 触发：prepared 到达</div>
+
+        <div class="card v-ok">
+
+          <div class="pill">开始陪你</div>
+
+          <div class="row">
+
+            <div class="badge"><i>
+
+              <svg viewBox="0 0 24 24" fill="none">
+
+                <path d="M5.5 12.6l4 4L18.5 7.6" stroke="#36D399" stroke-width="2.6"
+
+                      stroke-linecap="round" stroke-linejoin="round"/>
+
+              </svg>
+
+            </i></div>
+
+            <div class="col">
+
+              <div class="kicker">准备好了</div>
+
+              <div class="title">换好啦，开始陪你 </div>
+
+              <div class="body">已经换成原神的专属陪法，接下来我会盯着你的画面一起玩～</div>
+
+              <div class="status">连上啦，开始陪你 </div>
+
+              <div class="bar"><i style="width:100%"></i></div>
+
+            </div>
+
+          </div>
+
+        </div>
+
+      </div>
+
+
+
+      <!-- back -->
+
+      <div class="slot">
+
+        <div class="meta">scene=<b>"back"</b> · 回到本机 · 触发：reason=game_unlock</div>
+
+        <div class="card v-back">
+
+          <div class="pill">本机模式</div>
+
+          <div class="row">
+
+            <div class="badge"><i>
+
+              <svg viewBox="0 0 24 24" fill="none">
+
+                <path d="M12 4.2L4.4 11h15.2z" fill="#2DD4FF"/>
+
+                <rect x="6.6" y="10.6" width="10.8" height="8.6" rx="1" fill="#2DD4FF"/>
+
+                <rect x="10.4" y="14.2" width="3.2" height="5" rx=".6" fill="#0D1018"/>
+
+              </svg>
+
+            </i></div>
+
+            <div class="col">
+
+              <div class="kicker">回到本机陪你</div>
+
+              <div class="title">我回到本机陪你了</div>
+
+              <div class="body">显卡空出来了，我又能用本机陪你，反应会更快一些～</div>
+
+              <div class="status">连上啦，开始陪你 </div>
+
+              <div class="bar"><i style="width:100%"></i></div>
+
+            </div>
+
+          </div>
+
+        </div>
+
+      </div>
+
+
+
+      <!-- error -->
+
+      <div class="slot">
+
+        <div class="meta">error 态 · 任意场景叠加（状态行与进度条翻红，卡身保持场景色）</div>
+
+        <div class="card v-game">
+
+          <div class="pill">省显卡模式</div>
+
+          <div class="row">
+
+            <div class="badge"><i>
+
+              <svg viewBox="0 0 24 24" fill="none">
+
+                <rect x="3" y="9" width="18" height="8" rx="4" fill="#FFB84D"/>
+
+                <path d="M7.2 13h2.4M8.4 11.8v2.4" stroke="#0D1018"
+
+                      stroke-width="1.5" stroke-linecap="round"/>
+
+                <circle cx="15.4" cy="12.1" r="1.05" fill="#0D1018"/>
+
+                <circle cx="17.6" cy="14" r="1.05" fill="#0D1018"/>
+
+              </svg>
+
+            </i></div>
+
+            <div class="col">
+
+              <div class="kicker">让路给游戏</div>
+
+              <div class="title">我先退到云端啦</div>
+
+              <div class="body">看到你开了「三角洲行动」，我把显卡让给游戏，改用云端陪你，
+
+                这样游戏不会卡。</div>
+
+              <div class="status" style="color:#E5484D">没连上，我再试一次…</div>
+
+              <div class="bar"><i style="width:100%;background:
+
+                linear-gradient(90deg,#E5484D,#FFB84D)"></i></div>
+
+            </div>
+
+          </div>
+
+        </div>
+
+      </div>
+
+
+
+    </div>
+
+  </section>
+
+
+
+  <!-- ===== 2. 文案前后对照 ===== -->
+
+  <section class="sec">
+
+    <h2>描述词：从内部术语到人话</h2>
+
+    <div class="sub">原则：讲清「发生了什么 → 为什么 → 对你有什么影响」，永不出现内部词。</div>
+
+    <table>
+
+      <thead><tr>
+
+        <th>改之前（用户看不懂）</th><th></th><th>改之后</th><th>为什么这样改</th>
+
+      </tr></thead>
+
+      <tbody>
+
+        <tr>
+
+          <td class="old"><code>已切换快照模式</code></td>
+
+          <td class="arrow">→</td>
+
+          <td class="new">我先退到云端啦</td>
+
+          <td class="why">"快照"是内部实现名；换成达妮娅第一人称的动作</td>
+
+        </tr>
+
+        <tr>
+
+          <td class="old"><code>强制游戏锁：识别到「三角洲行动」，已无条件切换云端快照保障流畅；
+
+            期间减少屏幕切换可提升互动质量</code></td>
+
+          <td class="arrow">→</td>
+
+          <td class="new">看到你开了「三角洲行动」，我把显卡让给游戏，改用云端陪你，
+
+            这样游戏不会卡。反应会慢一点点，别介意～</td>
+
+          <td class="why">"强制/锁/无条件"像报错；改成让路的善意 + 说明代价</td>
+
+        </tr>
+
+        <tr>
+
+          <td class="old"><code>检测到显卡负载过高（外部显存占用 3200MB）</code></td>
+
+          <td class="arrow">→</td>
+
+          <td class="new">显卡有点忙（别的程序占了 3200MB 显存），我先退到云端帮忙，
+
+            把显卡留给它们，你这边不会卡～</td>
+
+          <td class="why">保留数字（给内行看），但先用一句人话交代结论</td>
+
+        </tr>
+
+        <tr>
+
+          <td class="old"><code>显卡负载已释放，已恢复双工模式，互动质量恢复</code></td>
+
+          <td class="arrow">→</td>
+
+          <td class="new">显卡空出来了，我又能用本机陪你，反应会更快一些～</td>
+
+          <td class="why">"双工/互动质量"→"用本机陪你 / 反应更快"</td>
+
+        </tr>
+
+        <tr>
+
+          <td class="old"><code>正在为抖音载入专属方案</code><br>
+
+            <code>双工正在重新连接，连好后再开口陪你…</code></td>
+
+          <td class="arrow">→</td>
+
+          <td class="new">换成抖音的陪法<br>
+
+            我认出这是抖音，正在换上更懂它的陪伴方式，连好之后就能一起玩了～</td>
+
+          <td class="why">"方案/提示词"→"陪法"；加"我认出这是…"体现被理解</td>
+
+        </tr>
+
+        <tr>
+
+          <td class="old"><code>已加载专属陪伴方案 </code><br>
+
+            <code>已为抖音载入专属提示词，双工已重新连上，开始陪你～</code></td>
+
+          <td class="arrow">→</td>
+
+          <td class="new">换好啦，开始陪你 <br>
+
+            已经换成抖音的专属陪法，接下来我会盯着你的画面一起玩～</td>
+
+          <td class="why">完成态给确定感，并说明接下来会做什么</td>
+
+        </tr>
+
+        <tr>
+
+          <td class="old"><code>双工已连上，正在下发专属提示词…</code></td>
+
+          <td class="arrow">→</td>
+
+          <td class="new">连上啦，正在换成这个软件的陪法…</td>
+
+          <td class="why">"下发提示词"是工程动作，用户只关心"在换陪法"</td>
+
+        </tr>
+
+        <tr>
+
+          <td class="old"><code>云端双工已就绪 </code> / <code>本地双工已就绪 </code></td>
+
+          <td class="arrow">→</td>
+
+          <td class="new">云端连上啦，开始陪你  / 连上啦，开始陪你 </td>
+
+          <td class="why">"就绪"是系统语；"开始陪你"才是用户在意的事</td>
+
+        </tr>
+
+        <tr>
+
+          <td class="old"><code>云端排队中（3/14）</code></td>
+
+          <td class="arrow">→</td>
+
+          <td class="new">云端排队中，前面还有 2 位…</td>
+
+          <td class="why">分数式看不出快慢；"前面还有几位"直觉可感</td>
+
+        </tr>
+
+        <tr>
+
+          <td class="old"><code>error: session closed / 会话异常</code></td>
+
+          <td class="arrow">→</td>
+
+          <td class="new">没连上，我再试一次…</td>
+
+          <td class="why">不暴露错误串，并告诉用户会自愈、不用管</td>
+
+        </tr>
+
+        <tr>
+
+          <td class="old"><code>（已学习进程 deltaforce.exe，下次秒卸）</code></td>
+
+          <td class="arrow">→</td>
+
+          <td class="new">（我记住这个软件了，下次一开就自动让路）</td>
+
+          <td class="why">进程名/"秒卸"是开发者视角；改成"记住了"的拟人承诺</td>
+
+        </tr>
+
+      </tbody>
+
+    </table>
+
+  </section>
+
+
+
+  <!-- ===== 3. 令牌映射 ===== -->
+
+  <section class="sec">
+
+    <h2>设计令牌映射</h2>
+
+    <div class="sub">全部取自 design_tokens.css，Tk 侧用等价 hex（tkinter 不支持 CSS 变量）。</div>
+
+    <div class="tokens">
+
+      <div class="tk v-game">
+
+        <div class="sw"></div><b>game · 让路给游戏</b>
+
+        <code>hue  #FFB84D 琥珀（让路/退避）
+
+hue2 var(--accent-2) #A06BFF
+
+pill #3A2A10 · 徽章 手柄</code>
+
+      </div>
+
+      <div class="tk v-back">
+
+        <div class="sw"></div><b>back · 回到本机</b>
+
+        <code>hue  var(--accent-1) #2DD4FF
+
+hue2 var(--accent-2) #A06BFF
+
+pill #0E2F3F · 徽章 小屋</code>
+
+      </div>
+
+      <div class="tk v-focus">
+
+        <div class="sw"></div><b>focus · 软件专属陪伴</b>
+
+        <code>hue  var(--accent-2) #A06BFF
+
+hue2 var(--accent-1) #2DD4FF
+
+pill #231A3A · 徽章 星星</code>
+
+      </div>
+
+      <div class="tk v-ok">
+
+        <div class="sw"></div><b>ok · 完成</b>
+
+        <code>hue  #36D399 绿（已就绪）
+
+hue2 var(--accent-1) #2DD4FF
+
+pill #0E2E24 · 徽章 对勾</code>
+
+      </div>
+
+    </div>
+
+  </section>
+
+
+
+  <!-- ===== 4. 写文案的规矩 ===== -->
+
+  <section class="sec">
+
+    <h2>以后写这类文案的规矩</h2>
+
+    <div class="sub">新增任何切换提醒都照这几条来，避免又冒出内部词。</div>
+
+    <div class="rules">
+
+      <div class="rule">
+
+        <b>① 达妮娅第一人称</b>
+
+        <p>她在跟你说话，不是系统在播报。<span class="no"><i data-icon="x"></i></span> 已切换快照模式 ·
+
+           <span class="yes"></span> 我先退到云端啦</p>
+
+      </div>
+
+      <div class="rule">
+
+        <b>② 先说影响，再说原因</b>
+
+        <p>用户最关心"我会不会卡 / 你还能不能陪我"。数字和进程名放后面或省掉。</p>
+
+      </div>
+
+      <div class="rule">
+
+        <b>③ 代价要坦白</b>
+
+        <p>退云端会慢就直说"反应会慢一点点，别介意～"，不粉饰成"保障流畅"。</p>
+
+      </div>
+
+      <div class="rule">
+
+        <b>④ 内部词一律不出现</b>
+
+        <p>双工 / 快照 / 提示词 / 就绪 / 下发 / 锁 / 秒卸 / 外部显存占用 —— 全部有对应人话，
+
+           兜底走 <code>mode_notify.humanize()</code>。</p>
+
+      </div>
+
+      <div class="rule">
+
+        <b>⑤ 出错不吓人</b>
+
+        <p>不贴错误串，只说"没连上，我再试一次…"，让用户知道不用管。</p>
+
+      </div>
+
+      <div class="rule">
+
+        <b>⑥ 语气收在颜文字/波浪号</b>
+
+        <p>句尾用「～」轻收，完成态配 。不用感叹号堆情绪，不加 emoji 满屏。</p>
+
+      </div>
+
+    </div>
+
+  </section>
+
+
+
+</div>
+
+<script src="/redesign/theme_manager.js?v=20261013d"></script>
+</body>
+
+</html>
+

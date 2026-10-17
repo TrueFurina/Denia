@@ -1,0 +1,1558 @@
+<!DOCTYPE html>
+
+<html lang="zh-CN">
+
+<head>
+
+<meta charset="UTF-8" />
+
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+
+<meta name="stage" content="off" />
+
+<title>软件档案 · 桌面伴侣</title>
+
+<link rel="stylesheet" href="/redesign/design_tokens.css?v=20261013e" />
+
+<link rel="stylesheet" href="/redesign/ui_shared.css?v=20261013e" />
+
+<link rel="stylesheet" href="/redesign/pages.css" />
+
+<style>
+
+  *{ -webkit-user-select:none; user-select:none; -webkit-touch-callout:none; -webkit-tap-highlight-color:transparent; }
+
+  input, textarea, select, [contenteditable="true"]{ -webkit-user-select:text; user-select:text; }
+
+  ::selection{ background:rgba(124,92,255,.25); }
+
+  img, canvas, svg, video{ -webkit-user-drag:none; user-drag:none; }
+
+  body{ -webkit-user-drag:none; }
+
+
+
+  .app.sp-page{ grid-template-columns: var(--side-w) minmax(0, 1fr); }
+
+
+
+  /* ---- 工具栏 ---- */
+
+  .sp-toolbar{ display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:14px; flex-wrap:wrap; }
+
+  .sp-toolbar-left{ display:flex; align-items:center; gap:10px; flex:1; min-width:0; }
+
+  .sp-search{ flex:1; max-width:320px; min-width:160px; padding:8px 14px; border:1px solid var(--line);
+
+    border-radius:var(--r-md); background:var(--surface); color:var(--ink); font-size:13px;
+
+    outline:none; transition:border-color .2s, box-shadow .2s; font-family:inherit; }
+
+  .sp-search:focus{ border-color:var(--accent-1); box-shadow:0 0 0 3px rgba(124,92,255,.12); }
+
+  .sp-search::placeholder{ color:var(--ink-3); }
+
+
+
+  /* ---- 档案列表 ---- */
+
+  .sp-list{ display:flex; flex-direction:column; gap:10px; }
+
+  .sp-empty{ padding:48px 16px; text-align:center; color:var(--ink-3); font-size:13px; line-height:1.8; }
+
+  .sp-empty b{ color:var(--ink-2); font-weight:600; }
+
+  .sp-empty svg{ width:56px; height:56px; margin-bottom:12px; opacity:.35; }
+
+
+
+  /* ---- 档案卡片（迈从式：图标+名称+路径+标签+操作） ---- */
+
+  .sp-card{ background:var(--surface-1); border:1px solid var(--line); border-radius:var(--r-lg);
+
+    box-shadow:var(--shadow-1); padding:12px 16px; display:flex; align-items:center; gap:14px;
+
+    animation:pageEnter .35s var(--ease) both; transition:border-color .2s; }
+
+  .sp-card:hover{ border-color:var(--line-strong); }
+
+  .sp-card[hidden]{ display:none !important; }
+
+
+
+  /* 图标 */
+
+  .sp-icon{ width:40px; height:40px; border-radius:var(--r-md); overflow:hidden;
+
+    flex-shrink:0; background:var(--surface-2); border:1px solid var(--line);
+
+    display:grid; place-items:center; }
+
+  .sp-icon img{ width:100%; height:100%; object-fit:contain; }
+
+  .sp-icon .sp-icon-placeholder{ width:20px; height:20px; opacity:.25; }
+
+
+
+  /* 信息区 */
+
+  .sp-info{ flex:1; min-width:0; display:flex; flex-direction:column; gap:3px; }
+
+  .sp-name-row{ display:flex; align-items:center; gap:8px; }
+
+  .sp-name{ font-size:14px; font-weight:650; color:var(--ink); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+
+  .sp-path{ font-size:11px; color:var(--ink-3); font-family:var(--font-mono);
+
+    white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+
+
+
+  /* 标签行 */
+
+  .sp-tags{ display:flex; align-items:center; gap:6px; margin-top:2px; flex-wrap:wrap; }
+
+  .sp-tag{ font-size:10px; font-weight:600; padding:2px 8px; border-radius:99px; white-space:nowrap;
+
+    letter-spacing:.02em; }
+
+  .sp-tag.tier-high{ color:#f59e0b; background:rgba(245,158,11,.10); border:1px solid rgba(245,158,11,.25); }
+
+  .sp-tag.tier-reg{ color:var(--ink-2); background:var(--surface-2); border:1px solid var(--line); }
+
+  .sp-tag.kind-game{ color:#a78bfa; background:rgba(167,139,250,.10); border:1px solid rgba(167,139,250,.25); }
+
+  .sp-tag.kind-app{ color:var(--ink-2); background:var(--surface-2); border:1px solid var(--line); }
+
+  .sp-tag.bind-on{ color:#34d399; background:rgba(52,211,153,.08); border:1px solid rgba(52,211,153,.25); }
+
+
+
+  /* 操作按钮 */
+
+  .sp-actions{ display:flex; gap:6px; flex-shrink:0; }
+
+
+
+  /* ---- 弹窗（复用知识库 modal 设计系统） ---- */
+
+  .sp-mask{ position:fixed; inset:0; background:rgba(4,7,14,.6); z-index:100; display:none; align-items:center; justify-content:center; }
+
+  .sp-mask.show{ display:flex; animation:pageEnter .2s var(--ease) both; }
+
+  .sp-panel{ background:var(--surface-1); border:1px solid var(--line-2); border-radius:var(--r-lg);
+
+    position:relative; z-index:1; width:540px; max-width:94vw; max-height:86vh;
+
+    display:flex; flex-direction:column; box-shadow:var(--shadow-pop), 0 0 0 1px rgba(124,92,255,.08); overflow:hidden; }
+
+  .sp-panel-head{ display:flex; align-items:center; justify-content:space-between; padding:16px 20px;
+
+    border-bottom:1px solid var(--line); gap:12px; }
+
+  .sp-panel-head h3{ margin:0; font-size:15px; font-weight:650; color:var(--ink); letter-spacing:.02em; }
+
+  .sp-close{ width:28px; height:28px; border:1px solid var(--line); border-radius:var(--r-md);
+
+    background:var(--surface); color:var(--ink-2); cursor:pointer; font-size:12px;
+
+    display:grid; place-items:center; flex-shrink:0; transition:border-color .15s, color .15s; }
+
+  .sp-close:hover{ border-color:var(--line-strong); color:var(--ink); }
+
+  .sp-panel-body{ padding:20px; overflow-y:auto; flex:1; display:flex; flex-direction:column; gap:16px; }
+
+  .sp-field{ display:flex; flex-direction:column; gap:4px; }
+
+  .sp-field > label{ font-size:11px; font-weight:650; color:var(--ink-2); letter-spacing:.04em; text-transform:uppercase; }
+
+  .sp-field input, .sp-field textarea, .sp-field select{
+
+    width:100%; box-sizing:border-box; padding:9px 12px; border:1px solid var(--line); border-radius:var(--r-md);
+
+    background:var(--surface); color:var(--ink); font-size:13px; outline:none; transition:border-color .2s, box-shadow .2s;
+
+    font-family:inherit; }
+
+  .sp-field input:focus, .sp-field textarea:focus, .sp-field select:focus{
+
+    border-color:var(--accent-1); box-shadow:0 0 0 3px rgba(124,92,255,.12); }
+
+  .sp-field input::placeholder, .sp-field textarea::placeholder{ color:var(--ink-3); }
+
+  .sp-field select{ cursor:pointer; appearance:none;
+
+    background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%23666'/%3E%3C/svg%3E");
+
+    background-repeat:no-repeat; background-position:right 12px center; padding-right:32px; }
+
+  .sp-field textarea{ min-height:72px; resize:vertical; line-height:1.55; }
+
+  .sp-row{ display:flex; gap:14px; }
+
+  .sp-row > *{ flex:1; min-width:0; }
+
+  .sp-hint{ font-size:11px; color:var(--ink-3); line-height:1.5; }
+
+  .sp-divider{ height:1px; background:var(--line); margin:2px 0; }
+
+  .sp-panel-foot{ display:flex; align-items:center; justify-content:flex-end; gap:10px;
+
+    padding:14px 20px; border-top:1px solid var(--line); background:rgba(0,0,0,.02); }
+
+  .sp-panel-foot .btn{ padding:9px 18px; border-radius:10px; font-size:13px; }
+
+
+
+  /* 图标预览（弹窗内） */
+
+  .sp-icon-preview{ width:48px; height:48px; border-radius:var(--r-md); overflow:hidden;
+
+    background:var(--surface-2); border:1px solid var(--line); display:grid; place-items:center; flex-shrink:0; }
+
+  .sp-icon-preview img{ width:100%; height:100%; object-fit:contain; }
+
+
+
+  /* ---- 进程选择器（从活跃进程添加） ---- */
+
+  .proc-list{ max-height:260px; overflow-y:auto; border:1px solid var(--line); border-radius:var(--r-md);
+
+    background:var(--surface); }
+
+  .proc-item{ display:flex; align-items:center; gap:10px; padding:8px 12px; cursor:pointer;
+
+    border-bottom:1px solid var(--line); transition:background .15s; }
+
+  .proc-item:last-child{ border-bottom:none; }
+
+  .proc-item:hover{ background:var(--surface-2); }
+
+  .proc-item.selected{ background:rgba(124,92,255,.08); border-color:var(--accent-1); }
+
+  .proc-item .pi-icon{ width:24px; height:24px; border-radius:6px; overflow:hidden;
+
+    background:var(--surface-2); display:grid; place-items:center; flex-shrink:0; }
+
+  .proc-item .pi-icon img{ width:100%; height:100%; object-fit:contain; }
+
+  .proc-item .pi-info{ flex:1; min-width:0; }
+
+  .proc-item .pi-name{ font-size:13px; font-weight:600; color:var(--ink); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+
+  .proc-item .pi-path{ font-size:10px; color:var(--ink-3); font-family:var(--font-mono);
+
+    white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+
+
+
+  /* ---- OCR 识别区块编辑器 ---- */
+
+  .sp-ocr-list{ display:flex; flex-direction:column; gap:10px; margin-bottom:8px; }
+
+  .sp-ocr-item{ border:1px solid var(--line); border-radius:var(--r-md); padding:10px 12px;
+
+    background:var(--surface); display:flex; flex-direction:column; gap:8px; position:relative; }
+
+  .sp-ocr-item .ocr-row{ display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
+
+  .sp-ocr-item .ocr-row > *{ flex:1; min-width:0; }
+
+  .sp-ocr-item input, .sp-ocr-item select{ width:100%; box-sizing:border-box; padding:7px 9px;
+
+    border:1px solid var(--line); border-radius:var(--r-sm); background:var(--surface-2); color:var(--ink);
+
+    font-size:12px; outline:none; font-family:inherit; }
+
+  .sp-ocr-item input:focus, .sp-ocr-item select:focus{ border-color:var(--accent-1); }
+
+  .sp-ocr-item .ocr-name{ flex:1.4; }
+
+  .sp-ocr-item .ocr-purpose{ flex:1.2; }
+
+  .sp-ocr-item .ocr-coords{ display:flex; gap:6px; flex:2; }
+
+  .sp-ocr-item .ocr-coords input{ width:100%; }
+
+  .sp-ocr-item .ocr-keywords{ flex:2; }
+
+  .sp-ocr-item .ocr-del{ position:absolute; top:8px; right:8px; width:22px; height:22px;
+
+    border:1px solid var(--line); border-radius:6px; background:var(--surface); color:var(--ink-3);
+
+    cursor:pointer; font-size:11px; display:grid; place-items:center; flex-shrink:0; }
+
+  .sp-ocr-item .ocr-del:hover{ color:#ef4444; border-color:#ef4444; }
+
+  .sp-ocr-item .ocr-label{ font-size:10px; color:var(--ink-3); letter-spacing:.03em; }
+
+</style>
+
+</head>
+
+<body>
+
+<script>
+
+  document.addEventListener('contextmenu',function(e){e.preventDefault()});
+
+  document.addEventListener('dragstart',function(e){e.preventDefault()});
+
+</script>
+
+
+
+<div class="app sp-page">
+
+  <!-- 左侧导航（与知识库一致） -->
+
+  <aside class="side">
+
+    <div class="grp">
+
+      <div class="gt">日常</div>
+
+      <a class="nav" href="/index.html"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>对话</a>
+
+      <a class="nav" href="/redesign/ui_redesign_daily.html"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M4 4h16v16H4z"/><path d="M8 9h8M8 13h5"/></svg>日报周报</a>
+
+    </div>
+
+    <div class="grp">
+
+      <div class="gt">伴侣</div>
+
+      <a class="nav" href="/redesign/ui_redesign_characters.html"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/></svg>角色</a>
+
+      <a class="nav" href="/redesign/ui_redesign_memory.html"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M5 4h12a2 2 0 0 1 2 2v14H7a2 2 0 0 1-2-2z"/></svg>记忆库</a>
+
+  <a class="nav" href="/redesign/ui_redesign_stickers.html"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="3"/><circle cx="9" cy="9" r="1.4"/><path d="M21 15l-4.5-4.5L7 20"/></svg>表情包管理</a>
+
+    </div>
+
+    <div class="grp">
+
+      <div class="gt">系统</div>
+
+      <a class="nav" href="/redesign/ui_redesign_settings.html"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/></svg>设置</a>
+
+      <a class="nav" href="/redesign/lib.html"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M5 4h11a2 2 0 0 1 2 2v14H7a2 2 0 0 1-2-2z M4 9h11 M4 13h11"/></svg>知识库</a>
+
+      <a class="nav on" href="/redesign/ui_redesign_software_profiles.html"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>软件档案</a>
+
+      <a class="nav" href="/redesign/ui_redesign_developer.html"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M4 6h16M7 12h10M10 18h4"/></svg>开发者</a>
+
+    </div>
+
+    <div class="spacer"></div>
+
+  </aside>
+
+
+
+  <!-- 主内容 -->
+
+  <main class="main">
+
+    <header class="top">
+
+      <div><div class="who">软件档案</div><div class="sub">绑定游戏/应用档案，设置性能档位，让达妮娅准确识别并智能应对</div></div>
+
+      <div class="right"></div>
+
+    </header>
+
+    <section class="content">
+
+      <!-- 工具栏 -->
+
+      <div class="sp-toolbar">
+
+        <div class="sp-toolbar-left">
+
+          <button class="btn" type="button" onclick="spRefresh()" title="刷新列表">&#x21bb; 刷新</button>
+
+          <input class="sp-search" id="spSearch" placeholder="搜索软件名称或路径..." oninput="spFilter()" />
+
+        </div>
+
+        <div class="toolbar-btns">
+
+          <button class="btn primary" type="button" onclick="spOpenProcPicker()">+ 从活跃进程添加</button>
+
+          <button class="btn" type="button" onclick="spOpenModal(false)">+ 手动添加</button>
+
+        </div>
+
+      </div>
+
+
+
+      <!-- 档案列表 -->
+
+      <div class="sp-list" id="spList">
+
+        <div class="sp-empty" id="spEmpty">
+
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
+
+          <div>还没有关联任何软件</div>
+
+          <div>点击<b>「从活跃进程添加」</b>自动识别当前运行的软件，<br>或<b>「手动添加」</b>指定 exe 路径。</div>
+
+        </div>
+
+      </div>
+
+    </section>
+
+  </main>
+
+</div>
+
+
+
+<!-- 编辑/新增弹窗 -->
+
+<div class="sp-mask" id="spMask">
+
+  <div class="sp-panel">
+
+    <div class="sp-panel-head">
+
+      <h3 id="spModalTitle">新增软件档案</h3>
+
+      <button class="sp-close" type="button" onclick="spCloseModal()">&times;</button>
+
+    </div>
+
+    <div class="sp-panel-body">
+
+      <!-- 图标预览 + 基本信息 -->
+
+      <div style="display:flex; gap:14px; align-items:flex-start;">
+
+        <div class="sp-icon-preview" id="spIconPreview">
+
+          <span style="font-size:20px; opacity:.2;">&#x1F4BE;</span>
+
+        </div>
+
+        <div style="flex:1; display:flex; flex-direction:column; gap:12px;">
+
+          <div class="sp-field">
+
+            <label>显示名称 *</label>
+
+            <input id="spFName" placeholder="如：三角洲行动" />
+
+          </div>
+
+          <div class="sp-field">
+
+            <label>exe 路径 *</label>
+
+            <input id="spFPath" placeholder="如：D:\Games\DeltaForce\Binaries\Win64\DeltaForceClient.exe" />
+
+          </div>
+
+        </div>
+
+      </div>
+
+
+
+      <div class="sp-row">
+
+        <div class="sp-field">
+
+          <label>类型</label>
+
+          <select id="spFKind">
+
+            <option value="app">软件</option>
+
+            <option value="game">游戏</option>
+
+          </select>
+
+        </div>
+
+        <div class="sp-field" style="display:none;">
+
+          <input type="checkbox" id="spFHighPerf" style="width:auto;" />
+
+          <label for="spFHighPerf" style="font-size:13px; color:var(--ink); text-transform:none; letter-spacing:0; white-space:nowrap;">
+
+            是否高性能（ 游戏锁）
+
+          </label>
+
+        </div>
+
+      </div>
+
+      <div class="sp-hint" style="margin:-6px 0 4px;">勾选=高性能游戏/应用：前台时触发游戏锁（切云端、卸载本地模型、把显卡留给它）；不勾=常规软件，本地正常陪伴。三角洲等游戏务必勾上。</div>
+
+
+
+      <!-- 陪伴模式 + OCR 调优 + 高性能 已统一在「知识库」每条软件里配置（保存时镜像进本档案） -->
+
+      <div class="sp-field" style="display:none;">
+
+        <label>陪伴模式</label>
+
+        <select id="spFMode">
+
+          <option value="duplex">双工+三段式（真全双工，默认）</option>
+
+          <option value="snapshot">OCR+快照（事件驱动，仿游戏方案）</option>
+
+        </select>
+
+        <div class="sp-hint">选「OCR+快照」后，进游戏即锁云端快照，由 OCR 裁决关键时刻（击杀/阵亡/胜负），不占本地算力。OCR 区块在下方配置；开发者面板只做只读参考（显示哪些规则命中）。</div>
+
+      </div>
+
+
+
+      <div class="sp-field" id="spOcrWrap" style="display:none;">
+
+        <label>玩家名（击杀归属判定用）</label>
+
+        <input id="spFPlayer" placeholder="如：你的游戏 ID，用于判定「你击杀/被击杀」" />
+
+        <div class="sp-hint">OCR 读到该名字出现在击杀播报里，才判定是你本人击杀/阵亡，避免误报队友。</div>
+
+      </div>
+
+
+
+      <div class="sp-field" id="spOcrRegionsWrap" style="display:none;">
+
+        <label>OCR 识别区块 <span style="font-weight:400;color:var(--ink-3);text-transform:none;letter-spacing:0">(屏幕比例，填 0~1 的小数：0.2 表示从左起 20%，0.1 表示从顶部 10%)</span></label>
+
+        <div id="spOcrRegions" class="sp-ocr-list"></div>
+
+        <button class="btn sm" type="button" id="spOcrAdd">+ 添加识别区块</button>
+
+        <div class="sp-hint">每个区块 = 一块屏幕区域 + 该区域出现的关键词 + 触发类型。命中关键词即触发达妮娅开口。进游戏时在开发者面板「OCR 调优」里可实时校准。</div>
+
+      </div>
+
+
+
+      <div class="sp-divider"></div>
+
+
+
+      <div class="sp-field">
+
+        <label>关键词（窗口标题匹配词，逗号分隔）</label>
+
+        <input id="spFKeywords" placeholder="如：deltaforce, 三角洲, delta force" />
+
+        <div class="sp-hint">用于前台检测时匹配窗口标题。留空则用 exe 文件名自动匹配。</div>
+
+      </div>
+
+
+
+      <div class="sp-field">
+
+        <label>专属知识</label>
+
+        <textarea id="spFKnowledge" placeholder="达妮娅在使用这款软件时应该知道什么、怎么陪你..."></textarea>
+
+      </div>
+
+
+
+      <div class="sp-field" style="display:flex; align-items:center; gap:8px;">
+
+        <input type="checkbox" id="spFBind" style="width:auto;" />
+
+        <label for="spFBind" style="font-size:13px; color:var(--ink); text-transform:none; letter-spacing:0;">
+
+          启用专属陪伴模式
+
+        </label>
+
+        <div class="sp-hint" style="margin:0;">开启后，达妮娅会以专属角色设定陪伴此软件的使用过程。</div>
+
+      </div>
+
+    </div>
+
+    <div class="sp-panel-foot">
+
+      <button class="btn" type="button" onclick="spCloseModal()">取消</button>
+
+      <button class="btn danger" type="button" id="spBtnDelete" style="display:none;" onclick="spDeleteCurrent()">删除</button>
+
+      <button class="btn primary" type="button" onclick="spSave()">保存</button>
+
+    </div>
+
+  </div>
+
+</div>
+
+
+
+<!-- 进程选择器弹窗 -->
+
+<div class="sp-mask" id="spProcMask">
+
+  <div class="sp-panel" style="width:520px;">
+
+    <div class="sp-panel-head">
+
+      <h3>从活跃进程添加</h3>
+
+      <button class="sp-close" type="button" onclick="spCloseProcPicker()">&times;</button>
+
+    </div>
+
+    <div class="sp-panel-body" style="gap:10px;">
+
+      <div class="sp-hint">选择一个正在运行的软件进程，将自动提取图标和路径：</div>
+
+      <div class="proc-list" id="spProcList">
+
+        <div style="padding:20px; text-align:center; color:var(--ink-3);">加载中...</div>
+
+      </div>
+
+    </div>
+
+    <div class="sp-panel-foot">
+
+      <button class="btn" type="button" onclick="spCloseProcPicker()">取消</button>
+
+      <button class="btn primary" type="button" onclick="spAddSelectedProc()" id="spBtnAddProc" disabled>添加选中项</button>
+
+    </div>
+
+  </div>
+
+</div>
+
+
+
+<script src="/redesign/ui_confirm.js?v=1"></script>
+<script src="/redesign/app_backend.js?v=20261015f"></script>
+
+<script>
+
+/* 统一提示出口（P1-5：替代原生 alert —— 系统灰白框与暗色界面割裂，且阻塞交互）。
+   优先走 Backend.toast（app_backend.js 提供），退化到本地 toast()，
+   都没有则回落到 alert（宁可丑也不丢提示）。 */
+function toastMsg(text, kind){
+  try {
+    if (window.Backend && typeof Backend.toast === 'function'){ Backend.toast(text, kind || 'ok'); return; }
+    if (typeof window.toast === 'function'){ window.toast(text, kind); return; }
+  } catch(e){}
+  window.alert(text);
+}
+
+
+(function(){
+
+  'use strict';
+
+
+
+  var $ = function(s){ return document.querySelector(s); };
+
+  var esc = function(s){
+
+    return String(s == null ? '' : s).replace(/[&<>"']/g, function(m){
+
+      return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[m];
+
+    });
+
+  };
+
+
+
+  /* ---- 状态 ---- */
+
+  var profiles = [];           // 当前全部档案
+
+  var editingId = null;        // 正在编辑的档案 ID（null=新增）
+
+  var selectedProc = null;     // 进程选择器中选中的进程
+
+
+
+  /* ================================================================
+
+     渲染
+
+     ================================================================ */
+
+
+
+  function tierLabel(tier){
+
+    return tier === 'high_performance' ? ' 高性能' : ' 常规';
+
+  }
+
+  function kindLabel(kind){
+
+    return kind === 'game' ? ' 游戏' : ' 软件';
+
+  }
+
+
+
+  function renderList(){
+
+    var list = $('#spList');
+
+    var empty = $('#spEmpty');
+
+    var search = ($('#spSearch') || {}).value || '';
+
+    search = search.toLowerCase().trim();
+
+
+
+    // 清除旧卡片（保留 empty 占位）
+
+    var cards = list.querySelectorAll('.sp-card');
+
+    for (var i = 0; i < cards.length; i++) cards[i].remove();
+
+
+
+    var filtered = profiles.filter(function(p){
+
+      if (!search) return true;
+
+      return (p.display_name || '').toLowerCase().indexOf(search) >= 0 ||
+
+             (p.exe_name || '').toLowerCase().indexOf(search) >= 0 ||
+
+             (p.exe_path || '').toLowerCase().indexOf(search) >= 0;
+
+    });
+
+
+
+    if (filtered.length === 0) {
+
+      empty.style.display = '';
+
+      if (profiles.length > 0 && search) {
+
+        empty.querySelector('div').textContent = '没有找到匹配「' + esc(search) + '」的软件';
+
+        empty.querySelectorAll('div')[1].innerHTML = '试试其他搜索词，或<a href="#" onclick="document.getElementById(\'spSearch\').value=\'\';spFilter()" style="color:var(--accent-1)">清除搜索</a>。';
+
+      }
+
+      return;
+
+    }
+
+
+
+    empty.style.display = 'none';
+
+
+
+    for (var i = 0; i < filtered.length; i++) {
+
+      var p = filtered[i];
+
+      var card = document.createElement('div');
+
+      card.className = 'sp-card';
+
+      card.setAttribute('data-id', p.id);
+
+
+
+      // 图标
+
+      var iconHtml = '';
+
+      if (p.icon_b64) {
+
+        iconHtml = '<img src="data:image/png;base64,' + p.icon_b64 + '" alt="" />';
+
+      } else {
+
+        iconHtml = '<svg class="sp-icon-placeholder" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>';
+
+      }
+
+
+
+      // 标签
+
+      var tags = '';
+
+      tags += '<span class="sp-tag ' + (p.tier === 'high_performance' ? 'tier-high' : 'tier-reg') + '">' + esc(tierLabel(p.tier)) + '</span>';
+
+      tags += '<span class="sp-tag ' + (p.kind === 'game' ? 'kind-game' : 'kind-app') + '">' + esc(kindLabel(p.kind)) + '</span>';
+
+      if (p.bind_companion) {
+
+        tags += '<span class="sp-tag bind-on">专属陪伴</span>';
+
+      }
+
+
+
+      card.innerHTML =
+
+        '<div class="sp-icon">' + iconHtml + '</div>' +
+
+        '<div class="sp-info">' +
+
+          '<div class="sp-name-row">' +
+
+            '<div class="sp-name" title="' + esc(p.display_name || p.id) + '">' + esc(p.display_name || p.id) + '</div>' +
+
+          '</div>' +
+
+          '<div class="sp-path" title="' + esc(p.exe_path || '') + '">' + esc(p.exe_path || p.exe_name || '') + '</div>' +
+
+          '<div class="sp-tags">' + tags + '</div>' +
+
+        '</div>' +
+
+        '<div class="sp-actions">' +
+
+          '<button class="btn sm" type="button" data-edit="' + p.id + '">编辑</button>' +
+
+          '<button class="btn sm" type="button" data-del="' + p.id + '">删除</button>' +
+
+        '</div>';
+
+
+
+      // 事件绑定
+
+      (function(pid){
+
+        card.querySelector('[data-edit]').addEventListener('click', function(){ spOpenModal(true, pid); });
+
+        card.querySelector('[data-del]').addEventListener('click', function(){ spConfirmDelete(pid); });
+
+      })(p.id);
+
+
+
+      list.appendChild(card);
+
+    }
+
+  }
+
+
+
+  window.spFilter = function(){ renderList(); };
+
+
+
+  /* ================================================================
+
+     加载 / 刷新
+
+     ================================================================ */
+
+
+
+  window.spRefresh = function(){
+
+    if (typeof Backend === 'undefined' || typeof Backend.listSoftwareProfiles !== 'function') {
+
+      console.warn('[SP] Backend 不可用');
+
+      return;
+
+    }
+
+    Backend.listSoftwareProfiles().then(function(r){
+
+      if (r && r.success && Array.isArray(r.profiles)) {
+
+        profiles = r.profiles;
+
+      } else {
+
+        profiles = [];
+
+      }
+
+      renderList();
+
+    });
+
+  };
+
+
+
+  /* ================================================================
+
+     弹窗：新增 / 编辑
+
+     ================================================================ */
+
+
+
+  window.spOpenModal = function(isEdit, pid){
+
+    editingId = isEdit ? (pid || null) : null;
+
+    var title = $('#spModalTitle');
+
+    var delBtn = $('#spBtnDelete');
+
+
+
+    title.textContent = isEdit ? '编辑软件档案' : '新增软件档案';
+
+    delBtn.style.display = isEdit ? '' : 'none';
+
+
+
+    // 填充表单
+
+    if (isEdit && pid) {
+
+      var p = profiles.find(function(x){ return x.id === pid; });
+
+      if (p) {
+
+        $('#spFName').value = p.display_name || '';
+
+        $('#spFPath').value = p.exe_path || '';
+
+        $('#spFHighPerf').checked = (p.tier === 'high_performance');
+
+        $('#spFKind').value = p.kind || 'app';
+
+        $('#spFKeywords').value = (p.keywords || []).join(', ');
+
+        $('#spFKnowledge').value = p.knowledge || '';
+
+        $('#spFBind').checked = !!p.bind_companion;
+
+        $('#spFMode').value = p.mode || 'duplex';
+
+        $('#spFPlayer').value = p.player_name || '';
+
+        spRenderOcrRegions(p.ocr_regions || []);
+
+        // 图标预览
+
+        spSetIconPreview(p.icon_b64);
+
+      }
+
+    } else {
+
+      $('#spFName').value = '';
+
+      $('#spFPath').value = '';
+
+      $('#spFHighPerf').checked = false;
+
+      $('#spFKind').value = 'app';
+
+      $('#spFKeywords').value = '';
+
+      $('#spFKnowledge').value = '';
+
+      $('#spFBind').checked = false;
+
+      $('#spFMode').value = 'duplex';
+
+      $('#spFPlayer').value = '';
+
+      spRenderOcrRegions([]);
+
+      spSetIconPreview('');
+
+    }
+
+    // 根据当前 mode 显示/隐藏 OCR 区块
+
+    spToggleOcr();
+
+
+
+    $('#spMask').classList.add('show');
+
+    setTimeout(function(){ try{ $('#spFName').focus(); }catch(_){} }, 80);
+
+  };
+
+
+
+  window.spCloseModal = function(){
+
+    $('#spMask').classList.remove('show');
+
+    editingId = null;
+
+  };
+
+
+
+  function spSetIconPreview(b64){
+
+    var el = $('#spIconPreview');
+
+    if (b64) {
+
+      el.innerHTML = '<img src="data:image/png;base64,' + b64 + '" alt="" />';
+
+    } else {
+
+      el.innerHTML = '<span style="font-size:20px; opacity:.2;">&#x1F4BE;</span>';
+
+    }
+
+  }
+
+
+
+  /* ---- 陪伴模式 → OCR 区块显隐 ---- */
+
+  function spToggleOcr(){
+
+    var isSnap = ($('#spFMode') || {}).value === 'snapshot';
+
+    var w1 = $('#spOcrWrap'), w2 = $('#spOcrRegionsWrap');
+
+    if (w1) w1.style.display = isSnap ? '' : 'none';
+
+    if (w2) w2.style.display = isSnap ? '' : 'none';
+
+  }
+
+
+
+  /* ---- OCR 识别区块编辑器 ---- */
+
+  var OCR_PURPOSES = ['kill','died','downed','victory','defeat','round','mode','score','teammate_down','general'];
+
+  var OCR_PURPOSE_LABELS = {
+
+    kill:'击杀', died:'阵亡', downed:'倒地待救', victory:'胜利', defeat:'失败',
+
+    round:'回合', mode:'模式', score:'比分', teammate_down:'队友倒下', general:'通用'
+
+  };
+
+  function spOcrPurposeOpts(sel){
+
+    return OCR_PURPOSES.map(function(k){
+
+      return '<option value="'+k+'"'+(k===sel?' selected':'')+'>'+(OCR_PURPOSE_LABELS[k]||k)+'</option>';
+
+    }).join('');
+
+  }
+
+  function spRenderOcrRegions(regions){
+
+    var box = $('#spOcrRegions');
+
+    if (!box) return;
+
+    box.innerHTML = '';
+
+    regions = regions || [];
+
+    regions.forEach(function(r){ box.appendChild(spBuildOcrItem(r)); });
+
+  }
+
+  function spBuildOcrItem(r){
+
+    r = r || {};
+
+    var item = document.createElement('div');
+
+    item.className = 'sp-ocr-item';
+
+    item.innerHTML =
+
+      '<button class="ocr-del" type="button" title="删除"><i data-icon="x"></i></button>' +
+
+      '<div class="ocr-row">' +
+
+        '<input class="ocr-name" placeholder="区块名(字母)" value="'+esc(r.name||'')+'" />' +
+
+        '<select class="ocr-purpose">'+spOcrPurposeOpts(r.purpose||'general')+'</select>' +
+
+      '</div>' +
+
+      '<div class="ocr-row">' +
+
+        '<div class="ocr-coords">' +
+
+          '<input class="ocr-x" placeholder="x" value="'+esc(r.x!=null?r.x:'')+'" />' +
+
+          '<input class="ocr-y" placeholder="y" value="'+esc(r.y!=null?r.y:'')+'" />' +
+
+          '<input class="ocr-w" placeholder="w" value="'+esc(r.w!=null?r.w:'')+'" />' +
+
+          '<input class="ocr-h" placeholder="h" value="'+esc(r.h!=null?r.h:'')+'" />' +
+
+        '</div>' +
+
+      '</div>' +
+
+      '<input class="ocr-keywords" placeholder="关键词(逗号分隔，命中即触发)" value="'+esc((r.keywords||[]).join(', '))+'" />';
+
+    item.querySelector('.ocr-del').addEventListener('click', function(){ item.remove(); });
+
+    return item;
+
+  }
+
+  function spCollectOcrRegions(){
+
+    var box = $('#spOcrRegions');
+
+    if (!box) return [];
+
+    var out = [];
+
+    var items = box.querySelectorAll('.sp-ocr-item');
+
+    items.forEach(function(it){
+
+      var name = (it.querySelector('.ocr-name').value || '').trim();
+
+      var kw = (it.querySelector('.ocr-keywords').value || '').split(/[,，、\s]+/).map(function(x){return x.trim();}).filter(Boolean);
+
+      if (!name && kw.length === 0) return;
+
+      out.push({
+
+        name: name,
+
+        purpose: it.querySelector('.ocr-purpose').value || 'general',
+
+        x: parseFloat(it.querySelector('.ocr-x').value) || 0,
+
+        y: parseFloat(it.querySelector('.ocr-y').value) || 0,
+
+        w: parseFloat(it.querySelector('.ocr-w').value) || 0,
+
+        h: parseFloat(it.querySelector('.ocr-h').value) || 0,
+
+        keywords: kw,
+
+      });
+
+    });
+
+    return out;
+
+  }
+
+
+
+  window.spSave = function(){
+
+    var name = ($('#spFName').value || '').trim();
+
+    var path = ($('#spFPath').value || '').trim();
+
+    if (!path) { toastMsg('请填写 exe 路径', 'err'); $('#spFPath').focus(); return; }
+
+    if (!name) { name = path.replace(/\\/g, '/').split('/').pop().replace(/\.[^.]+$/, ''); $('#spFName').value = name; }
+
+
+
+    // 陪伴模式/高性能/OCR 区块已统一在「知识库」每条软件里配置（保存时镜像进本档案），
+
+    // 故软件档案只负责 exe 关联 + 图标 + 名称 + 类型，不再在此编辑模式/OCR。
+
+    var data = {
+
+      exe_path: path,
+
+      display_name: name,
+
+      kind: $('#spFKind').value,
+
+      keywords: ($('#spFKeywords').value || '').split(/[,，、\s]+/).map(function(x){ return x.trim(); }).filter(Boolean),
+
+      knowledge: ($('#spFKnowledge').value || '').trim(),
+
+      bind_companion: $('#spFBind').checked,
+
+    };
+
+
+
+    if (typeof Backend === 'undefined' || typeof Backend.addSoftwareProfile !== 'function') {
+
+      toastMsg('后端未连接', 'err'); return;
+
+    }
+
+
+
+    var promise;
+
+    if (editingId) {
+
+      data.id = editingId;
+
+      promise = Backend.updateSoftwareProfile(data);
+
+    } else {
+
+      promise = Backend.addSoftwareProfile(data);
+
+    }
+
+
+
+    promise.then(function(r){
+
+      if (r && r.success) {
+
+        spCloseModal();
+
+        spRefresh();
+
+      } else {
+
+        toastMsg((r && r.error) ? ('保存失败：' + r.error) : '保存失败', 'err');
+
+      }
+
+    });
+
+  };
+
+
+
+  window.spDeleteCurrent = function(){
+
+    if (!editingId) return;
+
+    spConfirmDelete(editingId);
+
+  };
+
+
+
+  window.spConfirmDelete = async function(pid){
+
+    if (!pid) return;
+
+    if (!await uiConfirm('确定要删除这条软件档案吗？', { danger: true, okText: '删除' })) return;
+
+
+
+    if (typeof Backend === 'undefined' || typeof Backend.deleteSoftwareProfile !== 'function') return;
+
+    Backend.deleteSoftwareProfile({id: pid}).then(function(r){
+
+      if (r && r.success) {
+
+        spRefresh();
+
+      } else {
+
+        toastMsg((r && r.error) || '删除失败', 'err');
+
+      }
+
+    });
+
+  };
+
+
+
+  /* ================================================================
+
+   进程选择器（从活跃进程添加）
+
+   ================================================================ */
+
+
+
+  var procCache = [];  // 缓存已提取图标的进程
+
+
+
+  window.spOpenProcPicker = function(){
+
+    selectedProc = null;
+
+    $('#spBtnAddProc').disabled = true;
+
+    $('#spProcMask').classList.add('show');
+
+    spLoadProcesses();
+
+  };
+
+
+
+  window.spCloseProcPicker = function(){
+
+    $('#spProcMask').classList.remove('show');
+
+    selectedProc = null;
+
+  };
+
+
+
+  function spLoadProcesses(){
+
+    var listEl = $('#spProcList');
+
+    listEl.innerHTML = '<div style="padding:20px; text-align:center; color:var(--ink-3);">正在枚举进程...</div>';
+
+
+
+    if (typeof Backend === 'undefined' || typeof Backend.enumerateProcesses !== 'function') {
+
+      listEl.innerHTML = '<div style="padding:20px; text-align:center; color:var(--ink-3);">后端不可用</div>';
+
+      return;
+
+    }
+
+
+
+    Backend.enumerateProcesses().then(function(r){
+
+      if (!r || !r.success || !Array.isArray(r.processes) || r.processes.length === 0) {
+
+        listEl.innerHTML = '<div style="padding:20px; text-align:center; color:var(--ink-3);">未发现可添加的进程</div>';
+
+        return;
+
+      }
+
+
+
+      procCache = r.processes;
+
+      listEl.innerHTML = '';
+
+
+
+      for (var i = 0; i < r.processes.length; i++) {
+
+        var proc = r.processes[i];
+
+        var item = document.createElement('div');
+
+        item.className = 'proc-item';
+
+        item.setAttribute('data-pid', proc.pid);
+
+
+
+        item.innerHTML =
+
+          '<div class="pi-icon"><span style="font-size:14px; opacity:.3;">&#x1F4BE;</span></div>' +
+
+          '<div class="pi-info">' +
+
+            '<div class="pi-name">' + esc(proc.name) + '</div>' +
+
+            '<div class="pi-path">' + esc(proc.exe_path) + '</div>' +
+
+          '</div>';
+
+
+
+        (function(p){
+
+          item.addEventListener('click', function(){
+
+            // 取消其他选中
+
+            var all = listEl.querySelectorAll('.proc-item');
+
+            for (var j = 0; j < all.length; j++) all[j].classList.remove('selected');
+
+            item.classList.add('selected');
+
+            selectedProc = p;
+
+            $('#spBtnAddProc').disabled = false;
+
+          });
+
+        })(proc);
+
+
+
+        listEl.appendChild(item);
+
+      }
+
+    });
+
+  }
+
+
+
+  window.spAddSelectedProc = function(){
+
+    if (!selectedProc) return;
+
+    spCloseProcPicker();
+
+
+
+    // 用选中的进程信息预填表单并直接打开新增弹窗
+
+    var name = selectedProc.name.replace(/\.[^.]+$/, '');
+
+    $('#spFName').value = name;
+
+    $('#spFPath').value = selectedProc.exe_path;
+
+    $('#spFTier').value = 'regular';
+
+    $('#spFKind').value = 'app';
+
+    $('#spFKeywords').value = '';
+
+    $('#spFKnowledge').value = '';
+
+    $('#spFBind').checked = false;
+
+
+
+    // 尝试异步提取图标
+
+    spSetIconPreview('');
+
+    if (typeof Backend !== 'undefined' && typeof Backend.extractIcon === 'function') {
+
+      Backend.extractIcon({exe_path: selectedProc.exe_path}).then(function(r){
+
+        if (r && r.success && r.icon_b64) {
+
+          spSetIconPreview(r.icon_b64);
+
+        }
+
+      });
+
+    }
+
+
+
+    // 类型仍按进程名推断（仅 kind 字段；模式/高性能/OCR 在「知识库」配置）
+
+    var _isGame = /delta|game|launcher|wegame|epic|steam/i.test(selectedProc.name);
+
+    $('#spFKind').value = _isGame ? 'game' : 'app';
+
+
+
+    editingId = null;  // 新增模式
+
+    $('#spModalTitle').textContent = '新增软件档案';
+
+    $('#spBtnDelete').style.display = 'none';
+
+    $('#spMask').classList.add('show');
+
+    setTimeout(function(){ try{ $('#spFName').focus(); }catch(_){} }, 80);
+
+  };
+
+
+
+  /* ================================================================
+
+     初始化
+
+     ================================================================ */
+
+
+
+  // 点击遮罩关闭弹窗
+
+  $('#spMask').addEventListener('click', function(e){
+
+    if (e.target === this) spCloseModal();
+
+  });
+
+  $('#spProcMask').addEventListener('click', function(e){
+
+    if (e.target === this) spCloseProcPicker();
+
+  });
+
+
+
+  // ESC 关闭
+
+  document.addEventListener('keydown', function(e){
+
+    if (e.key === 'Escape') {
+
+      if ($('#spMask').classList.contains('show')) spCloseModal();
+
+      if ($('#spProcMask').classList.contains('show')) spCloseProcPicker();
+
+    }
+
+  });
+
+
+
+  // 陪伴模式切换 → OCR 区块显隐
+
+  var spModeEl = $('#spFMode');
+
+  if (spModeEl) spModeEl.addEventListener('change', spToggleOcr);
+
+  // 添加识别区块
+
+  var spOcrAddBtn = $('#spOcrAdd');
+
+  if (spOcrAddBtn) spOcrAddBtn.addEventListener('click', function(){
+
+    var box = $('#spOcrRegions');
+
+    if (box) box.appendChild(spBuildOcrItem({}));
+
+  });
+
+
+
+  // 页面加载时拉取数据
+
+  spRefresh();
+
+
+
+})();
+
+</script>
+
+<script src="/redesign/theme_manager.js?v=20261013d"></script>
+</body>
+
+</html>
+

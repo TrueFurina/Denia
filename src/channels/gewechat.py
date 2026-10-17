@@ -1,0 +1,254 @@
+"""Gewechat 微信通道（G 脚手架）：通过 Gewechat 网关把微信个人号接入同一个 AI 大脑。
+
+Gewechat 是一个 Docker 服务，对外暴露 REST API（默认 http://<host>:2531/v2/api/<接口>），
+所有请求带 X-GEWE-TOKEN 头。登录走 getQr→checkQr 扫码；发消息 postText/postImage/postVideo；
+收消息靠在 Gewechat 后台配置的回调 URL（本通道起一个 HTTP 回调服务接收）。
+
+⚠️ 微信个人号无官方 API，Gewechat 属逆向灰色方案，有封号风险——务必用微信小号，且同省部署更稳。
+依赖：无新增三方包（urllib + 标准库 http.server 起回调）。
+接口具体路径以你部署的 Gewechat 版本为准（本文按社区常见命名，联调时核对）。
+"""
+from __future__ import annotations
+
+import asyncio
+import json
+import logging
+import threading
+import urllib.request
+from typing import Any, Optional
+
+try:
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+except Exception:  # noqa: BLE001
+    ThreadingHTTPServer = None  # type: ignore[assignment]
+
+from ..event_bus import Event, EventType
+from .base import Channel
+from . import media_ingest as media
+
+logger = logging.getLogger("channels.gewechat")
+
+
+class GeweClient:
+    """Gewechat REST 客户端（纯逻辑，可离线 mock）。"""
+
+    def __init__(self, base_url: str, token: str = "") -> None:
+        self.base_url = base_url.rstrip("/")
+        self.token = token
+        self.app_id: Optional[str] = None
+
+    def _headers(self) -> dict:
+        h: dict[str, str] = {"Content-Type": "application/json"}
+        if self.token:
+            h["X-GEWE-TOKEN"] = self.token
+        return h
+
+    def _url(self, path: str) -> str:
+        return f"{self.base_url}/v2/api/{path.lstrip('/')}"
+
+    def _post(self, path: str, params: dict) -> dict:
+        url = self._url(path)
+        body = json.dumps(params, ensure_ascii=False).encode("utf-8")
+        req = urllib.request.Request(url, data=body, headers=self._headers(), method="POST")
+        with urllib.request.urlopen(req, timeout=15) as resp:  # noqa: S310
+            raw = resp.read().decode("utf-8", "replace")
+        return json.loads(raw)
+
+    # ---- 登录 ----
+    def get_token(self) -> str:
+        data = self._post("login/GetToken", {})
+        tok = (data.get("data") or {}).get("token") or data.get("token") or ""
+        if tok:
+            self.token = tok
+        return tok
+
+    def get_qr(self, app_id: str = "") -> dict:
+        return self._post("login/GetQr", {"appId": app_id})
+
+    def check_qr(self, app_id: str, uuid: str, captch_code: str = "") -> dict:
+        return self._post("login/CheckQr", {"appId": app_id, "uuid": uuid, "captchCode": captch_code})
+
+    # ---- 发消息 ----
+    def post_text(self, to_wxid: str, content: str, ats: str = "") -> dict:
+        return self._post("message/PostText", {"appId": self.app_id, "toWxid": to_wxid, "content": content, "ats": ats})
+
+    def post_image(self, to_wxid: str, img_url: str) -> dict:
+        return self._post("message/PostImage", {"appId": self.app_id, "toWxid": to_wxid, "imgUrl": img_url})
+
+    def post_video(self, to_wxid: str, video_url: str, thumb_url: str = "", duration: int = 0) -> dict:
+        return self._post("message/PostVideo", {"appId": self.app_id, "toWxid": to_wxid, "videoUrl": video_url, "thumbUrl": thumb_url, "duration": duration})
+
+
+class GewechatChannel(Channel):
+    """微信通道：把微信个人号消息喂给大脑，并把大脑决策发回微信。"""
+
+    name = "wechat"
+
+    def __init__(self, bus, dialogue, llm, cfg_section) -> None:
+        super().__init__(bus, dialogue, llm, cfg_section)
+        gw = getattr(cfg_section, "gewechat", None)
+        if gw is None:
+            raise ValueError("config.channels.wechat.gewechat 缺失")
+        self._client = GeweClient(
+            getattr(gw, "base_url", "") or "http://127.0.0.1:2531",
+            getattr(gw, "token", "") or "",
+        )
+        self._callback_host = getattr(gw, "callback_host", "") or "0.0.0.0"
+        self._callback_port = int(getattr(gw, "callback_port", 9912) or 9912)
+        self._allow_users = [str(x) for x in (getattr(gw, "allow_users", []) or [])]
+        self._block_users = [str(x) for x in (getattr(gw, "block_users", []) or [])]
+        mcfg = getattr(gw, "media", None)
+        self._ingest_images = bool(getattr(mcfg, "ingest_images", True)) if mcfg else True
+        self._ingest_urls = bool(getattr(mcfg, "ingest_urls", True)) if mcfg else True
+        self._watch_videos = bool(getattr(mcfg, "watch_videos", False)) if mcfg else True
+        self._store_to_memory = bool(getattr(mcfg, "store_to_memory", True)) if mcfg else True
+        self._queue: "asyncio.Queue[dict]" = asyncio.Queue()
+        self._loop: Optional[asyncio.AbstractEventLoop] = None
+        self._httpd = None
+
+    # ---------------- 主循环 ----------------
+    async def _run(self) -> None:
+        self._loop = asyncio.get_running_loop()
+        self._bus.subscribe(EventType.AI_DECISION, self._on_decision)
+        if ThreadingHTTPServer is not None:
+            self._start_callback_server()
+        await self._ensure_login()
+        while self._running:
+            try:
+                item = await asyncio.wait_for(self._queue.get(), timeout=1.0)
+            except asyncio.TimeoutError:
+                continue
+            await self._handle_inbound(item)
+
+    def _start_callback_server(self) -> None:
+        channel = self
+
+        class _Handler(BaseHTTPRequestHandler):
+            def do_POST(self) -> None:  # noqa: N802
+                try:
+                    n = int(self.headers.get("Content-Length", 0) or 0)
+                    raw = self.rfile.read(n) if n else b""
+                    data = json.loads(raw.decode("utf-8", "replace")) if raw else {}
+                except Exception:  # noqa: BLE001
+                    data = {}
+                try:
+                    if channel._loop is not None:
+                        channel._loop.call_soon_threadsafe(channel._queue.put_nowait, data)
+                except Exception:  # noqa: BLE001
+                    pass
+                self.send_response(200)
+                self.end_headers()
+                self.wfile.write(b"{}")
+
+            def log_message(self, *a) -> None:  # 静默
+                pass
+
+        try:
+            self._httpd = ThreadingHTTPServer((self._callback_host, self._callback_port), _Handler)
+            threading.Thread(target=self._httpd.serve_forever, daemon=True).start()
+            logger.info("Gewechat 回调服务已启动 http://%s:%s", self._callback_host, self._callback_port)
+        except Exception:  # noqa: BLE001
+            logger.exception("Gewechat 回调服务启动失败（不影响登录/发消息）")
+
+    async def _ensure_login(self) -> None:
+        try:
+            tok = await asyncio.to_thread(self._client.get_token)
+            logger.info("Gewechat token 获取%s", "成功" if tok else "失败")
+            qr = await asyncio.to_thread(self._client.get_qr, "")
+            uuid = (qr.get("data") or {}).get("uuid") or ""
+            logger.info("Gewechat 登录二维码已生成（请在 Gewechat 管理页扫码）；uuid=%s", uuid)
+            # 轮询 checkQr 直到扫码成功（封顶 ~3 分钟，避免永久阻塞）；成功后缓存 appId。
+            for _ in range(60):
+                if not self._running:
+                    break
+                res = await asyncio.to_thread(self._client.check_qr, "", uuid)
+                if (res.get("code") == 0 or (res.get("data") or {}).get("code") == 0) and (res.get("data") or {}).get("appId"):
+                    self._client.app_id = (res.get("data") or {}).get("appId")
+                    logger.info("Gewechat 登录成功 appId=%s", self._client.app_id)
+                    return
+                await asyncio.sleep(3)
+            logger.warning("Gewechat 未在限定时间内扫码登录；回调收消息需先登录成功")
+        except Exception:  # noqa: BLE001
+            logger.exception("Gewechat 登录初始化失败（可能网关未启动或路径不符）")
+
+    # ---------------- 入站消息 ----------------
+    async def _handle_inbound(self, data: dict) -> None:
+        # Gewechat 回调结构以部署版本为准；此处做防御式解析。
+        payload = data.get("data", data) if isinstance(data, dict) else {}
+        if not isinstance(payload, dict):
+            return
+        from_wxid = payload.get("fromWxid") or payload.get("fromWxId") or ""
+        content = payload.get("content") or payload.get("text") or ""
+        msg_type = payload.get("msgType")
+        if not from_wxid:
+            return
+        if self._block_users and str(from_wxid) in self._block_users:
+            return
+        if self._allow_users and str(from_wxid) not in self._allow_users:
+            return
+
+        # 媒体（图片/链接）摄入
+        extra_ctx: list[str] = []
+        try:
+            extra_ctx = await media.ingest_media(
+                self._llm, None, str(content), self._extract_media(payload),
+                ingest_images=self._ingest_images, ingest_urls=self._ingest_urls,
+                store_to_memory=self._store_to_memory,
+                watch_videos=self._watch_videos,
+            )
+        except Exception:  # noqa: BLE001
+            logger.exception("微信媒体摄入异常（继续按纯文本）")
+
+        combined = str(content)
+        if extra_ctx:
+            combined = ((str(content) + "\n\n" + "\n".join(extra_ctx)).strip()
+                        if content else "\n".join(extra_ctx))
+        if not combined.strip():
+            return
+        reply_target = {"to_wxid": from_wxid, "msg_type": msg_type}
+        try:
+            await self._feed_brain(combined, reply_target, source="wechat")
+        except Exception:  # noqa: BLE001
+            logger.exception("把微信消息喂给大脑失败")
+
+    @staticmethod
+    def _extract_media(payload: dict) -> list[dict]:
+        out: list[dict] = []
+        for img in (payload.get("images") or []):
+            if isinstance(img, dict) and img.get("url"):
+                out.append({"type": "image", "url": img["url"]})
+            elif isinstance(img, str):
+                out.append({"type": "image", "url": img})
+        return out
+
+    # ---------------- 决策回发 ----------------
+    async def _on_decision(self, event: Event) -> None:
+        d = event.data or {}
+        if d.get("channel") != self.name:
+            return
+        if d.get("failed"):
+            return
+        target = d.get("reply_target") or {}
+        to_wxid = target.get("to_wxid")
+        text = (d.get("text") or "").strip()
+        if not to_wxid:
+            return
+        if text:
+            await self._safe_post(self._client.post_text, to_wxid, text)
+        for m in (d.get("media") or []):
+            self._send_media_item(to_wxid, m)
+
+    def _send_media_item(self, to_wxid: str, m: dict) -> None:
+        f = m.get("file") or m.get("url") or ""
+        if not f:
+            return
+        if m.get("type") == "video":
+            self._client.post_video(to_wxid, f)
+        else:
+            self._client.post_image(to_wxid, f)
+
+    def _safe_post(self, fn, *args) -> None:
+        try:
+            fn(*args)
+        except Exception:  # noqa: BLE001
+            logger.exception("Gewechat 发送失败")
