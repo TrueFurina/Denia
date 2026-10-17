@@ -59,11 +59,11 @@ from .notify_geom import (  # noqa: E402
     _notify_current_monitor_rect, _notify_geom, _notify_park_out,
     _notify_rects_for_monitor, _notify_set_pos, _notify_show_in, _notify_slide,
 )
+from .ui_state import STATE  # 窗口/运行时共享状态（原模块级全局，2026-10-17 收敛）
 
 # /local_img 路由的额外白名单目录（2026-10-03 聊天图片）：char_banners 之外，
 # 聊天发图落盘目录（ActivityStore root/images/chat，root 可能被配置自定义）
 # 由 _save_chat_images() 首次落盘时注册进来；HTTP handler 运行时读取本列表。
-_LOCAL_IMG_EXTRA_DIRS: list = []
 
 
 def register_local_img_dir(path: str) -> bool:
@@ -81,8 +81,8 @@ def register_local_img_dir(path: str) -> bool:
         _abs = os.path.abspath(path)
         if not os.path.isdir(_abs):
             return False
-        if _abs not in _LOCAL_IMG_EXTRA_DIRS:
-            _LOCAL_IMG_EXTRA_DIRS.append(_abs)
+        if _abs not in STATE.local_img_extra_dirs:
+            STATE.local_img_extra_dirs.append(_abs)
         return True
     except Exception:  # noqa: BLE001
         return False
@@ -457,7 +457,7 @@ class CharacterAPI:
         fe_gap = (now - self._last_ui_ping) if self._last_ui_ping else -1.0
         wv2 = 0
         try:
-            wv2 = len(_WV2_CONTROLS)
+            wv2 = len(STATE.wv2_controls)
         except Exception:
             pass
         return {
@@ -525,11 +525,10 @@ class CharacterAPI:
         仅当渲染进程仍 IsConnected 时才 Reload（真正死了重载无效，须重启软件）。
         调用在守护线程上、且全程 try/except，绝不影响后端事件循环。
         """
-        global _PET_RECOVER_LAST
         now = time.time()
-        if now - _PET_RECOVER_LAST < 30.0:
+        if now - STATE.pet_recover_last < 30.0:
             return
-        _PET_RECOVER_LAST = now
+        STATE.pet_recover_last = now
         # 【2026-09-04 16:55 冻结实锤】看门狗线程直接调 cv2.Reload()（WebView2 要求
         # 必须在 GUI 线程调用，跨线程调它 → 整个进程冻结：日志 16:55:50 起全停 4 分钟+，
         # 所有线程无输出）。默认禁用自动 Reload；确要启用设环境变量 UI_RELOAD_RECOVER=1，
@@ -540,7 +539,7 @@ class CharacterAPI:
                            "16:55:50 实证）；前端无响应仅记录，不影响后端运行")
             return
         pet_uid = getattr(getattr(self, "_pet_win", None), "uid", None)
-        for uid, ctrl in list(_WV2_CONTROLS.items()):
+        for uid, ctrl in list(STATE.wv2_controls.items()):
             if uid == pet_uid:
                 continue  # 桌宠窗不重载（GPU 争用卡顿，重载雪崩）
             try:
@@ -618,11 +617,10 @@ class CharacterAPI:
     # ======== 桌宠模式（桌面浮动看板娘窗口：点击互动 / 拖动 / 右键面板） ========
     def set_windows(self, main_win=None, pet_win=None) -> None:
         """注入主窗口 / 桌宠窗口引用（main.py 创建窗口后调用）。"""
-        global _PET_WIN, _MAIN_WIN
         self._main_win = main_win
         self._pet_win = pet_win
-        _PET_WIN = pet_win
-        _MAIN_WIN = main_win
+        STATE.pet_win = pet_win
+        STATE.main_win = main_win
         self._main_win_closed = False
         self._pet_pos = None
         self._pet_base = None
@@ -760,26 +758,25 @@ class CharacterAPI:
         取消 100% 生效、且 window.on_top 可直读真实状态 → 右键文案与窗口永远一致。
         钉上时仍起每 1s 保活线程重新 on_top=True，恒盖过音乐软件等其它 TopMost 窗口。
         """
-        global _PET_TOPMOST, _PET_KEEPALIVE_ON
         try:
-            _PET_TOPMOST = not _PET_TOPMOST
-            if _PET_TOPMOST:
+            STATE.pet_topmost = not STATE.pet_topmost
+            if STATE.pet_topmost:
                 _pet_install_topmost_guard()   # 钉最前：启动每 1s 保活
             else:
-                _PET_KEEPALIVE_ON = False       # 关保活线程
+                STATE.pet_keepalive = False       # 关保活线程
             _pet_apply_topmost()
             # 直读 window.on_top 真实状态（不再读 WS_EX_TOPMOST）
-            on_top = _PET_TOPMOST
+            on_top = STATE.pet_topmost
             if self._pet_win is not None:
                 try:
                     on_top = bool(self._pet_win.on_top)
                 except Exception:  # noqa: BLE001
                     pass
-            logger.info("桌宠置顶: %s (win_on_top=%s)", _PET_TOPMOST, on_top)
+            logger.info("桌宠置顶: %s (win_on_top=%s)", STATE.pet_topmost, on_top)
             return {"ok": True, "on_top": on_top}
         except Exception as e:  # noqa: BLE001
             logger.warning("切换桌宠置顶失败: %s", e)
-            return {"ok": False, "error": str(e), "on_top": _PET_TOPMOST}
+            return {"ok": False, "error": str(e), "on_top": STATE.pet_topmost}
 
     def pet_is_on_top(self) -> dict:
         """返回桌宠当前是否真的置顶（直读 window.on_top 真实状态，而非 Python 标志）。"""
@@ -788,20 +785,20 @@ class CharacterAPI:
                 return {"ok": True, "on_top": bool(self._pet_win.on_top)}
         except Exception:  # noqa: BLE001
             pass
-        return {"ok": True, "on_top": _PET_TOPMOST}
+        return {"ok": True, "on_top": STATE.pet_topmost}
 
     def pet_set_capture_hidden(self, hidden: bool) -> dict:
         """切换桌宠对屏幕捕获是否隐身（截图/录屏/共享都抓不到；自己屏上照常可见）。"""
         try:
             ok = _pet_set_capture_hidden(bool(hidden))
-            return {"ok": ok, "hidden": _PET_CAPTURE_HIDDEN}
+            return {"ok": ok, "hidden": STATE.pet_capture_hidden}
         except Exception as e:  # noqa: BLE001
             logger.warning("切换桌宠截屏隐身失败: %s", e)
             return {"ok": False, "error": str(e)}
 
     def pet_is_capture_hidden(self) -> dict:
         """返回桌宠是否对屏幕捕获隐身（供右键菜单显示真实状态）。"""
-        return {"ok": True, "hidden": _PET_CAPTURE_HIDDEN}
+        return {"ok": True, "hidden": STATE.pet_capture_hidden}
 
     def pet_toggle(self) -> dict:
         """切换桌宠显示/隐藏。"""
@@ -6684,8 +6681,7 @@ class CharacterAPI:
     # ==========================================================
     def open_bailian_console(self, url_key: str = "free_quota") -> dict:
         """在应用内打开百炼控制台窗口（真实额度 / 用量 / 开「用完即停」）。"""
-        global _BAILIAN_CONSOLE_WIN
-        win = _BAILIAN_CONSOLE_WIN
+        win = STATE.bailian_console_win
         if win is None:
             # 兜底：理论上启动期已建；若缺失才尝试重建（非 GUI 线程有风险，仅兜底）。
             try:
@@ -6703,16 +6699,15 @@ class CharacterAPI:
             win.restore()
             win.show()
             # Step2：首次打开后启动 60s 周期注入（只起一次；失败静默不影响主功能）。
-            global _BAILIAN_INJECT_TIMER
-            if _BAILIAN_INJECT_TIMER is None:
+            if STATE.bailian_inject_timer is None:
                 try:
                     t = threading.Timer(3.0, _bailian_inject_loop, args=(win,))
                     t.daemon = True
-                    _BAILIAN_INJECT_TIMER = t
+                    STATE.bailian_inject_timer = t
                     t.start()
                     logger.info("[百炼控制台] 取数注入循环已启动（60s/次）")
                 except Exception:  # noqa: BLE001
-                    _BAILIAN_INJECT_TIMER = None
+                    STATE.bailian_inject_timer = None
             return {"success": True, "url": url}
         except Exception as e:  # noqa: BLE001
             logger.exception("[百炼控制台] 打开失败")
@@ -6744,7 +6739,7 @@ class CharacterAPI:
 
     def get_bailian_console_status(self) -> dict:
         """前端额度卡轮询：百炼控制台内嵌窗口是否可用、当前已加载哪个页面。"""
-        win = _BAILIAN_CONSOLE_WIN
+        win = STATE.bailian_console_win
         if win is None:
             return {"available": False}
         return {
@@ -7017,7 +7012,7 @@ class CharacterAPI:
             # 【2026-09-04 18:28 深层根因修复】不再经线程池 + 阻塞式 evaluate_js：
             # 直接用主窗 CoreWebView2 的 ExecuteScriptAsync（fire-and-forget，零阻塞、
             # 零线程创建——线程池 submit 会动态开新线程，已实锤在主循环线程上挂死）。
-            ctrl = _WV2_CONTROLS.get(getattr(win, "uid", None))
+            ctrl = STATE.wv2_controls.get(getattr(win, "uid", None))
             if ctrl is not None:
                 # 【2026-09-05 冻结修复】ctrl.CoreWebView2 / cv2.IsConnected 是跨套间 COM
                 # 调用，在后台线程直接读会触发 STA 同步封送阻塞（同 _wv2_broadcast 根因）。
@@ -7047,7 +7042,7 @@ class CharacterAPI:
                     except Exception:  # noqa: BLE001
                         pass
 
-                _WV2_BC_EXECUTOR.submit(_do)
+                STATE.wv2_bc_executor.submit(_do)
         except Exception:
             pass
 
@@ -16538,8 +16533,8 @@ class CharacterAPI:
         os.makedirs(out_dir, exist_ok=True)
         try:
             _abs = os.path.abspath(out_dir)
-            if _abs not in _LOCAL_IMG_EXTRA_DIRS:
-                _LOCAL_IMG_EXTRA_DIRS.append(_abs)
+            if _abs not in STATE.local_img_extra_dirs:
+                STATE.local_img_extra_dirs.append(_abs)
         except Exception:  # noqa: BLE001
             pass
         urls = []
@@ -17341,9 +17336,8 @@ def _ensure_web_server() -> str:
     作为主窗口/桌宠页面的加载源（替代 file://，规避 WebView2 对 file:// 的
     各种加载限制导致的空白/黑屏）。模块级单例，只起一次。返回基础 URL。
     """
-    global _WEB_SERVER_BASE, _WEB_START_TOKEN
-    if _WEB_SERVER_BASE:
-        return _WEB_SERVER_BASE
+    if STATE.web_server_base:
+        return STATE.web_server_base
     import http.server
     import socketserver
     import re as _re
@@ -17352,7 +17346,7 @@ def _ensure_web_server() -> str:
     # 强制 WebView2 永远拿不到磁盘缓存的旧 JS/CSS（实测 no-store / 启动清缓存都不可靠：
     # 旧 ?v=2 的 morph_icons.js 一旦被缓存，跑的就是无 _cb 时间戳逻辑的老 JS，
     # 导致 SPA 切栏一直拉旧版 HTML、旧聊天页 gsap.from(opacity:0) 卡透明态）。
-    _WEB_START_TOKEN = str(int(time.time()))
+    STATE.web_start_token = str(int(time.time()))
     _V_RE = _re.compile(r'\?v=[^"\'>\s]+')
     # 兜底：给【未带 ?v=】的本地 CSS/JS 资源也补上启动令牌。
     # 旧逻辑只重写已有的 ?v=，若某 HTML 以 <link href="x.css"> / <script src="x.js">
@@ -17431,7 +17425,7 @@ def _ensure_web_server() -> str:
                             os.path.join(web_root, "..", "..", "..", "data", "char_avatars")),
                     ]
                     try:
-                        _allowed.extend([os.path.abspath(_d) for _d in list(_LOCAL_IMG_EXTRA_DIRS)])
+                        _allowed.extend([os.path.abspath(_d) for _d in list(STATE.local_img_extra_dirs)])
                     except Exception:  # noqa: BLE001
                         pass
                     _full = os.path.abspath(_p)
@@ -17508,7 +17502,7 @@ def _ensure_web_server() -> str:
                     from urllib.parse import urlparse, parse_qs, unquote
                     _q = parse_qs(urlparse(self.path).query)
                     _st = unquote(_q.get("state", ["hidden"])[0])
-                    _NOTIFY_UI_STATE[0] = _st  # 保留原始值（show/hidden/complete）
+                    STATE.notify_ui_state[0] = _st  # 保留原始值（show/hidden/complete）
                     # 🔑 连上(complete)后约 1.8s 自动滑出窗口：事件驱动、只触发一次，
                     # 不靠心跳轮询（轮询每 0.5s 重驱动滑窗会在多次切换时闪动）。同时消除
                     # "卡片经 JS 2.2s 隐藏后、窗口仍停在屏内"的空深色框窗口。
@@ -17587,7 +17581,7 @@ def _ensure_web_server() -> str:
                         and '..' not in _rel and os.path.isfile(os.path.join(web_root, _rel))):
                     try:
                         with open(os.path.join(web_root, _rel), 'r', encoding='utf-8') as _f:
-                            _html = _stamp_html(_f.read(), _WEB_START_TOKEN, _rel)
+                            _html = _stamp_html(_f.read(), STATE.web_start_token, _rel)
                         _data = _html.encode('utf-8')
                         self.send_response(200)
                         self.send_header('Content-Type', 'text/html; charset=utf-8')
@@ -17608,7 +17602,7 @@ def _ensure_web_server() -> str:
                             _rel2 = os.path.relpath(fpath, web_root).replace('\\', '/')
                         except Exception:  # noqa: BLE001
                             _rel2 = ''
-                        _html = _stamp_html(_f.read(), _WEB_START_TOKEN, _rel2)
+                        _html = _stamp_html(_f.read(), STATE.web_start_token, _rel2)
                     _data = _html.encode("utf-8")
                     self.send_response(200)
                     self.send_header("Content-Type", "text/html; charset=utf-8")
@@ -17627,13 +17621,11 @@ def _ensure_web_server() -> str:
     srv = _TCPServer(("127.0.0.1", 8766), _Handler)
     t = threading.Thread(target=srv.serve_forever, daemon=True, name="web_static")
     t.start()
-    _WEB_SERVER_BASE = "http://127.0.0.1:8766"
-    logger.info("本地静态 HTTP 服务已启动: %s (根目录 %s, 启动令牌 %s)", _WEB_SERVER_BASE, web_root, _WEB_START_TOKEN)
-    return _WEB_SERVER_BASE
+    STATE.web_server_base = "http://127.0.0.1:8766"
+    logger.info("本地静态 HTTP 服务已启动: %s (根目录 %s, 启动令牌 %s)", STATE.web_server_base, web_root, STATE.web_start_token)
+    return STATE.web_server_base
 
 
-_WEB_SERVER_BASE: str = ""
-_WEB_START_TOKEN: str = ""
 
 
 # ==========================================================
@@ -17652,15 +17644,12 @@ _WEB_START_TOKEN: str = ""
 #
 # 修复方式：整体替换 EdgeChrome.__init__（复制 pywebview 6.2.1 官方实现，
 # 仅改 UserDataFolder + 追加参数），必须在 webview.start() 之前完成。
-_WV2_CONTROLS: dict = {}  # uid -> WebView2 控件（后端原生推送聊天刷新用）
 
 # 【防卡死·2026-09-03】WebView2 推送专用线程池。
 # PostWebMessageAsJson 在渲染进程挂死时会跨线程 COM 阻塞调用方线程，
 # 若发生在事件循环线程上会冻结整软件。故所有推送都提交到本池，事件循环永不等待。
-_WV2_BC_EXECUTOR = ThreadPoolExecutor(max_workers=2, thread_name_prefix="wv2-bc")
 
 # 通知窗 UI 状态（页面经 /notify_state 回报）：show=卡片已渲染应展开 / hidden=收缩
-_NOTIFY_UI_STATE = ["hidden"]
 
 # =====================================================================
 # 通知浮窗双模（2026-09-05 定版·默认透明）
@@ -17719,11 +17708,11 @@ def _wv2_broadcast(payload: dict) -> None:
     """
     import json as _json
     msg = _json.dumps(payload, ensure_ascii=False)
-    ctrls = list(_WV2_CONTROLS.values())
+    ctrls = list(STATE.wv2_controls.values())
     if not ctrls:
         return
     if payload.get("type") == "pet_tip":
-        logger.info("[pet_tip] 广播目标窗口数=%d uids=%s", len(ctrls), list(_WV2_CONTROLS.keys()))
+        logger.info("[pet_tip] 广播目标窗口数=%d uids=%s", len(ctrls), list(STATE.wv2_controls.keys()))
 
     def _post_one(ctrl, m):
         try:
@@ -17780,7 +17769,6 @@ except Exception:  # noqa: BLE001
     logger.warning("agent_confirm 广播器注册失败（确认弹窗可能不弹）")
 
 
-_GUI_PROBE_STARTED = False
 _GUI_STALL_S = 6.0          # GUI 线程停滞判定阈值（秒）：beat 超此时间未刷新即判定卡死并抓全线程栈
 _FREEZE_DUMPS: list = []   # 最近几次 GUI 冻结现场 dump 文件绝对路径（供开发者页健康面板读取/导出）
 
@@ -17799,10 +17787,9 @@ def _start_gui_liveness_probe(win) -> None:
     兜底推送；③ 跟随前台显示器移动通知窗；④ 周期自检（窗口矩形+卡片状态）。
     心跳停超 15s = 消息泵真死 → 转储全线程栈（此时判定才准确）。
     """
-    global _GUI_PROBE_STARTED
-    if _GUI_PROBE_STARTED:
+    if STATE.gui_probe_started:
         return
-    _GUI_PROBE_STARTED = True
+    STATE.gui_probe_started = True
     import sys as _sys
     import threading as _th
     import time as _time
@@ -17843,7 +17830,7 @@ def _start_gui_liveness_probe(win) -> None:
         UI 冻结）。ExecuteScriptAsync 发射后不管、不等待回执，物理上无死锁。
         """
         try:
-            ctrl = _WV2_CONTROLS.get(getattr(win, "uid", None))
+            ctrl = STATE.wv2_controls.get(getattr(win, "uid", None))
             if ctrl is not None:
                 cv2 = getattr(ctrl, "CoreWebView2", None)
                 if cv2 is not None:
@@ -17880,7 +17867,7 @@ def _start_gui_liveness_probe(win) -> None:
             if getattr(mode_notify, "_cmd_q", None):
                 _n = len(getattr(mode_notify, "_cmd_q", None))
                 _pushed = 0
-                for _ctrl in _WV2_CONTROLS.values():
+                for _ctrl in STATE.wv2_controls.values():
                     _cv2 = getattr(_ctrl, "CoreWebView2", None)
                     if _cv2 is not None:
                         _fire_async(_cv2,
@@ -17908,7 +17895,7 @@ def _start_gui_liveness_probe(win) -> None:
             try:
                 # 🔑 同样遍历所有控件推 __notifyDiag（旧写法只推主窗 → 通知窗卡片状态
                 #    永不回报）。通知窗页面经 /notify_report 把卡片状态回传后端日志。
-                for _ctrl in _WV2_CONTROLS.values():
+                for _ctrl in STATE.wv2_controls.values():
                     _cv2 = getattr(_ctrl, "CoreWebView2", None)
                     if _cv2 is not None:
                         _fire_async(_cv2,
@@ -18052,9 +18039,7 @@ except Exception:  # noqa: BLE001
 #   4) 关闭 → 拦截并隐藏（保留窗口实例），绝不销毁（销毁后重开需运行时 create_window）。
 #   5) 真数字被阿里云控制台登录态锁死：本窗口就是让用户「在 App 里登录一次」的载体。
 # ==========================================================
-_BAILIAN_CONSOLE_WIN = None  # 启动期创建后挂这里，供后端 RPC 读取
 _BAILIAN_REAL_QUOTA = {"data": None}  # inject 从已登录控制台页抓回的最新快照
-_BAILIAN_INJECT_TIMER = None  # 60s 周期注入循环（只起一次）
 
 # 百炼控制台各功能页深链（URL 已核实，非 AI 幻觉）：免费额度页来自社区一致来源，
 # 控制台根用于兜底。免费额度仅华北2·北京地域模型享。
@@ -18108,7 +18093,6 @@ _BAILIAN_INJECT_JS = (
 
 def _bailian_inject_loop(win) -> None:
     """每 60s 向控制台窗口注入一次取数脚本（窗口开着才有效；异常静默，绝不影响主功能）。"""
-    global _BAILIAN_INJECT_TIMER
     try:
         url = getattr(win, "_bailian_loaded_url", "") or ""
         if "bailian.console.aliyun.com" in url:
@@ -18116,11 +18100,11 @@ def _bailian_inject_loop(win) -> None:
     except Exception:  # noqa: BLE001
         logger.debug("[百炼控制台] 注入失败（窗口未就绪或已关闭）", exc_info=True)
     try:
-        _BAILIAN_INJECT_TIMER = threading.Timer(60.0, _bailian_inject_loop, args=(win,))
-        _BAILIAN_INJECT_TIMER.daemon = True
-        _BAILIAN_INJECT_TIMER.start()
+        STATE.bailian_inject_timer = threading.Timer(60.0, _bailian_inject_loop, args=(win,))
+        STATE.bailian_inject_timer.daemon = True
+        STATE.bailian_inject_timer.start()
     except Exception:  # noqa: BLE001
-        _BAILIAN_INJECT_TIMER = None
+        STATE.bailian_inject_timer = None
 
 
 
@@ -18133,7 +18117,6 @@ def create_bailian_console_window(api=None) -> Optional["webview.Window"]:  # no
     复用 edgechromium + 每窗口独立 UserDataFolder（登录态持久化到本机，跨重启保留）。
     绝不在运行时 create_window（会触发 WebView2 STA 死锁）。返回窗口对象或 None。
     """
-    global _BAILIAN_CONSOLE_WIN
     import webview
     placeholder = (
         "<!doctype html><html><head><meta charset='utf-8'>"
@@ -18175,7 +18158,7 @@ def create_bailian_console_window(api=None) -> Optional["webview.Window"]:  # no
         win.events.closing += _on_console_closing
     except Exception:  # noqa: BLE001
         logger.warning("[百炼控制台] 关闭拦截挂载失败（关闭将销毁窗口，重开需重启）", exc_info=True)
-    _BAILIAN_CONSOLE_WIN = win
+    STATE.bailian_console_win = win
     logger.info("[百炼控制台] 内嵌窗口已创建（隐藏，懒加载）")
     return win
 
@@ -18711,14 +18694,14 @@ def create_notify_window(api=None):
         # 🔑 注册通知窗的 CoreWebView2 控件（此前从未注册 → GUI 探针的
         # ExecuteScriptAsync 注入/自检通道一直取不到控件、从未生效）。
         try:
-            if win.uid not in _WV2_CONTROLS:
+            if win.uid not in STATE.wv2_controls:
                 _c = None
                 for _child in win.native.Controls:
                     if getattr(_child, "CoreWebView2", None) is not None:
                         _c = _child
                         break
                 if _c is not None:
-                    _WV2_CONTROLS[win.uid] = _c
+                    STATE.wv2_controls[win.uid] = _c
                     logger.info("[通知浮窗] 已注册 CoreWebView2 控件（uid=%s）", win.uid)
                 else:
                     logger.warning("[通知浮窗] 未在 native.Controls 中找到 WebView2 控件")
@@ -18779,12 +18762,6 @@ def create_notify_window(api=None):
 import ctypes as _ct
 from ctypes import wintypes as _wt
 
-_PET_TOPMOST = False           # 桌宠默认不置顶；用户右键"📌 置顶屏幕"才钉最前
-_PET_RECOVER_LAST = 0.0        # 看门狗重载冷却时间戳（占位保留）
-_PET_KEEPALIVE_ON = False       # 置顶保活线程是否已启动
-_PET_CAPTURE_HIDDEN = False     # 桌宠是否对屏幕捕获隐身（WDA_EXCLUDEFROMCAPTURE）
-_PET_WIN = None                # 桌宠 pywebview 窗口引用（set_windows 时填充，优先用 on_top 控置顶）
-_MAIN_WIN = None               # 主窗口 pywebview 窗口引用（用于给主窗也加透过亲和性）
 
 # —— 关键：声明 user32 调用的 argtypes/restype ——
 # 不声明时 ctypes 默认把参数当 32 位 int 处理；64 位 Windows 的 HWND 是 64 位指针，
@@ -18818,10 +18795,9 @@ def _pet_topmost_keepalive():
     WndProc，仅靠低频保活恒盖过音乐软件等其它 TopMost 窗口（≤1s 间隙人眼不可察）；
     取消置顶时设 _PET_KEEPALIVE_ON=False 让线程退出即解钉。
     """
-    global _PET_KEEPALIVE_ON
-    while _PET_KEEPALIVE_ON:
+    while STATE.pet_keepalive:
         try:
-            if _PET_TOPMOST:
+            if STATE.pet_topmost:
                 _pet_apply_topmost()
         except Exception:  # noqa: BLE001
             pass
@@ -18842,20 +18818,20 @@ def _pet_apply_topmost():
     优先用 pywebview 原生 window.on_top（直接控正确的窗口对象，取消必生效）；
     窗口对象不可用时回退裸 SetWindowPos（物理像素，HWND 声明已修）。
     """
-    if _PET_WIN is not None:
+    if STATE.pet_win is not None:
         try:
-            _PET_WIN.on_top = _PET_TOPMOST
+            STATE.pet_win.on_top = STATE.pet_topmost
             return True
         except Exception as e:  # noqa: BLE001
             logger.debug("pywebview on_top 失败，回退 SetWindowPos: %s", e)
     hwnd = _pet_find_hwnd()
     if not hwnd:
         return False
-    ins = -1 if _PET_TOPMOST else -2   # HWND_TOPMOST / HWND_NOTOPMOST
+    ins = -1 if STATE.pet_topmost else -2   # HWND_TOPMOST / HWND_NOTOPMOST
     ok = _u32.SetWindowPos(
         hwnd, ins, 0, 0, 0, 0, 0x0001 | 0x0002 | 0x0010)  # NOSIZE|NOMOVE|NOACTIVATE
     if not ok:
-        logger.warning("桌宠置顶 SetWindowPos 失败 hwnd=%s topmost=%s", hwnd, _PET_TOPMOST)
+        logger.warning("桌宠置顶 SetWindowPos 失败 hwnd=%s topmost=%s", hwnd, STATE.pet_topmost)
     return bool(ok)
 
 
@@ -18866,16 +18842,15 @@ def _pet_install_topmost_guard():
     仅靠低频保活即可恒盖过其它 TopMost 窗口（≤1s 间隙人眼不可察）。取消置顶时由
     pet_toggle_always_on_top 设 _PET_KEEPALIVE_ON=False 让线程退出，再一次性 NOTOPMOST 解钉。
     """
-    global _PET_KEEPALIVE_ON
-    if _PET_KEEPALIVE_ON:
+    if STATE.pet_keepalive:
         return
-    _PET_KEEPALIVE_ON = True
+    STATE.pet_keepalive = True
     try:
         _ka = __import__("threading").Thread(target=_pet_topmost_keepalive, daemon=True)
         _ka.start()
         logger.info("桌宠置顶保活线程已启动")
     except Exception:  # noqa: BLE001
-        _PET_KEEPALIVE_ON = False
+        STATE.pet_keepalive = False
 
 
 def _pet_set_wda(hwnd, hidden: bool) -> bool:
@@ -18941,7 +18916,6 @@ def _pet_set_capture_hidden(hidden: bool) -> bool:
     窗口看到后面的真实画面。这正是"双工推流帧里看不见桌宠和软件、直接透过"的需求。
     需 Windows 10 2004+。返回是否桌宠窗设置成功。
     """
-    global _PET_CAPTURE_HIDDEN
     pet_hwnd = _pet_find_hwnd()
     main_hwnd = _pet_find_main_hwnd()
     pet_ok = _pet_set_wda(pet_hwnd, hidden) if pet_hwnd else False
@@ -18949,7 +18923,7 @@ def _pet_set_capture_hidden(hidden: bool) -> bool:
     # 【2026-09-04 修】灰涂是否执行改由抓屏调用方按 WDA 实际生效数(applied)决定
     # （applied>0 帧已真透过→不灰涂；applied==0→灰涂兜底），不再在此覆盖
     # OWN_WINDOW_WDA（之前把它强制 False 导致灰涂永远跑、透明度被涂成灰块）。
-    _PET_CAPTURE_HIDDEN = hidden
+    STATE.pet_capture_hidden = hidden
     logger.info("双工/截屏透过: pet=%s(%s) main=%s(%s) hidden=%s",
                 bool(pet_hwnd), pet_ok, bool(main_hwnd), main_ok, hidden)
     return bool(pet_hwnd)
@@ -19012,7 +18986,7 @@ def _finalize_pet_window() -> None:
         # 3) 置顶（仅当 _PET_TOPMOST 为真才钉最前；默认不置顶 → 不装子类/不保活，
         #    避免 WebView2 宿主窗每消息都进 Python 子类回调造成卡顿，也避免"默认就置顶"）
         try:
-            if _PET_TOPMOST:
+            if STATE.pet_topmost:
                 _pet_apply_topmost()
                 _pet_install_topmost_guard()
         except Exception:  # noqa: BLE001
