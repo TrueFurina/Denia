@@ -332,7 +332,9 @@ class CharacterAPI(PetAPI, WindowAPI):
         # 桌宠模式：主窗口 / 桌面桌宠窗口引用（main.py 创建窗口后注入）+ 桌宠位置缓存
         self._main_win: Optional[Any] = None
         self._pet_win: Optional[Any] = None
-        self._pet_bubble_q: "queue.Queue" = queue.Queue()  # 双工看屏互动气泡文本队列（桌宠窗轮询取走显示）
+        # 上限 20 条：pop_pet_bubble 只显示最新一条并清空积压，桌宠窗隐藏时
+        # 生产端（双工线程）仍在推，无界会一路涨。
+        self._pet_bubble_q: "queue.Queue" = queue.Queue(maxsize=20)
         self._duplex_output_log: list = []   # 双工输出对话日志（调试台「双工输出」板块展示，存 {"ts":float,"text":str}）
         self._pet_pos: Optional[tuple] = None   # 桌宠窗口逻辑坐标缓存 (x, y)（仅 pet_show 暂存，拖动已不依赖）
         self._pet_base: Optional[tuple] = None  # 拖动基准：窗口左上角物理像素

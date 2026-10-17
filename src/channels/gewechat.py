@@ -23,10 +23,14 @@ except Exception:  # noqa: BLE001
     ThreadingHTTPServer = None  # type: ignore[assignment]
 
 from ..event_bus import Event, EventType
+from ..queue_util import put_drop_oldest_async
 from .base import Channel
 from . import media_ingest as media
 
 logger = logging.getLogger("channels.gewechat")
+
+# 入站消息队列上限（条）。群聊刷屏时先丢最旧，保证最新消息仍会被处理。
+_INBOX_MAX = 200
 
 
 class GeweClient:
@@ -102,7 +106,10 @@ class GewechatChannel(Channel):
         self._ingest_urls = bool(getattr(mcfg, "ingest_urls", True)) if mcfg else True
         self._watch_videos = bool(getattr(mcfg, "watch_videos", False)) if mcfg else True
         self._store_to_memory = bool(getattr(mcfg, "store_to_memory", True)) if mcfg else True
-        self._queue: "asyncio.Queue[dict]" = asyncio.Queue()
+        # 入站消息上限：回调 HTTP 线程只管往队列塞，主循环每条要走一遍 AI 决策，
+        # 高峰期（群聊刷屏）消费必然慢于生产。无界会一路涨；丢最旧可保证
+        # 「最新的消息一定被处理」，旧的过期消息本来也没回复价值。
+        self._queue: "asyncio.Queue[dict]" = asyncio.Queue(maxsize=_INBOX_MAX)
         self._loop: Optional[asyncio.AbstractEventLoop] = None
         self._httpd = None
 
@@ -133,7 +140,9 @@ class GewechatChannel(Channel):
                     data = {}
                 try:
                     if channel._loop is not None:
-                        channel._loop.call_soon_threadsafe(channel._queue.put_nowait, data)
+                        # 有界投递：满了丢最旧，且不阻塞回调线程
+                        channel._loop.call_soon_threadsafe(
+                            put_drop_oldest_async, channel._queue, data)
                 except Exception:  # noqa: BLE001
                     pass
                 self.send_response(200)

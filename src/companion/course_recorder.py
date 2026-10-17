@@ -30,10 +30,16 @@ from typing import Any, Callable, Optional
 
 from ..config import Config
 from ..event_bus import Event, EventBus, EventType
+from ..queue_util import put_drop_oldest
 from .activity_log import KIND_COURSE
 from .course_session import CourseRepository, CourseSceneStabilizer, CourseSession
 
 logger = logging.getLogger(__name__)
+
+# 转写文本缓冲上限（段）。生产者是系统音频转写线程，消费者是 _tick（主循环）。
+# 主循环被场景分析/摘要占住时，无界队列会一直涨；丢最旧保证最近的讲课内容
+# 仍会进入记录，滞后的旧段落已经没有摘要价值。
+_TEXT_QUEUE_MAX = 500
 
 # ---------- 教学行为判定词 ----------
 # 强课程标题词：命中即算教学窗口（网课平台 / 学习软件 / 课程标题）
@@ -201,7 +207,8 @@ class CourseRecorder:
         self._session: Optional[CourseSession] = None
         self._session_started: float = 0.0
         self._transcriber: Optional[_SystemAudioTranscriber] = None
-        self._text_queue: queue.Queue[str] = queue.Queue()
+        self._text_queue: queue.Queue[str] = queue.Queue(maxsize=_TEXT_QUEUE_MAX)
+        self._text_dropped = 0
 
         # 场景证据缓存（事件驱动更新）
         self._last_summary: str = ""
@@ -295,6 +302,14 @@ class CourseRecorder:
                 logger.exception("网课记录 tick 异常")
             await asyncio.sleep(self._tick_interval)
 
+    def _enqueue_text(self, text: str) -> None:
+        """转写线程的回调：有界投递，满了丢最旧（不能阻塞音频线程）。"""
+        if put_drop_oldest(self._text_queue, text):
+            self._text_dropped += 1
+            if self._text_dropped % 20 == 1:
+                logger.warning("转写缓冲已满，累计丢弃 %d 段（主循环跟不上）",
+                               self._text_dropped)
+
     def _tick(self) -> None:
         # 1) 消费转写队列（线程 → 主循环，保证 session 写操作单线程）
         drained = False
@@ -345,7 +360,7 @@ class CourseRecorder:
         self._last_keyframe_hash = None
         self._transcriber = None
         if self._audio_enabled:
-            t = _SystemAudioTranscriber(self._text_queue.put)
+            t = _SystemAudioTranscriber(self._enqueue_text)
             if t.start():
                 self._transcriber = t
         logger.info("网课开始记录: %s (id=%s, 音频转写=%s)",
