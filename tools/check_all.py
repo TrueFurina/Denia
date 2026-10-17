@@ -32,6 +32,7 @@ GATES: list[tuple[str, str, list[str], bool]] = [
     ("导入冒烟", PY_VENV, ["tools/smoke_import.py", "--strict"], True),
     ("壳层能力", PY_VENV, ["src/tests/test_win_shell.py"], True),
     ("RPC 通道", PY_VENV, ["src/tests/test_rpc_server.py"], False),
+    ("壳桌宠回退", PY_VENV, ["src/tests/test_pet_shell_fallback.py"], False),
     ("队列语义", PY_VENV, ["src/tests/test_queue_util.py"], True),
     ("通话冒烟", PY_VENV, ["src/ui/tests/test_call_smoke.py"], True),
     ("通道状态", PY_VENV, ["src/channels/tests/test_agent_status.py"], True),

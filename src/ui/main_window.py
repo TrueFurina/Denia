@@ -1324,9 +1324,26 @@ def run_webview(debug: bool = False,
         from .webapp import CharacterAPI  # noqa: PLC0415  循环依赖：延迟到调用时
         api = CharacterAPI()
     main = create_main_window(api=api, title=title)
-    desk = create_desktop_companion(api)
-    api.set_windows(main_win=main, pet_win=desk)
-    _attach_pet_no_taskbar(desk)
+
+    # 桌宠窗有两条实现路径：
+    #   ① Electron 壳（真透明，见 AGENTS.md 第四条）—— 仅在 RPC 已就绪且 Electron 可用时启用；
+    #   ② pywebview 原路径（背后会有 #F0F0F0 白底）—— 回退用，保证任何环境都还能出人。
+    # 两条路径暴露给上层的是同一组成员（show/hide/on_top/x/y），所以 pet_show 等函数无需分支。
+    desk = None
+    try:
+        from .pet_shell import create_pet_shell
+
+        desk = create_pet_shell()
+    except Exception as _e:  # noqa: BLE001  壳起不来绝不能拦住主窗口
+        logger.warning("壳桌宠启动异常（回退 pywebview 桌宠）：%s", _e, exc_info=True)
+
+    if desk is not None:
+        api.set_windows(main_win=main, pet_win=desk)
+        logger.info("桌宠窗由 Electron 壳承载（真透明）")
+    else:
+        desk = create_desktop_companion(api)
+        api.set_windows(main_win=main, pet_win=desk)
+        _attach_pet_no_taskbar(desk)
 
     def _on_main_closed(_win=None) -> None:
         try:

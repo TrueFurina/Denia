@@ -38,6 +38,11 @@ const y = parseInt(arg('y', '200'), 10)
 const w = parseInt(arg('w', '300'), 10)
 const h = parseInt(arg('h', '400'), 10)
 const autoQuit = parseInt(arg('quit', '0'), 10)
+// 标题必须与 pywebview 版桌宠一致：项目里大量 Win32 代码用 FindWindowW 按标题定位窗口
+// （拖动、置顶保活、截屏隐身）。换个标题这些能力会静默失效。
+const winTitle = arg('title', '达妮娅看板娘')
+const startHidden = arg('hidden', '1') !== '0'
+const startOnTop = arg('ontop', '0') === '1'
 
 // transparent 必须配合 frame:false，否则 Windows 上透明区会显示成黑色
 app.commandLine.appendSwitch('disable-features', 'CalculateNativeWinOcclusion')
@@ -45,11 +50,13 @@ app.commandLine.appendSwitch('disable-features', 'CalculateNativeWinOcclusion')
 app.whenReady().then(() => {
   const win = new BrowserWindow({
     x, y, width: w, height: h,
+    title: winTitle,
+    show: !startHidden,
     transparent: true,
     frame: false,
     hasShadow: false,
     resizable: false,
-    alwaysOnTop: true,
+    alwaysOnTop: startOnTop,
     skipTaskbar: true,
     focusable: true,
     backgroundColor: '#00000000',
@@ -69,6 +76,12 @@ app.whenReady().then(() => {
 
   win.loadURL(url)
 
+  // 窗口标题必须固定：项目里拖动/置顶/截屏隐身都用 FindWindowW 按标题找 HWND，
+  // 而 rig 页面会把自己的运行状态写进 document.title（看板娘[BARE]/[OK]/[ERR]）。
+  // 不拦住的话窗口标题被页面覆盖 → 上述 Win32 能力全部失效（实测过）。
+  win.on('page-title-updated', (e) => { e.preventDefault() })
+  win.setTitle(winTitle)
+
   win.webContents.on('did-finish-load', async () => {
     const b = win.getBounds()
     const sf = require('electron').screen.getDisplayMatching(b).scaleFactor
@@ -86,13 +99,48 @@ app.whenReady().then(() => {
       sock.setEncoding('utf-8')
       const say = (text) => sock.write(text + NL)
       sock.on('data', (chunk) => {
-        for (const cmd of String(chunk).split(/\s+/)) {
-          if (!cmd) continue
+        // 一次一把命令按行切，行内再按空格切出参数（move/size 需要坐标）
+        for (const line of String(chunk).split(/\r?\n/)) {
+          const tokens = line.trim().split(/\s+/).filter(Boolean)
+          if (!tokens.length) continue
+          const cmd = tokens[0]
+          const args = tokens.slice(1)
           if (cmd === 'hide') { win.hide(); say('HIDDEN') }
           else if (cmd === 'show') { win.show(); say('SHOWN') }
           else if (cmd === 'visible') { say('VISIBLE ' + (win.isVisible() ? '1' : '0')) }
+          else if (cmd === 'ontop') { say('ONTOP ' + (win.isAlwaysOnTop() ? '1' : '0')) }
+          else if (cmd === 'topon') { win.setAlwaysOnTop(true); say('TOPON ' + (win.isAlwaysOnTop() ? '1' : '0')) }
+          else if (cmd === 'topoff') { win.setAlwaysOnTop(false); say('TOPOFF ' + (win.isAlwaysOnTop() ? '1' : '0')) }
+          else if (cmd === 'pos') { say('POS ' + JSON.stringify(win.getBounds())) }
           else if (cmd === 'bounds') {
             say('BOUNDS2 ' + JSON.stringify({ ...win.getBounds(), scaleFactor: sf }))
+          } else if (cmd === 'move') {
+            // 供壳客户端做逻辑像素定位（与 pywebview 的 window.x/y 语义一致）
+            const nx = Math.round(parseFloat(args[0]))
+            const ny = Math.round(parseFloat(args[1]))
+            const b = win.getBounds()
+            win.setBounds({ x: nx, y: ny, width: b.width, height: b.height })
+            say('MOVED ' + JSON.stringify(win.getBounds()))
+          } else if (cmd === 'size') {
+            const nw = Math.round(parseFloat(args[0]))
+            const nh = Math.round(parseFloat(args[1]))
+            const b = win.getBounds()
+            win.setBounds({ x: b.x, y: b.y, width: nw, height: nh })
+            say('SIZED ' + JSON.stringify(win.getBounds()))
+          } else if (cmd === 'js') {
+            // 执行页面脚本（base64 传，避免命令里的空格/引号破坏协议）。
+            // 与 pywebview 的 window.evaluate_js 对齐，生产也会用到。
+            let code = ''
+            try { code = Buffer.from(args[0] || '', 'base64').toString('utf8') } catch (e) { /* 空脚本 */ }
+            win.webContents.executeJavaScript(code).then((r) => {
+              let payload = ''
+              try { payload = Buffer.from(JSON.stringify(r === undefined ? null : r)).toString('base64') } catch (e) { payload = '' }
+              say('JSOK ' + payload)
+            }).catch((e) => {
+              let payload = ''
+              try { payload = Buffer.from(String((e && e.message) || e)).toString('base64') } catch (e2) { payload = '' }
+              say('JSERR ' + payload)
+            })
           } else if (cmd === 'probe') {
             win.webContents.executeJavaScript(`(async () => {
               const out = {

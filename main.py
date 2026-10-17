@@ -2272,6 +2272,8 @@ def main() -> None:
                         help="启动本地 RPC（仅回环地址，需 token），供外部壳调用")
     parser.add_argument("--rpc-handshake", default=None, metavar="PATH",
                         help="把 RPC 的 url/token 写入该文件，供外壳读取")
+    parser.add_argument("--pet-shell", action="store_true",
+                        help="桌宠窗改用 Electron 壳承载（真透明；需要 shell/ 下已装 electron）")
     parser.add_argument("--debug-gui", action="store_true", help="GUI 调试模式（允许右键检查元素）")
     parser.add_argument("--config", default="config.yaml", help="指定配置文件（默认 config.yaml）")
     parser.add_argument("--video", default=None,
@@ -2336,15 +2338,21 @@ def main() -> None:
     # 🔌 换壳桥：把同一个 char_api 暴露成本地 RPC（Electron 壳用）。
     # 必须在这里启动——此时 char_api 已建好、GUI 尚未起，外壳读握手文件即可开始调用。
     # 失败只告警不拦启动：没有壳时这条通道本就该是关闭的。
-    if getattr(args, "rpc", False) or getattr(args, "rpc_handshake", None):
+    # --pet-shell 隐含开启 RPC：桌宠窗要靠它调后端，缺了就只能退回 pywebview 窗。
+    _want_rpc = (getattr(args, "rpc", False) or getattr(args, "rpc_handshake", None)
+                 or getattr(args, "pet_shell", False))
+    if _want_rpc:
         try:
             import atexit as _atexit
 
+            from src.ui.pet_shell import configure as _configure_pet_shell
             from src.ui.rpc_server import RpcServer, write_handshake
 
             _rpc = RpcServer(char_api)
             _rpc_info = _rpc.start()
             _atexit.register(_rpc.stop)
+            # 壳桌宠从这里拿连接信息（main_window 创建桌宠窗时读取）
+            _configure_pet_shell(_rpc_info)
             if getattr(args, "rpc_handshake", None):
                 write_handshake(args.rpc_handshake, _rpc_info)
             logger.info("[RPC] 已为外壳开放本地通道 %s", _rpc_info["url"])
