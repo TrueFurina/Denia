@@ -38,6 +38,7 @@
 | `86fa3df` | 00:45 | chore | AGENTS.md 协作宪章 + `check_all.py` 统一门禁 | 16 项全 PASS；变异后 exit 1 并点名 |
 | `6d75b24` | 00:52 | feat | 换壳 PoC：同一 rig 页面在 Electron 下真透明 | 角落与真背景逐点相等、中心不同 |
 | `cac2760` | 00:53 | chore | 锁定 Electron 依赖版本 | — |
+| `4792f40` | 01:20 | feat | 换壳 1/2 步：CharacterAPI 暴露本地 RPC + 壳侧 shim | 19 方法两通道一致；端到端五项全通过 |
 
 ---
 
@@ -388,11 +389,50 @@ FileNotFoundError: [WinError 3] 系统找不到指定的路径。: 'G:\\'
 
 ---
 
+## `4792f40` 换壳第 1、2 步：RPC + 壳侧 shim（2026-10-18 01:20）
+
+**为什么不是直接开始搬窗口**：透明只是外观。换壳真正会翻车的是"页面调用的
+`window.pywebview.api` 没人实现"——rig 页面有几十处这样的调用。把方法在壳里重写一遍，
+必然与后端漂移；正确做法是**让两条通道指向同一个 `char_api` 实例**。
+
+**Python 侧**（`src/ui/rpc_server.py`）：
+只绑 `127.0.0.1`、端口随机、每次启动生成令牌；只允许公开成员（下划线/dunder 一律拒绝）；
+请求体上限 32MB；业务异常原样回报（不吞）；不可 JSON 化的返回值降级为字符串并标 `degraded`。
+`main.py` 新增 `--rpc` / `--rpc-handshake`，启动后把 `{url, token, web_base}` 写进握手文件
+（先写临时文件再 rename，避免壳读到半截 JSON）。
+
+**壳侧**（`shell/preload.js`）：Proxy 把任意 `api.xxx()` 转发到 RPC。
+**失败一律抛异常，不静默返回 null**——页面大量 `await` 之后判断返回值，
+静默 null 会被当成"功能正常但没有数据"，是最难查的一类 bug。
+
+**验证（两层）**：
+1. `src/tests/test_rpc_server.py`：19 个方法两条通道结果**逐一比对完全一致**；
+   缺/错令牌 401、私有方法 403、不存在 404、超大体 413、OPTIONS 204、
+   业务异常 500 保留类型、不可序列化降级、`stop()` 后端口关闭。
+   变异（把 `_authorized` 改成恒真）→ 4 项失败，还原 → 全绿。
+2. `tools/rpc_bridge_smoke.py` 连续两次通过：
+
+```
+PROBE {"hasBridge":true,"psdType":"function","title":"看板娘[OK]","psdLen":4187477}
+后端收到 RPC 调用：['get_live2d_psd']
+窗口真透明（角落与背景差 0/0/60，背景噪声 70，容差内）
+```
+
+**踩到的假阳性（重要）**：第一版用 **stdin** 给壳发 `hide`/`show`。Windows 下管道里的 stdin
+收不到数据，命令全丢 → "隐藏后抓屏"抓的其实是显示态 → 两次采样一样 → 得出"透明 ✅"。
+现在命令走 TCP 且必须有回执，拿不到回执直接判失败。已写进 AGENTS.md。
+
+**顺带修正判定口径**：桌面背景本身会变（壁纸动画/背后窗口刷新），严格"逐点相等"会把真透明
+判成失败（第二次跑就出现了 14 级差）。改为先连续抓两次隐藏态量化噪声，再看显示态是否落在
+噪声内；并单独检测 `#F0F0F0`（WinForms 客户区底色）作为反面特征。
+
+---
+
 ## 待办（需要你决策）
 
 | 项 | 现状 | 需决定什么 |
 |---|---|---|
-| **桌宠白底（换壳）** | 已证明当前壳无解、Electron 下可行（PoC 已跑通） | 是否按 `产品化路线_2026-10-18.md` 四步迁移：A 换 Electron（+150~250MB）／B 试 Qt（未实测）／C 接受卡片化 |
+| **桌宠白底（换壳）** | ✅ 已确认 Electron 可行，第 1、2 步（RPC + shim）已落地并端到端验证 | 下一步是第 3 步：把桌宠窗真正切到壳上（要动 `run_webview` 的启动分支），动手前确认是否同时迁主窗口 |
 | **tkinter 两功能不可用** | 内置运行时无 `Lib/tkinter`、无 `_tkinter.pyd`、无 `tcl/`，OCR 校准与对话悬浮层在任何机器上都返回"不可用"（代码优雅降级，不崩） | 补 tcl/tk（+10MB，版本须严格匹配）／改 WebView2 浮层／隐藏入口 |
 | **交付物依赖安装** | `tools/make_dist.py` 已能产出干净目录（65.3MB），但内置运行时只有 pip，必须再执行 `dist/python/python.exe -m pip install -r requirements.txt`（或走「安装环境.exe」）才能启动 | 这段安装是留在安装器里，还是做成 `make_dist.py --install-deps` 一步到位 |
 | **打包方式** | 目前是"便携目录"，`dist/` 已在 `.gitignore` 内 | 若迁 Electron，则整体转为 electron-builder + NSIS |
