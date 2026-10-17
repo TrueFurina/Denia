@@ -12,6 +12,7 @@ import logging
 from ctypes import wintypes as _wt
 
 from ..event_bus import Event, EventType
+from ..queue_util import put_drop_oldest
 from .pet_window import (
     _POINT, _pet_apply_topmost, _pet_find_hwnd, _pet_install_topmost_guard,
     _pet_set_capture_hidden, _u32,
@@ -506,7 +507,8 @@ class PetAPI:
         跨线程注入与 WebView2 消息事件的坑。
         """
         try:
-            self._pet_bubble_q.put(text)
+            # 有界投递：桌宠窗未轮询时丢最旧，避免长时间后台后积压成内存增长
+            put_drop_oldest(self._pet_bubble_q, text)
         except Exception:  # noqa: BLE001
             pass
 

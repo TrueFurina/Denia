@@ -26,6 +26,12 @@ import tkinter as tk
 from tkinter import font as tkfont
 from typing import Callable, Optional
 
+from ..queue_util import put_drop_oldest
+
+# 待显示文本上限。悬浮层只展示最近几条，积压的旧句子既不会显示也不该占内存；
+# tkinter 主循环忙（拖动/重绘）时生产者可能短时快于消费者。
+_QUEUE_MAX = 32
+
 logger = logging.getLogger(__name__)
 
 # 透明色：窗口背景使用此颜色时该像素完全透明，露出真实游戏画面。
@@ -73,7 +79,7 @@ class ChatOverlay:
         self._font_size = max(11, int(st.get("font_size") or 16))
 
         self._msgs: list[tuple[str, str, float]] = []  # (kind, text, ts)
-        self._queue: "queue.Queue[tuple[str, str]]" = queue.Queue()
+        self._queue: "queue.Queue[tuple[str, str]]" = queue.Queue(maxsize=_QUEUE_MAX)
         self._drag: Optional[tuple[int, int]] = None
         self._closing: bool = False
 
@@ -136,7 +142,7 @@ class ChatOverlay:
         text = (text or "").strip()
         if not text or self._closing:
             return
-        self._queue.put((kind, text[:200]))
+        put_drop_oldest(self._queue, (kind, text[:200]))
 
     # ======== 绘制 ========
     def _round_rect(self, x0: float, y0: float, x1: float, y1: float,
