@@ -24,10 +24,20 @@ def check_file(path: str) -> list[str]:
     src = open(path, encoding="utf-8", errors="replace").read()
     try:
         top = symtable.symtable(src, path, "exec")
+        tree = __import__("ast").parse(src)
     except SyntaxError as e:
         return [f"{path}: 语法错误 {e}"]
     defined = {s.get_name() for s in top.get_symbols()}
     problems: list[str] = []
+
+    # 检查 A：`global X` 声明了 X，但模块顶层根本没定义 X。
+    # 这种写法在「只做下标赋值」(d[k]=v) 时必然 NameError，且常被 except 吞掉。
+    # 2026-10-17 拆 webapp → wv2_env 时就是这样丢了 WebView2 控件注册。
+    for node in __import__("ast").walk(tree):
+        if isinstance(node, __import__("ast").Global):
+            for name in node.names:
+                if name not in defined:
+                    problems.append(f"{path}:{node.lineno} global 声明了未定义的模块级变量 {name!r}")
 
     def walk(table, path_names: list[str]) -> None:
         for sym in table.get_symbols():

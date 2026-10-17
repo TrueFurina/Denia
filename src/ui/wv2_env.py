@@ -2,8 +2,9 @@
 """WebView2 运行环境：缓存目录加固、唯一 user-data 目录、CLR 崩溃守卫
 （自 webapp.py 抽出，2026-10-17）。
 
-注意：_wv2_broadcast 仍留在 webapp.py —— 它读写模块级 _WV2_CONTROLS 字典，
-而该字典同时被 CharacterAPI 的方法使用，迁出会造成状态分裂（广播读空字典）。
+注意：_wv2_broadcast 仍留在 webapp.py —— 它读写 STATE.wv2_controls 字典，
+而该字典同时被 CharacterAPI 的方法使用。两边现在都走 ui_state.STATE，
+不会再出现「各写各的字典」。
 """
 from __future__ import annotations
 
@@ -12,6 +13,8 @@ import json
 import logging
 import os
 import threading
+
+from .ui_state import STATE
 
 logger = logging.getLogger("src.ui.webapp")
 
@@ -272,8 +275,10 @@ def _patch_webview2_unique_user_data() -> None:
             try:
                 if args.IsSuccess:
                     logger.info("[WebView2] 窗口 %s READY OK", window.uid)
-                    global _WV2_CONTROLS
-                    _WV2_CONTROLS[window.uid] = self.webview
+                    # 【2026-10-17 修】原为 global _WV2_CONTROLS + 下标赋值。
+                    # 函数迁到本模块后该名字不存在 → NameError → 被下面 except 吞掉，
+                    # 控件永远注册不上（后端原生推送静默失效）。改走共享单例。
+                    STATE.wv2_controls[window.uid] = self.webview
                     _harden_webview2(self.webview, window)
                 else:
                     logger.error("[WebView2] 窗口 %s READY FAILED: %s",
