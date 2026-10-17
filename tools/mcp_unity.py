@@ -39,13 +39,13 @@ def _next_id():
 
 def _load_session():
     try:
-        return pathlib.Path(SID_FILE).read_text().strip()
+        return pathlib.Path(SID_FILE).read_text(encoding="utf-8").strip()
     except Exception:
         return None
 
 
 def _save_session(sid):
-    pathlib.Path(SID_FILE).write_text(sid)
+    pathlib.Path(SID_FILE).write_text(sid, encoding="utf-8")
 
 
 def rpc(method, params=None, notification=False):
