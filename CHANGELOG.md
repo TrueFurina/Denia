@@ -34,6 +34,10 @@
 | `c1f6b30` | 20:55 | docs | 报告回填队列结果 | — |
 | `a4a6a38` | 23:40 | feat | 交付目录组装器 `make_dist.py` + launcher 去旧盘符 | 组装 65.3MB/1334 文件，三道闸门 |
 | `2f14c0a` | 23:58 | fix | 应用图标/任务栏归属 + Win32 置顶 64 位句柄截断 | AUMID 读回一致、WM_GETICON 非零、TOPMOST 位正确 |
+| `e46f21b` | 00:40 | fix | 单实例锁 + DPI/单实例前置到建窗之前 | `test_win_shell.py` 6 项；跨进程同名锁 Failure |
+| `86fa3df` | 00:45 | chore | AGENTS.md 协作宪章 + `check_all.py` 统一门禁 | 16 项全 PASS；变异后 exit 1 并点名 |
+| `6d75b24` | 00:52 | feat | 换壳 PoC：同一 rig 页面在 Electron 下真透明 | 角落与真背景逐点相等、中心不同 |
+| `cac2760` | 00:53 | chore | 锁定 Electron 依赖版本 | — |
 
 ---
 
@@ -325,13 +329,73 @@ FileNotFoundError: [WinError 3] 系统找不到指定的路径。: 'G:\\'
 
 ---
 
+## `e46f21b` 单实例锁 + 壳层前置（2026-10-18 00:40）
+
+**问题**：全仓搜不到 `CreateMutex`——双击两次图标就是两个进程、两只宠物、两套后端，互相抢麦克风和麦克风设备。
+顺带发现 DPI 感知实测值为 **0**（不感知），而 `notify_geom.py`、`create_desktop_companion` 等多处注释都写着"进程已 SetProcessDPIAware"。
+
+**改动**：新增 `src/win_shell.py`，四个能力（DPI 感知、读回感知级别、单实例、唤起已有窗口），
+在 `main()` 最前面调用——**必须在任何窗口创建之前**，否则系统静默忽略且不报错。
+`--no-gui` 是控制台工具模式，跳过单实例检查。
+
+**验证**：`src/tests/test_win_shell.py` 6 项全绿（DPI 0→2；同名锁第二次 False、子进程 False、异名锁 True）。
+
+**没有做的事（诚实口径）**：我原以为 DPI 不感知会导致高缩放文字模糊，实测 `devicePixelRatio` **已经是 1.5**、
+开关 DPI 感知窗口矩形完全一致——页面本来就按原生分辨率渲染。所以这条的收益是"Win32 坐标与注释假设一致"，
+不是修可见缺陷。**不把它写成"修好了模糊"**。
+
+---
+
+## `86fa3df` AGENTS.md + 统一门禁（2026-10-18 00:45）
+
+**问题**：闸门散在 `tools/` 下十几个脚本里，靠人记必漏——这个项目已经漏过一次（看板娘整个目录没进版本控制）。
+
+**改动**：`tools/check_all.py` 编排 16 项闸门（`--fast` 跳过慢项，约 5 秒回环），只做编排与汇总，
+检查逻辑仍以各自脚本为单一真值源。`AGENTS.md` 把踩过的坑写成条款，重点是：
+证据口径、变异验证、Windows 三条硬约束、WebView2 透明已确认的结论、环境坑、交付红线。
+
+**验证**：16 项全 PASS；变异（临时挪走 `check_web_assets.py`）→ `exit 1` 并点名失败项，还原 → `exit 0`。
+
+---
+
+## `6d75b24` 换壳可行性 PoC（2026-10-18 00:52）
+
+**问题**：桌宠背后那块白底，之前一直被当成"参数没调对"。
+
+**查到底**：pywebview 的 Windows 后端是 WebView2 **windowed hosting**，不提供每像素 alpha。
+用**最小用例**（完全不含项目页面）逐个手测 8 种原生手法：
+
+| 手法 | 角落像素 |
+|---|---|
+| 基线 `transparent=True, frameless=True` | `(240,240,240)` |
+| `WS_EX_LAYERED` + `LWA_ALPHA(255)` | `(240,240,240)` |
+| `WS_EX_LAYERED` + `LWA_COLORKEY(#F0F0F0)` | `(32,32,32)` |
+| `Form.TransparencyKey = #F0F0F0` | `(32,32,32)` |
+| `Form.BackColor = ARGB(0,0,0,0)` | `(240,240,240)` |
+| `WS_EX_NOREDIRECTIONBITMAP` | 无变化 |
+| `DwmEnableBlurBehindWindow` | 白色填充 |
+| `SetWindowRgn` 裁剪 | 裁掉处纯黑 |
+| `WS_EX_LAYERED` + `LWA_ALPHA(0)` | 整窗消失（**反证：DWM 合成链路是通的，缺的只是顶层 alpha**） |
+
+**正证**：同一份 `rig/index.html?bare=1` 换到 Electron 宿主，前端一行未改，
+`window.pywebview.api` 由 `shell/preload.js` 的 Proxy shim 顶替，结果——窗口隐藏态与显示态三处角落**逐点相等**，
+中心不同（人物在渲染）。截图里人物背后是后面的应用窗口文字，不是白底。
+
+**踩坑两条**（已写进 AGENTS.md）：本机 shell 带 `ELECTRON_RUN_AS_NODE=1` 会让 Electron 退化成 node（`app` 未定义）；
+读子进程 stdout 用裸 `readline()` 会无限阻塞，第一次跑直接挂满 180 秒、且 `python` 不加 `-u` 时被杀后一个字都不留。
+
+**产出**：`产品化路线_2026-10-18.md`（证据表、三方案代价、四步可回滚迁移与验收）。
+
+---
+
 ## 待办（需要你决策）
 
 | 项 | 现状 | 需决定什么 |
 |---|---|---|
+| **桌宠白底（换壳）** | 已证明当前壳无解、Electron 下可行（PoC 已跑通） | 是否按 `产品化路线_2026-10-18.md` 四步迁移：A 换 Electron（+150~250MB）／B 试 Qt（未实测）／C 接受卡片化 |
 | **tkinter 两功能不可用** | 内置运行时无 `Lib/tkinter`、无 `_tkinter.pyd`、无 `tcl/`，OCR 校准与对话悬浮层在任何机器上都返回"不可用"（代码优雅降级，不崩） | 补 tcl/tk（+10MB，版本须严格匹配）／改 WebView2 浮层／隐藏入口 |
 | **交付物依赖安装** | `tools/make_dist.py` 已能产出干净目录（65.3MB），但内置运行时只有 pip，必须再执行 `dist/python/python.exe -m pip install -r requirements.txt`（或走「安装环境.exe」）才能启动 | 这段安装是留在安装器里，还是做成 `make_dist.py --install-deps` 一步到位 |
-| **打包方式** | 目前是"便携目录"，`dist/` 已在 `.gitignore` 内 | 是否要改成 PyInstaller 单文件 |
+| **打包方式** | 目前是"便携目录"，`dist/` 已在 `.gitignore` 内 | 若迁 Electron，则整体转为 electron-builder + NSIS |
 
 ---
 
