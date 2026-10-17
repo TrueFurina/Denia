@@ -1,0 +1,50 @@
+# 达妮娅 · 可选/重量级依赖（不进主安装包，按需自行安装）
+#
+# 与 requirements.txt 的分工：
+#   requirements.txt     核心 + 重要 + 轻量可选，缺了也不影响启动
+#   本文件               体积大、或需要单独仓库/模型的推理后端
+#
+# 分两段：
+#   【A 段】可直接 `pip install -r requirements-optional.txt`
+#   【B 段】非 pip 包（随各自仓库提供），用 `# not-pip: 名字` 登记，
+#          tools/check_requirements.py 会把它们视为「已声明」而非漏报
+#
+# 每项都注明「缺了会怎样」，便于判断某台机器要不要装。
+
+# ===== A 段：pip 可装 =====
+
+# OCR 的推理后端（rapidocr-onnxruntime 已依赖它，单列便于锁版本）
+onnxruntime>=1.17
+
+# 本地语音克隆 / TTS 推理环境
+# 缺了：对应引擎在设置页不可选，其余功能正常
+torch
+torchaudio
+funasr
+
+# 语音活动检测（VAD）
+# 缺了：human_voice_detector 退回能量阈值判定，嘈杂环境误触发变多
+sherpa-onnx
+
+# 云端克隆的 HF Space 客户端
+# 缺了：DANIYA_HF_SPACE 后端不可用（魔搭后端仍可用）
+gradio-client
+
+# 视频理解 / 媒体控制
+# 缺了：视频链接解析、系统媒体控制不可用
+yt-dlp
+winsdk
+
+# Live2D / PSD 处理
+# 缺了：PSD 分层导入不可用（看板娘仍可加载已生成的模型）
+psd-tools
+
+
+# ===== B 段：非 pip 包，随仓库提供 =====
+# 这些名字若写进 A 段会让 `pip install -r` 直接失败，故只登记不安装。
+
+# not-pip: cosyvoice      # CosyVoice 仓库，cosyvoice_server.py 使用
+# not-pip: ref_audio_util # CosyVoice 仓库内的辅助模块
+# not-pip: qwen_tts       # Qwen3-TTS 仓库，qwen3tts_server.py 使用
+# not-pip: voxcpm         # VoxCPM 仓库，需另下模型权重到 voxcpm2_models/
+# not-pip: laya           # 关系判定实验后端，随对应仓库提供
