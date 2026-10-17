@@ -2266,6 +2266,12 @@ def main() -> None:
 
     parser = argparse.ArgumentParser(description="AI 桌面伴侣")
     parser.add_argument("--no-gui", action="store_true", help="只启动控制台模式，不打开 GUI")
+    # 换壳用：把 CharacterAPI 暴露成本地 RPC（仅 127.0.0.1 + 每次启动随机令牌），
+    # 供 Electron 外壳调用。与 pywebview 的 js_api 指向同一个对象实例。
+    parser.add_argument("--rpc", action="store_true",
+                        help="启动本地 RPC（仅回环地址，需 token），供外部壳调用")
+    parser.add_argument("--rpc-handshake", default=None, metavar="PATH",
+                        help="把 RPC 的 url/token 写入该文件，供外壳读取")
     parser.add_argument("--debug-gui", action="store_true", help="GUI 调试模式（允许右键检查元素）")
     parser.add_argument("--config", default="config.yaml", help="指定配置文件（默认 config.yaml）")
     parser.add_argument("--video", default=None,
@@ -2326,6 +2332,24 @@ def main() -> None:
     # 构建 CharacterAPI（运行时注入推迟到加载完成后，见 _startup_supervisor）
     char_api = CharacterAPI("config.yaml")
     char_api._use_shared_cfg(cfg)
+
+    # 🔌 换壳桥：把同一个 char_api 暴露成本地 RPC（Electron 壳用）。
+    # 必须在这里启动——此时 char_api 已建好、GUI 尚未起，外壳读握手文件即可开始调用。
+    # 失败只告警不拦启动：没有壳时这条通道本就该是关闭的。
+    if getattr(args, "rpc", False) or getattr(args, "rpc_handshake", None):
+        try:
+            import atexit as _atexit
+
+            from src.ui.rpc_server import RpcServer, write_handshake
+
+            _rpc = RpcServer(char_api)
+            _rpc_info = _rpc.start()
+            _atexit.register(_rpc.stop)
+            if getattr(args, "rpc_handshake", None):
+                write_handshake(args.rpc_handshake, _rpc_info)
+            logger.info("[RPC] 已为外壳开放本地通道 %s", _rpc_info["url"])
+        except Exception as _e:  # noqa: BLE001
+            logger.error("[RPC] 启动失败（不影响 pywebview 界面）：%s", _e)
 
     # 1. 创建启动加载窗口（小窗口，与 QQ 登录窗口同尺寸；全部加载好才切换主窗口）
     import webview
