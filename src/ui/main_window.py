@@ -719,8 +719,9 @@ def create_main_window(api: Optional[CharacterAPI] = None,
     """创建主窗口（加载全部完成后由启动监督线程调用）。返回 webview.Window。"""
     import webview
     # 🛡️ 确保 CLR 异常守卫在窗口创建/消息泵运行前就位（防启动期 ObjectDisposedException 闪退）。
+    # force_load=True：此刻 pywebview 还没导入 clr，必须由这里主动加载，否则守卫装不上。
     try:
-        _install_clr_crash_guard()
+        _install_clr_crash_guard(force_load=True)
     except Exception:  # noqa: BLE001
         pass
     if api is None:

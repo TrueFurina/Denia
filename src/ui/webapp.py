@@ -1510,8 +1510,8 @@ class CharacterAPI(PetAPI, WindowAPI):
             return {"success": False, "error": "校准悬浮窗已打开（请先关闭开关）"}
         try:
             import tkinter  # noqa: F401
-        except Exception as e:
-            return {"success": False, "error": f"tkinter 不可用: {e}"}
+        except Exception:
+            return {"success": False, "error": "此版本未包含 tkinter（内置运行时为无 tcl/tk 的精简版），OCR 校准窗口不可用"}
         try:
             from .ocr_calibrator import run_calibrator
         except Exception as e:
@@ -1593,8 +1593,8 @@ class CharacterAPI(PetAPI, WindowAPI):
             return {"success": False, "error": "对话悬浮层已打开（请先关闭开关）"}
         try:
             import tkinter  # noqa: F401
-        except Exception as e:
-            return {"success": False, "error": f"tkinter 不可用: {e}"}
+        except Exception:
+            return {"success": False, "error": "此版本未包含 tkinter（内置运行时为无 tcl/tk 的精简版），对话悬浮层不可用"}
         try:
             from .chat_overlay import run_chat_overlay
         except Exception as e:
