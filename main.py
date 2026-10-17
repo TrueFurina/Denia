@@ -2189,6 +2189,34 @@ def _unload_ollama_models(_rt=None) -> None:
 
 
 def main() -> None:
+    # 🔧 壳层前置（顺序敏感，勿后移）：DPI 感知与单实例互斥体都必须在**任何窗口
+    # 创建之前**完成。放到下一步的 faulthandler 之后也能跑，但那样一旦有人在两者
+    # 之间插入建窗代码，DPI 感知就会被系统静默忽略（创建窗口后再设无效），且不会有
+    # 任何报错——所以固定放在函数最前面。
+    #   · DPI：进程默认不感知 → 高缩放（150%）下整窗被系统位图拉伸，文字必糊。
+    #   · 单实例：无互斥体 → 双击两次得到两个进程、两只宠物、两套后端。
+    # --no-gui 是控制台工具模式，允许与 GUI 实例并存，故跳过单实例检查。
+    try:
+        from src.win_shell import (
+            acquire_single_instance as _acquire_single,
+            activate_existing_window as _activate_existing,
+            dpi_awareness as _dpi_awareness,
+            enable_dpi_awareness as _enable_dpi,
+        )
+
+        _dpi_mode = _enable_dpi()
+        if _dpi_awareness() <= 0:
+            logger.warning("[壳层] DPI 感知未生效（方式=%s），高缩放下界面会发虚", _dpi_mode)
+        else:
+            logger.info("[壳层] DPI 感知已启用：%s", _dpi_mode)
+
+        if "--no-gui" not in sys.argv and not _acquire_single():
+            _activate_existing()
+            print("达妮娅已在运行，已为你切到已有窗口（本次启动退出）")
+            return
+    except Exception as _e:  # noqa: BLE001  壳层能力失败不得拦住主流程
+        logger.warning("[壳层] DPI/单实例初始化异常（继续启动）：%s", _e)
+
     # faulthandler 仅在【真实崩溃/致命信号】时转储，用于事后定位根因。
     # ⚠️ 原"每 45s 无条件 dump_traceback_later"会持续把全线程栈刷进
     # logs/fault_watchdog.log（曾累积 10w+ 行），且与是否卡死无关——纯属噪音，
