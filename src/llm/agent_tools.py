@@ -558,13 +558,17 @@ def _win32_focus_hwnd(hwnd: int) -> bool:
             return True
         # ④ TOPMOST 翻转兜底：不抢焦点但保证窗口在最上层可见
         try:
-            HWND_TOPMOST, HWND_NOTOPMOST = -1, -2
+            # 【2026-10-17】-1/-2 必须包成 c_void_p：ctypes 未声明 argtypes 时按
+            # C int 传参，64 位下 HWND_TOPMOST 会变成 0x00000000FFFFFFFF（不是全 1
+            # 的伪句柄），SetWindowPos 直接失败 ERROR_INVALID_WINDOW_HANDLE(1400)。
+            hwnd_top = ctypes.c_void_p(-1 & 0xFFFFFFFFFFFFFFFF)
+            hwnd_notop = ctypes.c_void_p(-2 & 0xFFFFFFFFFFFFFFFF)
             SWP_NOSIZE = 0x0001
             SWP_NOMOVE_F = 0x0002
             SWP_SHOWWINDOW = 0x0040
-            user32.SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, 0, 0,
+            user32.SetWindowPos(hwnd, hwnd_top, 0, 0, 0, 0,
                                 SWP_NOMOVE_F | SWP_NOSIZE | SWP_SHOWWINDOW)
-            user32.SetWindowPos(hwnd, HWND_NOTOPMOST, 0, 0, 0, 0,
+            user32.SetWindowPos(hwnd, hwnd_notop, 0, 0, 0, 0,
                                 SWP_NOMOVE_F | SWP_NOSIZE | SWP_SHOWWINDOW)
         except Exception:  # noqa: BLE001
             pass

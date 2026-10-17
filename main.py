@@ -52,6 +52,25 @@ if _os.path.isdir(_ort_dml_dir):
     if _ort_dml_dir not in _sys.path:
         _sys.path.insert(0, _ort_dml_dir)
 
+
+def _set_app_user_model_id() -> None:
+    """让 Windows 把本程序识别为独立应用，而不是"Python"。
+
+    不设时任务栏会按 python.exe 归组：图标是 Python、悬停名也是 Python，
+    看起来不像成品软件。设置 AppUserModelID 后系统按该 ID 分组，
+    配合 setup(icon=...) 的窗口图标，任务栏就是本应用自己的图标与名称。
+    必须在创建任何窗口之前调用。
+    """
+    try:
+        import ctypes
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(
+            "Daniya.DesktopCompanion.1")
+    except Exception:  # noqa: BLE001  非 Windows / 老系统忽略
+        pass
+
+
+_set_app_user_model_id()
+
 import argparse
 import asyncio
 import json

@@ -1346,4 +1346,11 @@ def run_webview(debug: bool = False,
     # 2) 手动设 --no-sandbox / --enable-unsafe-swiftshader 反而导致
     #    WebView2 初始化 E_ABORT（0x80004004）失败 → 窗口空白。
     # 因此**不设任何额外参数**，完全交给 pywebview/WebView2 默认行为最稳。
-    webview.start(debug=debug, func=None, gui="edgechromium")
+    # 应用图标：pywebview 会把 _state['icon'] 设给 WinForms 窗体
+    # （winforms.py:242-244），任务栏/Alt-Tab/窗口标题栏都用它。
+    # 不给的话 Windows 显示的是 python.exe 的图标。
+    _icon = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(
+        os.path.abspath(__file__)))), "app.ico")
+    if not os.path.isfile(_icon):
+        _icon = None
+    webview.start(debug=debug, func=None, gui="edgechromium", icon=_icon)
