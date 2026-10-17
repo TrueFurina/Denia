@@ -1671,11 +1671,19 @@ def _fetch_web(url: str) -> str:
 _SHELL_META_RE = re.compile(r"[;&|`$\n\r<>%^!()]")
 
 # cmd.exe 内建命令（没有对应 exe，shell=False 直接执行会 FileNotFoundError）
+# 注意：start 也在此列——它本身能启动任意程序，是否可用完全取决于用户是否把它写进
+# allow_commands（现有实配就包含 start/calc/notepad/explorer，属用户显式授权）。
 _CMD_BUILTINS = {
     "assoc", "cd", "chdir", "cls", "copy", "date", "del", "dir", "echo", "erase",
     "ftype", "md", "mkdir", "more", "move", "path", "pause", "rd", "ren", "rename",
-    "rmdir", "set", "sort", "time", "title", "type", "ver", "vol",
+    "rmdir", "set", "sort", "start", "time", "title", "type", "ver", "vol",
 }
+
+
+def _norm_exe(name: str) -> str:
+    """白名单归一：忽略大小写与 .exe 后缀（'Git' / 'git.exe' / 'git' 视为同一个）。"""
+    n = str(name).strip().lower()
+    return n[:-4] if n.endswith(".exe") else n
 
 
 def _split_argv(command: str) -> list[str]:
@@ -1696,7 +1704,7 @@ def _run_command(command: str, ctx: dict) -> str:
         return "未提供命令"
     if not ctx.get("allow_cmd"):
         return "run_command 未启用（config.yaml agent.allow_command=false）。"
-    allow = [str(a).lower() for a in (ctx.get("allow_cmds") or []) if str(a).strip()]
+    allow = [_norm_exe(a) for a in (ctx.get("allow_cmds") or []) if str(a).strip()]
     # fail-closed：白名单为空不许"默认全开"
     if not allow:
         return "命令白名单为空（agent.allow_commands 未配置），已拒绝执行。"
@@ -1709,7 +1717,7 @@ def _run_command(command: str, ctx: dict) -> str:
         return f"命令解析失败：{e}"
     if not argv:
         return "未提供命令"
-    exe = os.path.basename(argv[0]).lower()
+    exe = _norm_exe(os.path.basename(argv[0]))
     if exe not in allow:
         return f"命令 {exe!r} 不在白名单（agent.allow_commands），已拒绝执行。"
     run_argv = ["cmd.exe", "/d", "/c", command] if exe in _CMD_BUILTINS else argv
