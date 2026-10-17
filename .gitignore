@@ -50,3 +50,10 @@ tools/_*.txt
 .mypy_cache/
 *.tmp
 *.bak
+
+# Electron 壳 PoC：只提交源码，不提交 300MB 的二进制依赖
+shell/node_modules/
+shell/dist/
+shell/out/
+# 诊断脚本产出的截图（每次运行都会变，不入库）
+tools/_*.png
