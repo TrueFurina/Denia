@@ -18,6 +18,8 @@ __pycache__/
 *.msi
 build/
 dist/
+# 打包时的暂存目录（dist_stage / dist_core / dist_v2 …），与 dist/ 同等对待
+dist_*/
 *.spec
 ort_dml/
 
