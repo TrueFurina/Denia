@@ -33,6 +33,13 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
+# 控制台兜底：GBK 控制台编码不了 ↳ ✗ ⚠ 这类符号，doctor 会当场
+# UnicodeEncodeError 炸掉（2026-10-18 包内自检实锤）。不动编码——中文
+# 在 GBK 下本来就正常——只把编不了的符号换成 ?，诊断必须跑得完。
+for _s in (sys.stdout, sys.stderr):
+    if hasattr(_s, "reconfigure"):
+        _s.reconfigure(errors="replace")
+
 PASS, WARN, FAIL = "PASS", "WARN", "FAIL"
 
 _ORDER = {FAIL: 0, WARN: 1, PASS: 2}
