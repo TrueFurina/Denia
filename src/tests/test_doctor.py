@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import os
+import subprocess
 import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -541,6 +542,18 @@ def main() -> int:
         check(lvl == doctor.PASS, f"cookie 密文报 PASS：{detail}")
     finally:
         _sh.rmtree(_probe14, ignore_errors=True)
+
+    print()
+    print("[15] GBK 控制台不炸：编不了的符号降级为 ? 也要跑完"
+          "（2026-10-18 包内自检实锤 UnicodeEncodeError）")
+    env = dict(os.environ, PYTHONIOENCODING="gbk")
+    p = subprocess.run([sys.executable, os.path.join(ROOT, "tools", "doctor.py")],
+                       capture_output=True, text=True, encoding="utf-8",
+                       errors="replace", env=env, timeout=180)
+    check("UnicodeEncodeError" not in (p.stderr or ""),
+          "强制 GBK stdout 下无编码崩溃")
+    check("PASS" in (p.stdout or "") or "WARN" in (p.stdout or ""),
+          "doctor 正常输出诊断结果")
 
     print()
     if _fails:

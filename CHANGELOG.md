@@ -38,6 +38,7 @@
 | `8f28cc0` | 11:2x | docs | C2 拍板（A 路线）+ 凭据日志卫生门禁 | 规划落档 |
 | （本次） | 11:5x | feat | C2-A 落地：NSIS 安装器 + 升级保留配置 | 见下方明细 |
 | （本次） | 13:5x | feat | 代码签名管线 `--sign`（C10）：出包即签 + 签后核验 | 14 断言 + 2 刀变异；真机自签 E2E |
+| （本次） | 14:0x | fix | doctor GBK 控制台不炸（符号降级 `?`） | [15] 行为测试 + 变异；真机包内复现→修复 |
 
 > **\* 夹带说明（必须留档）**：12:10 / 12:2x 两行的内容实际随 `fa86a4c`（E1 开机自启）
 > 入库——13:14 的并发提交把质检工作流未提交的改动一起提交了，未按工作流拆分。
@@ -1345,3 +1346,25 @@ signtool 26100）签真 exe → 警告通过。测试探针 exe 与 3 天期测�
 **口径**：管线建成 ≠ 已签名。对外分发仍须 CA 证书（OV/EV，企业资质
 决策在用户）；届时只换环境变量值，管线零改动。doctor 第 13 项 WARN
 语义不变——"未签名"在真证书就位前是事实，不该被管线存在美化。
+
+---
+
+## 修复：doctor 在 GBK 控制台 UnicodeEncodeError（2026-10-18 14:0x）
+
+**问题**（真机实锤，装完最新包跑包内 doctor 当场炸）：
+`UnicodeEncodeError: 'gbk' codec can't encode character '\u21b3'`——
+GBK 控制台编不了 `↳` 符号，doctor 第 14 项一打印修复提示就崩，
+整个自检跑不完。
+
+**改动**（`tools/doctor.py`）：入口处
+`sys.stdout/stderr.reconfigure(errors="replace")`——**不动编码**
+（中文在 GBK 下本来就正常），只把编不了的符号降级为 `?`。
+这比强设 UTF-8 好：GBK 控制台里中文照样可读，只有符号变 `?`。
+
+**验证**：测试新增 `[15]` 行为级——子进程 `PYTHONIOENCODING=gbk`
+跑完整 doctor，断言无 `UnicodeEncodeError` 且输出含诊断结果；
+变异（reconfigure 旁路）→ `[15]` 红复绿。门禁 27/27。
+
+**踩坑记录**：跑测试用错解释器——miniconda 系统 Python 缺
+sounddevice 等核心依赖，doctor 依赖检查 FAIL（红的是环境不是代码）。
+本项目的测试解释器是 `.venv/Scripts/python.exe`。
