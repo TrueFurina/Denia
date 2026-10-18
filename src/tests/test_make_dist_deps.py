@@ -603,8 +603,7 @@ def main() -> int:
         # 【C9-5】装配时 make_dist 会写 .src_fingerprint；这里模拟装配产物
         with open(os.path.join(stage, ".src_fingerprint"), "w",
                   encoding="utf-8") as fh:
-            fh.write(make_dist.src_fingerprint(ROOT) + "
-")
+            fh.write(make_dist.src_fingerprint(ROOT) + "\n")
         captured: dict = {}
 
         def fake_run(argv, **kw):
