@@ -28,7 +28,7 @@ def main() -> int:
     root = tempfile.mkdtemp(prefix="autostart_root_")
     # 伪造包根结构：root/python/pythonw.exe + root/main.py
     os.makedirs(os.path.join(root, "python"), exist_ok=True)
-    open(os.path.join(root, "python", "pythonw.exe"), "w").close()
+    open(os.path.join(root, "python", "pythonw.exe"), "w", encoding="utf-8").close()
     open(os.path.join(root, "main.py"), "w", encoding="utf-8").write("pass\n")
 
     try:

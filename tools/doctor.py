@@ -266,7 +266,11 @@ def _shell_mode(cfg: object) -> str:
         mode = normalize(raw, source="doctor")
         return mode if mode in ("auto", "webview", "shell") else "auto"
     except Exception:  # noqa: BLE001
-        return AUTO
+        # 注意：这里必须写字面量。曾经写成 return AUTO，而 AUTO 只在 try 里
+        # 局部导入——配置结构异常时兜底路径自己抛 NameError，doctor 整个崩掉。
+        # 2026-10-18 由「闸门覆盖 vs 闸门名字」专项体检抓出（之前的 WEBVIEW
+        # NameError 只修了 check_shell，漏了这条 except 分支）。
+        return "auto"
 
 
 def probe_shell(timeout: float = 30.0) -> tuple[bool, str]:
