@@ -6,6 +6,7 @@
 """
 from __future__ import annotations
 
+import copy
 import logging
 import os
 import ssl
@@ -13,6 +14,8 @@ from types import SimpleNamespace
 from typing import Any, Optional
 
 import yaml
+
+from src import secret_box
 
 logger = logging.getLogger(__name__)
 
@@ -56,6 +59,18 @@ class Config:
     def __init__(self, raw: dict[str, Any], path: str = "") -> None:
         self.raw = raw
         self.path = path  # 配置文件路径（load_config 时记录），供 save() 持久化
+        # 【阶段 B4】加载即校验：缺字段/类型错/取值非法都会被收集，
+        # 由 `--doctor` 集中呈现。**不抛异常**——配置写错不该让软件打不开，
+        # 但必须大声说出来，不能静默回落（那才是"我配了却没生效"的根因）。
+        self.config_issues: list = []
+        try:
+            from src.config_schema import apply_defaults as _apply_defaults
+            from src.config_schema import validate as _validate
+
+            self.config_issues.extend(_apply_defaults(self.raw))
+            self.config_issues.extend(_validate(self.raw))
+        except Exception as _e:  # noqa: BLE001  校验器自己出问题也不能拖垮启动
+            logger.debug("[配置] 校验跳过：%s", _e)
         self.ns = _to_ns(raw)
         self._characters_map: dict[str, SimpleNamespace] = {}
         self._active_character_id: str = ""
@@ -324,12 +339,18 @@ class Config:
         logger.warning("降级: %s", msg)
 
     def save(self) -> None:
-        """把当前 raw 写回配置文件（内存修改持久化）。无 path 时忽略。"""
+        """把当前 raw 写回配置文件（内存修改持久化）。无 path 时忽略。
+
+        【C9-1】写盘前把明文 api_key 加密成 `dpapi:` 密文——**只加密写盘副本**，
+        内存 self.raw 保持明文，调用方零感知；加密失败降级为明文（与现状一致）。
+        """
         if not self.path:
             return
         try:
+            data = copy.deepcopy(self.raw)
+            secret_box.seal_tree(data)
             with open(self.path, "w", encoding="utf-8") as f:
-                yaml.dump(self.raw, f, allow_unicode=True,
+                yaml.dump(data, f, allow_unicode=True,
                           default_flow_style=False, sort_keys=False)
         except Exception:  # noqa: BLE001
             logger.exception("保存配置失败: %s", self.path)
@@ -338,7 +359,17 @@ class Config:
 def load_config(path: str) -> Config:
     with open(path, "r", encoding="utf-8") as f:
         raw = yaml.safe_load(f)
-    return Config(raw, path=path)
+    if not isinstance(raw, dict):
+        raw = {}
+    # 【C9-1】读盘时把 `dpapi:` 密文解密回内存明文。解密失败（典型：配置
+    # 从别的机器拷来，DPAPI 不认）不抛异常——保留密文并转成降级提示。
+    _ok, failed = secret_box.unseal_tree(raw)
+    cfg = Config(raw, path=path)
+    for p in failed:
+        cfg.add_degradation(
+            f"密钥 {p} 是 DPAPI 加密值且本机无法解密——"
+            "若配置是从别的电脑拷来的，请重新填写该 API Key")
+    return cfg
 
 
 # ==================== 环境探测 ====================
