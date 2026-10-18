@@ -26,9 +26,15 @@ PY_VENV = os.path.join(ROOT, ".venv", "Scripts", "python.exe")  # 装了三方�
 
 # (名称, 解释器, 参数, 是否慢项)
 GATES: list[tuple[str, str, list[str], bool]] = [
-    ("字节码编译", PY_RUNTIME, ["-m", "compileall", "-q", "src", "main.py"], False),
-    ("全局名完整性", PY_RUNTIME, ["tools/check_module_globals.py", "--all", "src"], False),
-    ("文本编码", PY_RUNTIME, ["tools/check_open_encoding.py", "--all", "src", "main.py"], False),
+    # 三道「全仓级」闸门的扫描范围必须名副其实：src + tools + 根目录脚本。
+    # 2026-10-18 专项体检（闸门名 vs 实际覆盖）的整改：这三道原本只圈
+    # src main.py，tools/ 整棵树在视野外——doctor.py 的 return AUTO
+    # NameError、_append_banter2_log.py 的换行 corruption 都因此漏进过 HEAD。
+    # 文本编码还必须带 --strict：检查器默认只打印计数、永远 exit 0，
+    # 少了它这就是一道装饰闸门（曾长期如此）。
+    ("字节码编译", PY_RUNTIME, ["-m", "compileall", "-q", "src", "tools", "main.py", "launch_companion.py", "run_webui.py"], False),
+    ("全局名完整性", PY_RUNTIME, ["tools/check_module_globals.py", "--all", "src", "tools", "launch_companion.py", "run_webui.py"], False),
+    ("文本编码", PY_RUNTIME, ["tools/check_open_encoding.py", "--all", "--strict", "src", "tools", "main.py", "launch_companion.py", "run_webui.py"], False),
     ("前端资源", PY_RUNTIME, ["tools/check_web_assets.py", "--strict"], False),
     ("凭据/隐私", PY_RUNTIME, ["tools/check_package_secrets.py"], False),
     ("凭据日志卫生", PY_RUNTIME, ["tools/check_log_leak.py"], False),

@@ -556,6 +556,36 @@ def main() -> int:
           "doctor 正常输出诊断结果")
 
     print()
+    print("[16] _shell_mode 兜底分支：normalize 不可用时也要收敛成 auto"
+          "（曾写成 return AUTO，而 AUTO 只在 try 里局部导入 → NameError）")
+    import src.ui.pet_backend as _pb
+    _orig_normalize = _pb.normalize
+
+    def _boom(*_a, **_k):
+        raise RuntimeError("强制失败：模拟 normalize 不可用")
+
+    # 先验正常路径：raw 为 None（配置缺省）时也该是 auto
+    try:
+        check(doctor._shell_mode(None) == "auto",
+              "cfg=None（配置缺省）→ auto")
+    except Exception as e:  # noqa: BLE001
+        check(False, f"正常路径就抛了 {type(e).__name__}：{e}")
+    # 再造一次导入/调用失败，走 except 分支
+    _pb.normalize = _boom
+    try:
+        try:
+            mode = doctor._shell_mode(None)
+        except NameError as e:
+            check(False, f"except 分支自己抛 NameError（{e}）："
+                         "AUTO/WEBVIEW 这类常量只在 try 里局部导入")
+        except Exception as e:  # noqa: BLE001
+            check(False, f"except 分支抛了意外的 {type(e).__name__}：{e}")
+        else:
+            check(mode == "auto", f"normalize 炸了也兜底成 auto，不抛（实际 {mode!r}）")
+    finally:
+        _pb.normalize = _orig_normalize
+
+    print()
     if _fails:
         print(f"FAIL：{len(_fails)} 项未通过")
         return 1

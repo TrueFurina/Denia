@@ -63,7 +63,7 @@ def _mk_out(tmp: str, with_python: bool = True) -> str:
     if with_python:
         pd = os.path.join(tmp, "python")
         os.makedirs(pd, exist_ok=True)
-        with open(os.path.join(pd, "python.exe"), "w"):
+        with open(os.path.join(pd, "python.exe"), "w", encoding="utf-8"):
             pass
     return tmp
 
@@ -151,7 +151,7 @@ def main() -> int:
         out9 = _mk_out(os.path.join(tmp, "o9"))
         wh9 = os.path.join(out9, "wheels")
         os.makedirs(wh9, exist_ok=True)
-        with open(os.path.join(wh9, "demo-1.0-py3-none-any.whl"), "w"):
+        with open(os.path.join(wh9, "demo-1.0-py3-none-any.whl"), "w", encoding="utf-8"):
             pass
         args9: list[list[str]] = []
 
@@ -498,17 +498,17 @@ def main() -> int:
         # 7.2 只有白名单 pywin32.pth → 不报
         sp = os.path.join(probe7, "python", "Lib", "site-packages")
         os.makedirs(sp)
-        open(os.path.join(sp, "pywin32.pth"), "w").write("import sys; sys.path.append('x')\n")
+        open(os.path.join(sp, "pywin32.pth"), "w", encoding="utf-8").write("import sys; sys.path.append('x')\n")
         check(make_dist.scan_stale_pth(probe7) == [],
               "白名单 pywin32.pth 不报警")
         # 7.3 新装 .pth → 报出且有序
-        open(os.path.join(sp, "foo.pth"), "w").write("some\\path\n")
-        open(os.path.join(sp, "__editable__.demo-0.1.pth"), "w").write("demo\n")
+        open(os.path.join(sp, "foo.pth"), "w", encoding="utf-8").write("some\\path\n")
+        open(os.path.join(sp, "__editable__.demo-0.1.pth"), "w", encoding="utf-8").write("demo\n")
         check(make_dist.scan_stale_pth(probe7)
               == ["__editable__.demo-0.1.pth", "foo.pth"],
               "新装 .pth 全部报出且有序")
         # 7.4 大小写不敏感
-        open(os.path.join(sp, "BAR.PTH"), "w").write("y\n")
+        open(os.path.join(sp, "BAR.PTH"), "w", encoding="utf-8").write("y\n")
         got = make_dist.scan_stale_pth(probe7)
         check("BAR.PTH" in got, f"大写扩展名也抓到（{got}）")
         # 7.5 warn_stale_pth 有发现时打印指引、无发现时安静
@@ -534,7 +534,7 @@ def main() -> int:
     probe8 = tempfile.mkdtemp(prefix="make_dist_wh_")
     try:
         os.makedirs(os.path.join(probe8, "python"))
-        open(os.path.join(probe8, "python", "python.exe"), "w").close()
+        open(os.path.join(probe8, "python", "python.exe"), "w", encoding="utf-8").close()
         open(os.path.join(probe8, "requirements.txt"), "w", encoding="utf-8").write(
             "# ===== 核心（缺一不可，软件启动必需）=====\nPyYAML\n")
         real_pip8 = make_dist._pip
@@ -550,7 +550,7 @@ def main() -> int:
                     if a == "-d":
                         dest.append(args[i + 1])
             if dest:
-                open(os.path.join(dest[0], "srt-3.5.3.tar.gz"), "w").close()
+                open(os.path.join(dest[0], "srt-3.5.3.tar.gz"), "w", encoding="utf-8").close()
             return 0, ["ok"]
 
         make_dist._pip = _pip8
@@ -593,7 +593,7 @@ def main() -> int:
     scratch = tempfile.mkdtemp(prefix="itest_c2a_")
     try:
         fake_nsis = os.path.join(scratch, "makensis.exe")
-        open(fake_nsis, "w").close()
+        open(fake_nsis, "w", encoding="utf-8").close()
         stage = os.path.join(scratch, "mystage")
         os.makedirs(os.path.join(stage, "src"))
         # 装配目录里的 version.py 必须与注入版本一致（漂移守卫）
@@ -715,7 +715,7 @@ def main() -> int:
     # 自包含脚手架（C2-A 段的 scratch 已被 finally 清掉，不复用）。
     scratch5 = tempfile.mkdtemp(prefix="itest_c95_")
     fake_nsis5 = os.path.join(scratch5, "makensis.exe")
-    open(fake_nsis5, "w").close()
+    open(fake_nsis5, "w", encoding="utf-8").close()
 
     def _fake_run5(argv, **kw):
         captured5["argv"] = argv
@@ -727,7 +727,7 @@ def main() -> int:
         out_exe = os.path.join(os.path.dirname(os.path.dirname(script_path)),
                                "dist", f"达妮娅AI桌面伴侣_Setup_v{v}.exe")
         os.makedirs(os.path.dirname(out_exe), exist_ok=True)
-        open(out_exe, "w").close()
+        open(out_exe, "w", encoding="utf-8").close()
         class _R:
             returncode = 0
             stdout = "ok"
@@ -803,7 +803,7 @@ def main() -> int:
 
     print("[C10-3] subject 模式：凭证进 cfg，工具可用 DANIA_SIGN_TOOL 显式指路")
     fake_tool = os.path.join(tmp, "signtool.exe")
-    open(fake_tool, "w").close()
+    open(fake_tool, "w", encoding="utf-8").close()
     cfg = make_dist.resolve_sign_config({"DANIA_SIGN_SUBJECT": "DaniaAI Test Signer",
                                          "DANIA_SIGN_TOOL": fake_tool})
     check(cfg is not None and cfg.get("subject") == "DaniaAI Test Signer",
@@ -831,7 +831,7 @@ def main() -> int:
     except ValueError:
         check(True, "PFX 不存在 → ValueError")
     real_pfx = os.path.join(tmp, "x.pfx")
-    open(real_pfx, "w").close()
+    open(real_pfx, "w", encoding="utf-8").close()
     cfg = make_dist.resolve_sign_config({"DANIA_SIGN_PFX": real_pfx,
                                          "DANIA_SIGN_TOOL": fake_tool})
     check(cfg is not None and cfg.get("pfx") == real_pfx and cfg.get("pass") == "",
@@ -860,7 +860,7 @@ def main() -> int:
         return _FakeResult(0, "Successfully verified")
 
     exe7 = os.path.join(tmp, "probe7.exe")
-    open(exe7, "w").close()
+    open(exe7, "w", encoding="utf-8").close()
     check(make_dist.sign_file(exe7, {"tool": fake_tool, "subject": "S"},
                               runner=_ok_runner) is True,
           "签成+验过 → True")

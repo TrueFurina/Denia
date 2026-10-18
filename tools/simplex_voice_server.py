@@ -31,7 +31,7 @@ if PROJECT_ROOT not in sys.path:
 
 import uvicorn  # noqa: E402
 from fastapi import FastAPI, Request, Response  # noqa: E402
-from fastapi.responses import FileResponse, JSONResponse  # noqa: E402
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse  # noqa: E402
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 logger = logging.getLogger("simplex_voice_server")
