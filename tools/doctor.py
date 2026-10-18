@@ -717,7 +717,7 @@ def check_secret_storage(path: str) -> tuple[str, str, str, str]:
             text = f.read()
     except Exception as e:  # noqa: BLE001
         return (WARN, "密钥落盘", f"读取失败：{e}", "")
-    plain = sealed = 0
+    plain = sealed = refs = 0
     for line in text.splitlines():
         s = line.strip()
         if s.startswith("- "):  # YAML 列表项：`- api_key: '...'`，先剥列表标记
@@ -730,6 +730,8 @@ def check_secret_storage(path: str) -> tuple[str, str, str, str]:
             continue
         if val.startswith("dpapi:"):
             sealed += 1
+        elif val.startswith("${") and val.endswith("}"):
+            refs += 1   # 【2026-10-18】`${ENV_VAR}` 是环境变量引用，本身不含密钥
         else:
             plain += 1
     if plain and sealed:
@@ -739,8 +741,144 @@ def check_secret_storage(path: str) -> tuple[str, str, str, str]:
         return (WARN, "密钥落盘", f"{plain} 处 API Key 明文落盘（拷走文件即泄露）",
                 "保存一次配置即可自动加密为 dpapi: 密文（DPAPI，仅本机可解；换机需重填）")
     if sealed:
-        return (PASS, "密钥落盘", f"{sealed} 处 API Key 已 DPAPI 加密（仅本机可解）", "")
+        # 注意：f-string 里要显示字面花括号得写 `{{}}`；`${...}` 里的 `...` 是
+        # Python 的 Ellipsis 字面量，会被渲染成 "$Ellipsis"（2026-10-18 实锤）。
+        extra = f"；另有 {refs} 处指向环境变量（${{ENV_VAR}}，密钥只在环境变量里，不落盘）" if refs else ""
+        return (PASS, "密钥落盘", f"{sealed} 处 API Key 已 DPAPI 加密（仅本机可解）{extra}", "")
+    if refs:
+        return (PASS, "密钥落盘", f"{refs} 处 API Key 用 ${{ENV}} 引用（密钥只存环境变量，不落盘）", "")
     return (PASS, "密钥落盘", "未填写任何 API Key", "")
+
+
+def _collect_llm_routes(raw: dict) -> list[tuple[str, str, str, str]]:
+    """收集当前生效的模型链路 → [(label, base_url, model, api_key)]。
+
+    只收**当前生效**的三处：主聊天(llm.openai)、手动选的聊天端口、active 视觉。
+    不扫全部 20 个条目——否则每次 doctor 都在发几十个请求。去重是因为
+    "主聊天"和"当前端口"常常就是同一个端点。
+    """
+    out: list[tuple[str, str, str, str]] = []
+
+    def add(label: str, d: object) -> None:
+        if not isinstance(d, dict):
+            return
+        base = (d.get("base_url") or "").strip().rstrip("/")
+        model = (d.get("model") or "").strip()
+        key = (d.get("api_key") or "").strip()
+        if base and model:
+            out.append((label, base, model, key))
+
+    add("主聊天", (raw.get("llm") or {}).get("openai") or {})
+    tc = raw.get("text_chat") or {}
+    manual = str(tc.get("manual_provider") or "")
+    for p in (tc.get("providers") or []):
+        if isinstance(p, dict) and p.get("id") == manual:
+            add("当前端口", p)
+    vm = raw.get("vision_models") or {}
+    active = str(vm.get("active") or "")
+    for p in (vm.get("models") or []):
+        if isinstance(p, dict) and p.get("id") == active:
+            add("当前视觉", p)
+
+    seen: set[tuple] = set()
+    uniq: list[tuple[str, str, str, str]] = []
+    for r in out:
+        sig = (r[1], r[2], r[3])
+        if sig not in seen:
+            seen.add(sig)
+            uniq.append(r)
+    return uniq
+
+
+def _probe_llm_routes(routes: list[tuple[str, str, str, str]],
+                      urlopen=None, timeout: float = 12.0
+                      ) -> tuple[str, str, str, str]:
+    """逐条发最小请求探活（拆成独立函数，方便测试用假 urlopen 打桩）。
+
+    判级（不按"有没有响应"，按 HTTP 语义）：
+      200            → PASS
+      429            → PASS  限流说明 **key 有效**，换个模型/等会即可
+      400/401/402/403 → FAIL  key 有但服务商不认：欠费/账户异常/未授权
+      其它状态码      → WARN
+      超时/连接失败   → WARN  不能判红：断网时全红，doctor 就废了
+      空 api_key     → 不请求，记入明细
+    """
+    import time
+    import urllib.error
+    import urllib.request
+
+    if urlopen is None:
+        urlopen = urllib.request.urlopen
+
+    level = PASS
+    details: list[str] = []
+    for label, base, model, key in routes:
+        if not key:
+            if level == PASS:
+                level = WARN
+            details.append(f"{label}（{model}）未填 api_key")
+            continue
+        payload = json.dumps({
+            "model": model,
+            "messages": [{"role": "user", "content": "回复OK"}],
+            "max_tokens": 4,
+        }).encode("utf-8")
+        req = urllib.request.Request(
+            base + "/chat/completions", data=payload, method="POST",
+            headers={"Content-Type": "application/json",
+                     "Authorization": f"Bearer {key}"})
+        t0 = time.time()
+        try:
+            with urlopen(req, timeout=timeout) as r:  # noqa: PLW2901
+                r.read()
+            details.append(f"{label}（{model}）✓ {int((time.time() - t0) * 1000)}ms")
+        except urllib.error.HTTPError as e:
+            msg = e.read().decode("utf-8", "replace")[:110]
+            if e.code == 429:
+                details.append(f"{label}（{model}）✓ 限流（key 有效）")
+            elif e.code in (400, 401, 402, 403, 404):
+                level = FAIL
+                details.append(f"{label}（{model}）✗ HTTP {e.code} {msg}")
+            else:
+                if level == PASS:
+                    level = WARN
+                details.append(f"{label}（{model}）? HTTP {e.code} {msg}")
+        except Exception as e:  # noqa: BLE001  断网/超时/证书
+            if level == PASS:
+                level = WARN
+            details.append(f"{label}（{model}）? {type(e).__name__}（网络不通或超时）")
+
+    if level == FAIL:
+        hint = ("HTTP 400/403 多为账户异常（欠费、未实名、风控）；401 是 key 无效；"
+                "402 是欠费。登录服务商控制台处理，或在 providers 里换一个渠道")
+    elif level == WARN:
+        hint = "补 api_key（setx 后重启软件）、或检查网络/代理"
+    else:
+        hint = ""
+    name = {"PASS": "模型渠道", "WARN": "模型渠道有隐患", "FAIL": "模型渠道不可用"}[level]
+    return (level, name, "；".join(details)[:200], hint)
+
+
+def check_llm_channel(cfg: object) -> tuple[str, str, str, str]:
+    """「当前生效的渠道真的能出话吗」。
+
+    【2026-10-18】为什么加这一项：用户全部渠道填的都是阿里云百炼，而百炼账户
+    HTTP 400 "not in good standing"（欠费/风控，**账户级**拦截——`GET /models`
+    还能列出 176 个模型，chat 一律被拒）。症状完全是静默的：级联大脑的
+    `enabled = bool(base_url and api_key and model)` 一假就只留一条 warning，
+    通话不出声、配置里明明"填好了"，用户只会觉得"一开始就难"。
+    """
+    try:
+        routes = _collect_llm_routes(getattr(cfg, "raw", None) or {})
+    except Exception as e:  # noqa: BLE001
+        return (WARN, "模型渠道", f"收集槽位失败：{e}", "")
+    if not routes:
+        return (WARN, "模型渠道", "没找到生效的聊天/视觉槽位",
+                "到配置里填 llm.openai 或 text_chat.providers")
+    try:
+        return _probe_llm_routes(routes)
+    except Exception as e:  # noqa: BLE001
+        return (WARN, "模型渠道", f"探活失败：{e}", "")
 
 
 def check_version(cfg: object) -> tuple[str, str, str, str]:
@@ -867,7 +1005,8 @@ def run_all(config_path: str) -> list[tuple[str, str, str, str]]:
                     (check_version, cfg),
                     (check_disk, None),
                     (check_logs, None),
-                    (check_secret_storage, config_path)):
+                    (check_secret_storage, config_path),
+                    (check_llm_channel, cfg)):
         try:
             # 按「函数自己声明的形参」决定传不传，而不是按参数值是否为 None。
             # 见 _takes_arg 的注释：那是本文件踩过的坑。
