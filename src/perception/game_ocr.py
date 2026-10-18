@@ -2308,8 +2308,8 @@ class GameOcrMonitor:
         # 提前 return 不编码 buf 无任何损失。
         if self._frame_source != "video":
             try:
-                import imagehash
-                ph = imagehash.phash(img.resize((64, 64)))
+                from . import phash
+                ph = phash.phash(img.resize((64, 64)))
                 if self._last_phash is not None and abs(ph - self._last_phash) < STATIC_PHASH_DIFF:
                     self._static_frames += 1
                     if self._static_frames >= STATIC_SKIP_FRAMES:
@@ -2331,7 +2331,7 @@ class GameOcrMonitor:
                     self._static_frames = 0
                 self._last_phash = ph
             except Exception:  # noqa: BLE001
-                pass  # imagehash 不可用则退回 OCR 文字静止判断
+                pass  # phash 不可用则退回 OCR 文字静止判断
         # 懒编码：整图 JPEG 只在发布时刻时按需编码（见 _frame_jpeg），不再每轮
         # 无谓编码一次（省 ~30~50ms/轮 + 一次 BytesIO 分配）。
         self._last_img = img
