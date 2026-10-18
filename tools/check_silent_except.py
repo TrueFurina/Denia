@@ -51,13 +51,19 @@ def _is_silent(handler: ast.ExceptHandler) -> bool:
     return True
 
 
-def scan(path: str) -> list[dict]:
+def scan(path: str) -> tuple[list[dict], str | None]:
+    """返回 (命中行, 解析错误说明)。
+
+    解析失败必须**上报**而不是返回空：否则主链路文件被改坏（语法错）时，
+    闸门反而更"绿"——少扫一个文件、总数还变小。2026-10-18 实测踩到：
+    往 tts.py 注入一段语法错误，闸门 0 处真静默、退出码 0。
+    """
     src = open(path, encoding="utf-8", errors="replace").read()
     lines = src.split("\n")
     try:
         tree = ast.parse(src)
-    except SyntaxError:
-        return []
+    except SyntaxError as e:
+        return [], f"SyntaxError: {e.msg}（第 {e.lineno} 行）"
 
     funcs: dict[int, str] = {}
     for node in ast.walk(tree):
@@ -80,7 +86,7 @@ def scan(path: str) -> list[dict]:
             "exc": exc,
             "comment": has_comment,
         })
-    return out
+    return out, None
 
 
 def iter_py(root: str):
@@ -113,10 +119,15 @@ def main() -> int:
 
     total = silent_nc = 0
     per_file: list[tuple[int, int, str]] = []
+    errors: list[tuple[str, str]] = []
     for p in paths:
         if not os.path.exists(p):
+            errors.append((p, "文件不存在"))
             continue
-        rows = scan(p)
+        rows, err = scan(p)
+        if err:
+            errors.append((p, err))
+            continue
         if not rows:
             continue
         real = [r for r in rows if not r["comment"]]
@@ -133,9 +144,15 @@ def main() -> int:
         print(f"{real:6d} {allc:6d}  {p}")
     print(f"\n合计：{silent_nc} 处真静默 / {total} 处静默（含带注释的降级）")
 
-    if args.strict and args.main and silent_nc:
-        print(f"\n✗ 主链路存在 {silent_nc} 处真静默：至少补 logger.debug(..., exc_info=True)",
-              file=__import__("sys").stderr)
+    if errors:
+        print("\n✗ 有文件没能扫（不能当「没问题」）：", file=__import__("sys").stderr)
+        for p, e in errors:
+            print(f"  {p}: {e}", file=__import__("sys").stderr)
+
+    if args.strict and args.main and (silent_nc or errors):
+        if silent_nc:
+            print(f"\n✗ 主链路存在 {silent_nc} 处真静默：至少补 logger.debug(..., exc_info=True)",
+                  file=__import__("sys").stderr)
         return 1
     return 0
 

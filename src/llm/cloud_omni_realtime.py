@@ -868,6 +868,7 @@ class _AudioPlayer:
             try:
                 chunk = self._q.get(timeout=0.05)
             except queue.Empty:
+                # 正常路径：这是 50ms 的轮询超时，不是错误（别当异常吞）
                 continue
             try:
                 with self._lock:
