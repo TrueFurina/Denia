@@ -36,10 +36,10 @@
 | `c216151` | 11:0x | perf | phash 自实现替换 ImageHash，甩 scipy（C9-3） | 208 图 bit 级对照；472→370MB |
 | `c010d83` | 11:1x | feat | wheelhouse 改 pip wheel，真离线化收口（C9-4） | 63 whl / 0 sdist；离线装全通 |
 | `8f28cc0` | 11:2x | docs | C2 拍板（A 路线）+ 凭据日志卫生门禁 | 规划落档 |
-| （本次） | 11:5x | feat | C2-A 落地：NSIS 安装器 + 升级保留配置 | 见下方明细 |
-| （本次） | 13:5x | feat | 代码签名管线 `--sign`（C10）：出包即签 + 签后核验 | 14 断言 + 2 刀变异；真机自签 E2E |
-| （本次） | 14:0x | fix | doctor GBK 控制台不炸（符号降级 `?`） | [15] 行为测试 + 变异；真机包内复现→修复 |
-| （本次） | 15:1x | fix | 桌面双击启动即崩：None 流 → pywebview GBK devnull → rich 炸 | io_safe 三态测试 + 变异；真机 crash 日志取证 |
+| `b87a8c1` | 11:5x | feat | C2-A 落地：NSIS 安装器 + 升级保留配置 | 见下方明细 |
+| `e624b6e` | 13:5x | feat | 代码签名管线 `--sign`（C10）：出包即签 + 签后核验 | 14 断言 + 2 刀变异；真机自签 E2E |
+| `a1e2f17` | 14:0x | fix | doctor GBK 控制台不炸（符号降级 `?`） | [15] 行为测试 + 变异；真机包内复现→修复 |
+| `6094d95` | 15:1x | fix | 桌面双击启动即崩：None 流 → pywebview GBK devnull → rich 炸 | io_safe 三态测试 + 变异；真机 crash 日志取证 |
 
 > **\* 夹带说明（必须留档）**：12:10 / 12:2x 两行的内容实际随 `fa86a4c`（E1 开机自启）
 > 入库——13:14 的并发提交把质检工作流未提交的改动一起提交了，未按工作流拆分。
@@ -1398,3 +1398,23 @@ UTF-8 / 正常→幂等）+ 变异红复绿；门禁 27/27。重出包重装后�
 
 **同族缺陷全景**：doctor（已修，GBK 控制台）、主程序入口（本条）——
 同一类「符号 × 编码」坑，两处入口各自兜底。
+
+---
+
+## 最终收口：闸门覆盖体检 + 并行工作入库（2026-10-18 15:4x，`96a9021`）
+
+**问题**：三道「全仓级」闸门（字节码编译 / 全局名完整性 / 文本编码）名不副实——
+只圈 `src main.py`，`tools/` 整棵树在视野外；doctor 的 `return AUTO`
+NameError、`_append_banter2_log.py` 换行损坏都是这样漏进 HEAD 的。文本编码
+闸还没带 `--strict`，检查器默认只打印计数、恒 exit 0——装饰闸门。
+
+**改动**：三闸扩到 `src + tools + main.py + launch_companion.py +
+run_webui.py`；编码闸加 `--strict`；doctor `_shell_mode` except 分支
+`return AUTO` → `return "auto"`（字面量，附 why 注释）；配套把测试与工具
+脚本里的裸 `open()` 补 `encoding="utf-8"`。
+
+**验证**：doctor / make_dist_deps / autostart / io_safe 四套测试全过；
+新闸门 27/27（tools 树首次全量进闸即全绿）。
+
+**协作说明**：本条为主体改动出自并行会话（闸门覆盖专项体检），收尾时由
+主线会话统一验证（四套测试 + 新闸门）后入库。
