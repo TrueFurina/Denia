@@ -52,14 +52,11 @@ _bootstrap_bundle_dlls()
 # (e.g. the "✓" checkmark) even when launched from a GBK codepage console
 # (e.g. double-clicking a .bat on Chinese Windows). Without this, console
 # output raises UnicodeEncodeError and crashes the startup thread.
-import sys as _sys
-try:
-    if hasattr(_sys.stdout, "reconfigure"):
-        _sys.stdout.reconfigure(encoding="utf-8", errors="replace")
-    if hasattr(_sys.stderr, "reconfigure"):
-        _sys.stderr.reconfigure(encoding="utf-8", errors="replace")
-except Exception:
-    pass
+# 2026-10-18 补 None 分支：桌面快捷方式（pythonw 无控制台）下 stdout/stderr
+# 是 None，原 reconfigure 被跳过 → pywebview 用 GBK devnull 顶替 → rich 写
+# ✓ 当场炸死启动线程（crash_20261018_150448）。详见 src/io_safe.py。
+from src.io_safe import ensure_safe_stdio
+ensure_safe_stdio()
 
 # 🔑 通知浮窗"重新出现时不产帧"的病根解方（2026-09-04 23:20）——必须在 WebView2
 # 环境初始化前设置，故放在文件最顶部。Chromium 默认对"不可见/被遮挡"的窗口停止
