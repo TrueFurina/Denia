@@ -1140,8 +1140,28 @@ def check_asr(cfg: object) -> tuple[str, str, str, str]:
                 "先看上面「配置文件」一项")
 
     ns = getattr(cfg, "ns", None)
-    asr = getattr(getattr(ns, "voice", None), "asr", None) if ns else None
+    voice = getattr(ns, "voice", None) if ns else None
+    asr = getattr(voice, "asr", None) if voice else None
     model_path = (getattr(asr, "model_path", "") or "").strip() if asr else ""
+
+    # 麦克风监听开关关着 → asr._run() 开头就挂起等待，唤醒和语音全废
+    # （webapp.py 自己写着"B2 修复：默认 mic_enabled=false 导致唤醒/语音全废"）。
+    # 判 WARN 而非 FAIL：用户有权在设置里主动关掉"不想被监听"，
+    # 但默认配置带着这个 false、而 mode 又是 clone（要她的本音）就是自相矛盾。
+    if voice is not None and not bool(getattr(voice, "mic_enabled", False)):
+        mic_note = ("麦克风监听关着（voice.mic_enabled=false）→ 她不采集、听不见你说话")
+    else:
+        mic_note = ""
+
+    def _finish(level: str, detail: str, fix: str = "") -> tuple:
+        """收口：模型就绪但麦克风关着 → 降 WARN（她照样听不见你说话）。
+
+        FAIL 不降级：配置指错比"没开麦克风"严重，先修红的。
+        """
+        if mic_note and level == PASS:
+            return (WARN, "语音识别", f"{detail}；{mic_note}",
+                    "到「设置 · 语音」打开麦克风监听（或把 voice.mic_enabled 改为 true）")
+        return (level, "语音识别", detail, fix)
 
     # ① 配了路径但目录不在 —— 这是本轮要抓住的主角
     if model_path:
@@ -1158,13 +1178,13 @@ def check_asr(cfg: object) -> tuple[str, str, str, str]:
         except Exception as e:  # noqa: BLE001
             return (FAIL, "语音识别", f"模型目录在但加载失败：{e}",
                     "模型文件可能不完整，重新解压一份")
-        return (PASS, "语音识别", f"用指定模型 {model_path}", "")
+        return _finish(PASS, f"用指定模型 {model_path}")
 
     # ② 没配路径 → 先看 sherpa（ASR 内部优先用它）
     for d in _SHERPA_MODEL_DIRS:
         p = d if os.path.isabs(d) else os.path.join(ROOT, d)
         if os.path.isdir(p):
-            return (PASS, "语音识别", f"sherpa-onnx 模型就绪（{os.path.basename(p)}）", "")
+            return _finish(PASS, f"sherpa-onnx 模型就绪（{os.path.basename(p)}）")
 
     # ③ 再看 vosk 本地缓存（Model(lang="cn") 的落盘处）
     cache = os.path.join(os.path.expanduser("~"), ".cache", "vosk")
@@ -1175,7 +1195,7 @@ def check_asr(cfg: object) -> tuple[str, str, str, str]:
             Model(lang="cn")
         except Exception as e:  # noqa: BLE001
             return (FAIL, "语音识别", f"本地缓在但加载失败：{e}", "")
-        return (PASS, "语音识别", "vosk 中文模型已缓存（~/.cache/vosk）", "")
+        return _finish(PASS, "vosk 中文模型已缓存（~/.cache/vosk）")
 
     return (WARN, "语音识别",
             "没有 sherpa / vosk 模型：第一次用麦克风时会自动下载（约 42MB，需联网）",

@@ -1779,7 +1779,7 @@ voice:
   - wechatappex.exe
   - qq.exe
   - tim.exe
-  mic_enabled: false
+  mic_enabled: true
   mode: clone
   muted: false
   wake_words:
