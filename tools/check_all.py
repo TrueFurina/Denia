@@ -72,6 +72,8 @@ GATES: list[tuple[str, str, list[str], bool]] = [
     ("日志轮转", PY_VENV, ["src/tests/test_log_rotate.py"], False),
     ("配置校验", PY_VENV, ["src/tests/test_config_schema.py"], False),
     ("doctor 自检结构", PY_VENV, ["src/tests/test_doctor.py"], False),
+    # 「她现在能说话吗」：engine 为空会落到静音后端（不出声、不联网、零日志）。
+    ("语音合成判级", PY_VENV, ["src/tests/test_doctor_voice_backend.py"], False),
     # 模型渠道探活的判级（本轮事故的直接教训：百炼账户 400 欠费，配置里却"填好了"）。
     # 测试 ⑦ 组 + 变异 7 刀全红（tools/_qc_channel_mutation.py）。
     ("渠道探活判级", PY_VENV, ["src/tests/test_doctor_llm_channel.py"], False),
