@@ -78,6 +78,10 @@ GATES: list[tuple[str, str, list[str], bool]] = [
     # 不存在的目录，两口堵死自动下载。闭环测试 + doctor 判级测试。
     ("ASR 听得见", PY_VENV, ["src/tests/test_asr_voice_pipeline.py"], False),
     ("语音识别判级", PY_VENV, ["src/tests/test_doctor_asr.py"], False),
+    # 「理不理你」：small-cn 词图没有"达妮娅"整词，整词语法让她名字被静默跳过；
+    # 改单字+同音字语法 + 拼音容错匹配（娅/亚 同音也算中）。单测 + 变异 6 刀全红。
+    ("唤醒词命中", PY_VENV, ["src/tests/test_wake_word.py"], False),
+    ("唤醒词变异", PY_VENV, ["tools/_qc_wake_mutation.py"], False),
     # 配置引用体检：路径指错 / 角色没绑引擎 → 红；可选功能（auto_start:false）
     # 与端口未就绪 → 只提示。扫进仓模板，CI 上也能跑。
     ("配置引用体检", PY_VENV, ["tools/_qc_path_refs.py", "config.release.yaml"], False),
