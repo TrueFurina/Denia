@@ -29,12 +29,37 @@
 | `3fb4a71` | 20:26 | chore | `live2d/rig` 由 gitlink 改为真实跟踪 | 变异：删文件 → exit 1 |
 | `1207233` | 20:31 | chore | 打包闸双向化（也查"必须带的"） | 三组假包实测 |
 | — | 12:10 | fix | 桌宠后端默认值改回 auto（默认拿到真透明） | doctor PASS + 变异 3 项 FAIL |
+| （本次） | 12:2x | fix | 依赖档位参数名骗人：`upto="optional"` 静默等于 `important` | [22]~[25] 新用例 + 双变异被抓 |
 | `422f140` | 10:4x | fix | RPC 401 残留 body 污染 keep-alive（10053 假绿） | 720 次长连接 0 失败 |
 | `2035457` | 10:5x | security | 敏感配置 DPAPI 加密落盘（C9-1） | 20 断言 + 3 刀变异 |
 | `c216151` | 11:0x | perf | phash 自实现替换 ImageHash，甩 scipy（C9-3） | 208 图 bit 级对照；472→370MB |
 | `c010d83` | 11:1x | feat | wheelhouse 改 pip wheel，真离线化收口（C9-4） | 63 whl / 0 sdist；离线装全通 |
 | `8f28cc0` | 11:2x | docs | C2 拍板（A 路线）+ 凭据日志卫生门禁 | 规划落档 |
 | （本次） | 11:5x | feat | C2-A 落地：NSIS 安装器 + 升级保留配置 | 见下方明细 |
+
+### 2026-10-18 · E 阶段开篇：开机自启开关（HKCU Run 键，全链路实测）
+
+**src/autostart.py**：写/清/查 `HKCU\...\Run` 的 `DaniaAI` 值（每用户无 UAC，
+与 C2-A 安装器同理念）。命令行 `"<root>\python\pythonw.exe" "<root>\main.py"`
+——pythonw 无控制台、全路径引号包裹防含空格路径解析漂移。enable/disable 幂等；
+is_enabled 对 FileNotFoundError/OSError 一律 False 不抛。
+
+**挂接四处**：① config.release.yaml `app.autostart: false`（单一真值）；
+② main.py 启动 sync（包内判定：root 同时有 main.py 与 python/pythonw.exe，
+开发机 .venv 自动跳过；失败不拖垮启动）；③ WindowAPI 新增
+`get_autostart`/`set_autostart` RPC（UI 开关）——set **双写**注册表+config：
+只写注册表不写 config，下次启动 sync 会按旧 config 悄悄关掉（本仓
+「开关接线了但没通电」典型病，一次双写根治）；④ installer.nsi 卸载段
+`DeleteRegValue` 清自启项（保留数据≠保留自启——程序没了 Run 键残留只会
+让每次开机弹「找不到文件」）。
+
+**端到端实测**：装 → 包内 python enable → 真实 Run 键写入且命令指向安装目录 →
+静默卸载 → Run 键被清、目录只剩 config.yaml。
+
+**测试事故与工程化**：M2 变异（enable 写死全局值名）跑变异测试时把
+`DaniaAI` 写进真实 Run 键无人清——**变异测试污染真实系统状态的活案例**。
+工程化修复：测试加快照守卫（测前记录真实键原值，测后不一致自动还原），
+M2 重验下守卫生效（变异红 + 真实键零污染）。
 
 ### 2026-10-18 · C2-A 补强：装配漂移守卫 + 安装/卸载运行中检测
 
@@ -1221,3 +1246,48 @@ doctor 去掉回退重试（`if False`）→ 重新变成 `[WARN] 本机起不�
    就必须排空或关连接。
 8. **偶发失败先量化再定性**：这轮如果直接重跑放过，"偶发"就会被归档成抖动。连跑 20 次拿到 10%
    失败率、再分组 180 次定位到唯一变量（是否读 body），才配得上"找到根因"这四个字。
+
+---
+
+## 依赖档位的参数名骗人：`upto="optional"` 静默等于 `important`（2026-10-18 12:20）
+
+**问题**：质检第七节/P3 唯一"当轮没改"的一条，现在收口。`make_dist.py` 的
+`install_deps(upto="optional")` 表现和 `important` 一模一样——optional 档被
+`upto != "all"` 挡在门外。三层叠加：
+
+1. **门**写死 `upto != "all"` → 传 `"optional"` 的人拿到 `important` 的行为；
+2. **入口** CLI `--tier` 的 choices 里没有 `optional` → 命令行根本传不进来；
+3. **容错**缺失 → `upto="optinal"`（拼错）不装可选项也不报错，打包现场才发现。
+
+共同点：**参数名承诺了一件代码不做的事**。
+
+**改动**（`tools/make_dist.py`）：
+- 新增 `normalize_tier()`：`all` 收敛为 `optional`（别名不是独立档位）；
+  未知值当场抛 `ValueError`，错误信息点名合法值；
+- `tier_specs()` 走 `normalize_tier()`；`install_deps()` 的门改为
+  `tier not in _TIER_ORDER[:index(wanted)+1]`，且校验在第一个 pip 之前；
+- CLI `--tier` choices 补 `optional`。
+
+**验证**：`src/tests/test_make_dist_deps.py` 新增 `[22]`~`[25]`——
+`optional` 真装且含更低档、`all` 与 `optional` 等价、五种拼错全部抛
+（`"OPTIONAL "` 这种大小写空白的合法值要接受）、CLI choices 含 optional。
+
+**双变异验证**（判定看测试末尾汇总行，不 grep `✗`——被测代码自己打印的
+拒绝理由里也带 `✗`，上一轮就这样误判过一次）：
+
+| 变异 | 抓到它的 | 结果 |
+|---|---|---|
+| 档位门退回旧语义 | `[22]` | FAIL |
+| `normalize_tier` 静默回落 | `[24]` | 7 项断言全红 |
+
+变异 1 的细节值得记：`upto="core"` 时它放行了「重要」档，但 `[12]` 没报警——
+因为 `install_deps` 还有第二道门 `if tier == upto: break`。两道门是冗余设计：
+360 行的门负责"跳过时告诉用户为什么"，380 行的 break 负责硬停止。
+`[12]` 守 break（对应"`--tier core` 却装了重要档"那次真回归），`[22]` 守门。
+
+**真打包核对**：改完后真打一次包（输出到临时目录），解包确认包内
+`DEFAULT = AUTO` / `pet_backend: auto` / `GPU_FALLBACK_FLAGS` 都在——
+分类安装的"分类"现在名副其实，前面两轮的成果没被挤掉。
+
+**教训**：参数名是接口的一部分。当调用方按名字理解语义、实现却不按名字办事，
+错的是实现；而当这个错还要靠拼写运气才暴露时，它早晚会在打包现场兑现代价。

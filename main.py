@@ -2373,7 +2373,7 @@ def main() -> None:
     parser.add_argument("--pet-backend", default=None, choices=("auto", "webview", "shell"),
                         help="桌宠窗用哪套渲染宿主：auto=有壳就用、不可用回退；"
                              "webview=强制 pywebview（背景有白底）；shell=强制 Electron 壳（真透明）。"
-                             "不传时取配置项 ui.pet_backend，缺省 webview（壳是实验特性）")
+                             "不传时取配置项 ui.pet_backend，缺省 auto（壳起不来自动静默回退）")
     parser.add_argument("--pet-shell", action="store_true",
                         help="【历史开关，等价 --pet-backend shell】桌宠窗改用 Electron 壳承载"
                              "（真透明；需要 shell/ 下已装 electron）")
@@ -2414,6 +2414,19 @@ def main() -> None:
         max_mb=getattr(_app_ns, "log_max_mb", None),
     )
     console.print(f"[dim]日志文件: {log_file}[/]")
+
+    # 【阶段 E】开机自启：config.app.autostart 是单一真值，启动时把注册表对齐。
+    # 只在包内环境做（root 同时有 main.py 与 python/pythonw.exe；开发机 .venv 跳过）。
+    # 失败绝不拖垮启动——自启只是体验项。
+    try:
+        _as_root = os.path.dirname(os.path.dirname(sys.executable))
+        if (os.path.isfile(os.path.join(_as_root, "main.py"))
+                and os.path.isfile(os.path.join(_as_root, "python", "pythonw.exe"))):
+            from src import autostart as _autostart
+
+            _autostart.sync(bool(getattr(_app_ns, "autostart", False)), _as_root)
+    except Exception as _e:  # noqa: BLE001
+        logger.debug("[自启] 对齐注册表失败（忽略）：%s", _e)
 
     # 桌宠窗渲染宿主：命令行 > 配置 ui.pet_backend > auto。
     # 必须在起 RPC 之前定下来，因为 webview 模式下根本不需要那通道。

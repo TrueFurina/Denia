@@ -429,6 +429,74 @@ class WindowAPI:
         except Exception:  # noqa: BLE001
             return {}
 
+    def get_version(self) -> dict:
+        """【阶段 B1】版本号 / 构建号（给关于页与排障用）。
+
+        版本号只在 `src/version.py` 定义一处，这里只做转发，避免再长出第二个真值源。
+        """
+        try:
+            from ..version import APP_BUILD, APP_NAME, APP_VERSION
+
+            return {"ok": True, "name": APP_NAME,
+                    "version": APP_VERSION, "build": APP_BUILD,
+                    "text": f"v{APP_VERSION} (build {APP_BUILD})"}
+        except Exception as e:  # noqa: BLE001
+            logger.debug("读取版本号失败: %s", e)
+            return {"ok": False, "error": str(e)}
+
+    def _autostart_root(self) -> str | None:
+        """包根（供 autostart 写命令行）；非包内环境（.venv 开发机）→ None。
+
+        判定：root = sys.executable 上两级，须同时有 main.py 与 python/pythonw.exe
+        （包内 = <installdir>\\python\\python.exe；开发机 .venv\\Scripts 必不满足）。
+        """
+        import sys
+
+        root = os.path.dirname(os.path.dirname(sys.executable))
+        if (os.path.isfile(os.path.join(root, "main.py"))
+                and os.path.isfile(os.path.join(root, "python", "pythonw.exe"))):
+            return root
+        return None
+
+    def get_autostart(self) -> dict:
+        """【阶段 E】开机自启状态（UI 设置开关读取）。
+
+        supported=False 表示当前是开发环境（.venv），开关应置灰。
+        """
+        try:
+            from .. import autostart
+
+            root = self._autostart_root()
+            return {"ok": True, "supported": root is not None,
+                    "enabled": bool(root and autostart.is_enabled(root))}
+        except Exception as e:  # noqa: BLE001
+            logger.debug("读开机自启状态失败: %s", e)
+            return {"ok": False, "error": str(e)}
+
+    def set_autostart(self, on: bool) -> dict:
+        """【阶段 E】设置开机自启：写注册表 + 持久化到 config（单一真值）。
+
+        两处都改：只写注册表不写 config，下次启动 sync 会按旧 config 悄悄关掉
+        ——本仓「开关接线了但没通电」的典型病，这里一次性双写根治。
+        """
+        try:
+            from .. import autostart
+
+            root = self._autostart_root()
+            if not root:
+                return {"success": False, "error": "开发环境不支持（仅安装版可用）"}
+            autostart.sync(bool(on), root)
+            if self._cfg:
+                raw = self._cfg.raw
+                app = raw.setdefault("app", {})
+                app["autostart"] = bool(on)
+                self._cfg.save()
+            logger.info("开机自启已%s", "开启" if on else "关闭")
+            return {"success": True, "enabled": bool(on)}
+        except Exception as e:  # noqa: BLE001
+            logger.exception("设置开机自启失败")
+            return {"success": False, "error": str(e)}
+
     def get_settings_health(self) -> dict:
         """【2026-09-29 · UX #1】每个开关的生效状态：{on, effective, blocked_by, reason}。
 

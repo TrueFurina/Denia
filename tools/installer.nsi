@@ -165,4 +165,7 @@ KeepUserData:
 
   DeleteRegKey HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\${APPID}"
   DeleteRegKey HKCU "Software\${APPID}"
+  ; 【阶段 E】开机自启项随卸载清理（保留数据≠保留自启——程序都没了，Run 键残留只会
+  ; 让每次开机弹一次「找不到文件」）
+  DeleteRegValue HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "${APPID}"
 SectionEnd

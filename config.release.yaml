@@ -13,7 +13,12 @@ voice_profiles:
 app:
   log_level: INFO
   name: AI桌面伴侣
-  version: 0.1.0
+  version: 0.2.0
+  # [阶段 B2] 日志保留策略
+  log_keep: 30
+  log_max_mb: 8
+  # [阶段 E] 开机自启（HKCU Run 键，每用户无 UAC；UI 开关即改这里）
+  autostart: false
 app_knowledge:
 - id: trae_code
   exe:
@@ -1593,6 +1598,18 @@ text_chat:
     model: qwen-plus
     timeout_s: 60
     _howto: 填你自己的服务商 Key 与 base_url；别把别人的 Key 打包进来
+ui:
+  # 桌宠窗用哪套渲染宿主：
+  #   auto    = 有壳就用、不可用回退（**默认**；壳起不来会静默回退 webview，
+  #             结果与 webview 相同，只是多花一次启动时间）
+  #   webview = pywebview（背景会有 #F0F0F0 白底，但任何机器都能出人）
+  #   shell   = Electron 壳（真透明；起不来仍然回退，但日志记 ERROR 并说明原因）
+  # 壳撞上 GPU 崩溃时会自动带软件合成开关重试一次（--in-process-gpu
+  # --disable-gpu-compositing），不需要手动加。本机验证：
+  #   tools/_qc_shell_transparency.py   看逐像素透明是否成立
+  #   tools/pet_shell_selfheal_smoke.py 看端到端自愈是否成立
+  # 命令行 --pet-backend 可临时覆盖，不必改配置。
+  pet_backend: auto
 vision_models:
   active: zai-glm-4v-flash
   enabled: false
