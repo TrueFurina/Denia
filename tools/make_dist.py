@@ -82,6 +82,13 @@ INCLUDE_TOOLS = [
 IGNORE_DIRS = {"__pycache__", ".git", "node_modules", ".venv", "tests", "test"}
 IGNORE_SUFFIX = (".pyc", ".pyo", ".log", ".map", ".orig", ".rej")
 
+# 【C11】桌宠 Electron 壳：不进 INCLUDE_DIRS（那里是全量拷贝的源码树），
+# 走下面的专用装配——只拿壳脚本 + electron 运行时，其余 node_modules 一律不进包。
+SHELL_FILES = ["main.js", "preload.js", "package.json"]
+# electron dist 里的 locales/ 占 ~49MB（几十种语言），桌宠 UI 只会见到
+# 中文/英文，留这三份其余全裁：包体立省 ~46MB，运行无感。
+SHELL_LOCALE_KEEP = {"zh-CN.pak", "zh-TW.pak", "en-US.pak"}
+
 # 组装后必须存在的路径（缺一个就是"打包漏件"，正是看板娘那次事故的形状）
 REQUIRED = [
     "main.py",
@@ -503,8 +510,9 @@ def warn_stale_pth(out_dir: str) -> None:
     print("    参考：pywin32.pth 的三段路径就是这么补回的（见 write_isolated_pth）。")
 
 
-def run_gates(out_dir: str, strict_deps: bool = False) -> tuple[int, bool]:
-    """成型后跑闸门。返回 (退出码, 依赖是否未装)。"""
+def run_gates(out_dir: str, strict_deps: bool = False,
+              root: str | None = None) -> tuple[int, bool]:
+    """成型后跑闸门。返回 (退出码, 依赖是否未装)。root 用于壳漂移比对（C11）。"""
     here = os.path.dirname(os.path.abspath(__file__))
     rc = 0
     deps_missing = False
@@ -516,6 +524,11 @@ def run_gates(out_dir: str, strict_deps: bool = False) -> tuple[int, bool]:
 
     print("\n=== 闸门 2/3：必需文件清单 ===")
     missing = check_required(out_dir)
+    # 【C11】壳装配漂移：源里有 shell/main.js 而包里没有 → copy_shell 没跑/被绕过，
+    # 装机将静默回退白底桌宠。与 C9-5 指纹闸同一逻辑：装配丢失必须硬失败。
+    if root and os.path.isfile(os.path.join(root, "shell", "main.js")) \
+            and not os.path.isfile(os.path.join(out_dir, "shell", "main.js")):
+        missing.append("shell/main.js（源里有的桌宠壳没进包）")
     if missing:
         rc = 1
         for m in missing:
@@ -793,6 +806,10 @@ def src_fingerprint(root: str) -> str:
                 rels.append(os.path.relpath(full, root).replace("\\", "/"))
     if os.path.isfile(os.path.join(root, "main.py")):
         rels.append("main.py")
+    # 【C11】壳脚本进指纹：shell/main.js 改了而包没重出，和源码过期是同一种事故
+    for rel in ("shell/main.js", "shell/preload.js"):
+        if os.path.isfile(os.path.join(root, rel.replace("/", os.sep))):
+            rels.append(rel)
     for rel in sorted(rels):
         with open(os.path.join(root, rel), "rb") as fh:
             h.update(rel.encode("utf-8"))
@@ -800,6 +817,60 @@ def src_fingerprint(root: str) -> str:
             h.update(fh.read())
             h.update(b"\x00")
     return h.hexdigest()
+
+
+def copy_shell(root: str, out: str) -> bool:
+    """【C11】把桌宠 Electron 壳装进包。
+
+    装机里没有 electron.exe 时 pet_backend 会静默回退 pywebview 桌宠——
+    白底、置顶弱（2026-10-18 用户真机实测的两个差评都来自这条回退路径）。
+    本函数保证 `shell/node_modules/electron/dist/electron.exe` 跟包走。
+
+    返回 True=壳就位 / False=源里就没有壳（打警告但不算装配失败，
+    纯后端/无壳场景仍应能出包）。
+    """
+    shell_src = os.path.join(root, "shell")
+    if not os.path.isdir(shell_src):
+        print("  ⚠ shell/ 不存在，跳过桌宠壳（运行时将回退 pywebview 白底桌宠）")
+        return False
+    # 1) 壳脚本三件（main.js / preload.js / package.json）
+    have_main = False
+    for f in SHELL_FILES:
+        src = os.path.join(shell_src, f)
+        if os.path.isfile(src):
+            dst = os.path.join(out, "shell", f)
+            os.makedirs(os.path.dirname(dst), exist_ok=True)
+            shutil.copy2(src, dst)
+            have_main = have_main or f == "main.js"
+    # 2) electron 运行时（只裁 locales，其余全量——缺一个 dll 壳都可能起不来）
+    dist_src = os.path.join(shell_src, "node_modules", "electron", "dist")
+    if not os.path.isdir(dist_src):
+        print("  ⚠ shell/node_modules/electron/dist 不存在（开发机没装 electron？）"
+              "→ 包内无壳，运行时回退 pywebview")
+        return False
+    dist_dst = os.path.join(out, "shell", "node_modules", "electron", "dist")
+    if os.path.isdir(dist_dst):
+        shutil.rmtree(dist_dst)
+    os.makedirs(dist_dst)
+    n_files = 0
+    for dirpath, dirnames, filenames in os.walk(dist_src):
+        dirnames.sort()
+        rel = os.path.relpath(dirpath, dist_src)
+        dst_dir = dist_dst if rel == "." else os.path.join(dist_dst, rel)
+        os.makedirs(dst_dir, exist_ok=True)
+        if rel == "locales":
+            filenames = [f for f in filenames if f in SHELL_LOCALE_KEEP]
+        for fn in filenames:
+            shutil.copy2(os.path.join(dirpath, fn), os.path.join(dst_dir, fn))
+            n_files += 1
+    exe = os.path.join(dist_dst, "electron.exe")
+    if not os.path.isfile(exe):
+        print("  ✗ electron dist 拷完却没有 electron.exe——源 dist 不完整，视为装配失败")
+        return False
+    sz, _ = _tree_size(dist_dst)
+    print(f"  ✓ 桌宠壳就位：shell/（main.js{'✓' if have_main else '✗'} + electron 运行时 "
+          f"{n_files} 文件 / {_human(sz)}，locales 已裁至 {len(SHELL_LOCALE_KEEP)} 语言）")
+    return True
 
 
 def write_src_fingerprint(root: str, out_dir: str) -> str:
@@ -1098,6 +1169,10 @@ def main() -> int:
         print("    （下个版本的用户解压覆盖不会经过这里——见 README 的升级说明）")
     copy_items(items, out)
     write_src_fingerprint(root, out)  # 【C9-5】源码指纹存档，出包闸要用
+    # 【C11】桌宠 Electron 壳：透明背景 + 置顶守卫的真身。少了它装机回退
+    # pywebview 白底桌宠（2026-10-18 用户实测差评的直接根因）。
+    print("\n=== 桌宠壳（Electron）===")
+    shell_ok = copy_shell(root, out)
     _stale = purge_stale_caches(out)
     if _stale:
         # 说出来而不是默默清掉：这提示"上一次装配后有人在包内跑过东西"
@@ -1138,7 +1213,7 @@ def main() -> int:
         if dlls:
             print(f"  · pywin32 DLL 铺到 python/ 根（入口无关的依赖 DLL 路径）：{', '.join(dlls)}")
 
-    rc, deps_missing = run_gates(out, strict_deps=args.strict_deps)
+    rc, deps_missing = run_gates(out, strict_deps=args.strict_deps, root=root)
     if not deps_ok:
         rc = 1
     print()

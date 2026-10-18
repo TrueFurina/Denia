@@ -3581,9 +3581,20 @@
        旧 DOM 已隐藏，下面原有的重置/绑定逻辑保留但不再被触发（可回滚）。 */
     try {
       var _rm = $('onbRoleMount');
-      if (_rm && window.OnboardingRole) {
-        window.OnboardingRole.mountInto(_rm);
-        window.OnboardingRole.reload();
+      if (_rm) {
+        /* 2026-10-18 修复：进屏回到顶部——上次滚动位置残留会让用户以为"进来没有任何选项"。 */
+        _rm.scrollTop = 0;
+        if (window.OnboardingRole) {
+          window.OnboardingRole.mountInto(_rm);
+          window.OnboardingRole.reload();
+          /* 2026-10-18 防御：不再允许"静默白屏"——真机上挂载失败的表现就是
+             「建角色完全卡死、没有任何选项」。宁可显式报文案也不要假死。 */
+          if (!_rm.firstChild) {
+            _rm.innerHTML = '<div style="padding:28px;text-align:center;color:var(--muted,#889)">建角色模块没有渲染出来（挂载异常）。请点「上一步」再进一次；仍空白请带 run 日志反馈。</div>';
+          }
+        } else {
+          _rm.innerHTML = '<div style="padding:28px;text-align:center;color:var(--muted,#889)">建角色模块脚本未加载（onboarding_role.js 缺失）。请带 run 日志反馈。</div>';
+        }
       }
     } catch (_e) {}
     // —— 修复：screenRole 在本地/云端两条链路是同一份 DOM，进入此屏必须重置选择，

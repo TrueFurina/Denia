@@ -924,6 +924,85 @@ def main() -> int:
     check('"--sign"' in src_txt10 and "--sign 需要 --installer" in src_txt10,
           "--sign 无包可签时硬失败")
 
+    # ==================== C11：桌宠 Electron 壳进包 ====================
+    print("== [C11] 桌宠壳装配（缺它装机回退白底 pywebview 桌宠） ==")
+    scratch11 = tempfile.mkdtemp(prefix="md_c11_")
+    try:
+        def _mk(rel: str, content: bytes = b"x") -> str:
+            p = os.path.join(scratch11, rel.replace("/", os.sep))
+            os.makedirs(os.path.dirname(p), exist_ok=True)
+            with open(p, "wb") as fh:
+                fh.write(content)
+            return p
+
+        print("[C11-1] 完整源（壳三件 + electron dist）→ 全拷贝，locales 只留三语")
+        _mk("shell/main.js", b"// shell main")
+        _mk("shell/preload.js", b"// preload")
+        _mk("shell/package.json", b"{}")
+        _mk("shell/node_modules/electron/dist/electron.exe", b"MZ")
+        _mk("shell/node_modules/electron/dist/ffmpeg.dll", b"dll")
+        _mk("shell/node_modules/electron/dist/locales/zh-CN.pak", b"zh")
+        _mk("shell/node_modules/electron/dist/locales/fr.pak", b"fr")
+        _mk("shell/node_modules/electron/dist/locales/en-US.pak", b"en")
+        out11 = os.path.join(scratch11, "out1")
+        os.makedirs(out11)
+        ok = make_dist.copy_shell(scratch11, out11)
+        check(ok is True, "copy_shell 返回 True")
+        check(os.path.isfile(os.path.join(out11, "shell", "main.js")),
+              "壳脚本 main.js 进包")
+        check(os.path.isfile(os.path.join(out11, "shell", "node_modules",
+                                         "electron", "dist", "electron.exe")),
+              "electron.exe 进包")
+        loc = os.path.join(out11, "shell", "node_modules", "electron", "dist",
+                           "locales")
+        check(os.path.isfile(os.path.join(loc, "zh-CN.pak"))
+              and os.path.isfile(os.path.join(loc, "en-US.pak")),
+              "zh-CN/en-US 语言包保留")
+        check(not os.path.exists(os.path.join(loc, "fr.pak")),
+              "无关语言包已裁（省 ~46MB）")
+        check(os.path.isfile(os.path.join(out11, "shell", "node_modules",
+                                         "electron", "dist", "ffmpeg.dll")),
+              "dist 其余文件全量保留（缺 dll 壳起不来）")
+
+        print("[C11-2] 无 shell/ 源 → False 且不炸（纯后端场景仍能出包）")
+        scratch11b = tempfile.mkdtemp(prefix="md_c11b_")
+        out11b = os.path.join(scratch11b, "out")
+        os.makedirs(out11b)
+        check(make_dist.copy_shell(scratch11b, out11b) is False,
+              "无 shell/ 返回 False")
+
+        print("[C11-3] dist 不完整（缺 electron.exe）→ False（残壳不如无壳）")
+        scratch11c = tempfile.mkdtemp(prefix="md_c11c_")
+        _mk(os.path.join(scratch11c, "shell", "main.js"))
+        _mk(os.path.join(scratch11c, "shell", "node_modules", "electron",
+                         "dist", "ffmpeg.dll"))
+        out11c = os.path.join(scratch11c, "out")
+        os.makedirs(out11c)
+        check(make_dist.copy_shell(scratch11c, out11c) is False,
+              "缺 electron.exe 返回 False")
+
+        print("[C11-4] 漂移闸：源有 shell/main.js 而包里没有 → 闸门点名缺壳")
+        import contextlib
+        import io as _io
+        out11d = os.path.join(scratch11, "out4")
+        os.makedirs(out11d)
+        buf = _io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            rc_gates, _ = make_dist.run_gates(out11d, root=scratch11)
+        # scratch 根本来就没配齐 REQUIRED，rc!=0 不说明问题——必须点名 shell/main.js
+        check("shell/main.js（源里有的桌宠壳没进包）" in buf.getvalue(),
+              "缺壳装配被闸门点名（不是靠别的缺件蒙混 rc!=0）")
+
+        print("[C11-5] 指纹含壳脚本：改 shell/main.js 一字节 → 指纹变")
+        fp1 = make_dist.src_fingerprint(scratch11)
+        _mk("shell/main.js", b"// shell main v2")
+        fp2 = make_dist.src_fingerprint(scratch11)
+        check(fp1 != fp2, "壳脚本改动进指纹（出包闸可拦旧包）")
+    finally:
+        shutil.rmtree(scratch11, ignore_errors=True)
+        shutil.rmtree(scratch11b, ignore_errors=True)
+        shutil.rmtree(scratch11c, ignore_errors=True)
+
     print()
     if _fails:
         print(f"❌ {len(_fails)} 项未通过：")
