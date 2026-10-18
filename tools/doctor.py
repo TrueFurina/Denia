@@ -1202,6 +1202,86 @@ def check_asr(cfg: object) -> tuple[str, str, str, str]:
             "保持联网跑一次即可；或提前把 models/sherpa-onnx-* 放到项目根目录")
 
 
+def check_wake_words(cfg: object) -> tuple[str, str, str, str]:
+    """「她理不理你」——唤醒词配置能不能真把她叫醒（2026-10-19 新增）。
+
+    实测定性：small-cn 模型的语法约束只能识别**静态词图里存在的字/词**，
+    她名字"达妮娅"作为一个整词不在词图里，而"小薇"（某个遗留 TTS 音色名）
+    却在——于是"念她名字永远不醒、念一个不认识的词一叫就醒"。修复后是
+    单字+同音字语法 + 拼音容错匹配（见 src/voice/wake_word.py）。
+
+    这一项只做【配置/可用性】门禁，不重复做声学验证（那由 tools/_qc_wake_word.py
+    真跑一轮 TTS→识别 闭环负责，不能塞进 doctor 卡一分钟）。判级：
+      FAIL  唤醒词表为空 → 她根本不可能被叫醒（产品级配置指错）
+      WARN  pypinyin 没装 → 唤醒词退化为整字精确匹配，同音字（娅/亚）配不上
+      WARN  麦克风监听关着 → 唤醒词配得再对也不采集（check_asr 也会报，这里点明关联）
+      WARN  ASR 模型未就绪 → 唤醒词暂时无法验证，首次监听自动下载约 42MB
+      WARN  唤醒词里混入了遗留 TTS 音色名（小薇/小爱 等）→ 多半是旧配置，建议清理
+      PASS  配置齐整，且 pypinyin 在、模型在 → 叫醒链路前置条件都绿灯
+    """
+    if cfg is None:
+        return (FAIL, "唤醒词", "配置没加载成功，无法确认唤醒词", "先看「配置文件」一项")
+
+    ns = getattr(cfg, "ns", None)
+    voice = getattr(ns, "voice", None) if ns else None
+    if voice is None:
+        return (WARN, "唤醒词", "配置里没有 voice 段", "检查 YAML")
+
+    wake_words = [w for w in (getattr(voice, "wake_words", []) or []) if w]
+    if not wake_words:
+        return (FAIL, "唤醒词", "voice.wake_words 为空 → 没有任何词能把她叫醒",
+                "在 config.yaml 的 voice.wake_words 里至少填一个（如「达妮娅」）")
+
+    notes = []
+    fix = []
+
+    # pypinyin：拼音容错匹配靠它；缺了退化成整字精确匹配（同音字配不上）
+    if importlib.util.find_spec("pypinyin") is None:
+        notes.append("pypinyin 未安装，唤醒词退化为整字精确匹配（同音字娅/亚之类配不上）")
+        fix.append("pip install pypinyin（已列入 requirements 重要档）")
+
+    # 麦克风监听：关着就不采集，唤醒词形同虚设
+    if not bool(getattr(voice, "mic_enabled", False)):
+        notes.append("麦克风监听关着（voice.mic_enabled=false）→ 不采集，唤醒词不会触发")
+        fix.append("打开麦克风监听（或把 voice.mic_enabled 改为 true）")
+
+    # 残留 TTS 音色名：这些是音色名不是她的名字，多半是旧配置遗留
+    legacy = {
+        "小薇": "Edge-TTS 遗留音色名（zh-CN-XiaoyiNeural）",
+        "小爱": "小爱同学相关，非本角色名",
+        "小冰": "小冰相关，非本角色名",
+        "小白": "疑似占位/其他助手名",
+    }
+    for w in wake_words:
+        if w in legacy:
+            notes.append(f"「{w}」像是遗留 TTS 音色名（{legacy[w]}），不是她的名字")
+            fix.append(f"如不需要，从 voice.wake_words 删掉「{w}」")
+
+    # ASR 模型：没有就没法验证可识别性
+    asr = getattr(voice, "asr", None)
+    model_path = (getattr(asr, "model_path", "") or "").strip() if asr else ""
+    model_ready = False
+    if model_path and os.path.isdir(model_path):
+        model_ready = True
+    else:
+        cache = os.path.join(os.path.expanduser("~"), ".cache", "vosk")
+        model_ready = os.path.isdir(cache) and any(os.scandir(cache))
+    if not model_ready:
+        notes.append("ASR 模型未就绪，唤醒词无法验证；首次监听会自动下载（约 42MB）")
+        fix.append("保持联网跑一次麦克风监听即可")
+
+    if notes:
+        level = WARN
+        detail = "；".join(notes)
+        hint = "；".join(dict.fromkeys(fix)) if fix else ""
+        return (level, "唤醒词", detail, hint)
+
+    # 前置条件全绿：真识别由 _qc_wake_word.py 闭环验证
+    return (PASS, "唤醒词",
+            f"已配置 {len(wake_words)} 条唤醒词，pypinyin 在、ASR 模型就绪——"
+            f"叫醒链路前置条件全绿（声学识别另由 _qc_wake_word.py 闭环验证）", "")
+
+
 def run_all(config_path: str) -> list[tuple[str, str, str, str]]:
     """跑完全部检查；任何一项自己炸了都降级成 WARN，不让整体崩。"""
     results: list[tuple[str, str, str, str]] = []
@@ -1231,7 +1311,8 @@ def run_all(config_path: str) -> list[tuple[str, str, str, str]]:
                     (check_secret_storage, config_path),
                     (check_llm_channel, cfg),
                     (check_voice_backend, cfg),
-                    (check_asr, cfg)):
+                    (check_asr, cfg),
+                    (check_wake_words, cfg)):
         try:
             # 按「函数自己声明的形参」决定传不传，而不是按参数值是否为 None。
             # 见 _takes_arg 的注释：那是本文件踩过的坑。
