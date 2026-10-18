@@ -567,6 +567,66 @@ def main() -> int:
     finally:
         shutil.rmtree(probe8, ignore_errors=True)
 
+    print("== [C2-A] 安装器版本注入 ==")
+    nsi_path = os.path.join(ROOT, "tools", "installer.nsi")
+
+    # 版本号单一真值：make_dist.read_app_version 必须与直接执行 version.py 一致。
+    # 两法互证，不在测试里硬编码版本（否则发版必红——P2/P3 fixture 教训）。
+    ns: dict = {}
+    with open(os.path.join(ROOT, "src", "version.py"), encoding="utf-8") as fh:
+        exec(fh.read(), ns)  # noqa: S102 - 受控仓库内文件
+    ver = make_dist.read_app_version(ROOT)
+    check(ver == ns["APP_VERSION"],
+          f"read_app_version 与 version.py 执行结果一致（{ver}）")
+    check(len(ver.split(".")) == 3 and all(p.isdigit() for p in ver.split(".")),
+          "版本号形如 x.y.z")
+
+    # .nsi 的 VERSION/STAGE 必须可由命令行 /D 覆盖（!ifndef 守卫），
+    # 且兜底值必须是醒目的哨兵而不是像真的版本号（防双口径漂移）。
+    nsi_text = open(nsi_path, encoding="utf-8-sig").read()
+    check("!ifndef VERSION" in nsi_text and "!ifndef STAGE" in nsi_text,
+          "installer.nsi 的 VERSION/STAGE 有 !ifndef 守卫（/D 注入可覆盖）")
+    check('"0.0.0-dev"' in nsi_text,
+          "VERSION 兜底是 0.0.0-dev 哨兵（忘注入时在『添加删除程序』里一眼可见）")
+
+    # build_installer 命令组装：假 makensis + 假 subprocess，断言 argv。
+    scratch = tempfile.mkdtemp(prefix="itest_c2a_")
+    try:
+        fake_nsis = os.path.join(scratch, "makensis.exe")
+        open(fake_nsis, "w").close()
+        stage = os.path.join(scratch, "mystage")
+        os.makedirs(stage)
+        captured: dict = {}
+
+        def fake_run(argv, **kw):
+            captured["argv"] = argv
+            class R:
+                returncode = 0
+                stdout = "ok"
+            return R()
+
+        orig_run = make_dist.subprocess.run
+        make_dist.subprocess.run = fake_run
+        try:
+            ok = make_dist.build_installer(stage, ROOT, nsis_exe=fake_nsis)
+        finally:
+            make_dist.subprocess.run = orig_run
+        argv = captured.get("argv", [])
+        check(ok is True, "build_installer 返回 True")
+        check(any(a == f"/DVERSION={ver}" for a in argv),
+              "argv 带 /DVERSION=（值来自 read_app_version，非硬编码）")
+        check(any(a == f"/DSTAGE={os.path.abspath(stage)}" for a in argv),
+              "argv 带 /DSTAGE=（指向被装配的输出目录，绝对路径）")
+        check(any(a.endswith("installer.nsi") for a in argv),
+              "argv 最后一项是 installer.nsi 脚本")
+
+        # makensis 缺失 → 明确失败而不是静默跳过
+        ok2 = make_dist.build_installer(stage, ROOT,
+                                        nsis_exe=os.path.join(scratch, "nope.exe"))
+        check(ok2 is False, "makensis 不存在时返回 False（不静默跳过）")
+    finally:
+        shutil.rmtree(scratch, ignore_errors=True)
+
     print()
     if _fails:
         print(f"❌ {len(_fails)} 项未通过：")

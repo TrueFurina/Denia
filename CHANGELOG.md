@@ -35,6 +35,26 @@
 | `8f28cc0` | 11:2x | docs | C2 拍板（A 路线）+ 凭据日志卫生门禁 | 规划落档 |
 | （本次） | 11:5x | feat | C2-A 落地：NSIS 安装器 + 升级保留配置 | 见下方明细 |
 
+### 2026-10-18 · C2-A 收口：版本号单一真值注入（--installer 一步出包）
+
+**问题**：installer.nsi 硬编码 `VERSION "0.2.0"`——发版改了 `src/version.py`
+但忘了改脚本，就会出"安装包报 0.2.0、程序自报 0.3.0"的双口径（正是本日
+质检 P2/P3 刚抓过的同类 fixture 漂移）。
+
+**改动**：`make_dist.py` 新增 `read_app_version`（正则读 `src/version.py`，
+不 import 不依赖包内环境）/ `find_makensis` / `build_installer`（/D 注入
+VERSION + STAGE 绝对路径），main 加 `--installer`：装配过闸后才出包，
+一步到位。installer.nsi 的 VERSION/STAGE 加 `!ifndef` 守卫，兜底是
+`0.0.0-dev` 哨兵——忘注入时"添加删除程序"里一眼可见，绝不给像真的版本号。
+
+**验证**：测试两法互证（正则 vs exec version.py，测试内不硬编码版本）+
+argv 断言；2 刀变异全红（M1 版本硬编码 → 版本一致性断言红 + 产物落空红；
+M2 去 /DSTAGE 注入 → argv 断言红）。端到端：`--installer` 全流程 4m29s
+出 `达妮娅AI桌面伴侣_Setup_v0.2.0.exe`（72.8MB），静默装 → 包内 doctor
+13 PASS / 0 FAIL → 静默卸载只留 config.yaml。门禁 27/27。
+**顺带修真缺陷**：build_installer 原实现对传入不存在的 makensis 路径
+直接 FileNotFoundError——补了 isfile 预检（测试抓住的）。
+
 ### 2026-10-18 · C2-A 落地：NSIS 安装器（每用户、升级保留配置、卸载保数据）
 
 **为什么不是 electron-builder**：查盘实锤当前架构是 Python 主导、Electron 只渲染

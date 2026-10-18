@@ -751,6 +751,75 @@ def copy_items(items: list[tuple[str, str, bool]], out: str) -> None:
             shutil.copy2(src, dst)
 
 
+def read_app_version(root: str) -> str:
+    """从 src/version.py 读 APP_VERSION（单一真值）。
+
+    正则读文本而不是 import：不执行模块代码、不依赖包内环境，
+    构建机上有没有装 src 的依赖都能拿到版本号。
+    """
+    path = os.path.join(root, "src", "version.py")
+    with open(path, encoding="utf-8") as fh:
+        m = re.search(r'^APP_VERSION\s*=\s*"([^"]+)"', fh.read(), re.M)
+    if not m:
+        raise SystemExit("✗ src/version.py 里找不到 APP_VERSION 字面量")
+    return m.group(1)
+
+
+_NSIS_CANDIDATES = (
+    os.path.join(".build_tools", "nsis-3.10", "makensis.exe"),
+    os.path.join("C:", os.sep, "Program Files (x86)", "NSIS", "makensis.exe"),
+)
+
+
+def find_makensis(root: str) -> str | None:
+    """按候选顺序找 makensis；找不到返回 None（调用方显式报错）。"""
+    for rel in _NSIS_CANDIDATES:
+        p = rel if os.path.isabs(rel) else os.path.join(root, rel)
+        if os.path.isfile(p):
+            return p
+    return None
+
+
+def build_installer(out_dir: str, root: str, nsis_exe: str | None = None,
+                    version: str | None = None) -> bool:
+    """把 out_dir 打成 NSIS 安装包（C2-A）。
+
+    版本号与装配目录都通过 /D 注入 tools/installer.nsi（脚本里有
+    !ifndef 守卫，兜底 VERSION 是 0.0.0-dev 哨兵——忘注入会很难看，
+    这是故意的）。产物落在 root/dist/ 下，名字由脚本 OutFile 决定。
+    """
+    version = version or read_app_version(root)
+    nsis = nsis_exe or find_makensis(root)
+    if not nsis or not os.path.isfile(nsis):
+        print("  ✗ 找不到 makensis：装到 .build_tools/nsis-3.10/ 或 Program Files (x86)/NSIS")
+        return False
+    script = os.path.join(root, "tools", "installer.nsi")
+    argv = [nsis,
+            f"/DVERSION={version}",
+            f"/DSTAGE={os.path.abspath(out_dir)}",
+            script]
+    print(f"  → makensis {version} ← {os.path.basename(out_dir)} …")
+    try:
+        proc = subprocess.run(argv, stdout=subprocess.PIPE,
+                              stderr=subprocess.STDOUT, text=True,
+                              encoding="utf-8", errors="replace")
+    except OSError as e:
+        print(f"  ✗ makensis 启动失败：{e}")
+        return False
+    if proc.returncode != 0:
+        for line in (proc.stdout or "").splitlines()[-20:]:
+            print("    nsis> " + line)
+        print("  ✗ makensis 失败")
+        return False
+    exe = os.path.join(root, "dist",
+                       f"达妮娅AI桌面伴侣_Setup_v{version}.exe")
+    if not os.path.isfile(exe):
+        print("  ✗ 安装包没有出现在预期位置：" + exe)
+        return False
+    print(f"  ✓ 安装包：{exe}（{os.path.getsize(exe) / 1048576:.1f} MB）")
+    return True
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description="按白名单组装交付目录")
     ap.add_argument("--out", help="输出目录；不给则只打印清单（dry-run）")
@@ -771,6 +840,8 @@ def main() -> int:
                     help="--install-deps 时强制只用本地 wheelhouse，不联网")
     ap.add_argument("--report", metavar="DIR", nargs="?", const="__OUT__",
                     help="打印某个目录的体积报告（配合 --out 时打到刚组装完的包上）")
+    ap.add_argument("--installer", action="store_true",
+                    help="装配通过后追加 NSIS 安装包（C2-A；版本号读 src/version.py）")
     args = ap.parse_args()
 
     # 单独 --report 某个目录：只报告，不组装
@@ -861,6 +932,13 @@ def main() -> int:
         print(f"⚠ 结构与凭据都合格，但依赖还没装 —— 装完才能双击启动：{out}")
     else:
         print(f"✓ 可发布：{out}")
+
+    # C2-A：装配合格后才出安装包（版本号单一真值 = src/version.py）
+    if args.installer:
+        if rc != 0:
+            print("✗ 装配未通过，跳过安装包")
+        elif not build_installer(out, args.root):
+            rc = 1
 
     # --report 不给目录时，报的就是刚组装出来的这个包
     if args.report:
