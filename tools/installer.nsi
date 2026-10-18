@@ -84,6 +84,8 @@ NotRunning:
   File /r "${STAGE}\python"
   File /r "${STAGE}\src"
   File /r "${STAGE}\tools"
+  ; 【C11】桌宠 Electron 壳（缺它装机回退 pywebview 白底桌宠；stage 闸门保证存在）
+  File /nonfatal /r "${STAGE}\shell"
 
   ; ---- 卸载器 + 注册表 ----
   WriteUninstaller "$INSTDIR\Uninstall.exe"
