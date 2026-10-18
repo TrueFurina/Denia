@@ -45,6 +45,9 @@ GATES: list[tuple[str, str, list[str], bool]] = [
     ("异步阻塞", PY_RUNTIME, ["tools/check_async_blocking.py", "src"], False),
     ("异步阻塞自测", PY_RUNTIME, ["src/tests/test_check_async_blocking.py"], False),
     ("文本编码", PY_RUNTIME, ["tools/check_open_encoding.py", "--all", "--strict", "src", "tools", "main.py", "launch_companion.py", "run_webui.py"], False),
+    # 主链路静默异常：`except: pass/continue` 且块内无注释 = 出错零痕迹
+    # （NameError 和"设备不存在"长得一模一样）。--strict 才判红；带注释的有意降级放行。
+    ("主链路静默异常", PY_RUNTIME, ["tools/check_silent_except.py", "--main", "--strict"], False),
     ("前端资源", PY_RUNTIME, ["tools/check_web_assets.py", "--strict"], False),
     # 前端 JS 语法：一处语法错误会让整个 <script> 块静默不执行（该块里所有按钮全哑），
     # 而 check_web_js_syntax 原来打印完就 exit 0 —— 是装饰闸门。本机没 node 时
