@@ -50,6 +50,9 @@ GATES: list[tuple[str, str, list[str], bool]] = [
     # 而 check_web_js_syntax 原来打印完就 exit 0 —— 是装饰闸门。本机没 node 时
     # 按 77 跳过（单列「未验证」，不计通过）。
     ("前端 JS 语法", PY_RUNTIME, ["tools/check_web_js_syntax.py"], False),
+    # 桥接三层：index.html 的 Backend.xxx → app_backend.js 的 call('py_name') →
+    # CharacterAPI。任一层断掉都是"点了没反应"，控制台之外没有任何痕迹。
+    ("前端桥接", PY_VENV, ["tools/check_bridge_methods.py"], False),
     ("凭据/隐私", PY_RUNTIME, ["tools/check_package_secrets.py"], False),
     ("凭据日志卫生", PY_RUNTIME, ["tools/check_log_leak.py"], False),
     ("依赖声明", PY_VENV, ["tools/check_requirements.py", "--strict"], True),

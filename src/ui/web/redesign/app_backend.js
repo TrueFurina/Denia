@@ -395,6 +395,12 @@ const getOnboardingDefaults = (p) => call('get_onboarding_defaults', p || {});
   const stickerInstallContinue = (taskId)          => call('stickerInstallContinue', taskId || '');
   const stickerPick        = (character, conv)     => call('stickerPick', character || '', conv || []);
   const stickerUpload      = (pid, filename, b64)  => call('stickerUpload', pid || '', filename || '', b64 || '');
+  /* 【2026-10-18 补接线】设置页「打开状态文件」按钮调的是 Backend.open_data_file
+     （snake_case，页面 5845 行就这么写的，且带 typeof 守卫）。后端
+     CharacterAPI.open_data_file 早就实现了（含防路径穿越），但适配层**从来没导出过**
+     → 守卫恒为 false → 按钮永远走"只 toast 一个路径"的降级分支，
+     用户点了不会打开资源管理器。这里按页面已有的名字同名转发，不改页面。 */
+  const open_data_file = (filename) => call('open_data_file', filename || '');
   // 【2026-10-01 D】记忆性能观测仪快照（开发者页面板轮询）
   const getMemoryProfile = () => call('get_memory_profile');
   const startOcrCalibration = () => call('start_ocr_calibration');
@@ -760,6 +766,7 @@ const getOnboardingDefaults = (p) => call('get_onboarding_defaults', p || {});
     stickerAutotagProgress, stickerCharacters,
     stickerMarketplace, stickerInstall, stickerInstallStart, stickerInstallProgress,
     stickerPick, stickerUpload,
+    open_data_file,
   };
 })();
 

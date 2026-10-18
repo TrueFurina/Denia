@@ -42,12 +42,52 @@
 | `6094d95` | 15:1x | fix | 桌面双击启动即崩：None 流 → pywebview GBK devnull → rich 炸 | io_safe 三态测试 + 变异；真机 crash 日志取证 |
 | `94709d4` | 17:5x | fix | 微信通道「能收不能回」+ 回调无鉴权对外暴露 + 发消息卡死事件循环 | 6 断言 + 5 刀变异全红；门禁 28→30 项 |
 | `3eb3f86` | 18:2x | fix | 同一类坑再扫三处（qzone 发布 / tts 的 sleep / heavy_apps 拉取）+ JS 闸门能染红了 | 变异 2 刀全红；门禁 30→34 项 |
+| `TBD3` | 18:4x | fix | 设置页「打开状态文件」恒走降级（适配层漏导出后端已有的方法）+ 桥接三层闸门 | 变异 2 刀全红；门禁 34→35 项 |
 
 > **\* 夹带说明（必须留档）**：12:10 / 12:2x 两行的内容实际随 `fa86a4c`（E1 开机自启）
 > 入库——13:14 的并发提交把质检工作流未提交的改动一起提交了，未按工作流拆分。
 > 代码与测试主体由 `5dbc64c` 收口，**归属以本脚注为准**。
 > 教训：并发会话各自只 `git add` 自己知道的文件，提交前先 `git log` 确认HEAD 没有
 > 在几分钟内被别人推进过。
+
+### 2026-10-18 · 桥接三层闸门 + 一个"恒走降级分支"的死按钮
+
+**为什么查这里**：AGENTS.md 第七条写着"定义齐全 ≠ 接线"。前端→适配层→后端这条链
+有三级，任何一级断掉都只表现为"点了没反应"，日志里一条都没有。此前的
+`check_web_js_syntax` 只做 JS 语法、`check_web_assets` 只查资源文件是否存在，
+**没有人查过名字对不对得上**。
+
+**① 找到并修掉一个真断点：设置页「打开状态文件」**
+`ui_redesign_settings.html:5845` 写的是
+`if (window.Backend && typeof Backend.open_data_file === 'function') { Backend.open_data_file(...) }`，
+而 `app_backend.js` 从来没有导出过 `open_data_file` → 守卫恒为 false → 按钮**永远**
+走 `Backend.toast('状态文件：data/proactive_pack.json')` 这个降级分支。
+后端 `CharacterAPI.open_data_file()`（webapp.py:15839，含防路径穿越）早就实现好了，
+纯粹是适配层漏了一行。补上同名转发（页面已按 snake_case 写，改页面风险更大）。
+这类 bug 的特征值得记：**带 `typeof` 守卫的降级写法会把"接线漏了"伪装成"环境不支持"**，
+所以它比直接报错更难发现。
+
+**② 新闸门「前端桥接」（`tools/check_bridge_methods.py`）**
+三层全查：
+  ① 每个页面（46 个，排除 `pre_v2` / `SIMPLIFIED` / `_pre_` 历史副本）调用的
+    `Backend.xxx` 必须在适配层导出；
+  ② 导出的成员必须能在定义里找到 `call('py_name')`（`toast`/`ready`/`call`/
+    `capacityBadge` 这类纯前端助手除外）；
+  ③ `call('py_name')` 的目标必须真的在 `CharacterAPI` 上——**包括页面还没用到的导出**
+    （那是潜伏的坏接线，等页面接上去才炸）。
+实测：46 页 / 134 个方法 / 245 个导出 / 320 个后端公开方法，0 断点。
+
+**踩到的两个假阳性（都写进工具注释了）**
+  · 不剥注释会把说明文字当调用：页面里明明写着
+    "（Backend.getProactivePackFlags 不存在）"和"本地视频文件 → Backend.watch_local_video"，
+    第一版因此报了两个假断点；
+  · 适配层的 `toast` 是本地函数、不转发后端，不能算"接线不明"——否则永远红。
+
+**变异验证**：① 把 `call('send_chat')` 改成 `call('send_chatt')` → 报
+"③ sendChat → call('send_chatt')：后端 CharacterAPI 没有 send_chatt()"；
+② 从导出对象删掉 `sendChat,` → 报"① …没导出（点了没反应）"；
+③ 删掉 `open_data_file,` → 精确点名 `ui_redesign_settings.html`。
+三处还原均 sha256 一致。门禁 **34 → 35 项全过、0 跳过**。
 
 ### 2026-10-18 · 同一类坑再扫三处 + 前端 JS 闸门从"装饰"变"能红"
 
