@@ -39,6 +39,7 @@
 | （本次） | 11:5x | feat | C2-A 落地：NSIS 安装器 + 升级保留配置 | 见下方明细 |
 | （本次） | 13:5x | feat | 代码签名管线 `--sign`（C10）：出包即签 + 签后核验 | 14 断言 + 2 刀变异；真机自签 E2E |
 | （本次） | 14:0x | fix | doctor GBK 控制台不炸（符号降级 `?`） | [15] 行为测试 + 变异；真机包内复现→修复 |
+| （本次） | 15:1x | fix | 桌面双击启动即崩：None 流 → pywebview GBK devnull → rich 炸 | io_safe 三态测试 + 变异；真机 crash 日志取证 |
 
 > **\* 夹带说明（必须留档）**：12:10 / 12:2x 两行的内容实际随 `fa86a4c`（E1 开机自启）
 > 入库——13:14 的并发提交把质检工作流未提交的改动一起提交了，未按工作流拆分。
@@ -1368,3 +1369,32 @@ GBK 控制台编不了 `↳` 符号，doctor 第 14 项一打印修复提示就�
 **踩坑记录**：跑测试用错解释器——miniconda 系统 Python 缺
 sounddevice 等核心依赖，doctor 依赖检查 FAIL（红的是环境不是代码）。
 本项目的测试解释器是 `.venv/Scripts/python.exe`。
+
+---
+
+## 修复：桌面双击启动即崩（GBK devnull 真凶链）（2026-10-18 15:1x）
+
+**问题**（用户双击快捷方式实测 crash_20261018_150448）：应用「点了加载很久」
+其实是**启动即崩**。完整因果链：
+1. pythonw 无控制台 → `sys.stdout/stderr = None`；
+2. main.py 原有 reconfigure 对 None 无效（hasattr 跳过）；
+3. pywebview `webview/http.py` 见 None → 替换成 `open(os.devnull, 'w')`
+   —— devnull 按 **locale 编码 = GBK** 打开；
+4. rich 往 GBK 流写 `✓` → UnicodeEncodeError → asyncio 启动线程死亡。
+
+**取证**：三次探针才定位——管道子进程（句柄有效、GBK 但非 None）不复现；
+同 snippet 在 `pythonw -c` 下也不复现（仍非 None）；最后用**干净环境 +
+装机 pythonw + 无管道**复刻出 GBK 流，锁定 pywebview 替换路径。
+教训：**复现失败 ≠ 缺陷不存在，启动态的句柄环境必须一模一样。**
+
+**改动**：新增 `src/io_safe.py`（零依赖，只许标准库）——`ensure_safe_stdio()`
+在一切第三方 import 之前把 None 流补成 **UTF-8 devnull**（pythonw 下输出
+本来就无人可见，丢弃即正确语义；pywebview 见非 None 不再替换，GBK devnull
+消失）；非 None 流维持原 reconfigure(utf-8, replace) 语义。main.py 引导期
+改调它。
+
+**验证**：`test_io_safe.py` 三态行为测试（None→UTF-8 devnull / GBK→转
+UTF-8 / 正常→幂等）+ 变异红复绿；门禁 27/27。重出包重装后真机启动验证。
+
+**同族缺陷全景**：doctor（已修，GBK 控制台）、主程序入口（本条）——
+同一类「符号 × 编码」坑，两处入口各自兜底。
