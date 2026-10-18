@@ -330,6 +330,13 @@
   .embed-onboard #capBack{ display:none !important; }
   .embed-onboard .cap-wrap{ padding-top:4px; }
   .embed-onboard .cap-lead{ display:none; }
+  /* 2026-10-18 修复「内嵌页最上面被截断」（真机 + 960x640 实测复现：cap-wrap top=-65px）：
+     design_tokens.css 给 body 的 SPA 基线是 `display:grid; place-items:center; padding:20px`，
+     本页被 iframe 嵌入时内容远高于 iframe 视口 → grid 垂直居中让溢出内容**顶部不可达**
+     （经典居中溢出坑：看得到中段、页头永远被裁）。embed 模式必须复位成块级正常流，
+     body 自己当滚动容器，页头从第 0 像素开始排。 */
+  body.embed-onboard{ display:block; place-items:normal; padding:0; height:100%; min-height:0; }
+  body.embed-onboard .main{ display:block; height:auto; min-height:0; }
   /* v8（2026-10-12）：
      ① 弹层打开时锁外层滚动 —— 否则 iframe 内外两条滚动条一起出现，看着像"卡住了"；
      ② 弹层贴合 iframe 视口，内部滚动，不再被夹住；
