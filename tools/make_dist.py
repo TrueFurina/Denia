@@ -19,6 +19,16 @@
     # 3) 不打包内置运行时（只做源码包，体积小很多）
     python tools/make_dist.py --out dist --no-runtime
 
+    # 4) 组装后把依赖装进包内的 python/，让它拷到干净机器上也能跑
+    python tools/make_dist.py --out dist --install-deps
+
+    # 5) 只装核心依赖（启动必需，体积最小）
+    python tools/make_dist.py --out dist --install-deps --tier core
+
+    # 6) 【离线化】先把 wheel 全下到 dist/wheels，再从本地装（目标机器无需联网）
+    python tools/make_dist.py --out dist --wheelhouse
+    python tools/make_dist.py --out dist --install-deps --offline
+
 组装完成后自动执行：
     · 凭据/隐私闸（check_package_secrets.py --dir）
     · 静态资源完整性（check_web_assets.py --dir）
@@ -30,9 +40,11 @@ from __future__ import annotations
 
 import argparse
 import os
+import re
 import shutil
 import subprocess
 import sys
+import tempfile
 
 # ============================ 清单（唯一真值来源） ============================
 
@@ -58,7 +70,12 @@ RENAME = {"config.release.yaml": "config.yaml"}
 # 运行时真会调用的 tools 脚本（src/companion/proactive.py、src/llm/cloud_omni_realtime.py
 # 都用 os.path.join(ROOT, "tools", "clone_danya_voice.py") 定位它）。
 # 其余 290 个是开发期一次性脚本，一律不进包。
-INCLUDE_TOOLS = ["clone_danya_voice.py"]
+INCLUDE_TOOLS = [
+    "clone_danya_voice.py",
+    # 【阶段 B3】--doctor 的实现本体。少了它，交付包里的 --doctor 只剩一句
+    # 「自检脚本加载失败」，而它恰恰是给用户排障用的第一入口。
+    "doctor.py",
+]
 
 # 这些目录/文件不复制
 IGNORE_DIRS = {"__pycache__", ".git", "node_modules", ".venv", "tests", "test"}
@@ -175,6 +192,253 @@ def check_required(root: str) -> list[str]:
     return [p for p in REQUIRED if not os.path.exists(os.path.join(root, p))]
 
 
+# ==================== 依赖分级安装（阶段 C1 · 离线化） ====================
+
+# requirements.txt 里用 `# ===== 核心（…）=====` 这样的注释行分档。
+# pip 看不见分档，只能整份装 —— 于是 GB 级的可选项会跟着核心一起被拖下水，
+# 而且任何一项装不上就整批失败，看不出到底是哪个档位出了问题。
+# 这里把分档从注释里提出来，让安装器能按档推进、按档定责。
+_TIER_MARKERS = (("核心", "core"), ("重要", "important"), ("可选", "optional"))
+_TIER_ORDER = ("core", "important", "optional")
+_TIER_LABEL = {"core": "核心", "important": "重要", "optional": "可选"}
+# 失败的后果：核心装不上就别发布了；重要缺了只是部分功能不可用；可选无所谓
+_TIER_FATAL = {"core": True, "important": False, "optional": False}
+
+
+def parse_requirements(path: str) -> dict[str, list[str]]:
+    """按注释里的分档标题切 requirements。
+
+    分档标记之前的内容（文件头说明等）一律算 core —— 宁可多装不可漏装。
+    """
+    tiers: dict[str, list[str]] = {t: [] for t in _TIER_ORDER}
+    if not os.path.isfile(path):
+        return tiers
+    cur = "core"
+    with open(path, "r", encoding="utf-8") as fh:
+        for raw in fh:
+            line = raw.strip()
+            if not line:
+                continue
+            if line.startswith("#"):
+                for marker, tier in _TIER_MARKERS:
+                    if marker in line and "=====" in line:
+                        cur = tier
+                        break
+                continue
+            spec = line.split(" #", 1)[0].strip()
+            if spec:
+                tiers[cur].append(spec)
+    return tiers
+
+
+def tier_specs(tiers: dict[str, list[str]], upto: str) -> list[str]:
+    """取到某一档为止的全部依赖（包含更低档）。"""
+    out: list[str] = []
+    for t in _TIER_ORDER:
+        out.extend(tiers.get(t, []))
+        if t == upto:
+            break
+    return out
+
+
+def _pip(python_exe: str, args: list[str]) -> tuple[int, list[str]]:
+    """跑一条 pip 命令，返回 (退出码, 输出行)。"""
+    try:
+        p = subprocess.run([python_exe, "-m", "pip", *args], env=_clean_env(),
+                           stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                           text=True, encoding="utf-8", errors="replace")
+    except Exception as _e:  # noqa: BLE001
+        return 1, [f"pip 调用失败：{_e}"]
+    return p.returncode, (p.stdout or "").splitlines()
+
+
+def _wheelhouse_dir(out_dir: str) -> str:
+    return os.path.join(out_dir, "wheels")
+
+
+def build_wheelhouse(out_dir: str, python_exe: str, upto: str) -> bool:
+    """把指定档位（含以下）的 wheel 连依赖一起下载到 dist/wheels/。
+
+    这是「离线化」的关键：构建机联网一次，目标机器可以完全断网安装。
+    """
+    dest = _wheelhouse_dir(out_dir)
+    os.makedirs(dest, exist_ok=True)
+    specs = tier_specs(parse_requirements(os.path.join(out_dir, "requirements.txt")), upto)
+    if not specs:
+        print("  ! requirements.txt 没解析出任何依赖")
+        return False
+    tmp = os.path.join(dest, "_tier.txt")
+    try:
+        with open(tmp, "w", encoding="utf-8") as fh:
+            fh.write("\n".join(specs) + "\n")
+        # 【C9-4】必须用 `pip wheel` 而非 `pip download`：srt / proxy_tools 这类
+        # 在 PyPI 上**只有 sdist** 的包，download 会原样存 .tar.gz；离线
+        # --no-index 安装时 pip 要为 sdist 联网拉 build 后端 → 必失败
+        # （2026-10-18 实测：「核心」档安装失败）。pip wheel 在构建机联网时
+        # 就把 sdist 构建成 .whl，交付包侧零构建。
+        # 注意：`pip download` 用 -d，`pip wheel` 用 **-w**——参数名不同，
+        # 用错会得到 "no such option: -d"（输出进 pip> 前缀，容易被 tail 截掉漏看）。
+        print(f"  → 下载/构建 {len(specs)} 项（含传递依赖）到 wheels/ …")
+        rc, out = _pip(python_exe, ["wheel", "-r", tmp, "-w", dest])
+    finally:
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
+    if rc != 0:
+        for line in out[-25:]:
+            print("    pip> " + line)
+        return False
+    # 兜底清扫：目录里残留的 sdist（上一版 download 留下的）会让
+    # --find-links 优先匹配到它们，离线安装照样炸。发现即删并点名。
+    leftovers = [f for f in os.listdir(dest) if f.endswith((".tar.gz", ".zip"))]
+    for f in leftovers:
+        try:
+            os.remove(os.path.join(dest, f))
+        except OSError:
+            pass
+    if leftovers:
+        print(f"  ! 清掉 {len(leftovers)} 个非 wheel 产物（离线安装无法构建它们）："
+              f"{', '.join(leftovers[:3])}")
+    n = len([f for f in os.listdir(dest) if f.endswith(".whl")])
+    sz = sum(os.path.getsize(os.path.join(dest, f))
+             for f in os.listdir(dest) if f.endswith(".whl"))
+    print(f"  ✓ wheelhouse：{n} 个 wheel，{_human(sz)}")
+    return True
+
+
+def install_deps(out_dir: str, upto: str = "important", offline: bool = False,
+                 verify: bool = True) -> bool:
+    """把依赖装进包内的 python/。按档推进，核心失败即停。"""
+    python_exe = os.path.join(out_dir, "python", "python.exe")
+    if not os.path.isfile(python_exe):
+        print("  ✗ 包内没有 python/python.exe（用了 --no-runtime？）—— 不知道该往哪装依赖")
+        print("    要么去掉 --no-runtime，要么先把运行时放进 dist/python/")
+        return False
+
+    tiers = parse_requirements(os.path.join(out_dir, "requirements.txt"))
+    if not any(tiers.values()):
+        print("  ✗ 包内 requirements.txt 没解析出任何依赖")
+        return False
+
+    wh = _wheelhouse_dir(out_dir)
+    have_wheels = os.path.isdir(wh) and any(
+        f.endswith(".whl") for f in os.listdir(wh))
+    if offline and not have_wheels:
+        print(f"  ✗ --offline 但 {wh} 里没有 wheel，先跑一次 --wheelhouse")
+        return False
+    if have_wheels:
+        print(f"  · 从本地 wheelhouse 安装（离线）：{wh}")
+
+    fatal = False
+    for tier in _TIER_ORDER:
+        specs = tiers.get(tier) or []
+        if not specs:
+            continue
+        if tier == "optional" and upto != "all":
+            print(f"  - 跳过「{_TIER_LABEL[tier]}」档 {len(specs)} 项"
+                  f"（加 --tier all 才会装）")
+            continue
+        print(f"  → 安装「{_TIER_LABEL[tier]}」档 {len(specs)} 项 …")
+        args = ["install", "--no-warn-script-location", *specs]
+        if have_wheels:
+            args += ["--no-index", "--find-links", wh]
+        rc, out = _pip(python_exe, args)
+        if rc != 0:
+            for line in out[-25:]:
+                print("    pip> " + line)
+            if _TIER_FATAL[tier]:
+                print(f"  ✗ 「{_TIER_LABEL[tier]}」档安装失败 —— 这个包不能发布")
+                fatal = True
+                break
+            print(f"  ⚠ 「{_TIER_LABEL[tier]}」档有项装不上（不影响启动）")
+        else:
+            print(f"  ✓ 「{_TIER_LABEL[tier]}」档完成")
+        if tier == upto:
+            break   # 档位递进是「到此为止」，不是「全部装完」
+
+    if fatal:
+        return False
+    warn_stale_pth(out_dir)   # 【C9-2】新装 .pth 在 isolated 模式下会静默失效，必须报警
+    if verify:
+        return verify_deps(out_dir, python_exe)
+    return True
+
+
+def _clean_env() -> dict:
+    """给"换台机器"验收用的环境变量：把构建机的痕迹清掉。
+
+    为什么必须清（2026-10-18 实测踩到）：
+        包内 `python/` 是**完整 Python 拷贝**，不是带 `python._pth` 的隔离版，
+        所以它会照常加载用户级 site-packages
+        （`%APPDATA%\\Roaming\\Python\\PythonXY\\site-packages`）。构建机上恰好装过
+        rich / httpx / requests，于是 `--doctor` 的依赖检查看到的是「包内 ∪ 构建机」，
+        把一个**缺 5 个核心包**的交付件判成了 9 PASS /「可发布」。
+
+        验证手段与被验证对象共用同一个污染源，是这类假绿唯一的来源。
+        上面的 docstring 早就写了「不能用构建机的 dev 环境验」——但代码没做到，
+        规矩写在注释里而没写在 `env=` 里，就等于没有。
+
+    清的是：
+        PYTHONPATH / PYTHONHOME —— 会把构建机的包直接塞进 sys.path
+        PYTHONNOUSERSITE=1      —— 关掉用户级 site-packages，这才是真正的开关
+        其余 PYTHON*            —— 作用不确定，一律不带进验收现场
+    """
+    env = {k: v for k, v in os.environ.items()
+           if not k.upper().startswith("PYTHON") and k.upper() != "VIRTUAL_ENV"}
+    env["PYTHONNOUSERSITE"] = "1"
+    env["PYTHONIOENCODING"] = "utf-8"
+    return env
+
+
+def verify_deps(out_dir: str, python_exe: str) -> bool:
+    """用**包内的** python 跑一遍 --doctor，证明这包真能起得来。
+
+    两个必须守住的规矩：
+
+    1. 不能用构建机的 dev 环境验 —— dev 装了什么跟包里带什么没关系，
+       验了等于没验，「在我机器上能跑」就是这么来的。
+    2. 必须在**临时副本**里验，绝不能对着交付件本身跑。
+       2026-10-18 实测：main.py 的导入期副作用会在包根建出
+       data/call_av.log 与 logs/crash_*.log，于是"只读自检"把包弄脏，
+       随后被凭据闸判为混入隐私目录。验收动作本身制造故障，
+       是这类闸门最难查的一类误报。
+    """
+    scratch = tempfile.mkdtemp(prefix="denia_verify_")
+    probe = os.path.join(scratch, "probe")
+    try:
+        shutil.copytree(out_dir, probe)
+        # 副本里的运行时也要跟着走：验的就是这一份 python
+        probe_py = os.path.join(probe, "python", "python.exe")
+        py = probe_py if os.path.isfile(probe_py) else python_exe
+        print("  → 用包内运行时跑 --doctor 验收（在临时副本里，不碰交付件）…")
+        env = _clean_env()
+        print("  · 验收环境已隔离：PYTHONNOUSERSITE=1，不带 PYTHONPATH/HOME")
+        try:
+            p = subprocess.run([py, "main.py", "--doctor"],
+                               cwd=probe, env=env, stdout=subprocess.PIPE,
+                               stderr=subprocess.STDOUT, text=True,
+                               encoding="utf-8", errors="replace", timeout=180)
+        except subprocess.TimeoutExpired:
+            print("  ✗ --doctor 超时（180s）")
+            return False
+
+        tail = (p.stdout or "").strip().splitlines()[-8:]
+        for line in tail:
+            print("    " + line)
+        if p.returncode != 0:
+            print(f"  ✗ 包内运行时跑 --doctor 失败（rc={p.returncode}）")
+            return False
+        out = p.stdout or ""
+        if "[FAIL]" in out or "自检脚本加载失败" in out:
+            print("  ✗ 包内运行时自检有 FAIL 项，先修再发布")
+            return False
+        print("  ✓ 包内运行时自检全绿")
+        return True
+    finally:
+        shutil.rmtree(scratch, ignore_errors=True)
+
+
 def _site_pkgs_count(out_dir: str) -> tuple[int, list[str]]:
     """统计内置运行时 site-packages 里的第三方包数（排除 pip/setuptools 系）。"""
     sp = os.path.join(out_dir, "python", "Lib", "site-packages")
@@ -183,6 +447,36 @@ def _site_pkgs_count(out_dir: str) -> tuple[int, list[str]]:
     skip = ("pip", "pip-", "setuptools", "wheel", "_distutils", "pkg_resources")
     names = [n for n in os.listdir(sp) if not n.startswith(skip)]
     return len(names), names[:6]
+
+
+# isolated 模式（python312._pth）下 `site` 不执行，site-packages/*.pth 全部失效。
+# pywin32.pth 已由装配期 write_isolated_pth 手工补回三段路径，这是白名单里唯一成员。
+# 【C9-2 · _pth 维护税】install_deps 之后新装进来的任何 .pth 都会**静默失效**——
+# 包不报错、功能就是没反应，是最难查的一类。所以装完必须扫一遍并大声报警。
+_KNOWN_PTH = {"pywin32.pth"}
+
+
+def scan_stale_pth(out_dir: str) -> list[str]:
+    """返回包内 site-packages 里白名单之外的 .pth 文件名（会静默失效的）。"""
+    sp = os.path.join(out_dir, "python", "Lib", "site-packages")
+    if not os.path.isdir(sp):
+        return []
+    return sorted(f for f in os.listdir(sp)
+                  if f.lower().endswith(".pth") and f not in _KNOWN_PTH)
+
+
+def warn_stale_pth(out_dir: str) -> None:
+    """发现会静默失效的 .pth 时打印处置指引。"""
+    stale = scan_stale_pth(out_dir)
+    if not stale:
+        return
+    print("  ⚠ 发现 " + ", ".join(stale))
+    print("    包内运行时是 isolated 模式（python312._pth），`site` 不执行，")
+    print("    这些 .pth 里登记的路径会静默失效（功能没反应且无报错）。处置：")
+    print("    1) 打开 .pth，读出里面登记的路径；")
+    print("    2) 逐条追加进 python/python312._pth；")
+    print("    3) 若 .pth 里是可执行行（import …），需手工等价处理。")
+    print("    参考：pywin32.pth 的三段路径就是这么补回的（见 write_isolated_pth）。")
 
 
 def run_gates(out_dir: str, strict_deps: bool = False) -> tuple[int, bool]:
@@ -227,6 +521,226 @@ def run_gates(out_dir: str, strict_deps: bool = False) -> tuple[int, bool]:
     return rc, deps_missing
 
 
+# ==================== 体积报告（阶段 C3） ====================
+
+def _dir_size(path: str) -> tuple[int, int]:
+    total = 0
+    count = 0
+    for r, _dirs, names in os.walk(path):
+        for n in names:
+            try:
+                total += os.path.getsize(os.path.join(r, n))
+                count += 1
+            except OSError:
+                pass
+    return total, count
+
+
+def size_report(root: str, top_files: int = 12, top_pkgs: int = 12) -> None:
+    """从目录 / 单文件 / 第三方包三个视角拆开体积。
+
+    为什么需要它：交付包只有一个总大小，看不出是谁占的。等到"怎么 300MB"
+    被问起来，只能靠猜。这个报告就是回答"凭什么这么大、砍哪里最值"。
+    """
+    if not os.path.isdir(root):
+        print(f"✗ 不是目录：{root}")
+        return
+    rows: list[tuple[str, int, int]] = []
+    for name in sorted(os.listdir(root)):
+        p = os.path.join(root, name)
+        if os.path.isdir(p):
+            sz, n = _dir_size(p)
+        else:
+            try:
+                sz, n = os.path.getsize(p), 1
+            except OSError:
+                continue
+        rows.append((name, sz, n))
+    total = sum(r[1] for r in rows) or 1
+
+    print(f"\n=== 体积报告：{root} ===")
+    print(f"总计 {_human(total)}\n")
+    print(f"{'条目':38s} {'体积':>10s} {'占比':>7s} {'文件数':>8s}")
+    print("-" * 68)
+    for name, sz, n in sorted(rows, key=lambda r: -r[1]):
+        print(f"{name:38s} {_human(sz):>10s} {sz * 100.0 / total:>6.1f}% {n:>8d}")
+
+    files: list[tuple[str, int]] = []
+    for r, _dirs, names in os.walk(root):
+        for n in names:
+            fp = os.path.join(r, n)
+            try:
+                files.append((os.path.relpath(fp, root), os.path.getsize(fp)))
+            except OSError:
+                pass
+    files.sort(key=lambda x: -x[1])
+    print(f"\n最大的 {top_files} 个文件：")
+    for rel, sz in files[:top_files]:
+        print(f"  {_human(sz):>9s}  {rel}")
+
+    sp = os.path.join(root, "python", "Lib", "site-packages")
+    if os.path.isdir(sp):
+        pkgs: list[tuple[str, int]] = []
+        loose = 0
+        for name in os.listdir(sp):
+            p = os.path.join(sp, name)
+            if os.path.isdir(p):
+                pkgs.append((name, _dir_size(p)[0]))
+            else:
+                try:
+                    loose += os.path.getsize(p)
+                except OSError:
+                    pass
+        pkgs.sort(key=lambda x: -x[1])
+        sp_total = sum(p[1] for p in pkgs) + loose
+        print(f"\nsite-packages 共 {_human(sp_total)}，最重的 {top_pkgs} 个：")
+        for name, sz in pkgs[:top_pkgs]:
+            print(f"  {_human(sz):>9s}  {name}")
+        if loose:
+            print(f"  {_human(loose):>9s}  （散装顶层文件）")
+
+
+def runtime_tag(out_dir: str) -> str:
+    """从 python/pythonXY.dll 认出内置运行时的版本 tag（如 python312）。"""
+    pay = os.path.join(out_dir, "python")
+    if not os.path.isdir(pay):
+        return ""
+    for n in sorted(os.listdir(pay)):
+        m = re.match(r"^python(\d{3,})\.dll$", n)
+        if m:
+            return f"python{m.group(1)}"
+    return ""
+
+
+def isolated_pth_lines(out_dir: str) -> list[str]:
+    """pythonXY._pth 的内容行。
+
+    isolated 模式下 `site` 不执行：site-packages 不再自动进 sys.path，
+    `*.pth` 全部失效 —— 所以每一段路径都要显式列出。写不存在的东西是撒谎
+    （python.exe 找不到会静默跳过，查错时白绕），zip 行和 pywin32 三段
+    都只在对应文件/目录真实存在时才写。
+    """
+    pay = os.path.join(out_dir, "python")
+    sp = os.path.join(pay, "Lib", "site-packages")
+    lines = ["."]
+    tag = runtime_tag(out_dir)
+    if tag and os.path.isfile(os.path.join(pay, f"{tag}.zip")):
+        lines.append(f"{tag}.zip")
+    for rel in ("DLLs", "Lib"):
+        if os.path.isdir(os.path.join(pay, rel)):
+            lines.append(rel)
+    if os.path.isdir(sp):
+        lines.append("Lib\\site-packages")
+        for sub in ("win32", os.path.join("win32", "lib"), "Pythonwin"):
+            if os.path.isdir(os.path.join(sp, sub)):
+                lines.append("Lib\\site-packages\\" + sub)
+    # 包根放最后：`..` 既能让 main.py 可导入，又不会遮蔽标准库
+    lines.append("..")
+    return lines
+
+
+def write_isolated_pth(out_dir: str, enable: bool = True) -> tuple[bool, list[str]]:
+    """写/删 pythonXY._pth，让包内运行时进入 isolated 模式。
+
+    enable=False 必须真删旧文件：否则「这次没开隔离」和「运行时确实没隔离」
+    是两回事——上一次装配留下的 _pth 会继续生效。
+    """
+    tag = runtime_tag(out_dir)
+    if not tag:
+        return False, []
+    path = os.path.join(out_dir, "python", f"{tag}._pth")
+    if not enable:
+        if os.path.exists(path):
+            os.remove(path)
+        return False, []
+    lines = isolated_pth_lines(out_dir)
+    # CRLF：与同目录其它文本文件一致，别让 git 检出抖动
+    with open(path, "w", encoding="utf-8", newline="") as f:
+        f.write("\r\n".join(lines) + "\r\n")
+    return True, lines
+
+
+def bundle_pywin32_dlls(out_dir: str) -> list[str]:
+    """把 pywin32_system32 的依赖 DLL 复制到 python/ 根（解释器同目录）。
+
+    isolated 下唯一对**任何入口**都有效的依赖 DLL 方案（2026-10-18 三条路
+    实测）：_pth 里写路径无效（3.8+ 依赖 DLL 不从 sys.path 找）；main.py 里
+    add_dll_directory 只管走 main.py 的入口。放解释器同目录则 python -c、
+    run_webui.py 等所有入口都能找到。
+    """
+    src = os.path.join(out_dir, "python", "Lib", "site-packages", "pywin32_system32")
+    dst = os.path.join(out_dir, "python")
+    if not os.path.isdir(src) or not os.path.isdir(dst):
+        return []
+    moved: list[str] = []
+    for n in sorted(os.listdir(src)):
+        if n.lower().endswith(".dll"):
+            shutil.copy2(os.path.join(src, n), os.path.join(dst, n))
+            moved.append(n)
+    return moved
+
+
+def purge_stale_caches(out_dir: str) -> list[str]:
+    """清掉输出目录里（`python/` 之外）的 `__pycache__` 与 `.pyc` / `.log`。
+
+    为什么必须单独做一次（2026-10-18 实测）：`--force` 的语义是「覆盖同名
+    文件，不删多余文件」，于是上一次在包内跑过 main.py 留下的 src/__pycache__
+    会一直躺着，凭据闸判「包内混入目录」拦下发布。`python/` 下的字节码不动
+    （删了只是首启变慢，不值），tests/ 更不许顺手删——漏拷了东西宁可让闸门
+    抓住，也不要它悄悄消失。
+    """
+    killed: list[str] = []
+    pyroot = os.path.join(out_dir, "python")
+    for cur, dirs, files in os.walk(out_dir):
+        if os.path.normcase(os.path.abspath(cur)).startswith(
+                os.path.normcase(os.path.abspath(pyroot)) + os.sep):
+            dirs[:] = []
+            continue
+        for d in list(dirs):
+            if d == "__pycache__":
+                p = os.path.join(cur, d)
+                shutil.rmtree(p, ignore_errors=True)
+                killed.append(os.path.relpath(p, out_dir))
+                dirs.remove(d)
+        for fn in files:
+            if fn.endswith((".pyc", ".pyo", ".log")):
+                p = os.path.join(cur, fn)
+                try:
+                    os.remove(p)
+                    killed.append(os.path.relpath(p, out_dir))
+                except OSError:
+                    pass
+    return killed
+
+
+def preserve_user_config(out: str, root: str) -> str | None:
+    """装配覆盖前，把目标目录里**用户改过的** config.yaml 抢救出来。
+
+    为什么必须做（2026-10-18 盘点出的产品化缺口）：
+        RENAME 把 `config.release.yaml` 改名成 `config.yaml` 写入交付包。用户
+        拿到包后往里面填 API Key；下个版本发布，用户**解压新 zip 到同一目录**
+        ——config.yaml 被出厂默认值静默覆盖，Key 直接丢失。zip 解压这一步
+        谁也拦不住，所以这里做两件事：
+        1. 装配机侧（--force 重装配到已有目录）：旧 config 与 release 模板
+           不同 = 有人改过，先备份成 config.user.bak.yaml 再覆盖；
+        2. 用户机侧靠 doctor（check_config）发现 .bak 与 config 并存时提示比对。
+    返回备份路径；没东西可救返回 None。
+    """
+    dst = os.path.join(out, "config.yaml")
+    src = os.path.join(root, "config.release.yaml")
+    if not os.path.isfile(dst) or not os.path.isfile(src):
+        return None
+    with open(dst, "rb") as f:
+        old = f.read()
+    with open(src, "rb") as f:
+        new = f.read()
+    if old == new:
+        return None  # 都是出厂默认，覆盖无损失
+    bak = os.path.join(out, "config.user.bak.yaml")
+    shutil.copy2(dst, bak)
+    return bak
+
+
 def copy_items(items: list[tuple[str, str, bool]], out: str) -> None:
     for src, rel, is_dir in items:
         dst = os.path.join(out, rel)
@@ -242,10 +756,27 @@ def main() -> int:
     ap.add_argument("--out", help="输出目录；不给则只打印清单（dry-run）")
     ap.add_argument("--root", default=".", help="项目根目录")
     ap.add_argument("--no-runtime", action="store_true", help="不打包 python/ 内置运行时")
+    ap.add_argument("--no-isolate", action="store_true",
+                    help="不写 pythonXY._pth（不启用运行期隔离）；默认开启隔离")
     ap.add_argument("--force", action="store_true", help="输出目录非空时也继续（会覆盖同名文件，不删除多余文件）")
     ap.add_argument("--strict-deps", action="store_true",
                     help="内置运行时没装第三方包时视为失败（CI/正式发布建议开）")
+    ap.add_argument("--install-deps", action="store_true",
+                    help="组装后把依赖装进包内的 python/（让它拷到干净机器上也能跑）")
+    ap.add_argument("--tier", choices=("core", "important", "all"), default="important",
+                    help="--install-deps 装到哪一档：core=启动必需（默认 important）")
+    ap.add_argument("--wheelhouse", action="store_true",
+                    help="把依赖连传递依赖下载成 wheel 放到 <out>/wheels/（供离线安装）")
+    ap.add_argument("--offline", action="store_true",
+                    help="--install-deps 时强制只用本地 wheelhouse，不联网")
+    ap.add_argument("--report", metavar="DIR", nargs="?", const="__OUT__",
+                    help="打印某个目录的体积报告（配合 --out 时打到刚组装完的包上）")
     args = ap.parse_args()
+
+    # 单独 --report 某个目录：只报告，不组装
+    if args.report and args.report != "__OUT__":
+        size_report(os.path.abspath(args.report))
+        return 0
 
     root = os.path.abspath(args.root)
     items = plan(root, with_runtime=not args.no_runtime)
@@ -273,18 +804,67 @@ def main() -> int:
         return 1
 
     print(f"\n开始组装 → {out}")
+    _bak = preserve_user_config(out, root)
+    if _bak:
+        print(f"  ⚠ 目标已有**改过的** config.yaml，已备份：{os.path.basename(_bak)}")
+        print("    （下个版本的用户解压覆盖不会经过这里——见 README 的升级说明）")
     copy_items(items, out)
-    sz, n = _tree_size(out)
-    print(f"完成：{n} 个文件，{_human(sz)}")
+    _stale = purge_stale_caches(out)
+    if _stale:
+        # 说出来而不是默默清掉：这提示"上一次装配后有人在包内跑过东西"
+        print(f"  · 清掉 {len(_stale)} 项上次装配的残留（{', '.join(_stale[:3])}"
+              f"{' …' if len(_stale) > 3 else ''}）")
+    # 这里必须用真实占用而不是 _tree_size：后者为了清单好看会跳过 .pyc/test，
+    # 但交付包是要按真实体积上线的。两个数字不一致会让人以为报告算错了。
+    sz, n = _dir_size(out)
+    print(f"完成：{n} 个文件，{_human(sz)}（磁盘真实占用）")
+
+    deps_ok = True
+    if args.wheelhouse:
+        print("\n=== 依赖离线化：构建 wheelhouse ===")
+        py = os.path.join(out, "python", "python.exe")
+        if not os.path.isfile(py):
+            print("  ✗ 包内没有 python/python.exe，无法下载 wheel")
+            deps_ok = False
+        else:
+            deps_ok = build_wheelhouse(out, py, args.tier)
+
+    if args.install_deps:
+        print("\n=== 依赖安装（装进包内 python/）===")
+        deps_ok = install_deps(out, upto=args.tier, offline=args.offline) and deps_ok
+
+    # 隔离必须写在依赖装完之后：pywin32 的三个子目录要先存在，才能决定 _pth
+    # 里要不要写它们。也必须写在闸门之前，否则闸门查到的是一份还没隔离的包。
+    print("\n=== 运行期依赖隔离（pythonXY._pth）===")
+    if args.no_runtime:
+        print("  - 未打包 python/，跳过")
+    else:
+        enabled, iso_lines = write_isolated_pth(out, enable=not args.no_isolate)
+        if enabled:
+            print(f"  · python/{runtime_tag(out)}._pth 已写入（{len(iso_lines)} 行，isolated 模式）")
+            print("    sys.path 由该文件固定，用户级 site-packages 与交付包彻底无关")
+        else:
+            print("  · --no-isolate：不启用运行期隔离（旧 _pth 已删，若存在）")
+        dlls = bundle_pywin32_dlls(out)
+        if dlls:
+            print(f"  · pywin32 DLL 铺到 python/ 根（入口无关的依赖 DLL 路径）：{', '.join(dlls)}")
 
     rc, deps_missing = run_gates(out, strict_deps=args.strict_deps)
+    if not deps_ok:
+        rc = 1
     print()
-    if rc != 0:
+    if not deps_ok:
+        print(f"✗ 依赖环节失败，先修正再发布：{out}")
+    elif rc != 0:
         print(f"✗ 未通过闸门，先修正再发布：{out}")
     elif deps_missing:
         print(f"⚠ 结构与凭据都合格，但依赖还没装 —— 装完才能双击启动：{out}")
     else:
         print(f"✓ 可发布：{out}")
+
+    # --report 不给目录时，报的就是刚组装出来的这个包
+    if args.report:
+        size_report(out)
     return rc
 
 
