@@ -30,6 +30,13 @@ logger = logging.getLogger(__name__)
 # 请求体上限：前端可能回传截图/音频的 base64，留 32MB 余量，超出直接拒绝
 MAX_BODY = 32 * 1024 * 1024
 
+# 拒绝分支愿意"读掉"的请求体上限。协议要求：HTTP/1.1 长连接上，
+# 没读完的请求体会被当成下一个请求的请求行，于是 401/413 之后的调用全部错乱
+# （Windows 上表现为客户端 WinError 10053）。所以拒绝前必须排空 body；
+# 超过这个上限就不排空、直接关连接——此时 RST 是可接受的（对方本就超限）。
+# 1MB 足够覆盖真实壳的鉴权失败场景（正常调用的小包），又不至于被大包拖住。
+DRAIN_LIMIT = 1024 * 1024
+
 
 class RpcError(Exception):
     """业务层错误：会被序列化成 {"ok": false, "error": {...}} 返回给前端。"""
@@ -65,6 +72,9 @@ class _Handler(BaseHTTPRequestHandler):
     api: Any = None
     token: str = ""
 
+    # 本次请求的 body 是否已被读走（handler 实例按连接复用，每次 do_POST 重置）
+    _body_consumed: bool = False
+
     def log_message(self, fmt: str, *args: Any) -> None:  # noqa: A003
         # 默认实现会把每个请求打到 stderr；这里降级到 debug，避免刷屏
         logger.debug("[RPC] " + fmt, *args)
@@ -88,6 +98,37 @@ class _Handler(BaseHTTPRequestHandler):
         # compare_digest：避免按字节比较带来的时序差异
         return bool(self.token) and secrets.compare_digest(got, self.token)
 
+    def _drain_body(self) -> bool:
+        """读掉请求体，使连接可以被安全复用。
+
+        返回 False 表示无法排空（长度畸形 / 超过 DRAIN_LIMIT / 对端提前断开），
+        调用方必须让这条连接结束——否则下一个请求会读到上一个的残留字节。
+        """
+        if self._body_consumed:   # _read_json 已经读过，再读会阻塞
+            return True
+        try:
+            length = int(self.headers.get("Content-Length") or 0)
+        except ValueError:
+            return False
+        if length <= 0:
+            return True
+        if length > DRAIN_LIMIT:
+            return False
+        remaining = length
+        while remaining > 0:
+            chunk = self.rfile.read(min(remaining, 64 * 1024))
+            if not chunk:
+                return False
+            remaining -= len(chunk)
+        return True
+
+    def _reject(self, payload: dict, status: int) -> None:
+        """在读 body 之前就拒绝的响应：先排空，排不空才结束连接。"""
+        if not self._drain_body():
+            self.close_connection = True
+            logger.debug("[RPC] 拒绝分支无法排空请求体，连接将关闭")
+        self._send_json(payload, status)
+
     def do_OPTIONS(self) -> None:  # noqa: N802
         self.send_response(204)
         self.send_header("Access-Control-Allow-Origin", "*")
@@ -105,18 +146,19 @@ class _Handler(BaseHTTPRequestHandler):
         self._send_json({"ok": True, "result": {"app": "daniya", "pid": os.getpid()}})
 
     def do_POST(self) -> None:  # noqa: N802
+        self._body_consumed = False
         if self.path.split("?")[0] != "/rpc":
-            self._send_json({"ok": False, "error": {"type": "NotFound",
-                                                    "message": "只支持 POST /rpc"}}, 404)
+            self._reject({"ok": False, "error": {"type": "NotFound",
+                                                 "message": "只支持 POST /rpc"}}, 404)
             return
         if not self._authorized():
-            self._send_json({"ok": False, "error": {"type": "Unauthorized",
-                                                    "message": "缺少或错误的 X-Daniya-Token"}}, 401)
+            self._reject({"ok": False, "error": {"type": "Unauthorized",
+                                                 "message": "缺少或错误的 X-Daniya-Token"}}, 401)
             return
         try:
             payload = self._read_json()
         except RpcError as e:
-            self._send_json({"ok": False, "error": {"type": e.kind, "message": str(e)}}, e.status)
+            self._reject({"ok": False, "error": {"type": e.kind, "message": str(e)}}, e.status)
             return
 
         method = str(payload.get("method") or "")
@@ -171,6 +213,7 @@ class _Handler(BaseHTTPRequestHandler):
         if length > MAX_BODY:
             raise RpcError(f"请求体过大（{length} 字节，上限 {MAX_BODY}）", status=413, kind="TooLarge")
         raw = self.rfile.read(length)
+        self._body_consumed = True   # 已读走，后续拒绝分支不能再排空一次
         try:
             data = json.loads(raw.decode("utf-8"))
         except Exception:
