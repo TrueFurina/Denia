@@ -22,8 +22,16 @@
 
 !define APPNAME "达妮娅AI桌面伴侣"
 !define APPID "DaniaAI"
-!define VERSION "0.2.0"
+
+; VERSION / STAGE 由 make_dist.py --installer 用 /D 注入（单一真值 =
+; src/version.py）。这里的兜底是故意的哨兵：忘注入时安装包版本显示
+; 0.0.0-dev，在"添加删除程序"里一眼可见，绝不给一个像真的版本号。
+!ifndef VERSION
+!define VERSION "0.0.0-dev"
+!endif
+!ifndef STAGE
 !define STAGE "dist_stage"
+!endif
 
 Unicode true
 Name "${APPNAME}"
