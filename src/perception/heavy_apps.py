@@ -21,6 +21,7 @@
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
@@ -217,11 +218,16 @@ class HeavyAppRegistry:
         if not (self._cloud_sync and self._cloud_url):
             return
         try:
-            import urllib.request
-            req = urllib.request.Request(
-                self._cloud_url, headers={"User-Agent": "WorkBuddy-HeavyApps"})
-            with urllib.request.urlopen(req, timeout=5) as r:
-                data = json.loads(r.read().decode("utf-8"))
+            def _fetch() -> dict:
+                # 【2026-10-18 修】urllib 是同步阻塞（timeout=5）。直接写在 async 函数里
+                # 会把事件循环占住最多 5 秒 —— 首启时正好和 TTS/对话抢同一个循环。
+                import urllib.request
+                req = urllib.request.Request(
+                    self._cloud_url, headers={"User-Agent": "WorkBuddy-HeavyApps"})
+                with urllib.request.urlopen(req, timeout=5) as r:
+                    return json.loads(r.read().decode("utf-8"))
+
+            data = await asyncio.to_thread(_fetch)
             with self._lock:
                 if isinstance(data, dict):
                     self._cloud.update({k.lower(): v for k, v in data.items()})
@@ -240,15 +246,18 @@ class HeavyAppRegistry:
         if not batch:
             return
         try:
-            import urllib.request
-            url = self._cloud_url.rstrip("/") + "/report"
-            payload = json.dumps({"apps": batch}).encode("utf-8")
-            req = urllib.request.Request(
-                url, data=payload,
-                headers={"Content-Type": "application/json",
-                         "User-Agent": "WorkBuddy-HeavyApps"},
-                method="POST")
-            urllib.request.urlopen(req, timeout=5).close()
+            def _post() -> None:
+                import urllib.request
+                url = self._cloud_url.rstrip("/") + "/report"
+                payload = json.dumps({"apps": batch}).encode("utf-8")
+                req = urllib.request.Request(
+                    url, data=payload,
+                    headers={"Content-Type": "application/json",
+                             "User-Agent": "WorkBuddy-HeavyApps"},
+                    method="POST")
+                urllib.request.urlopen(req, timeout=5).close()
+
+            await asyncio.to_thread(_post)
             logger.info("已上报 %d 个新晋重负载进程到云端", len(batch))
         except Exception as e:  # noqa: BLE001
             with self._lock:

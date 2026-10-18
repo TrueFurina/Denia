@@ -41,12 +41,56 @@
 | `a1e2f17` | 14:0x | fix | doctor GBK 控制台不炸（符号降级 `?`） | [15] 行为测试 + 变异；真机包内复现→修复 |
 | `6094d95` | 15:1x | fix | 桌面双击启动即崩：None 流 → pywebview GBK devnull → rich 炸 | io_safe 三态测试 + 变异；真机 crash 日志取证 |
 | `94709d4` | 17:5x | fix | 微信通道「能收不能回」+ 回调无鉴权对外暴露 + 发消息卡死事件循环 | 6 断言 + 5 刀变异全红；门禁 28→30 项 |
+| `TBD2` | 18:2x | fix | 同一类坑再扫三处（qzone 发布 / tts 的 sleep / heavy_apps 拉取）+ JS 闸门能染红了 | 变异 2 刀全红；门禁 30→34 项 |
 
 > **\* 夹带说明（必须留档）**：12:10 / 12:2x 两行的内容实际随 `fa86a4c`（E1 开机自启）
 > 入库——13:14 的并发提交把质检工作流未提交的改动一起提交了，未按工作流拆分。
 > 代码与测试主体由 `5dbc64c` 收口，**归属以本脚注为准**。
 > 教训：并发会话各自只 `git add` 自己知道的文件，提交前先 `git log` 确认HEAD 没有
 > 在几分钟内被别人推进过。
+
+### 2026-10-18 · 同一类坑再扫三处 + 前端 JS 闸门从"装饰"变"能红"
+
+上一节修的是"async 里做同步事"这一类。既然是一类，就不能只修撞见的那一处——
+写了个 AST 探针按类扫，又抓到三处，并把这类问题固化成闸门。
+
+**① `qzone._on_decision` 发说说卡死事件循环**
+`QzoneClient.publish` 是同步 urllib（超时 15s），原来在事件循环线程里直接调 →
+发一条说说期间 TTS / 对话 / 桌宠全停，最长 15 秒。改 `await asyncio.to_thread(...)`。
+佐证"这是漏网"：通道里其它出站调用（`onebot.py:346`、`media_ingest`、`video_watch`）
+早就是 `to_thread`，只有这里没跟上。新增 `test_qzone_nonblocking.py`（桩 sleep 0.4s，
+量循环抖动；变异回同步调用 → "卡住 406ms" 被抓住）。
+
+**② `tts._pyttsx3_speak` 里 `time.sleep(0.6)`**
+写在 `async def` 的 finally 里 —— 每用 pyttsx3 说一句就把事件循环占住 600ms。
+改 `await asyncio.sleep(0.6)`。注意：同一文件里另有 3 处 `time.sleep(0.6)` 在**同步**
+函数里（`_play_file` 等，本身就跑在 `to_thread` 里），不能无脑替换——只改 async 那一处。
+
+**③ `heavy_apps.pull_cloud / report_promoted` 里 `urlopen(timeout=5)`**
+两个 `async def` 直接在循环里发 HTTP。它们由 `asyncio.create_task(...)` 在首启与
+周期同步时拉起，正好和 TTS/对话抢同一个循环 → 首启卡 5 秒。改为嵌套同步 worker +
+`to_thread`（保留原失败重排队逻辑）。
+
+**④ 前端 JS 语法闸门：原来永远 exit 0（装饰闸门）**
+`check_web_js_syntax.py` 打印完"语法错误总数"就结束，**没有退出码**——错再多门禁也不红。
+而且中间产物写进 `data/_syntax_check`（往用户数据目录堆垃圾，实测已积 12 个文件）。
+改：有错 `exit 1`；无 node 时 `exit 77`（check_all 的跳过约定，单列"未验证"）；
+中间产物改系统临时目录并在结束时清掉。变异：往 index.html 第一个 `console.` 前插
+`}}{` → rc=1 且指出"inline块#3 第 519 行起"，还原后 sha256 一致。
+顺带删掉 `tools/check_html_scripts.py`：它把 node 写死成
+`C:\Users\Administrator\...\node.exe`（本机直接 FileNotFoundError），功能又与
+`check_web_js_syntax` 重复，属 P3 死工具。
+
+**⑤ 新闸门：异步阻塞（`tools/check_async_blocking.py`）**
+AST 查"async 函数体内（不下钻嵌套 def）出现 time.sleep / urlopen / subprocess.run /
+requests.* / os.system / socket.* 且没被 to_thread/run_in_executor 包裹"。
+嵌套同步 worker 是正确写法（通常交给 to_thread），必须排除——否则全是噪音。
+配套 `src/tests/test_check_async_blocking.py` 7 条正反例守闸门本身。
+
+**验证**：门禁 **30 → 34 项全过、0 跳过**（新增：前端 JS 语法 / 空间发布不阻塞 /
+异步阻塞 / 异步阻塞自测）。变异 2 刀全红：qzone 改回同步 → "卡住 406ms"；
+tts 改回 `time.sleep` → 闸门报 `tts.py:1259 async _pyttsx3_speak() 里同步调用 time.sleep()`。
+两处还原均 sha256 一致。
 
 ### 2026-10-18 · 微信通道三连修：回复发不出去 / 回调对外裸奔 / 发消息卡死主循环
 

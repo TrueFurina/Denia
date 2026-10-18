@@ -1254,7 +1254,9 @@ class TTS:
             await asyncio.to_thread(_speak)
         finally:
             if use_gate:
-                time.sleep(0.6)  # 尾音静音：吃掉采集缓冲延迟
+                # 【2026-10-18 修】原 time.sleep(0.6) 写在 async 函数里 —— 每说一句就把
+                # 事件循环占住 600ms（TTS/对话/桌宠一起卡）。要等就 await asyncio.sleep。
+                await asyncio.sleep(0.6)  # 尾音静音：吃掉采集缓冲延迟
                 INPROC_SPEAK_GATE.clear()
 
     def stop(self) -> None:
