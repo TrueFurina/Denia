@@ -1760,7 +1760,8 @@ vision_models:
 voice:
   asr:
     cmd_timeout_s: 8
-    model_path: models/vosk-model-small-cn-0.22
+    model_path: ''   # 留空=运行时自动下载中文模型；指到不存在的目录反而
+  # 会把自动下载堵死（src/voice/asr.py:_load_model）
     sample_rate: 16000
   clone:
     local_engine: voxcpm

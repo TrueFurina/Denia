@@ -74,6 +74,10 @@ GATES: list[tuple[str, str, list[str], bool]] = [
     ("doctor 自检结构", PY_VENV, ["src/tests/test_doctor.py"], False),
     # 「她现在能说话吗」：engine 为空会落到静音后端（不出声、不联网、零日志）。
     ("语音合成判级", PY_VENV, ["src/tests/test_doctor_voice_backend.py"], False),
+    # 「听得见吗」：vosk 语言代码写成 zh-cn（应为 cn）+ model_path 指向
+    # 不存在的目录，两口堵死自动下载。闭环测试 + doctor 判级测试。
+    ("ASR 听得见", PY_VENV, ["src/tests/test_asr_voice_pipeline.py"], False),
+    ("语音识别判级", PY_VENV, ["src/tests/test_doctor_asr.py"], False),
     # 模型渠道探活的判级（本轮事故的直接教训：百炼账户 400 欠费，配置里却"填好了"）。
     # 测试 ⑦ 组 + 变异 7 刀全红（tools/_qc_channel_mutation.py）。
     ("渠道探活判级", PY_VENV, ["src/tests/test_doctor_llm_channel.py"], False),
