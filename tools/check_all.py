@@ -39,8 +39,17 @@ GATES: list[tuple[str, str, list[str], bool]] = [
     # await/调度`（协程对象直接丢弃，函数体一行不执行）。自测守着闸门本身别退化。
     ("协程调度", PY_RUNTIME, ["tools/check_await_sync.py", "src"], False),
     ("协程调度自测", PY_RUNTIME, ["src/tests/test_check_await_sync.py"], False),
+    # 异步阻塞：async 里做同步 HTTP/sleep 会把事件循环占住（"卡一下"，不报错）。
+    # 一天内撞到四处：gewechat 回发、qzone 发布、tts 的 time.sleep(0.6)、
+    # heavy_apps 的 urlopen(timeout=5)。嵌套同步 worker（交给 to_thread）不算。
+    ("异步阻塞", PY_RUNTIME, ["tools/check_async_blocking.py", "src"], False),
+    ("异步阻塞自测", PY_RUNTIME, ["src/tests/test_check_async_blocking.py"], False),
     ("文本编码", PY_RUNTIME, ["tools/check_open_encoding.py", "--all", "--strict", "src", "tools", "main.py", "launch_companion.py", "run_webui.py"], False),
     ("前端资源", PY_RUNTIME, ["tools/check_web_assets.py", "--strict"], False),
+    # 前端 JS 语法：一处语法错误会让整个 <script> 块静默不执行（该块里所有按钮全哑），
+    # 而 check_web_js_syntax 原来打印完就 exit 0 —— 是装饰闸门。本机没 node 时
+    # 按 77 跳过（单列「未验证」，不计通过）。
+    ("前端 JS 语法", PY_RUNTIME, ["tools/check_web_js_syntax.py"], False),
     ("凭据/隐私", PY_RUNTIME, ["tools/check_package_secrets.py"], False),
     ("凭据日志卫生", PY_RUNTIME, ["tools/check_log_leak.py"], False),
     ("依赖声明", PY_VENV, ["tools/check_requirements.py", "--strict"], True),
@@ -62,6 +71,9 @@ GATES: list[tuple[str, str, list[str], bool]] = [
     # 微信回调：无签名 POST 的鉴权边界 + AI 决策回发（曾因 `await 同步函数`
     # 导致回复一条都发不出去）。变异 5 刀全红，见 tools/_qc_gewechat_mutation.py。
     ("微信回调边界", PY_VENV, ["src/channels/tests/test_gewechat_callback.py"], False),
+    # 空间发布：publish 是同步 urllib（超时 15s），在事件循环线程里直接调会卡住
+    # TTS/对话/桌宠。变异：改回同步调用 → "卡住 406ms" 被抓住。
+    ("空间发布不阻塞", PY_VENV, ["src/channels/tests/test_qzone_nonblocking.py"], False),
     ("Key 归一", PY_VENV, ["tools/test_key_unify.py"], True),
     ("能力槽位", PY_VENV, ["tools/test_capability_slots.py"], True),
     ("OneBot 协议", PY_VENV, ["src/channels/tests/test_onebot.py"], True),
