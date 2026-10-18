@@ -19,7 +19,12 @@ import re
 import sys
 from urllib.parse import unquote
 
-SKIP_DIRS = {"node_modules", "__pycache__", ".git", "models"}
+# 「site-packages」必须跳过：内置运行时里第三方包自带的 HTML
+# （pygame 的 docs/generated、win32com/HTML…）不是我们的资源，
+# 里面的失效外链我们既无法修，也不该为它挡住发布。
+# 2026-10-18 实测：装上核心+重要依赖后，这几条外链让整包被判阻断。
+SKIP_DIRS = {"node_modules", "__pycache__", ".git", "models",
+             "site-packages", "dist-info", "tests"}
 # 远程/内联/模板化资源不检查
 EXTERNAL = ("http://", "https://", "//", "data:", "blob:", "javascript:", "mailto:", "#", "{{", "${")
 

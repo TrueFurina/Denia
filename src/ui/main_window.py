@@ -322,7 +322,10 @@ def _ensure_web_server() -> str:
     t = threading.Thread(target=srv.serve_forever, daemon=True, name="web_static")
     t.start()
     STATE.web_server_base = "http://127.0.0.1:8766"
-    logger.info("本地静态 HTTP 服务已启动: %s (根目录 %s, 启动令牌 %s)", STATE.web_server_base, web_root, STATE.web_start_token)
+    # 启动令牌只打前 8 位：日志会留存、可能被截图/上传，完整令牌不该落盘。
+    # 同类处理见 webapp.py 的 api_key=%.8s。
+    logger.info("本地静态 HTTP 服务已启动: %s (根目录 %s, 启动令牌 %.8s...)",
+                STATE.web_server_base, web_root, STATE.web_start_token)
     return STATE.web_server_base
 
 
@@ -867,7 +870,15 @@ def create_desktop_companion(api: Optional[CharacterAPI] = None) -> "webview.Win
         api = CharacterAPI()
     base = _ensure_web_server()
     rig_path = base + "/live2d/rig/index.html?v=2"
-    w, h, margin = 420, 540, 24
+    # 尺寸与 pet_state.PET_W/PET_H 同源：位置存盘的归一化用的就是这两个数，
+    # 两处各写一份会在「工作区 − 窗口尺寸」这个分母上产生几像素差（2026-10-18 质检 P2）。
+    try:
+        from .pet_state import PET_H as _PET_H, PET_W as _PET_W
+
+        w, h = _PET_W, _PET_H
+    except Exception:  # noqa: BLE001
+        w, h = 420, 540
+    margin = 24
     # pywebview 的 x/y/width/height 均为逻辑像素（内部按显示器 DPI 换算成物理像素）。
     # 不能用 webview.screens 当逻辑分辨率：应用进程 start 后已 SetProcessDPIAware，
     # 此时 Screen.Bounds 返回的是物理像素且 scale 恒为 1.0（pywebview 6.2.1 实现如此），
@@ -882,6 +893,14 @@ def create_desktop_companion(api: Optional[CharacterAPI] = None) -> "webview.Win
     gdi32.DeleteDC(hdc)
     scale = max(dpi / 96.0, 1.0)
     lw, lh = int(sw / scale), int(sh / scale)
+    # 【阶段 A4】有存档就回到上次位置，否则右下角。收尾阶段（_finalize_pet_window）
+    # 会再夹一次，这里先给对位置，避免"先在右下角闪一下再跳"。
+    try:
+        from .pet_state import restore_logical
+
+        px, py = restore_logical(w, h, (lw - w - margin, lh - h - margin))
+    except Exception:  # noqa: BLE001
+        px, py = lw - w - margin, lh - h - margin
     pet_window = webview.create_window(
         title="达妮娅看板娘",
         url=rig_path,
@@ -891,8 +910,8 @@ def create_desktop_companion(api: Optional[CharacterAPI] = None) -> "webview.Win
         easy_drag=False,
         text_select=False,
         on_top=False,
-        x=lw - w - margin,
-        y=lh - h - margin,
+        x=px,
+        y=py,
         width=w,
         height=h,
         hidden=False,
@@ -1309,7 +1328,8 @@ def create_notify_window(api=None):
 
 def run_webview(debug: bool = False,
                 api: Optional[CharacterAPI] = None,
-                title: str = "AI 桌面伴侣 - 角色管理") -> None:
+                title: str = "AI 桌面伴侣 - 角色管理",
+                pet_backend: str = "auto") -> None:
     """启动 pywebview 角色管理窗口。
 
     当 main.py 集成调用时，api 会是已注入 runtime 的 CharacterAPI。
@@ -1325,25 +1345,31 @@ def run_webview(debug: bool = False,
         api = CharacterAPI()
     main = create_main_window(api=api, title=title)
 
-    # 桌宠窗有两条实现路径：
-    #   ① Electron 壳（真透明，见 AGENTS.md 第四条）—— 仅在 RPC 已就绪且 Electron 可用时启用；
-    #   ② pywebview 原路径（背后会有 #F0F0F0 白底）—— 回退用，保证任何环境都还能出人。
-    # 两条路径暴露给上层的是同一组成员（show/hide/on_top/x/y），所以 pet_show 等函数无需分支。
-    desk = None
-    try:
-        from .pet_shell import create_pet_shell
+    # 桌宠窗有两条实现路径（shell = Electron 真透明 / webview = pywebview 有白底），
+    # 选哪条由 `ui.pet_backend` 或命令行定，决策点只有 `pet_backend.create_pet_window` 一处——
+    # 本函数与 main.py 的 _startup_supervisor 共用它，避免"开关接线了但没通电"。
+    from . import pet_shell as _pet_shell_mod
+    from .pet_backend import create_pet_window as _create_pet_window
+    from .pet_backend import normalize as _norm_backend
+    from .pet_backend import wants_rpc as _wants_rpc
 
-        desk = create_pet_shell()
-    except Exception as _e:  # noqa: BLE001  壳起不来绝不能拦住主窗口
-        logger.warning("壳桌宠启动异常（回退 pywebview 桌宠）：%s", _e, exc_info=True)
+    _backend = _norm_backend(pet_backend, source="run_webview 参数")
+    # 本入口不经过 main.py 的 --rpc 分支，壳要用的通道得自己起。
+    # 已注入则不动（main.py 集成时那边早就起好了，避免重复监听）。
+    if _wants_rpc(_backend) and not _pet_shell_mod.rpc_ready():
+        try:
+            from .rpc_server import RpcServer as _RpcServer
 
-    if desk is not None:
-        api.set_windows(main_win=main, pet_win=desk)
+            _pet_shell_mod.configure(_RpcServer(api).start())
+        except Exception as _e:  # noqa: BLE001  起不来就回退，不影响主窗口
+            logger.warning("[RPC] 本地通道启动失败（桌宠回退 pywebview）：%s", _e)
+
+    desk, _used, _why = _create_pet_window(_backend, api=api)
+    api.set_windows(main_win=main, pet_win=desk)
+    if _used == "shell":
         logger.info("桌宠窗由 Electron 壳承载（真透明）")
     else:
-        desk = create_desktop_companion(api)
-        api.set_windows(main_win=main, pet_win=desk)
-        _attach_pet_no_taskbar(desk)
+        _attach_pet_no_taskbar(desk)   # 桌宠不占任务栏/Alt+Tab（壳自带 skipTaskbar，不需要）
 
     def _on_main_closed(_win=None) -> None:
         try:

@@ -127,16 +127,22 @@ def excluded_names(path: str) -> set[str]:
 
 
 def local_modules(root: str) -> set[str]:
-    """src/ 下的包目录名与文件名 —— 这些是项目自己的模块，不是第三方依赖。"""
+    """src/ 与 tools/ 下的包目录名与文件名 —— 这些是项目自己的模块，不是 pip 依赖。
+
+    为什么必须带上 tools/：不少测试与脚本会 `sys.path.insert(tools)` 之后
+    `import doctor` / `import make_dist`。只扫 src/ 的话，这些本地模块会被
+    判成「未安装且未声明」的第三方依赖，把依赖闸染红（2026-10-18 撞到）。
+    """
     out = set(LOCAL_HINTS)
-    base = os.path.join(root, "src")
-    for r, dirs, names in os.walk(base):
-        dirs[:] = [d for d in dirs if d not in SKIP_DIRS]
-        for d in dirs:
-            out.add(d)
-        for n in names:
-            if n.endswith(".py"):
-                out.add(n[:-3])
+    for sub in ("src", "tools"):
+        base = os.path.join(root, sub)
+        for r, dirs, names in os.walk(base):
+            dirs[:] = [d for d in dirs if d not in SKIP_DIRS]
+            for d in dirs:
+                out.add(d)
+            for n in names:
+                if n.endswith(".py"):
+                    out.add(n[:-3])
     return out
 
 
