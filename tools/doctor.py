@@ -1110,6 +1110,78 @@ def _port_listening(port: int, host: str = "127.0.0.1") -> bool:
         return False
 
 
+# sherpa-onnx 识别模型目录（src/voice/sherpa_recognizer.py 的两个候选，
+# 按它的优先级原样列在这里，避免两处各写一份走样）
+_SHERPA_MODEL_DIRS = (
+    "models/sherpa-onnx-streaming-paraformer-bilingual-zh-en",
+    "models/sherpa-onnx-streaming-zipformer-bilingual-zh-en-2023-02-20",
+)
+
+
+def check_asr(cfg: object) -> tuple[str, str, str, str]:
+    """「她现在听得见吗」——语音识别模型在不在、加载不加载得动。
+
+    【2026-10-19】实测两个 bug，任何一个都足以让她"听不见"：
+    ① `asr.py:_load_model` 写 `Model(lang="zh-cn")`，而 vosk 只认 "cn"，
+       于是"model_path 留空就自动下载"这条兜底从来没通过；
+    ② 配置把 `voice.asr.model_path` 写成一个**不存在的目录**，
+       `Model(路径)` 必抛异常，自动下载又被非空值堵死。
+    症状只有一条 ASR_INIT_FAIL 事件，日志里没有"配置指错了"。
+
+    判级（这里**不真的去下载** 42MB，那会让 doctor 卡一分钟）：
+      FAIL  model_path 非空但目录不存在（配置堵死了自动下载，且必然加载失败）
+      FAIL  model_path 非空、目录在，但加载抛异常
+      PASS  sherpa 模型目录在（质量更好，ASR 优先用它）
+      PASS  vosk 本地缓存已在（~/.cache/vosk/…）且能加载
+      WARN  两处都没有 → 首次监听会自动下载（约 42MB，需联网）
+    """
+    if cfg is None:
+        return (FAIL, "语音识别", "配置没加载成功，无法确认 ASR 模型",
+                "先看上面「配置文件」一项")
+
+    ns = getattr(cfg, "ns", None)
+    asr = getattr(getattr(ns, "voice", None), "asr", None) if ns else None
+    model_path = (getattr(asr, "model_path", "") or "").strip() if asr else ""
+
+    # ① 配了路径但目录不在 —— 这是本轮要抓住的主角
+    if model_path:
+        if not os.path.isdir(model_path):
+            return (FAIL, "语音识别",
+                    f"model_path={model_path!r} 目录不存在，且非空值会把"
+                    "「留空自动下载」那条路一起堵死",
+                    "删掉这个值让它留空（首次监听自动下载中文模型，约 42MB），"
+                    "或把模型解压到该目录")
+        try:
+            from vosk import Model, SetLogLevel
+            SetLogLevel(-1)
+            Model(model_path)
+        except Exception as e:  # noqa: BLE001
+            return (FAIL, "语音识别", f"模型目录在但加载失败：{e}",
+                    "模型文件可能不完整，重新解压一份")
+        return (PASS, "语音识别", f"用指定模型 {model_path}", "")
+
+    # ② 没配路径 → 先看 sherpa（ASR 内部优先用它）
+    for d in _SHERPA_MODEL_DIRS:
+        p = d if os.path.isabs(d) else os.path.join(ROOT, d)
+        if os.path.isdir(p):
+            return (PASS, "语音识别", f"sherpa-onnx 模型就绪（{os.path.basename(p)}）", "")
+
+    # ③ 再看 vosk 本地缓存（Model(lang="cn") 的落盘处）
+    cache = os.path.join(os.path.expanduser("~"), ".cache", "vosk")
+    if os.path.isdir(cache) and any(os.scandir(cache)):
+        try:
+            from vosk import Model, SetLogLevel
+            SetLogLevel(-1)
+            Model(lang="cn")
+        except Exception as e:  # noqa: BLE001
+            return (FAIL, "语音识别", f"本地缓在但加载失败：{e}", "")
+        return (PASS, "语音识别", "vosk 中文模型已缓存（~/.cache/vosk）", "")
+
+    return (WARN, "语音识别",
+            "没有 sherpa / vosk 模型：第一次用麦克风时会自动下载（约 42MB，需联网）",
+            "保持联网跑一次即可；或提前把 models/sherpa-onnx-* 放到项目根目录")
+
+
 def run_all(config_path: str) -> list[tuple[str, str, str, str]]:
     """跑完全部检查；任何一项自己炸了都降级成 WARN，不让整体崩。"""
     results: list[tuple[str, str, str, str]] = []
@@ -1138,7 +1210,8 @@ def run_all(config_path: str) -> list[tuple[str, str, str, str]]:
                     (check_logs, None),
                     (check_secret_storage, config_path),
                     (check_llm_channel, cfg),
-                    (check_voice_backend, cfg)):
+                    (check_voice_backend, cfg),
+                    (check_asr, cfg)):
         try:
             # 按「函数自己声明的形参」决定传不传，而不是按参数值是否为 None。
             # 见 _takes_arg 的注释：那是本文件踩过的坑。

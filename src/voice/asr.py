@@ -105,8 +105,13 @@ class ASR:
         SetLogLevel(-1)
         if self._model_path:
             return Model(self._model_path)
-        # 留空则尝试自动下载中文模型（需联网）
-        return Model(lang="zh-cn")
+        # 留空则自动下载中文模型（需联网，首次约 42MB / 1 分钟）。
+        # 【2026-10-19】语言代码必须是 "cn"：原来写 "zh-cn"，vosk 直接
+        # `lang zh-cn does not exist` 抛异常 → 这条"留空即自动下载"的兜底
+        # 从来没通过（用户机器上 models/ 目录不存在 + model_path 又写着个
+        # 不存在的路径，两路口一堵，她就是"听不见"，日志里只有一条 ERROR）。
+        # 下载产物落在 ~/.cache/vosk/，第二次起是本地加载（秒开）。
+        return Model(lang="cn")
 
     def _run(self) -> None:
         # 优先用 sherpa-onnx 流式识别器（识别质量远好于 vosk-small）；失败回退 vosk
