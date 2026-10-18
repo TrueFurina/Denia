@@ -78,6 +78,10 @@ GATES: list[tuple[str, str, list[str], bool]] = [
     # 不存在的目录，两口堵死自动下载。闭环测试 + doctor 判级测试。
     ("ASR 听得见", PY_VENV, ["src/tests/test_asr_voice_pipeline.py"], False),
     ("语音识别判级", PY_VENV, ["src/tests/test_doctor_asr.py"], False),
+    # 配置引用体检：路径指错 / 角色没绑引擎 → 红；可选功能（auto_start:false）
+    # 与端口未就绪 → 只提示。扫进仓模板，CI 上也能跑。
+    ("配置引用体检", PY_VENV, ["tools/_qc_path_refs.py", "config.release.yaml"], False),
+    ("配置引用判级", PY_VENV, ["src/tests/test_config_path_refs.py"], False),
     # 模型渠道探活的判级（本轮事故的直接教训：百炼账户 400 欠费，配置里却"填好了"）。
     # 测试 ⑦ 组 + 变异 7 刀全红（tools/_qc_channel_mutation.py）。
     ("渠道探活判级", PY_VENV, ["src/tests/test_doctor_llm_channel.py"], False),
