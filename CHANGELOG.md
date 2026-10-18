@@ -28,6 +28,211 @@
 | `add925a` | 20:26 | fix | 去掉写死盘符与 locale 编码依赖 | import 实测通过 |
 | `3fb4a71` | 20:26 | chore | `live2d/rig` 由 gitlink 改为真实跟踪 | 变异：删文件 → exit 1 |
 | `1207233` | 20:31 | chore | 打包闸双向化（也查"必须带的"） | 三组假包实测 |
+| `422f140` | 10:4x | fix | RPC 401 残留 body 污染 keep-alive（10053 假绿） | 720 次长连接 0 失败 |
+| `2035457` | 10:5x | security | 敏感配置 DPAPI 加密落盘（C9-1） | 20 断言 + 3 刀变异 |
+| `c216151` | 11:0x | perf | phash 自实现替换 ImageHash，甩 scipy（C9-3） | 208 图 bit 级对照；472→370MB |
+| `c010d83` | 11:1x | feat | wheelhouse 改 pip wheel，真离线化收口（C9-4） | 63 whl / 0 sdist；离线装全通 |
+| `8f28cc0` | 11:2x | docs | C2 拍板（A 路线）+ 凭据日志卫生门禁 | 规划落档 |
+| （本次） | 11:5x | feat | C2-A 落地：NSIS 安装器 + 升级保留配置 | 见下方明细 |
+
+### 2026-10-18 · C2-A 落地：NSIS 安装器（每用户、升级保留配置、卸载保数据）
+
+**为什么不是 electron-builder**：查盘实锤当前架构是 Python 主导、Electron 只渲染
+桌宠窗，B 路线等于把 D 主窗迁移提前；A 路线 installer 只做「铺文件+快捷方式+
+卸载+升级保留配置」。NSIS 3.10 本体仅 ~2.4MB（SourceForge），不是 200MB+ 的
+electron-builder。
+
+**改动**：`tools/installer.nsi`。每用户装 `%LOCALAPPDATA%\DaniaAI`（无 UAC）；
+config.yaml `SetOverwrite off`、data\ logs\ 安装器从不写入；卸载默认保数据
+（GUI 才弹询问）；不打包 wheels\ 与 config.user.bak.yaml（构建残留会制造假 WARN）。
+
+**验证（全部实测）**：静默装 `/D` 自定义路径 → 装后包内 doctor 13 PASS / 0 FAIL
+（rc=0）；连续两次升级重装，用户 config.yaml 标记行均保留；静默卸载删净程序
+文件与注册表键，只留 config.yaml。体积 314MB → **72.8MB**（LZMA 23.1%）。
+
+**踩坑**：① NSIS `File` 相对路径按脚本目录解析（非 CWD）→ `!cd ..` 锚定；
+② `MessageBox` 静默模式取默认按钮（YES=删用户数据）→ `/SD IDNO` 必加——
+这条若漏掉，脚本化卸载会静默清掉用户配置；③ Git Bash 传 `//S //D=...`
+会弄丢 `/D`（装到默认路径），静默操作走 `cmd /c`；④ .nsi 必须 UTF-8 带 BOM；
+⑤ NSIS 卸载器自复制 TEMP 后异步重执行，验证要等 ~15s。
+| — | 11:45 | fix | 壳 GPU 崩溃后自动退让软件合成（真透明恢复可用） | 端到端 PASS + 变异 4 项 FAIL |
+
+### 2026-10-18 · 质检 P2/P3：版本号 fixture 去字面量、位置还原口径同源、三处死代码
+
+**问题**：
+1. `test_config_schema` 的 fixture 写死 `"version": "0.2.0"`，而它断言"无问题"。
+   按文档"发版只改 `src/version.py`"操作 → 配置校验这道闸**必红**。
+2. 位置持久化：`save_physical` 用 `PET_W/PET_H`（420×540）归一化，
+   `_finalize_pet_window` 却拿**实际窗口尺寸**（实测 424×544）还原 —— 分母差 4px，
+   在右/下边缘放大成几像素漂移。这条坑 `pet_state` 自己的注释里就写着。
+3. 三处死代码/失效工具：`make_dist._BOOT_MODULES` 定义后无人使用；
+   `check_web_js_syntax.py` 硬编码 `G:\ai对话\11` 与某台机器的 node 路径（换机即崩）；
+   `pet_state.screen_scale()` 取了 `sw` 不用。
+
+**改动**：
+- fixture 改用 `from src.version import APP_VERSION`。
+- `_finalize_pet_window` 还原改用 `PET_W/PET_H`；`create_desktop_companion` 的窗口尺寸
+  也改成从 `pet_state` 取，三处口径合一。
+- 删 `_BOOT_MODULES`；`check_web_js_syntax` 的 ROOT 从 `__file__` 推、node 走
+  `DANIYA_NODE`/PATH；去掉未用的 `sw`；`version.__all__` 补 `name_version`。
+
+**验证**：
+- `test_pet_state` 新增 [7]：源码级断言"`pet_window` 不得用实际尺寸调用 `restore_logical`"，
+  且必须出现 `restore_logical(_ps.PET_W, _ps.PET_H`。
+- `check_web_js_syntax.py`（指定 DANIYA_NODE）→ 语法错误 0，桥方法 41 个。
+- 全量门禁：26 通过 + 1 跳过。
+
+### 2026-10-18 · 质检 P1 两条：看门狗「失败即停摆」+ 配置可选缺失误报 ERROR
+
+**问题**：
+1. `_watchdog_loop` 写的是 `if not self._try_restart(): return`，而 `_try_restart` 在
+   **"这一次没起来"**时也返回 False —— 一次瞬时失败（端口占用、单实例锁残留、GPU 抖动）
+   就把看门狗弄死：既不重试，也不降级，桌宠静默消失。而 `_try_restart` 末尾的注释
+   还写着"保留看门狗，下一轮再试"——**行为与注释相反**。
+2. `config_schema` 给可选项 `app.version` 补默认 `""`，`validate` 再拿 `""` 去和
+   `APP_VERSION` 比，于是"没写版本号"被判成"版本漂移"的 **ERROR**；
+   `doctor.check_version` 里"缺失 → WARN"的分支因此永远走不到（死代码）。
+
+**改动**：
+1. `_try_restart` 的返回值只表示"这一次起没起来"，是否收工另用 `_give_up` 表达：
+   只有"配额耗尽 / 已降级"才置 True，`_watchdog_loop` 只在 `_give_up` 时退出。
+   单次失败仍计入配额（防止无限 spawn），但不再等于终局。
+2. `app.version` 默认值改 `None` 且**不补**（无默认值的可选项保持缺失；不补也不在这里报，
+   否则 `apply_defaults` 失去幂等性），由 doctor 的「版本一致」项负责出声；
+   `validate` 把空串按"没配"处理；`doctor.check_version` 同样判空。
+
+**验证**：
+- `test_pet_shell_selfheal` 新增 [14]：单次失败后 `_give_up` 仍为 False；从零跑满配额时
+  "1 次直调 + 3 次重试 = 4 次"。变异（循环改回旧写法）→ **FAIL**（实际 2 次、未降级），还原 PASS。
+- `test_config_schema` [9] 新增"缺失 ≠ 漂移"：不补假值、不产生 ERROR、再补一次仍为空（幂等）。
+  变异（默认改回 `""` + 旧比较）→ **3 项 FAIL**，还原 PASS。
+- `test_doctor` [5] 新增"空串 = 没配 → WARN"。
+- 实测：删掉 `config.yaml` 的 `version:` 再跑 `--doctor` → `[WARN] 版本一致 配置里没有 app.version`，
+  汇总 **0 FAIL**（改之前是"配置文件"+"版本一致"两条 FAIL）。
+- `tools/check_all.py`：26 通过 + 1 跳过（壳在本机起不来）。
+
+### 2026-10-18 · 质检 P0 处置：桌宠壳默认关闭，门禁区分「跳过」与「失败」
+
+**问题**：深度质检（`质检报告_2026-10-18.md`）发现 `check_all.py` 的 `壳自愈端到端` 稳定红（4/4）：
+Electron 渲染真实 rig 页面时 GPU 进程连续崩（`0xC0000005`）→ Chromium
+`FATAL: GPU process isn't usable. Goodbye.`（rc=`0x80000003`），壳根本起不来。
+而默认 `ui.pet_backend: auto` 会让**每次启动**都先崩一次再静默回退 pywebview ——
+用户只看到白底，日志里多一段看不懂的 GPU 报错；`--doctor` 的 `check_shell` 只查
+`electron.exe`/`main.js`/`preload.js` 在不在，还报 **PASS**，是典型的假绿。
+
+**改动**：
+1. 默认后端 `auto → webview`（`pet_backend.DEFAULT`、`config_schema`、两份 config、
+   `run_webview` 形参、`main.py` 回退值）。壳降级为**显式选择**
+   （`ui.pet_backend: shell` 或 `--pet-backend shell`），注释里写明"已知部分 GPU 环境必崩"。
+2. `--doctor` 的壳检查改成三态：缺件 → WARN；装了但没启用 → WARN（不再假绿）；
+   配置要求 shell → **真起一次**（`probe_shell()`，判据是 stdout 出现 `CONTROL`），
+   起不来 → FAIL 并带 FATAL 原文。
+3. 端到端冒烟引入退出码 **77 = 跳过**：只有 `DANIYA_REQUIRE_SHELL=1` 或配置
+   `pet_backend: shell` 时才把失败升级为红；`check_all.py` 把 77 单列为
+   「跳过（未验证）」并打印原因，**不计入通过**（避免静默绿）。
+4. 壳启动失败时顺手删握手文件：原来只有 `close()`/`shutdown_all()` 会删，
+   而 `create_pet_shell` 失败后调用方直接回退，根本走不到那里，令牌会留在盘上。
+
+**验证**：
+- `tools/pet_shell_selfheal_smoke.py` → `rc=77`，打印 `[SKIP] 壳在本机起不来` + 「这不是通过」；
+  同命令加 `DANIYA_REQUIRE_SHELL=1` → `rc=1`（红项仍在，只是不再默认挡发布）。
+- `tools/doctor.py` → `[WARN] Electron 壳 已安装，但当前不启用（实验特性…）`；
+  临时把配置改成 `pet_backend: shell` 再跑 → `[FAIL] … 本机起不来：GPU process isn't usable. Goodbye.`
+- `tools/check_all.py` → 27 项：**26 通过 + 1 跳过**（跳过原因原样打印）。
+- `test_pet_backend` / `test_config_schema` 的默认值断言同步改为 webview，均 PASS。
+
+### 2026-10-18 · C9 前两刀：密钥 DPAPI 加密 + `.pth` 静默失效报警
+
+**问题**：① `config.yaml` 里 `sticker.api_key` 等字段以**明文**存真实服务商 Key
+（实测查到一颗智谱 Key 躺在 1781 行）——文件被 git ignore 挡住了版本控制，
+但挡不住交付包、`config.user.bak.yaml` 备份、误传截图；② 包内运行时是
+isolated 模式（`python312._pth`，`site` 不执行），install_deps 之后新装的
+任何 `.pth` 都会**静默失效**——功能没反应且无报错，是最难查的一类。
+
+**改动**：
+- 新增 `src/secret_box.py`：DPAPI（crypt32，ctypes 直调，零依赖）。
+  `Config.save()` 写盘前把非空明文 `api_key` 加密为 `dpapi:<base64>`
+  （deepcopy 副本上加密，内存保持明文，调用方零感知）；
+  `load_config()` 读盘时自动解密回明文；明文旧格式兼容；解密失败
+  （配置从别的机器拷来）不抛异常，转降级提示让用户重填。
+- `tools/doctor.py` 第 14 项「密钥落盘」：文本级扫描，明文 → WARN
+  并给出"保存一次配置即自动加密"的修复路径。
+- `tools/make_dist.py`：`scan_stale_pth` + `warn_stale_pth`，
+  install_deps 收尾调用；白名单 `pywin32.pth`（C6 已手工补回），其余
+  `.pth` 点名报警并给三步处置指引。
+
+**验证**：`test_secret_box.py` 20 项（往返/树遍历/幂等/save 端到端
+"磁盘无明文"/load 端到端/换机降级）+ 3 刀变异全红；
+doctor 第 14 项 5 断言 + 1 刀变异红；`scan_stale_pth` 6 断言 + 2 刀变异红。
+测试抓到两个真缺陷：① doctor 扫描漏 YAML 列表项 `- api_key:` 前缀
+（真实 config 里恰好有大量此形态）；② 自家测试断言算错解密计数。
+门禁 27/27（首次跑壳自愈端到端 flaky 一次，RPC 10054 竞态，复跑即绿，
+与本轮四个改动文件无交集）。
+
+**边界（如实）**：DPAPI 只防"文件被拷走"，不防同机同用户其它进程；
+`qzone.cookie` 等其他敏感字段未覆盖；config 里现存那颗明文 Key 要等
+下次程序保存才自动升级为密文。
+
+### 2026-10-18 · C9 第三刀：numpy 版 phash 替换 ImageHash，甩掉 scipy ~124MB
+
+**问题**：`scipy`（115MB）+ `PyWavelets`（8.6MB）纯由 `ImageHash>=4.3` 拖进
+交付包，而全仓 6 处调用（screen_capture / realtime_vision / game_ocr /
+squad_monitor / course_recorder）全部只用 `imagehash.phash(img)` 后做
+`h1 - h2`——109MB+ 换一个距离比较，是 C3 体积报告里的最大单项。
+
+**改动**：新增 `src/perception/phash.py`（numpy DCT 矩阵实现，接口只含
+调用方用到的汉明距离）；6 处调用点替换；requirements.txt 显式排除标记
+（`# ImageHash` 整行注释 + 原因）。
+
+**对齐口径（生死线）**：`convert('L')` → LANCZOS 32×32 → 两次 DCT-II
+（norm=None 均匀因子 2 可省——中位数二值化对均匀缩放免疫）→ 左上 8×8 →
+median 严格大于二值化。**验证：208 张图（噪声 120 / 渐变 40 / 纯色 8 /
+混合 40）与 imagehash 4.3.2 bit 级全部一致，含汉明距离**。
+
+**踩坑（最贵部分）**：
+1. 强对称图（纯色/渐变）低频系数**数学相等**——scipy FFT 把余弦和精确
+   归零，矩阵乘留 ~1e-15 残差，残差悬在中位数两侧让纯色图二值化一半
+   翻 1（ref 全 0 / own 32 个 1）。修法 `np.round(low, 9)`：压回数学零点，
+   对 1e4 量级真实系数侵入（1e-13 相对）低于双精度极限。
+   round(6)/round(9) 实测 208/208 全一致，取侵入更小的 9 位。
+2. `str(imagehash)` 是 16 位 hex、自实现是 64 位 0/1——测试第一版比 str
+   得出 208/208「全不一致」的假红，实际第一张就一字不差。
+3. 最初 grep 用 head 截断，漏掉 squad_monitor 的第 6 处调用——
+   「依赖声明」门禁按已知依赖反查才暴露。教训：全量清单类操作禁 head 截断。
+
+**验证**：`test_phash.py` 10 断言 + 2 刀变异全红（去 round → 3 红；
+DCT 矩阵去转置 → 4 红）。门禁 27/27。
+
+**遗留**：dist/ 里的旧构建仍含 scipy——收益在下次 `--wheelhouse` 重建时
+兑现（预计 472MB → ~348MB）；tools/ 下 4 个一次性脚本仍用 scipy（走
+dev 环境，不进包，不受影响）。
+
+### 2026-10-18 · C9-4：wheelhouse wheel-only 纪律 + 重建兑现 472→370MB
+
+**问题（隔离重建实测撞上）**：`build_wheelhouse` 用 `pip download`，对
+PyPI 上**只有 sdist** 的包（实测：`srt`、`proxy_tools`——后者是 pywebview
+的传递依赖）会原样存 .tar.gz。离线 `--no-index` 安装时 pip 要为 sdist 跑
+PEP 517 构建，联网拉 `setuptools>=40.8.0` → 「核心」档安装失败，
+包不能发布。之前 472MB 那次构建没炸是因为装依赖走了联网——
+**离线化一直是「半离线」，只有干净机器上才炸**。
+
+**改动**：`build_wheelhouse` 改用 `pip wheel`（构建机联网时就把 sdist
+构建成 .whl，交付侧零构建）+ 兜底清扫目录里的 sdist 残留并点名。
+
+**踩坑**：`pip download` 的目标参数是 `-d`，`pip wheel` 是 **`-w`**——
+用错得到 `no such option: -d`，报错带 `pip>` 前缀且被 `tail -55` 截掉，
+第一眼看不到（调了三步才发现：grep wheels 目录 → 前台单跑 build_wheelhouse）。
+教训：构建工具的报错别只用 tail 看结尾。
+
+**验证**：测试 2 断言（pip wheel 参数 / 无 sdist 残留）+ 2 刀变异红
+（M2 去清扫以 NameError 崩溃形式红——第一次误读为绿，实际是恢复命令
+先执行、tail 跑在恢复后；变异判定必须看**变异后那次**的原始输出）。
+端到端：wheelhouse 63 whl / 0 sdist → 离线安装成功 → 隔离 doctor
+**12 PASS / 3 WARN / 0 FAIL** → **370.1MB**（旧 472MB，降 102MB；
+scipy/pywt 消失，包内 phash 零 imagehash 依赖可用）。门禁 27/27。
+
+**遗留（待拍板）**：`dist_stage_old_20261018/`（472MB，已改名保留）与
+`dist/`（69MB）是否清理。
 | `206cc47` | 20:38 | feat | 导入冒烟 + 依赖对账 | 变异 3 次 |
 | `01d185c` | 20:41 | fix | CLR 崩溃守卫此前从未装上 | `_CLR_CRASH_GUARD_INSTALLED` 可置 True |
 | `5b348a5` | 20:51 | fix | 6 处无界队列改有界丢最旧 | 14 项测试 + 变异 |
@@ -40,6 +245,419 @@
 | `cac2760` | 00:53 | chore | 锁定 Electron 依赖版本 | — |
 | `4792f40` | 01:20 | feat | 换壳 1/2 步：CharacterAPI 暴露本地 RPC + 壳侧 shim | 19 方法两通道一致；端到端五项全通过 |
 | `6801aee` | 02:10 | feat | 换壳 3 步：桌宠窗改由 Electron 壳承载（主窗口仍 pywebview） | 壳桌宠冒烟 11 项连续三次通过 |
+| 待提交 | 10-18 | fix | `main.py` 模块级 ImportError：双击直接崩 | `--help` / `--doctor` 实测通过 |
+| 待提交 | 10-18 | feat | `ui.pet_backend` 配置项 + 两处入口统一接线 | 22 项测试 + 变异 2 次 FAIL |
+| 待提交 | 10-18 | feat | 桌宠位置持久化（按工作区比例存） | 18 项测试 + 突变越界夹取 FAIL |
+| 待提交 | 10-18 | feat | 版本号单点 `src/version.py` | 三处口径归一 |
+| 待提交 | 10-18 | feat | `--doctor` 一键自检（9 项） | 每项带修复提示，支持 `--json` |
+| 待提交 | 10-18 | feat | 壳自愈 + 退出清理 + 崩溃降级 | 单测 13 组；端到端真杀进程验证 |
+| 待提交 | 10-18 | feat | `make_dist --install-deps`：依赖按档装进包内运行时 | 包内 `--doctor` 9 PASS / 0 FAIL |
+| 待提交 | 10-18 | feat | `make_dist --report`：体积可拆（谁占了 408MB） | 实测 python/ 占 93.1%，scipy 109MB |
+| 待提交 | 10-18 | fix | RPC 长连接被 401 残留 body 污染（P1） | 压测 720 次 0 失败；3 项变异全 FAIL |
+| 待提交 | 10-18 | feat | 交付包运行期隔离（`pythonXY._pth`）+ pywin32 DLL 铺放（C6） | 隔离环境 doctor 11 项；摘掉包内 rich → 报缺失 exit 1；8 项变异全 FAIL |
+| 待提交 | 10-18 | feat | `--doctor` 增「干净机器三件套」：WebView2 / UCRT / 代码签名（C4+C7） | 包内 12 PASS / 2 WARN / 0 FAIL；26 项断言 + 7 项变异全 FAIL |
+| 待提交 | 10-18 | fix | 升级吞配置：装配覆盖前抢救改过的 config.yaml（P1） | `preserve_user_config` + doctor「出厂默认+使用痕迹」检测；3 道变异全红 |
+| 待提交 | 10-18 | fix | 启动令牌全量打进日志（P2） | `%.8s` 截断 + 新门禁「凭据日志卫生」（27 项）；4 轮调试闭环 |
+| 待提交 | 10-18 | fix | **make_dist.py 被 `git checkout --` 误还原，从测试规格+产物重放**（P0 事故） | 21 段测试全绿 + 隔离环境端到端验证通过；教训：变异还原禁用 git checkout |
+
+---
+
+## 2026-10-18（待提交）
+
+### 阶段 C8：产品化缺口两刀 + 一次误还原事故
+
+**#2 升级吞配置（P1）**。`RENAME: config.release.yaml → config.yaml` 意味着老用户
+解压新版 zip 时，填了 API Key 的 config.yaml 被出厂默认值静默覆盖。两处修复：
+装配机侧 `preserve_user_config`（--force 重装配时旧 config 与模板不同 → 备份成
+`config.user.bak.yaml`）；用户机侧 doctor 检测「出厂默认值 + data/ 有使用痕迹」
+（两个单信号都不报——没填 Key 的新用户和 Key 还在的老用户都会误报，双信号
+同时成立才是升级覆盖），发现 `config.user.bak.yaml` 时点名提示比对恢复。
+
+**#6 启动令牌进日志（P2）**。`main_window.py` 把 `web_start_token` 以 `%s` 全量
+打进日志，而同仓 `webapp.py` 对 api_key 早就用 `%.8s`——同类问题两种处理，
+说明不能靠每个人每次记得，改成门禁：`tools/check_log_leak.py`（已注册进
+check_all，27 项）。
+
+**新门禁的调试过程本身就是 4 个真问题**，逐一被变异验证戳穿后才收口：
+1. `\w*` 不含 `.`，抓不到 `STATE.web_start_token` 这种限定名；
+2. 调用分两行写，单行口径对生产形态**永久失明**——升级为括号平衡的跨行拼接；
+3. 拼接串里的 `\n` 让 `(.*)` 提前截断——补 `re.S`；
+4. 「格式串里存在裸 %s」会把另两个不敏感参数（URL/目录）也抓进来——改成
+   占位符与参数**位置对齐**后只看 token 参数对应的那一个。
+最后一轮：修复态 exit 0 / 变异体（token 裸 %s）exit 1 / 删参数变异保守放行，
+三态全部符合预期。
+
+**一次 P0 事故，如实记录**：变异验证后还原时误用 `git checkout -- tools/make_dist.py`，
+把当天全部未提交修改（C1 依赖隔离、C6 `_pth`/DLL 铺放/残留清理）冲回 HEAD。
+恢复靠三样东西：08:53 的 `/tmp/make_dist.bak`（只到 C1 状态）、**测试文件**
+（21 段断言就是完整行为规格）、磁盘产物（`dist_stage/python/python312._pth`
+的 8 行内容）。按测试重写实现后 21 段全绿 + 隔离环境端到端复验（12 PASS /
+0 FAIL、`isolated=1`、rich 来自包内、win32api 真调用通过）。教训进规矩：
+**变异/实验还原只用明确的备份文件，`git checkout --` 对未提交工作等于 rm。**
+
+### 阶段 C7 + C4 前半：干净机器三件套（WebView2 / UCRT / 代码签名）
+
+**动机**：C1 收尾时留了一句「没在真·另一台电脑上验过」。这句话没法靠加班消掉——
+手上只有一台机器。但能让程序在干净机器上打不开的原因，其实只有三类，其中两类
+可以**前置判定**：WebView2 Runtime 缺失、Universal CRT 缺失。第三类（杀软拦截）
+判不了，但「未签名」是它的最大诱因，而签名状态能在本地读出来。
+
+#### 一、先拆掉一个臆想中的风险：VC++ 运行库
+
+原本的假设是「干净机器缺 VC++ 运行库 → numpy 起不来」。所以写了 PE 导入表解析器，
+对交付包内 300+ 个 PE 逐个数依赖（本机没有 dumpbin，纯结构体解析）：
+
+| DLL | 谁提供 | 被几个文件引用 |
+|---|---|---|
+| `vcruntime140.dll` | **包内自带** | 93 |
+| `vcruntime140_1.dll` | **包内自带** | 32 |
+| `msvcp140.dll` | 引用数 **0**（numpy 用自带的哈希改名版 `msvcp140-a4c2...dll`） | 0 |
+| `api-ms-win-crt-*` | **系统 UCRT** | 133 / 84 / 64 / 19 / 12 |
+
+**结论：不需要装 VC++ 运行库。** 真正的系统依赖只剩 Universal CRT，而它是 Win10 起的
+系统组件。于是这条检查从「查 VC++ 装没装」改成了「查 UCRT 在不在」——查对了才有意义。
+
+#### 二、PE 签名解析：一个自己造的假绿
+
+第一版把数据目录起始偏移写反了（PE32 应 `opt+0x60`，PE32+ 应 `opt+0x70`，
+我写成 `0x70/0x80`）。读到的其实是 **Debug 目录**：
+
+- `electron.exe` 返回 `(237485440, 28)` —— 28 字节，正好**一个调试目录条目的大小**，
+  看上去完全像"已签名"
+- `notepad.exe` 返回 `(189168, 112)`，也像
+
+用 PowerShell `Get-AuthenticodeSignature` 交叉校验才发现三个文件全被判反。
+修好后 3 个真实未签名文件（仓库根的 .NET exe）+ 2 个真实已签名文件（两次 python.exe）
+与官方接口**逐一吻合**。
+
+另一条查清的事实：**内嵌签名为空 ≠ 未签名**。`notepad.exe` 内嵌签名为空但系统判
+`Valid`——它走的是 catalog 签名。所以这个函数只用于我们自己的交付件，不能拿去判系统文件，
+代码注释里写死了这条边界。
+
+#### 三、签名检查不能拿别人的签名给自己背书
+
+第一版 `_signature_targets()` 把 `python/python.exe` 也算进去了。它是 Python 软件基金会
+签的，在交付包里一跑就是 PASS——而我们自己**一个 exe 都没有**。这是第 N 次同型假绿。
+收紧成「只认包根的自研 exe」后，交付包里如实报出：
+
+```
+[WARN] 代码签名  没有自研可执行入口（包根没有 .exe），签名无可检对象
+```
+
+#### 四、顺带查到的一件事（未处理，只记录）
+
+仓库根躺着三个 10-17 产出的 exe（`达妮娅.exe` / `安装环境.exe` /
+`达妮娅AI桌面伴侣_安装程序_v1.0_零依赖.exe`，共 35MB）。读节表与 CLR 头得知它们是
+**.NET 程序**，不是 NSIS/Inno；而仓库里**找不到任何生成它们的脚本**。
+即：一次性产物，不可重现。三者官方接口均判 `NotSigned`。
+
+**验证**：26 项新断言（`[9]`–`[11]`）+ 7 道变异**全部按预期变红**（偏移写反、
+UCRT 少查一个文件、无入口冒充 PASS、没装 WebView2 报 PASS、去掉越界判断、
+版本号不进 detail、把第三方 exe 算成自研）。门禁 26/26 全绿；包内隔离环境
+`--doctor` = 12 PASS / 2 WARN / 0 FAIL。
+
+### 阶段 C6：交付包运行期隔离（`pythonXY._pth`）
+
+**问题**：上一轮把「装」和「验」都做了隔离（`PYTHONNOUSERSITE=1`），但**运行期**没管。
+包内 `python/` 是完整 Python 拷贝，不是 `python._pth` 隔离版，用户双击 .exe 时 `site`
+照常加载 `%APPDATA%\Roaming\Python\Python312\site-packages`。后果是「在我机器上能跑」
+这句话永远成立——用户自己 `pip install` 过什么都会混进来，而我们看不见。
+
+**做法**：装配时写 `python/python312._pth`，让包内解释器进入 isolated 模式，
+`sys.path` 完全由这个文件固定。默认开启，`--no-isolate` 仅供调试。
+
+**代价是实测出来的，不是设计时想到的**（这是本轮最费时间的部分，三条路逐一试）：
+
+| 尝试 | 结果 |
+|---|---|
+| `_pth` 里加 `Lib\site-packages\pywin32_system32` | **无效**，Python 3.8+ 的依赖 DLL 不从 `sys.path` 找 |
+| 在 `main.py` 里 `os.add_dll_directory` | 有效，但只管走 `main.py` 的入口；`run_webui.py` / `python -c` 照旧坏；且句柄不保活会被 `RemoveDllDirectory` 立刻撤销 |
+| 把 DLL 复制到 `python/` 根（解释器同目录） | **有效且入口无关**，`python -c "import win32api"` 直接过 ← 采用 |
+
+根因是 `site` 不执行 ⇒ `site-packages/*.pth` 全部失效，而全包只有一个
+`pywin32.pth`（负责 `win32` / `win32\lib` / `Pythonwin` 三段路径）。所以 `_pth` 里
+手工补回这三段；`..`（包根，`main.py` 在那儿）放在**最后**，避免遮蔽标准库。
+
+顺带两个真问题：
+
+1. **`_pth` 不支持 `import` 行**。照抄 `pywin32.pth` 写 `import pywin32_bootstrap`
+   会得到 `unsupported 'import' line`，而那个模块在包里**根本不存在**（死代码）。
+2. **`--force` 只覆盖不删多余**。上一次在包内跑过 `main.py` 留下的 `src/__pycache__`
+   会一直躺着，凭据闸判「包内混入目录」直接拦下发布。补 `purge_stale_caches()`，
+   只清 `__pycache__` / `.pyc` / `.log`，**不动 `python/`、也不顺手删 `tests/`**
+   ——真漏拷了东西，宁可让闸门当场抓住，也不要它悄悄消失。
+
+**验证**（同一台机器，用户 site 里明明装着 rich 15.0.0）：
+- 隔离环境 `main.py --doctor` → 11 项全 PASS，含「运行期隔离：isolated 模式，
+  sys.path 全部落在包内（8 条）」
+- 把包内 `rich` 改名 → doctor 报 `缺少：rich`，**退出码 1**。上一轮同样的场景
+  报的是「9 PASS / 可发布」，因为读到了用户 site。这就是隔离生效的硬证据。
+- `win32api.GetSystemMetrics` / `win32gui.GetForegroundWindow` 真调用通过
+
+**测试自身的盲区（本轮又踩一次）**：`check(all(... for n in got))` 在 `got` 为空时
+恒真；`[8.2]` 的 `sys.path` 里放了包外路径，导致 FAIL 可能来自旁边那道判定，
+去掉 isolated 判定照样绿。两处都改成「先判长度/隔离变量，再判内容」后才真能红。
+
+
+### 阶段 C2 前置：RPC 长连接污染（一条真 P1，不是测试噪声）
+
+**症状**：`RPC 通道`闸门偶发失败，客户端侧 `ConnectionAbortedError: [WinError 10053]`，
+重跑就好，连续多次未复现——按惯例这会被当成测试抖动放过去。
+
+**先量化再下结论**：连跑 20 次统计到 2 次失败（10%），失败点固定在
+`test_security` 的第一个调用。再用分组压测（每组 180 次）把假设拆开：
+
+| 分组 | 分支 | 是否读走请求体 | 失败 |
+|---|---|---|---|
+| 带令牌 → 200 | 正常 | ✅ | 0/180 |
+| 无令牌 → 401 | 鉴权失败即 return | ❌ | 1/180 |
+| 错令牌 → 401 | 鉴权失败即 return | ❌ | 5/180 |
+| 下划线方法 → 403 | 读完 body 才 return | ✅ | 0/180 |
+
+差异只有一个变量：**是否读了请求体**。机制随之确定——`protocol_version = "HTTP/1.1"`
+下连接保持，而拒绝分支在 `_read_json()` 之前 return，body 原封不动留在接收缓冲里；
+handler 回到 `readline()`，把这段残留字节当成下一个请求的请求行去解析，连接状态从此错位。
+
+**这比闸门挂掉严重得多**：Electron 壳用 `fetch`，连接是复用的。壳重启后握手文件里的
+令牌换新，只要有一次带着旧令牌打进来，**壳之后的所有调用都落在错位的连接上**——
+表现为「界面突然全哑」，而不是一条清晰的 401。
+
+**修法**：拒绝分支先排空请求体再响应，排不空（超过 `DRAIN_LIMIT` = 1MB / 长度畸形 /
+对端已断）才 `close_connection = True`。不用「一律关连接」是因为 body 未读就 `closesocket`
+在 Windows 上会发 RST，把客户端的干净 EOF 变成 10053——那等于把 bug 换个地方发作。
+`_body_consumed` 标记防止 `_read_json` 已读之后被二次排空卡死。
+
+**验证**：新增 7 项断言（401 / 413 / 404 三条拒绝路径各自「同一条连接上再发一个合法请求
+必须拿到 200」）。变异验证把 `_drain_body` 改成永远返回真，**三条全部变红且失败形态正是
+「状态 400」**——残留 body 被当成请求行的机制被完整复现。还原后：单跑 30/30 全过，
+分组压测 3 轮共 720 次 0 失败，全量闸门 26/26。
+
+---
+
+### 阶段 C1 + C3：依赖离线化与体积可拆
+
+**起点问题是硬的**：`dist/` 里 `python/` 只有 pip 一个包，双击必然起不来，而闸门 3
+对这件事只给 `⚠`（非阻断），于是"包能发布"和"包能运行"长期是两件事。
+
+新增 `make_dist.py --install-deps`：把 `requirements.txt` 里**本来就写好但没人读**的
+「核心 / 重要 / 可选」分档从注释里解析出来，按档推进、按档定责（核心失败即停，
+重要失败只告警，可选默认不装）。`--wheelhouse` 把 wheel 连传递依赖下到 `<out>/wheels`，
+`--offline` 强制 `--no-index` 安装 —— 「离线」如果会静默退化成联网，对目标机器就是假承诺。
+
+**这一轮真正值钱的是打包链路里被顺手挖出来的 8 个 bug**，每一个都只在"真装、真跑"时才现形：
+
+| # | 症状 | 根因 |
+|---|---|---|
+| 1 | 交付包里凭空多出 `data/`、`logs/` | `--doctor` 排在 DPI/单实例/崩溃钩子**之后**，"只读自检"自己写文件，随后被凭据闸判为混入隐私目录 |
+| 2 | 包里 `--doctor` 只剩一句「自检脚本加载失败」 | `tools/doctor.py` 没进白名单，交付包缺自检本体 |
+| 3 | 自检脚本加载失败仍 `rc=0` | 走的是 `return` 不是 `SystemExit(非零)`，上层得到一条**假绿** |
+| 4 | `--tier core` 却把「重要」档也装了 | 档位循环缺 `break`，"递进"被写成"全装" |
+| 5 | 验收把交付件弄脏 | 直接在 `dist/` 上跑 `main.py`，改为在临时副本里验 |
+| 6 | 配置加载失败时冒出 `TypeError: check_version() missing 'cfg'` | `run_all` 按"参数值是否 None"决定传不传参；cfg 恰为 None 时退化成无参调用，把真正的配置问题盖掉 |
+| 7 | 装完依赖后整包被静态资源闸判死 | `check_web_assets` 扫进了 `site-packages`，pygame docs / win32com 的失效外链被当成"我们的资源" |
+| 8 | 依赖闸报 `import make_dist` 未声明 | `local_modules` 只扫 `src/`，不认 `tools/` 下的本地模块 |
+
+**验证**：`dist_stage` 装配 + 装依赖 → 包内运行时跑 `--doctor` = 9 PASS / 1 WARN / 0 FAIL，
+三道闸全过，输出 `✓ 可发布`。5 个变异（去 break、核心档不阻断、去 `--no-index`、
+不剥行内注释、去 offline 守卫）全部 FAIL，还原后 PASS。
+其中「去 offline 守卫」第一次**没被抓住**，补了 `--offline 无 wheel 必须失败` 用例后才红。
+
+**C3 体积报告**（`--report`）第一次让 408.6MB 可以拆开看：`python/` 占 93.1%，
+其中 `scipy` 109MB + `scipy.libs` 19MB + `PyWavelets` 8MB 全部由 **ImageHash** 一个包
+拖进来（而代码里只用 `phash`，它要的只是 `scipy.fftpack.dct`）。`vosk` 51MB、`pygame` 24MB
+属「重要」档。**结论：`--tier core` 是可用的第一刀，但真正的大头要动 ImageHash。**
+
+### C1 复查：包内依赖是假的（真 P0，比 RPC 那条严重）
+
+上一条写的「包内运行时 `--doctor` 9 PASS / 0 FAIL、✓ 可发布」是**假绿**。
+触发复查的动作很朴素：不想再拿"包内能跑"当"换台机器能跑"，于是把交付目录复制到
+一个全新路径，用 `env -i` 清空环境变量、`PYTHONNOUSERSITE=1`、空的 `USERPROFILE`/`APPDATA`，
+再跑一遍自检。
+
+**结果第一行就崩了**：`main.py:88 from rich.console import Console` → `ModuleNotFoundError: rich`。
+
+逐个核实核心档 12 个包的来源，**5 个根本不在包里**：
+
+| 核心包 | 干净环境 |
+|---|---|
+| PyYAML / numpy / sounddevice / pywebview / mss / Pillow / psutil | ✅ 来自包内 |
+| **httpx / websockets / requests / rich / dashscope** | ❌ **不存在** |
+
+**一个根因，两个假象。** 包内 `python/` 是**完整 Python 拷贝**，不是带 `python._pth`
+的隔离版，`site` 模块照常加载 `%APPDATA%\Roaming\Python\Python312\site-packages`：
+
+- **装的时候**：`pip install rich` 输出
+  `Requirement already satisfied: rich in c:\users\lenovo\appdata\roaming\python\python312\site-packages (15.0.0)`
+  —— pip 认为已满足，一个字节都不往包里装。
+- **验的时候**：`--doctor` 的依赖检查看到同一份 site-packages，报「12 个核心依赖全部可导入」。
+
+对照实验把因果钉死：同一台机器、同一个包内运行时，只加 `PYTHONNOUSERSITE=1`，
+`pip install --dry-run rich` 就从「already satisfied」变成 `Collecting rich ... (310 kB)`。
+
+**最讽刺的一点**：`verify_deps` 的 docstring 早就写着「不能用构建机的 dev 环境验 ——
+dev 装了什么跟包里带什么没关系，验了等于没验」。规矩写进了注释，没写进 `env=`，等于没写。
+
+**四处修复**：
+
+| # | 改哪 | 怎么改 |
+|---|---|---|
+| 1 | `_pip` | 传 `_clean_env()`：否则 pip 拿构建机用户 site 判「已满足」而跳过安装 |
+| 2 | `verify_deps` | 同样传 `_clean_env()`，并把 `PYTHONNOUSERSITE` 的实际值打印出来，让隔离这件事被看见 |
+| 3 | `doctor.check_deps` | 包内运行时下不只判「能 import」，还判 `__file__` 是否落在包内；借了外部依赖直接 FAIL 并点名到目录 |
+| 4 | `main.py` | `--doctor` 提前到**任何三方 import 之前**：它只依赖标准库，才能在"什么都缺"的机器上工作。原先它排在 `main()` 里，而 `main.py` 顶层就有几十个三方 import，缺 rich 时先崩在 import，用户看到的是 traceback 而不是「缺 rich」 |
+
+**验证**（每项都有对照，不是自说自话）：
+
+- 隔离探测：核心 12 个包 **12/12 的 `__file__` 全部落在包内 `python\Lib\site-packages`**；
+- 重新装配后第三方包数 **96 → 153**，体积 432MB → 443.3MB（差的 11MB 就是那 5 个包的传递依赖）；
+- 隔离环境跑 `--doctor`：**9 PASS / 1 WARN / 0 FAIL**（这一次是真绿）；
+- 新增 `[14]`/`[15]`/`[16]` 三组测试 + doctor `[7]` 组，共 8 条断言；
+- 变异验证 3 轮：删 `env=`（2 红）、删 `_pip` 的 `env=`（2 红）、`_borrowed_deps` 恒假（1 红）。
+  其中第一轮发现 `"PYTHONPATH" not in {}` 是**空洞通过**——变异体下照样打勾，改成先判 `env is not None` 再判内容。
+
+**仍然没做到的事**（别当成已解决）：
+
+1. 包内 Python 依旧会读用户级 site-packages。这次只是让**构建与验收**睁着眼，没堵住运行期。
+   真正根治要放 `python._pth` 走 isolated 模式，但那样 `site` 不执行、`.pth` 不生效，
+   pywin32 这类依赖 `.pth` 的包可能直接坏——必须实测过才敢上。
+2. 「另一台电脑」仍未被真正验证。这次是**同一台机器上的环境隔离 + 换路径**，
+   覆盖了依赖完整性与路径无关性，但没覆盖缺 VC++ 运行库、缺 WebView2、杀软拦截。
+
+### 阶段 A 收口 + 可诊断地基（A1 → A4 → B1 → B3 → A2/A3）
+
+这一批都是"**错了不会崩、只会让人看不懂**"的改动，所以每一条都配了能抓住回归的测试，
+并按 AGENTS.md 第二条做了变异验证（改坏代码 → 测试必须 FAIL）。
+
+---
+
+#### P0 · `main.py` 根本起不来
+
+**问题**：`main.py:116` 从 `src.ui.webapp` 导入 `_attach_pet_no_taskbar` /
+`_patch_webview2_unique_user_data` / `_start_gui_liveness_probe`，但 10-17 那次拆分
+已把这三个搬到 `src/ui/main_window.py`，webapp 只 re-export 了一部分 →
+**模块级 ImportError，双击就崩**。
+
+**最贵的部分**：这说明那次拆分之后主入口**一次都没被真正执行过**（用户跑的是
+`达妮娅.exe` 里的旧包）。**以后动 import 结构，先跑一次 `--help`。**
+
+**改动**：`webapp.py` 补全 re-export，并写明这些函数现在的真正归属。
+
+**验证**：`python main.py --help`、`python main.py --doctor` 均正常退出。
+
+---
+
+#### A1 · `ui.pet_backend` 配置项（开关真正通电）
+
+**问题**：决策散在两处——`main.py` 看 `--pet-shell`，`run_webview()` 无条件先试壳。
+结果是 `--pet-shell` 只对 RPC 生效，**桌宠窗照旧走 pywebview**，开关接了线没通电。
+
+**改动**：新增 `src/ui/pet_backend.py` 作唯一决策点（命令行 > 配置 > 默认 auto）；
+`main.py:_startup_supervisor` 与 `main_window.py:run_webview` 两条入口都改调它；
+回退原因统一由 `shell_readiness()` 产出。
+
+**验证**：`test_pet_backend.py` 22 项；变异（忽略命令行 / 去掉回退）均 FAIL。
+
+---
+
+#### A4 · 桌宠位置持久化
+
+**问题**：位置只存在内存 `api_pet._pet_pos`，**进程一退就没**，每次开机得重新拖。
+
+**改动**：`src/ui/pet_state.py`。**不存绝对坐标**（换屏/改分辨率会甩出屏幕外），
+存「相对所在显示器工作区的比例」+ 存档时工作区矩形，恢复时映射到当前最接近的屏并夹回可视区。
+
+**踩坑**：存用实际矩形（带边框 424×544）、取用名义 420×540 →
+「工作区 − 窗口尺寸」这个分母把 4px 口径差**放大成 24px 漂移**。修法：存/取同源，统一常量。
+
+**验证**：往返一致、跨屏越界夹回、损坏档回落默认，三组实测。
+
+---
+
+#### B1 · 版本号单点 & B3 · `--doctor`
+
+**问题**：版本号三处口径不一（配置 0.1.0、安装包 v1.0、日志里没有）；
+排障只能靠人肉翻日志，没有一个"先跑这个"的入口。
+
+**改动**：`src/version.py` 单点定义，日志首行横幅；`tools/doctor.py`
+（也可 `python main.py --doctor`）9 项检查，每项 PASS/WARN/FAIL 带可行动修复提示，支持 `--json`。
+
+**关键设计**：`--doctor` 在 `load_config` **之前**执行——配置坏掉的时候正是最需要它的时候。
+
+---
+
+#### A2 · 壳自愈 & A3 · 退出清理
+
+**问题**（两个都是"桌宠会消失"的剩余风险）：
+  · 壳是独立进程，驱动重启/崩溃/误杀都会让它无声消失，主窗口却一切正常；
+  · 退出不干净 → 孤儿 Electron 窗口滞留，且下次启动撞 userData 单实例限制
+    （Electron 会**无输出地立刻退出**，本项目最难查的坑之一）；
+  · 握手文件里有 RPC 令牌，不该留在磁盘上。
+
+**改动**：
+  · 守护线程每 2s 查存活，死了自动重拉并恢复生前的可见/置顶/位置；
+  · **配额**：60s 内重启 5 次判定为反复崩溃 → 停手；
+  · 配额耗尽时**降级**到 pywebview 窗口（本对象转为透明代理，调用方无感、不会拿到 None）；
+  · `close()` 先礼后兵（quit → terminate → 杀进程树），并删除握手文件；
+  · `shutdown_all()` 幂等，挂在 `main.py` 的 atexit 上。
+
+**为什么宁可白底也不能没人**：桌宠的背景透明度是体验问题，桌宠消失是功能问题。
+
+**验证**：`test_pet_shell_selfheal.py` 13 组；变异 8 次（配额/关闭检查/降级/清队列等）全部 FAIL、还原 PASS；
+另有 `tools/pet_shell_selfheal_smoke.py` 端到端**真杀 electron 进程**验证自动恢复。
+
+---
+
+#### B2 · 日志轮转
+
+**问题**：`main.py` 每次启动新建 `logs/run_<时间戳>.log`，崩溃时再落一个
+`logs/crash_<时间戳>.log`，**从来没人删过**。现在盘上 8 个 crash 文件全是 0 字节——
+崩溃钩子每次启动都会创建文件，哪怕没崩。跑一年就是几千个文件。
+
+**改动**：新增 `src/log_rotate.py`。
+  · 按份数：`run_*` 与 `crash_*` 各自保留最近 N 份（默认 30，配置项 `app.log_keep`）；
+  · 按单文件上限：当前这次运行的日志交给 `RotatingFileHandler` 滚动（默认 8MB，
+    配置项 `app.log_max_mb`）；
+  · 清理在建 handler **之前**做，避免把正在写的当前文件算进"待删旧档"。
+
+**一个易错点**：排序按 **mtime 降序**，不按文件名。文件名里的时间戳是进程启动时刻，
+而 `run_` 文件是持续写入的——按名字排会删掉还在用的文件。另外空文件排最后优先被清，
+它们没有任何排障价值。
+
+**验证**：`test_log_rotate.py` 6 组；变异 5 次（删反了 / 去掉空文件优先 /
+不夹负数 / keep 被吃掉 / 漏掉 crash_）全部 FAIL、还原 PASS。
+
+**顺带收口 B1**：光有 `src/version.py` 不算单点——`app.version` 还是 0.1.0，
+两处照样漂移。现已同步为 0.2.0，并新增 doctor 项「版本一致」，
+漂移即 FAIL 且在提示里写明该改成什么。
+
+---
+
+#### B4 · 配置校验与迁移
+
+**问题**：`load_config()` 就是 `yaml.safe_load` + 转 SimpleNamespace，**零校验**。
+后果分两类：
+  · 缺必需段（如 `perception`）→ `Config.__init__` 里 `self.ns.perception.vision`
+    直接 AttributeError，**崩在一个完全看不出是配置问题的地方**；
+  · 缺可选键 → 到处 `getattr(x, "y", default)` 静默回落，
+    用户以为配了其实没生效——这是"玄学 bug"的主要来源。
+
+**改动**：新增 `src/config_schema.py`，`Config.__init__` 里加载即校验。
+  · **必需项**缺失/类型错/取值非法 → ERROR；
+  · **可选项**缺失 → 补齐默认值 **并 log 一条 WARNING**（关键：不留声不叫迁移，叫静默默认）；
+  · hint 一律写成「改哪个文件的哪个键」，能直接照着改，不写"请检查配置"这种废话。
+
+**设计取舍**：**不抛异常**。配置写错是"该被大声告知"的事，不是"该让软件打不开"的事——
+所以补齐默认值让它能起来，问题交给 `--doctor` 集中呈现。
+
+**为什么只列关键项不做全量 schema**：30 个顶层段全量 schema 是维护陷阱，
+改配置就得改 schema，最后变成谁都不敢动。只列会崩 / 会静默出错的。
+
+**验证**：`test_config_schema.py` 11 组；变异 5 次（缺字段不报 / 类型检查失效 /
+枚举失效 / 版本漂移失效 / 补齐不出声）全部 FAIL、还原 PASS。
+其中「补齐不出声」第一次**没被抓住**——原测试只断言了返回值清单，
+没断言日志。补齐动作"必须被看见"是这个模块的核心要求，已补上日志断言。
+
+**实测**：`config.yaml` 与 `config.release.yaml` 关键项齐全，0 issues。
 
 ---
 
@@ -470,6 +1088,47 @@ PROBE {"hasBridge":true,"psdType":"function","title":"看板娘[OK]","psdLen":41
 
 ---
 
+## 壳的 GPU 回退：崩溃后自动退让到软件合成（2026-10-18 11:45）
+
+**问题**：质检把壳判成"本机不可用"并降级为实验特性。但它只是**起不来**，不是**做不到**——
+壳存在的唯一理由就是真透明，判死之后桌宠只能回白底，等于把这个功能废掉。
+
+**查的过程（结论来自实测，不是猜）**：
+
+| 开关组合 | 进程 | 画面 | 透明 |
+|---|---|---|---|
+| 无 | ✗ `FATAL: GPU process isn't usable` | — | — |
+| `--disable-gpu` / `--use-angle=swiftshader` / `--disable-gpu-compositing` 单独 | ✗ 照样崩 | — | — |
+| `--in-process-gpu` | ✓ 活 | ✗ **一帧不出** | — |
+| `--in-process-gpu --disable-gpu-compositing` | ✓ 活 | ✓ 出帧 | ✓ 真透明 |
+
+**改动**（`src/ui/pet_shell.py`）：
+- 新增 `GPU_FALLBACK_FLAGS` / `GPU_CRASH_MARKS`；
+- `_launch()` 先按原样启动，`CONTROL` 等不到且输出命中崩溃特征时，带开关**重试一次**并记住状态；
+- `_read_loop()` 维护 `_recent` 环形缓冲（`_wait()` 会把行取走，崩溃原因得另存一份才能判断）。
+
+不一律带开关跑：GPU 正常的机器不该白吃软件合成的性能损失。
+
+**验证**：
+- `DANIYA_REQUIRE_SHELL=1 tools/pet_shell_selfheal_smoke.py` → PASS（真进程崩溃 → 自动恢复，
+  `页面渲染就绪` 等的是页面自己写 `看板娘[OK]`，即 Live2D 真的画出来了）；
+- 新增单测 [15] + 变异（改成 `if False` → 4 项 FAIL）；
+- `tools/check_all.py` → **27 项全部通过，0 项跳过**（`壳自愈端到端` 从"跳过"变"真跑通"）；
+- `tools/_qc_shell_transparency.py` → 三关全过，对照组（同位置纯绿不透明窗）证明判据有区分力。
+
+**这轮最贵的教训**：判据先自证，再下结论。
+1. 第一版用 `capturePage()` 的 alpha 当"透明"证据，加 `--opaque` 对照一跑就废——
+   `transparent:false` 时它照样返回 alpha=0，**根本没有区分力**。
+2. `--in-process-gpu` 单独用是陷阱：进程活、`did-finish-load` 也打了、`IsWindowVisible` 正常，
+   但屏幕是空的。**只看进程存活会误判成"修好了"。**
+3. `WindowFromPoint` 返回的是 Chromium 的**子** HWND，和顶层 HWND 比永远不等 → 要 `IsChild`。
+4. Win32 窗口必须**建窗与消息泵同线程**，跨线程 `GetMessage` 收不到 `WM_PAINT`，底色铺不上。
+5. 两个自建窗口不能共用一个窗口类名：第二次 `RegisterClassW` 失败，画刷/回调会串。
+6. 新版 Electron 的透明走 DirectComposition（`WS_EX_NOREDIRECTIONBITMAP`），
+   没有 `WS_EX_LAYERED`——按"必须有 LAYERED"判会误报"不可能透明"。
+
+---
+
 ## 待办（需要你决策）
 
 | 项 | 现状 | 需决定什么 |
@@ -489,3 +1148,9 @@ PROBE {"hasBridge":true,"psdType":"function","title":"看板娘[OK]","psdLen":41
 4. **测试"通过"可能是假的**：变异验证要确认真的跑在变异体上（`/tmp` 在 Git Bash 和 Windows Python 下不是同一个目录，`cp` 失败时 `;` 让 `$?` 变成 cp 的退出码）。
 5. **数字对不代表结论对**：13 处无界队列只有 6 处该改；167 处缺 encoding 实为 0 处。报数前先确认口径。
 6. **修安全默认值前先 grep 实际配置**：白名单里有 `start`，`shell=False` 会把它从"能开程序"变成"执行失败"。
+7. **HTTP/1.1 长连接上"读 body 之前就 return"必炸**：拒绝分支（401/413/404）不排空请求体，
+   残留字节会被下一个 `readline()` 当成请求行。症状是客户端 `WinError 10053` 或莫名的 400，
+   且**只在连接被复用后才现形**——单请求测试永远抓不到。判据：只要分支在读完 body 前返回，
+   就必须排空或关连接。
+8. **偶发失败先量化再定性**：这轮如果直接重跑放过，"偶发"就会被归档成抖动。连跑 20 次拿到 10%
+   失败率、再分组 180 次定位到唯一变量（是否读 body），才配得上"找到根因"这四个字。
