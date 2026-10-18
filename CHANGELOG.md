@@ -44,6 +44,25 @@
 > 教训：并发会话各自只 `git add` 自己知道的文件，提交前先 `git log` 确认HEAD 没有
 > 在几分钟内被别人推进过。
 
+### 2026-10-18 · C9 收尾双刀：装配源码指纹闸（C9-5）+ cookie 覆盖 DPAPI
+
+**C9-5 源码指纹闸**：堵上「装配漂移守卫只看版本号」的盲区（上轮实测撞上：
+版本没 bump 但 dist_stage 源码过期，出包带着旧程序）。装配收尾把
+`src/**/*.py + main.py` 的（相对路径+内容）聚合 sha256 存档到
+`.src_fingerprint`；`build_installer` 出包前重算比对——不一致或缺存档
+（旧装配）直接拒绝，makensis 不启动。只看内容不看 mtime，git checkout
+不假阳性。**真机级双向实测**：装配后给 version.py 追加一行注释 → 出包
+被拒（存档 12da30… ≠ 当前 3a1248…）；还原 → 放行。
+
+**cookie 覆盖 DPAPI（C9 缺口关闭）**：`_SECRET_FIELDS` 加 `cookie`
+（qzone 登录态，全仓唯一 cookie 字段无误伤）——写盘自动加密为
+`dpapi:`、读盘解密、明文兼容，与 api_key 同路径。doctor 第 14 项扫描
+同步扩到 `cookie:` 行（明文 cookie → WARN）。
+
+测试：secret_box 24 断言 / make_dist_deps 34 断言（C9-5 段 7 项）/
+doctor 32 断言（14.5/14.6 cookie 两路）；变异 M1（指纹丢内容）M2
+（比对恒假跳闸）全红。端到端 4m45s 装配+出包，门禁 27/27。
+
 ### 2026-10-18 · E 阶段开篇：开机自启开关（HKCU Run 键，全链路实测）
 
 **src/autostart.py**：写/清/查 `HKCU\...\Run` 的 `DaniaAI` 值（每用户无 UAC，

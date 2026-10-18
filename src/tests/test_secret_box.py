@@ -58,6 +58,22 @@ check(raw["llm"]["openai"]["api_key"].startswith("dpapi:"), "嵌套 dict 已加�
 check(raw["roles"][0]["api_key"].startswith("dpapi:"), "list 内 api_key 已加密")
 check(raw["roles"][0]["api_key"] != PLAIN, "list 内不是明文残留")
 check(raw["empty_key"] == "" and raw["name"] == "not-a-key", "空串与非密钥字段不动")
+
+print("== 2b. cookie 字段覆盖（C9 缺口关闭：qzone.cookie） ==")
+raw2 = {
+    "qzone": {"enabled": True, "uin": "12345", "cookie": "p_skey=SECRET; uin=o12345;"},
+    "channels": [{"cookie": "sid=abc"}],
+    "not_cookie_field": "plain text",
+}
+n3 = secret_box.seal_tree(raw2)
+check(n3 == 2, f"cookie 加密 2 处（实际 {n3}）")
+check(raw2["qzone"]["cookie"].startswith("dpapi:"), "qzone.cookie 已加密")
+check(raw2["channels"][0]["cookie"].startswith("dpapi:"), "list 内 cookie 已加密")
+check(raw2["qzone"]["uin"] == "12345" and raw2["not_cookie_field"] == "plain text",
+      "uin 与非 cookie 字段不动")
+ok2, failed2 = secret_box.unseal_tree(raw2)
+check(ok2 == 2 and failed2 == [], f"cookie 解密 2 处 0 失败（实际 {ok2}/{failed2}）")
+check(raw2["qzone"]["cookie"].startswith("p_skey="), "qzone.cookie 往返还原")
 check(raw["sealed"]["api_key"] == sealed, "已加密的不二次加密")
 n2 = secret_box.seal_tree(raw)
 check(n2 == 0, f"幂等：再 seal 加密 0 处（实际 {n2}）")

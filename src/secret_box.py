@@ -16,7 +16,7 @@
 
 边界（如实声明）：
 - DPAPI 只防"文件被拷走"，不防同机同用户的其它进程——这是用户级加密的固有边界；
-- 只覆盖 `api_key` 字段；`qzone.cookie` 等其他敏感字段是已知缺口，见规划 C9。
+- 覆盖 `api_key` 与 `cookie`（qzone 登录态）字段；其余敏感字段发现即登记。
 """
 from __future__ import annotations
 
@@ -30,7 +30,9 @@ logger = logging.getLogger(__name__)
 _PREFIX = "dpapi:"
 
 # 只加密这些字段名的字符串值。收紧范围：宁可少加密，不误伤业务字段。
-_SECRET_FIELDS = frozenset({"api_key"})
+# 【2026-10-18 · C9 缺口关闭】cookie（qzone 登录态）与 api_key 同级敏感：
+# 泄漏都能拿用户身份。全仓 config 仅 qzone.cookie 一处 cookie 字段，无同名误伤。
+_SECRET_FIELDS = frozenset({"api_key", "cookie"})
 
 
 class _CRYPT_BLOB(ctypes.Structure):
