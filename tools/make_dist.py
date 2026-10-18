@@ -918,6 +918,119 @@ def build_installer(out_dir: str, root: str, nsis_exe: str | None = None,
     return True
 
 
+# ===== 【C10】代码签名（可选闸：不配凭证=不签名；配了凭证=必须签成） =====
+# 凭证全部走环境变量，不落仓库、不进 config——真证书与自签只差变量值：
+#   DANIA_SIGN_SUBJECT     按证书主题选证书（证书库里"颁发给"的名字）
+#   DANIA_SIGN_THUMBPRINT  或按 40 位指纹选证书
+#   DANIA_SIGN_PFX         或用 PFX 文件（配 DANIA_SIGN_PFX_PASS 口令）
+#   DANIA_SIGN_TOOL        signtool.exe 路径（不给则自动找）
+# 三选一。自签证书链在用户机上不受信（SmartScreen 仍会提示）——适合
+# 联调签名管线；对外分发必须换 CA 签发的真证书。
+
+
+def find_signtool() -> str | None:
+    """找 signtool.exe：先 PATH，再 Windows Kits 各版本取最高。"""
+    p = shutil.which("signtool")
+    if p:
+        return p
+    for base in (r"C:\Program Files (x86)\Windows Kits\10\bin",
+                 r"C:\Program Files\Windows Kits\10\bin"):
+        hits: list[str] = []
+        if os.path.isdir(base):
+            for ver in os.listdir(base):
+                cand = os.path.join(base, ver, "x64", "signtool.exe")
+                if os.path.isfile(cand):
+                    hits.append(cand)
+        if hits:
+            return sorted(hits)[-1]
+    return None
+
+
+def resolve_sign_config(env: dict | None = None) -> dict | None:
+    """从环境变量解析签名凭证。None = 未配置（签名默认关闭）。
+
+    同时配多个选择器是口径错误——"到底用哪张证书"说不清，显式拒绝；
+    凭证配了但环境里没有 signtool 也在这里挡住，不等到签名那一步才炸。
+    """
+    env = env if env is not None else os.environ
+    subject = (env.get("DANIA_SIGN_SUBJECT") or "").strip()
+    thumb = (env.get("DANIA_SIGN_THUMBPRINT") or "").strip()
+    pfx = (env.get("DANIA_SIGN_PFX") or "").strip()
+    picked = [n for n, v in (("subject", subject), ("thumbprint", thumb),
+                             ("pfx", pfx)) if v]
+    if not picked:
+        return None
+    if len(picked) > 1:
+        raise ValueError(f"签名凭证只能三选一，同时给了：{', '.join(picked)}")
+    cfg: dict = {"tool": (env.get("DANIA_SIGN_TOOL") or "").strip()
+                 or find_signtool() or ""}
+    if not cfg["tool"] or not os.path.isfile(cfg["tool"]):
+        raise ValueError(f"配了 {picked[0]} 但找不到可用的 signtool.exe"
+                         f"（装 Windows SDK 或设 DANIA_SIGN_TOOL）")
+    if pfx:
+        if not os.path.isfile(pfx):
+            raise ValueError(f"DANIA_SIGN_PFX 指向的文件不存在：{pfx}")
+        cfg["pfx"] = pfx
+        cfg["pass"] = env.get("DANIA_SIGN_PFX_PASS") or ""
+    elif subject:
+        cfg["subject"] = subject
+    elif not re.fullmatch(r"[0-9a-fA-F]{40}", thumb):
+        raise ValueError("DANIA_SIGN_THUMBPRINT 应为 40 位证书指纹")
+    else:
+        cfg["thumbprint"] = thumb
+    return cfg
+
+
+def sign_file(path: str, cfg: dict, runner=None) -> bool:
+    """对单个 exe 做 Authenticode 签名并核验；没签上/验不过一律 False。
+
+    自签链不受信时 verify 报 root not trusted——自签的预期现象，
+    降级为警告不算失败；其余 verify 失败（文件被改、签名缺失）算失败。
+    """
+    run = runner or subprocess.run
+    tool = cfg["tool"]
+    argv = [tool, "sign", "/fd", "SHA256"]
+    if cfg.get("pfx"):
+        argv += ["/f", cfg["pfx"]]
+        if cfg.get("pass"):
+            argv += ["/p", cfg["pass"]]
+    elif cfg.get("subject"):
+        argv += ["/n", cfg["subject"]]
+    else:
+        argv += ["/sha1", cfg["thumbprint"]]
+    argv.append(path)
+    try:
+        proc = run(argv, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                   text=True, encoding="utf-8", errors="replace")
+    except OSError as e:
+        print(f"  ✗ signtool 启动失败：{e}")
+        return False
+    if proc.returncode != 0:
+        for line in (proc.stdout or "").splitlines()[-10:]:
+            print("    sign> " + line)
+        print("  ✗ 签名失败：" + os.path.basename(path))
+        return False
+    try:
+        v = run([tool, "verify", "/pa", path], stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT, text=True, encoding="utf-8",
+                errors="replace")
+    except OSError as e:
+        print(f"  ✗ signtool(verify) 启动失败：{e}")
+        return False
+    out = v.stdout or ""
+    if v.returncode != 0:
+        if "not trusted" in out.lower():
+            print(f"  ⚠ 已签名（自签链不受信为预期；对外分发须换 CA 证书）："
+                  f"{os.path.basename(path)}")
+            return True
+        for line in out.splitlines()[-10:]:
+            print("    verify> " + line)
+        print("  ✗ 签名核验失败：" + os.path.basename(path))
+        return False
+    print(f"  ✓ 已签名并通过核验：{os.path.basename(path)}")
+    return True
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description="按白名单组装交付目录")
     ap.add_argument("--out", help="输出目录；不给则只打印清单（dry-run）")
@@ -943,6 +1056,9 @@ def main() -> int:
                     help="打印某个目录的体积报告（配合 --out 时打到刚组装完的包上）")
     ap.add_argument("--installer", action="store_true",
                     help="装配通过后追加 NSIS 安装包（C2-A；版本号读 src/version.py）")
+    ap.add_argument("--sign", action="store_true",
+                    help="对安装包做 Authenticode 签名（C10；需 --installer，"
+                         "凭证走 DANIA_SIGN_* 环境变量，三选一）")
     args = ap.parse_args()
 
     # 单独 --report 某个目录：只报告，不组装
@@ -1036,11 +1152,37 @@ def main() -> int:
         print(f"✓ 可发布：{out}")
 
     # C2-A：装配合格后才出安装包（版本号单一真值 = src/version.py）
+    # C10：签名只在安装包真出出来之后执行；--sign 没配凭证是口径错误，硬失败
+    if args.sign and not args.installer:
+        print("✗ --sign 需要 --installer（签名对象是安装包，没有包可签即口径错误）")
+        rc = 1
+    setup_exe: str | None = None
     if args.installer:
         if rc != 0:
             print("✗ 装配未通过，跳过安装包")
-        elif not build_installer(out, args.root):
+        else:
+            ver_main = read_app_version(args.root)
+            if build_installer(out, args.root, version=ver_main):
+                setup_exe = os.path.join(root, "dist",
+                                         f"达妮娅AI桌面伴侣_Setup_v{ver_main}.exe")
+            else:
+                rc = 1
+    if args.sign and setup_exe is not None and rc == 0:
+        try:
+            sign_cfg = resolve_sign_config()
+        except ValueError as e:
+            print(f"✗ 签名凭证：{e}")
             rc = 1
+        else:
+            if sign_cfg is None:
+                print("✗ --sign 已给但没有签名凭证：设 DANIA_SIGN_SUBJECT / "
+                      "DANIA_SIGN_THUMBPRINT / DANIA_SIGN_PFX 之一")
+                rc = 1
+            elif not os.path.isfile(setup_exe):
+                print(f"✗ 待签安装包不存在：{setup_exe}")
+                rc = 1
+            elif not sign_file(setup_exe, sign_cfg):
+                rc = 1
 
     # --report 不给目录时，报的就是刚组装出来的这个包
     if args.report:

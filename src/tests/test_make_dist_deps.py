@@ -787,6 +787,144 @@ def main() -> int:
         shutil.rmtree(scratch5, ignore_errors=True)
 
     print()
+    print("== [C10] 代码签名管线（凭证三选一 + 签后核验） ==")
+
+    # --- resolve_sign_config：凭证解析 ---
+    print("[C10-1] 不配任何凭证 → None（签名默认关闭，不报错）")
+    check(make_dist.resolve_sign_config({}) is None, "空环境变量 → None")
+
+    print("[C10-2] 同时配多个选择器 → 拒绝（用哪张证书说不清）")
+    try:
+        make_dist.resolve_sign_config({"DANIA_SIGN_SUBJECT": "A",
+                                       "DANIA_SIGN_PFX": "b.pfx"})
+        check(False, "双选择器应当抛 ValueError")
+    except ValueError:
+        check(True, "双选择器 → ValueError")
+
+    print("[C10-3] subject 模式：凭证进 cfg，工具可用 DANIA_SIGN_TOOL 显式指路")
+    fake_tool = os.path.join(tmp, "signtool.exe")
+    open(fake_tool, "w").close()
+    cfg = make_dist.resolve_sign_config({"DANIA_SIGN_SUBJECT": "DaniaAI Test Signer",
+                                         "DANIA_SIGN_TOOL": fake_tool})
+    check(cfg is not None and cfg.get("subject") == "DaniaAI Test Signer",
+          f"subject 进 cfg：{cfg}")
+    check(cfg and cfg.get("tool") == fake_tool, "DANIA_SIGN_TOOL 优先于自动查找")
+
+    print("[C10-4] thumbprint 模式：40 位 hex 才收，脏值拒绝")
+    try:
+        make_dist.resolve_sign_config({"DANIA_SIGN_THUMBPRINT": "zz09",
+                                       "DANIA_SIGN_TOOL": fake_tool})
+        check(False, "脏指纹应当抛 ValueError")
+    except ValueError:
+        check(True, "脏指纹 → ValueError")
+    ok_thumb = "a" * 40
+    cfg = make_dist.resolve_sign_config({"DANIA_SIGN_THUMBPRINT": ok_thumb.upper(),
+                                         "DANIA_SIGN_TOOL": fake_tool})
+    check(cfg is not None and cfg.get("thumbprint") == ok_thumb.upper(),
+          "40 位大写 hex 原样收进 cfg")
+
+    print("[C10-5] pfx 模式：文件必须真实存在，口令可缺省")
+    try:
+        make_dist.resolve_sign_config({"DANIA_SIGN_PFX": os.path.join(tmp, "no.pfx"),
+                                       "DANIA_SIGN_TOOL": fake_tool})
+        check(False, "不存在的 PFX 应当抛 ValueError")
+    except ValueError:
+        check(True, "PFX 不存在 → ValueError")
+    real_pfx = os.path.join(tmp, "x.pfx")
+    open(real_pfx, "w").close()
+    cfg = make_dist.resolve_sign_config({"DANIA_SIGN_PFX": real_pfx,
+                                         "DANIA_SIGN_TOOL": fake_tool})
+    check(cfg is not None and cfg.get("pfx") == real_pfx and cfg.get("pass") == "",
+          "PFX 收进 cfg 且口令缺省为空串")
+
+    print("[C10-6] 配了凭证但找不到 signtool → 在解析期就挡住，不等到签名")
+    try:
+        make_dist.resolve_sign_config({"DANIA_SIGN_SUBJECT": "X"})
+        check(not os.path.isfile("signtool.exe"),
+              "无 TOOL 且 PATH 无 signtool 时应抛 ValueError（本机没有裸 signtool.exe）")
+    except ValueError:
+        check(True, "凭证配了但没工具 → ValueError")
+
+    # --- find_signtool：本机真身探测（存在则必须是个真文件） ---
+    st = make_dist.find_signtool()
+    check(st is None or os.path.isfile(st), f"find_signtool 结果自洽：{st}")
+
+    # --- sign_file：签 + 验全链（打桩 runner，四路分支） ---
+    print("[C10-7] 签成 + 验过 → True，argv 带 /fd SHA256 且凭证参数正确")
+    calls: list[list[str]] = []
+
+    def _ok_runner(argv, **kw):
+        calls.append(list(argv))
+        if "sign" in argv:
+            return _FakeResult(0, "Successfully signed")
+        return _FakeResult(0, "Successfully verified")
+
+    exe7 = os.path.join(tmp, "probe7.exe")
+    open(exe7, "w").close()
+    check(make_dist.sign_file(exe7, {"tool": fake_tool, "subject": "S"},
+                              runner=_ok_runner) is True,
+          "签成+验过 → True")
+    check(len(calls) == 2 and calls[0][1] == "sign" and
+          "/fd" in calls[0] and "SHA256" in calls[0] and "/n" in calls[0],
+          f"sign argv 形态正确：{calls[0] if calls else '无'}")
+    check(calls[1][1] == "verify" and "/pa" in calls[1], "核验走 verify /pa")
+
+    print("[C10-8] pfx 凭证映射成 /f /p")
+    calls.clear()
+    make_dist.sign_file(exe7, {"tool": fake_tool, "pfx": real_pfx, "pass": "pw"},
+                        runner=_ok_runner)
+    check("/f" in calls[0] and real_pfx in calls[0] and "/p" in calls[0]
+          and "pw" in calls[0], f"pfx argv：{calls[0] if calls else '无'}")
+
+    print("[C10-9] thumbprint 凭证映射成 /sha1")
+    calls.clear()
+    make_dist.sign_file(exe7, {"tool": fake_tool, "thumbprint": "A" * 40},
+                        runner=_ok_runner)
+    check("/sha1" in calls[0] and "A" * 40 in calls[0],
+          f"thumbprint argv：{calls[0] if calls else '无'}")
+
+    print("[C10-10] sign 返回非零 → False（没签上不算成功）")
+    def _sign_fail(argv, **kw):
+        if "sign" in argv:
+            return _FakeResult(2, "SignTool Error")
+        return _FakeResult(0, "")
+    check(make_dist.sign_file(exe7, {"tool": fake_tool, "subject": "S"},
+                              runner=_sign_fail) is False,
+          "签名失败 → False")
+
+    print("[C10-11] verify 报根不受信 → 自签预期，降级为警告仍 True")
+    def _untrusted(argv, **kw):
+        if "sign" in argv:
+            return _FakeResult(0, "ok")
+        return _FakeResult(1, "SignTool Error: A certificate chain processed, "
+                              "but terminated in a root certificate which is "
+                              "not trusted by the trust provider.")
+    check(make_dist.sign_file(exe7, {"tool": fake_tool, "subject": "S"},
+                              runner=_untrusted) is True,
+          "自签不受信链 → 警告但 True")
+
+    print("[C10-12] verify 报其它错（如文件被改）→ False")
+    def _verify_hard_fail(argv, **kw):
+        if "sign" in argv:
+            return _FakeResult(0, "ok")
+        return _FakeResult(1, "SignTool Error: The signature is invalid.")
+    check(make_dist.sign_file(exe7, {"tool": fake_tool, "subject": "S"},
+                              runner=_verify_hard_fail) is False,
+          "verify 硬失败 → False")
+
+    print("[C10-13] runner 抛 OSError（工具起不来）→ False 不炸")
+    def _boom(argv, **kw):
+        raise OSError("no such tool")
+    check(make_dist.sign_file(exe7, {"tool": fake_tool, "subject": "S"},
+                              runner=_boom) is False, "OSError → False")
+
+    print("[C10-14] CLI 口径：--sign 必须连着 --installer")
+    src_txt10 = open(os.path.join(ROOT, "tools", "make_dist.py"),
+                     encoding="utf-8").read()
+    check('"--sign"' in src_txt10 and "--sign 需要 --installer" in src_txt10,
+          "--sign 无包可签时硬失败")
+
+    print()
     if _fails:
         print(f"❌ {len(_fails)} 项未通过：")
         for m in _fails:
