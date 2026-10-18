@@ -1418,3 +1418,33 @@ run_webui.py`；编码闸加 `--strict`；doctor `_shell_mode` except 分支
 
 **协作说明**：本条为主体改动出自并行会话（闸门覆盖专项体检），收尾时由
 主线会话统一验证（四套测试 + 新闸门）后入库。
+
+---
+
+## C11 + 引导页双修复：桌宠壳进包 / 能力槽顶部截断 / 建角色防白屏（2026-10-18 16:4x，`0a31a4e`）
+
+**用户真机四连差评**：①桌宠外围背景不透明 ②点击不能浮到最上 ③「把达妮娅连上大脑和声音」下面
+的内嵌页最上面被截断 ④建角色完全卡死、没有任何选项、下一步灰色。
+
+**根因（全部实测取证）**：
+- ①② 同根：**Electron 桌宠壳根本没进安装包**——`INCLUDE_DIRS` 只有 src/assets/prompts，
+  装机里没有 electron.exe → pet_backend 静默回退 pywebview 桌宠（代码注释自己写着「背景会有
+  白底」，置顶能力也弱）。run 日志实锤：`壳不可用（未找到 Electron 可执行文件）→ 使用
+  pywebview 桌宠`。并行会话把壳写好了，装配白名单没跟上。
+- ③ Playwright + 960×620 实测复现：`ui_redesign_modelapi.html?embed=onboard` 里
+  `.cap-wrap` 顶部在视口上方 **-65px**——design_tokens.css 的 SPA 基线
+  `body{display:grid; place-items:center; padding:20px}` 在 iframe 内把超高内容垂直居中，
+  溢出部分顶部不可达（经典居中溢出坑）。embed 模式的 CSS 只关了滚动没复位布局。
+- ④ 建角色模块本体无桥/真桥/桥缺失三态在浏览器里全部渲染正常（stub 桥逐帧链模拟）。
+  真机「没有选项 + 下一步灰」= 高度 ~533px（150% 缩放）下模块确认键在折叠线下 + 失败
+  被静默吞掉的综合体验。处置：进屏 scrollTop 归零；挂载失败显式出兜底文案，绝不白屏。
+
+**改动**：
+- `tools/make_dist.py`：`copy_shell()` —— 壳三件 + electron dist 全量进包（locales 裁至
+  zh-CN/zh-TW/en-US，省 46MB）；闸门 2 加壳漂移检查（源有 shell/main.js 而包没有 → 点名
+  硬失败）；壳脚本进 C9-5 源码指纹。
+- `ui_redesign_modelapi.html`：embed 模式复位 body 布局（display:block / padding:0）。
+- `first_launch_setup.html`：enterRole scrollTop 归零 + 双路兜底文案。
+
+**验证**：C11 段 9 断言 + 2 刀变异全红复绿；浏览器实测 embed wrapTop -65→0、页头完整；
+正常路径无回归；缺模块路径出兜底文案。门禁 27/27。重出包重装后真机验证桌宠。
