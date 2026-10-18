@@ -528,6 +528,17 @@ def main() -> int:
             f.write("a:\n  api_key: ''\n  name: x\n")
         lvl, _i, detail, _h = doctor.check_secret_storage(_cfg14)
         check(lvl == doctor.PASS, f"全空 Key 不误报（实际 {lvl}：{detail}）")
+        # 14.5 cookie 字段同覆盖（C9 缺口关闭）：明文 cookie → WARN
+        with open(_cfg14, "w", encoding="utf-8") as f:
+            f.write("qzone:\n  uin: '123'\n  cookie: 'p_skey=LEAK;'\n")
+        lvl, _i, detail, _h = doctor.check_secret_storage(_cfg14)
+        check(lvl == doctor.WARN and "1 处" in detail,
+              f"明文 cookie 报 WARN：{detail}")
+        # 14.6 cookie 密文 → PASS
+        with open(_cfg14, "w", encoding="utf-8") as f:
+            f.write("qzone:\n  cookie: 'dpapi:QUJD'\n")
+        lvl, _i, detail, _h = doctor.check_secret_storage(_cfg14)
+        check(lvl == doctor.PASS, f"cookie 密文报 PASS：{detail}")
     finally:
         _sh.rmtree(_probe14, ignore_errors=True)
 

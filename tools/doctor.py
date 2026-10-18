@@ -697,8 +697,10 @@ def check_secret_storage(path: str) -> tuple[str, str, str, str]:
     """API Key 落盘方式（C9-1，第 14 项）。
 
     文本级扫描（不 load_config——避免触发 DPAPI 解密与 schema 校验的副作用）：
-    `api_key:` 行的值非空且不带 `dpapi:` 前缀即判明文。
+    `api_key:` / `cookie:` 行（C9 缺口关闭：qzone.cookie 同级敏感）的值
+    非空且不带 `dpapi:` 前缀即判明文。
     """
+    _SECRET_PREFIXES = ("api_key:", "cookie:")
     try:
         with open(path, encoding="utf-8") as f:
             text = f.read()
@@ -709,9 +711,10 @@ def check_secret_storage(path: str) -> tuple[str, str, str, str]:
         s = line.strip()
         if s.startswith("- "):  # YAML 列表项：`- api_key: '...'`，先剥列表标记
             s = s[2:].strip()
-        if not s.startswith("api_key:"):
+        hit = next((p for p in _SECRET_PREFIXES if s.startswith(p)), None)
+        if not hit:
             continue
-        val = s[len("api_key:"):].strip().strip("'\"")
+        val = s[len(hit):].strip().strip("'\"")
         if not val:
             continue
         if val.startswith("dpapi:"):
