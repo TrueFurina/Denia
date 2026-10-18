@@ -1769,8 +1769,11 @@ channels:
     gewechat:
       base_url: http://127.0.0.1:2531
       token: ''
-      callback_host: 0.0.0.0
+      # 回调监听：默认只听本机回环。Gewechat 跑在 Docker 里、需要从容器访问本机时
+      # 才改成 0.0.0.0 —— 那种情况**必须**同时配 callback_token（否则回调服务拒绝启动）。
+      callback_host: 127.0.0.1
       callback_port: 9912
+      callback_token: ''     # 共享密钥；非空时 Gewechat 后台回调地址写 http://<本机IP>:9912/?token=<它>
       allow_users: []
       block_users: []
       media:

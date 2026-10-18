@@ -40,6 +40,7 @@
 | `e624b6e` | 13:5x | feat | 代码签名管线 `--sign`（C10）：出包即签 + 签后核验 | 14 断言 + 2 刀变异；真机自签 E2E |
 | `a1e2f17` | 14:0x | fix | doctor GBK 控制台不炸（符号降级 `?`） | [15] 行为测试 + 变异；真机包内复现→修复 |
 | `6094d95` | 15:1x | fix | 桌面双击启动即崩：None 流 → pywebview GBK devnull → rich 炸 | io_safe 三态测试 + 变异；真机 crash 日志取证 |
+| `TBD` | 17:5x | fix | 微信通道「能收不能回」+ 回调无鉴权对外暴露 + 发消息卡死事件循环 | 6 断言 + 5 刀变异全红；门禁 28→30 项 |
 
 > **\* 夹带说明（必须留档）**：12:10 / 12:2x 两行的内容实际随 `fa86a4c`（E1 开机自启）
 > 入库——13:14 的并发提交把质检工作流未提交的改动一起提交了，未按工作流拆分。
@@ -47,7 +48,58 @@
 > 教训：并发会话各自只 `git add` 自己知道的文件，提交前先 `git log` 确认HEAD 没有
 > 在几分钟内被别人推进过。
 
+### 2026-10-18 · 微信通道三连修：回复发不出去 / 回调对外裸奔 / 发消息卡死主循环
+
+> 起点：门禁 27 项全绿，但绿的是"已知项"。这轮换成从**运行中的进程**往回查：
+> doctor 报"端口 9912 被占用" → 顺着这条线进了 `src/channels/gewechat.py`。
+
+**① 微信回复从来没发出去过（P1，功能完全失效）**
+`_on_decision` 写的是 `await self._safe_post(...)`，而 `_safe_post` 是**同步 def** →
+每次回微信都在 `await None` 上抛 `TypeError: object NoneType can't be used in 'await'
+expression`。事件总线 `except Exception: logger.exception(...)` 把它吞了，所以症状只是
+"AI 不理人"，日志里一行没人看的异常。**这条从基线 `5bffc68` 就在**（`git log -S` 确认）。
+修法：`_safe_post` 改 async + `asyncio.to_thread(fn, *args)`；`_send_media_item` 同步改
+async（原来媒体那条在事件循环里直接发）。
+
+**② 同一个函数里的第二个洞：发消息卡死整个桌宠**
+`_client.post_text` 走 `urllib`（超时 15s）。就算把 `await` 去掉，它仍然是在**事件循环
+线程里**做同步 HTTP——网关慢/挂时 TTS、对话、桌宠动画一起停。`to_thread` 一并解决。
+实测：桩函数 sleep 0.4s，改前事件循环抖动 406ms，改后 16ms。
+
+**③ 回调服务绑 0.0.0.0 且零鉴权（安全边界，与 OneBot 不一致）**
+Gewechat 的回调是**无签名**的裸 JSON POST。绑 `0.0.0.0` 又没令牌 ⇒ 同网段任何主机
+POST 一条 `{"data":{"fromWxid":"...","content":"..."}}` 就能让桌宠"以为微信来了消息"，
+AI 会当成真人说的去回复、甚至调工具（投毒/越权）。实测：伪造 POST 返回 200 且**入队成功**。
+OneBot(reverse) 早就按"默认只听回环、非回环必须配 token、否则一律拒绝"做了
+（`onebot.py:32`），微信这条漏了。修法照同一套标准：
+- `callback_host` 缺省改 `127.0.0.1`；`config.yaml` / `config.release.yaml` 同步，
+  并新增 `callback_token`；
+- 非回环 + 无 token ⇒ **拒绝启动**（fail-closed）并打 ERROR，写明两种修法；
+- 配了 token ⇒ 校验 `?token=` / `X-GEWECHAT-TOKEN` / `Authorization: Bearer`，
+  `hmac.compare_digest` 定长比较，错的一律 401 且**不入队**；
+- README 补上"为什么必须鉴权"和 Docker 场景怎么填。
+
+**验证**
+- 新增 `src/channels/tests/test_gewechat_callback.py`（6 组）：默认回环 / 非回环无
+  token 拒启 / 回环免 token 入队 / 三种带 token 方式放行且错的一律 401 不入队 /
+  **决策回发真的发出去了** / 回发不阻塞事件循环。
+- 变异 5 刀全红（`tools/_qc_gewechat_mutation.py`，还原后 sha256 一致）：
+  还原原 bug → `TypeError: object NoneType...`；同步调用 → "卡住 406ms"；
+  鉴权恒放行 → "无 token 必须 401"；去掉 fail-closed → "必须拒绝启动"；
+  默认 host 改回 0.0.0.0 → "默认必须只听回环"。
+- 新增闸门 **`协程调度`**（`tools/check_await_sync.py`）：AST 查两个方向——
+  `await` 了同步方法、async 方法没被 await/调度（协程对象直接丢）。真实案例就是①。
+  误报边界已处理：异步生成器、`asyncio.run` / `create_task` / `gather` / `wait_for`。
+  配套 `src/tests/test_check_await_sync.py` 7 条正反例守闸门本身（含 `asyncio.run`
+  消费、`async for` 生成器两个反例）。
+- 全量门禁 **30 项全过、0 跳过**；doctor 12 PASS / 3 WARN / 0 FAIL（WARN 均为已知）。
+
+**留给用户的动作**：`config.yaml` 的 `callback_host` 已改 `127.0.0.1`。若 Gewechat 跑在
+Docker 里（容器访问不到宿主回环），把它改回 `0.0.0.0` **并**配 `callback_token`，
+后台回调地址写 `http://<本机IP>:9912/?token=<同一个值>`，否则回调服务会按设计拒绝启动。
+
 ### 2026-10-18 · C9 收尾双刀：装配源码指纹闸（C9-5）+ cookie 覆盖 DPAPI
+
 
 **C9-5 源码指纹闸**：堵上「装配漂移守卫只看版本号」的盲区（上轮实测撞上：
 版本没 bump 但 dist_stage 源码过期，出包带着旧程序）。装配收尾把

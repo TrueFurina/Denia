@@ -34,6 +34,11 @@ GATES: list[tuple[str, str, list[str], bool]] = [
     # 少了它这就是一道装饰闸门（曾长期如此）。
     ("字节码编译", PY_RUNTIME, ["-m", "compileall", "-q", "src", "tools", "main.py", "launch_companion.py", "run_webui.py"], False),
     ("全局名完整性", PY_RUNTIME, ["tools/check_module_globals.py", "--all", "src", "tools", "launch_companion.py", "run_webui.py"], False),
+    # 协程调度：两个方向都查——`await 同步方法`（await None 抛 TypeError，被 except
+    # 吞掉就是功能静默失效；微信回复一条发不出去就是这么来的）与 `async 方法没被
+    # await/调度`（协程对象直接丢弃，函数体一行不执行）。自测守着闸门本身别退化。
+    ("协程调度", PY_RUNTIME, ["tools/check_await_sync.py", "src"], False),
+    ("协程调度自测", PY_RUNTIME, ["src/tests/test_check_await_sync.py"], False),
     ("文本编码", PY_RUNTIME, ["tools/check_open_encoding.py", "--all", "--strict", "src", "tools", "main.py", "launch_companion.py", "run_webui.py"], False),
     ("前端资源", PY_RUNTIME, ["tools/check_web_assets.py", "--strict"], False),
     ("凭据/隐私", PY_RUNTIME, ["tools/check_package_secrets.py"], False),
@@ -54,6 +59,9 @@ GATES: list[tuple[str, str, list[str], bool]] = [
     ("队列语义", PY_VENV, ["src/tests/test_queue_util.py"], True),
     ("通话冒烟", PY_VENV, ["src/ui/tests/test_call_smoke.py"], True),
     ("通道状态", PY_VENV, ["src/channels/tests/test_agent_status.py"], True),
+    # 微信回调：无签名 POST 的鉴权边界 + AI 决策回发（曾因 `await 同步函数`
+    # 导致回复一条都发不出去）。变异 5 刀全红，见 tools/_qc_gewechat_mutation.py。
+    ("微信回调边界", PY_VENV, ["src/channels/tests/test_gewechat_callback.py"], False),
     ("Key 归一", PY_VENV, ["tools/test_key_unify.py"], True),
     ("能力槽位", PY_VENV, ["tools/test_capability_slots.py"], True),
     ("OneBot 协议", PY_VENV, ["src/channels/tests/test_onebot.py"], True),
