@@ -411,12 +411,12 @@ class CourseRecorder:
         try:
             import mss
             from PIL import Image
-            import imagehash
+            from ..perception import phash
             if self._sct is None:
                 self._sct = mss.mss()
             raw = self._sct.grab(self._sct.monitors[1])
             img = Image.frombytes("RGB", (raw.width, raw.height), raw.bgra, "raw", "BGRX")
-            h = imagehash.phash(img.resize((64, 64)))
+            h = phash.phash(img.resize((64, 64)))
             changed = (self._last_keyframe_hash is None
                        or (h - self._last_keyframe_hash) >= self._keyframe_change_threshold)
             self._last_keyframe_hash = h

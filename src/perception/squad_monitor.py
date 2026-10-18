@@ -233,8 +233,8 @@ class SquadMonitor:
             if crop.width < 640:
                 crop = crop.resize((640, max(1, int(crop.height * 640 / crop.width))))
         try:
-            import imagehash
-            phash = imagehash.phash(crop)
+            from . import phash as _phash_mod
+            phash = _phash_mod.phash(crop)
             if self._last_crop_hash is not None and phash - self._last_crop_hash <= 4:
                 return None  # 画面未变，跳过（省 token）
             self._last_crop_hash = phash
