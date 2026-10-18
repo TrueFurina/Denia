@@ -38,6 +38,10 @@ SENSITIVE_KEY_RE = re.compile(
     re.I,
 )
 
+# 【2026-10-18】`${ENV_VAR}`：环境变量引用（src/config.py 的 _expand_env_refs），
+# 值是变量名而不是密钥，扫它等于把"没落盘"误判成"泄漏了"。
+ENV_REF_RE = re.compile(r"^\$\{[A-Za-z_][A-Za-z0-9_]*\}$")
+
 # 视为"空"的占位值
 EMPTY_VALUES = {"", "''", '""', "null", "~", "none", "None", "<your-key>", "your-key"}
 
@@ -71,14 +75,27 @@ def _iter_rows(path: str):
 
 
 def scan_config(path: str) -> list[tuple[int, str]]:
-    """返回该配置文件中所有『非空凭据』的 (行号, 键)。"""
+    """返回该配置文件中所有『非空凭据』的 (行号, 键)。
+
+    【2026-10-18】`${ENV_VAR}` 引用不算凭据：它是"密钥只存环境变量、不落盘"
+    约定（见 src/config.py 的 _expand_env_refs）的落地形式，模板里写它是为了让
+    用户少抄一遍 key，文件本身不含任何机密。不排除它，发布模板就只能永远写空
+    key，用户反而要把 key 手抄进配置——那才正是要防的。
+    """
     hits: list[tuple[int, str]] = []
     for no, key, value in _iter_rows(path):
         if not SENSITIVE_KEY_RE.match(key):
             continue
         # 去掉行尾注释后判断
-        raw = value.split(" #", 1)[0].strip()
+        raw = value.split(" #", 1)[0].strip().strip("'\"")
         if raw in EMPTY_VALUES:
+            continue
+        # `dpapi:` 是 secret_box 的密文前缀（DPAPI 绑定本机，别处解不开），
+        # 扫它等于把"已加密"误判成"泄漏了"——2026-10-18 实测 sticker.api_key
+        # 就这样每次打包都报一次假警，噪音会把真警淹掉。
+        if raw.startswith("dpapi:"):
+            continue
+        if ENV_REF_RE.fullmatch(raw):
             continue
         hits.append((no, key))
     return hits

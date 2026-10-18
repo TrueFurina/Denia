@@ -9,6 +9,7 @@ from __future__ import annotations
 import copy
 import logging
 import os
+import re
 import ssl
 from types import SimpleNamespace
 from typing import Any, Optional
@@ -46,6 +47,85 @@ def _ensure_localhost_proxy_bypass() -> None:
 _ensure_localhost_proxy_bypass()
 
 
+# ==================== 配置里的环境变量引用 ====================
+# 【2026-10-18】`api_key: ${ZHIPU_API_KEY}` —— 密钥只存环境变量，配置文件里只留引用。
+#
+# 背景：用户的安全约定是「完整 key 一律 setx 进环境变量，不落盘、不进 git」，
+# 但配置加载器原来只认字面量。结果是为了让软件能跑，只能把 key 抄进 config.yaml
+# （虽然有 DPAPI 加密 + gitignore，仍然违背约定），而且**每次换渠道都要手抄一遍**。
+# 渠道一多就必然漏，漏了就是「key 为空 → 渠道静默不启用」——2026-10-18 实测：
+# llm.openai / cascade / agent.llm / text_chat.providers 的 api_key 全是空串，
+# 通话大脑 CascadeBrain 的 enabled 判据是 bool(base_url and api_key and model)，
+# 于是「达妮娅不会说话」而日志里只有一条 warning。
+#
+# 规则：
+#   · 支持整串引用 `${VAR}`，也支持内嵌（如 `Bearer ${VAR}`）；
+#   · 环境变量不存在 → 展开成空串，并记一条 config_issue（doctor 里可见），
+#     **不抛异常**（配置写错不该让软件打不开，但必须说出来）；
+#   · 展开是「内存态」：save() 时把仍是展开值的字段写回 `${VAR}` 模板，
+#     用户若在界面里改了值则以新值为准（改过的值走 DPAPI 加密落盘）。
+_ENV_REF = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
+
+
+def _expand_env_refs(obj: Any, missing: list[str], templates: dict,
+                     path: tuple = ()) -> None:
+    """就地展开 `${VAR}`；把 (路径 → (模板, 展开值)) 记进 templates 供 save 还原。"""
+    if isinstance(obj, dict):
+        for k, v in list(obj.items()):
+            if isinstance(v, str):
+                if "${" not in v:
+                    continue
+                def _sub(m: re.Match) -> str:
+                    name = m.group(1)
+                    val = os.environ.get(name, "")
+                    if not val and name not in missing:
+                        missing.append(name)
+                    return val
+                new = _ENV_REF.sub(_sub, v)
+                if new != v:
+                    templates[path + (k,)] = (v, new)
+                    obj[k] = new
+            else:
+                _expand_env_refs(v, missing, templates, path + (k,))
+    elif isinstance(obj, list):
+        for i, v in enumerate(obj):
+            if isinstance(v, str):
+                if "${" not in v:
+                    continue
+                def _sub2(m: re.Match) -> str:
+                    name = m.group(1)
+                    val = os.environ.get(name, "")
+                    if not val and name not in missing:
+                        missing.append(name)
+                    return val
+                new = _ENV_REF.sub(_sub2, v)
+                if new != v:
+                    templates[path + (i,)] = (v, new)
+                    obj[i] = new
+            else:
+                _expand_env_refs(v, missing, templates, path + (i,))
+
+
+def _restore_env_templates(data: Any, templates: dict) -> None:
+    """save() 用：把「没被用户改过」的字段写回 `${VAR}` 模板，避免 key 落盘。"""
+    for path, (tpl, expanded) in templates.items():
+        cur = data
+        ok = True
+        for k in path[:-1]:
+            try:
+                cur = cur[k]
+            except (KeyError, IndexError, TypeError):
+                ok = False
+                break
+        if not ok:
+            continue
+        try:
+            if cur[path[-1]] == expanded:
+                cur[path[-1]] = tpl
+        except (KeyError, IndexError, TypeError):
+            continue
+
+
 def _to_ns(obj: Any) -> Any:
     """递归把 dict/list 转成 SimpleNamespace / list，支持点号访问。"""
     if isinstance(obj, dict):
@@ -59,10 +139,20 @@ class Config:
     def __init__(self, raw: dict[str, Any], path: str = "") -> None:
         self.raw = raw
         self.path = path  # 配置文件路径（load_config 时记录），供 save() 持久化
+        # 【2026-10-18】先展开 `${VAR}` 引用，再交给 apply_defaults/validate：
+        # 否则校验器看到的是字面量 "${ZHIPU_API_KEY}"，会把一个「填了 key」的配置
+        # 误判成「key 格式不对」。templates 供 save() 还原成引用（key 不落盘）。
+        self._env_templates: dict = {}
+        _missing: list[str] = []
+        _expand_env_refs(self.raw, _missing, self._env_templates)
+        self.config_issues: list = []
+        if _missing:
+            self.config_issues.append(
+                "配置引用了未设置的环境变量：" + "、".join(_missing)
+                + "（对应渠道的 api_key 会为空；用 setx 设好并重启软件）")
         # 【阶段 B4】加载即校验：缺字段/类型错/取值非法都会被收集，
         # 由 `--doctor` 集中呈现。**不抛异常**——配置写错不该让软件打不开，
         # 但必须大声说出来，不能静默回落（那才是"我配了却没生效"的根因）。
-        self.config_issues: list = []
         try:
             from src.config_schema import apply_defaults as _apply_defaults
             from src.config_schema import validate as _validate
@@ -348,6 +438,9 @@ class Config:
             return
         try:
             data = copy.deepcopy(self.raw)
+            # 【2026-10-18】先把「仍是 ${VAR} 展开值」的字段还原成引用，
+            # 再加密：否则每次保存都会把环境变量里的明文 key 抄进配置文件。
+            _restore_env_templates(data, self._env_templates)
             secret_box.seal_tree(data)
             with open(self.path, "w", encoding="utf-8") as f:
                 yaml.dump(data, f, allow_unicode=True,

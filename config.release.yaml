@@ -9,7 +9,8 @@ voice_profiles:
   model: cosyvoice-v3.5-plus
   pitch_scale: 1.0
   engine: dashscope_cosy
-  api_key: ''
+  # 备用云端克隆（主用本地 voxcpm，欠费不影响）；充值后自动可用
+  api_key: ${DASHSCOPE_API_KEY}
 app:
   log_level: INFO
   name: AI桌面伴侣
@@ -960,10 +961,13 @@ llm:
     temperature: 0.6
     timeout_s: 60
   openai:
-    api_key: ''
-    base_url: https://dashscope.aliyuncs.com/compatible-mode/v1
+    # 【2026-10-18】阿里云百炼账户 400 "not in good standing"（欠费/风控），
+    # 主聊天切到智谱 glm-4-flash（永久免费不限量，实测 1.0s，支持工具调用）。
+    # key 用环境变量引用，不落盘：setx ZHIPU_API_KEY <key> 后重启。
+    api_key: ${ZHIPU_API_KEY}
+    base_url: https://open.bigmodel.cn/api/paas/v4
     max_tokens: null
-    model: qwen-plus
+    model: glm-4-flash
     timeout_s: 60
     vision: true
   provider: openai
@@ -1447,9 +1451,11 @@ proactive:
   runtime_on: true
   chat_initiative: false
 cascade:
-  base_url: https://dashscope.aliyuncs.com/compatible-mode/v1
-  api_key: ''
-  model: qwen-plus
+  # 通话大脑：90 token 上限，不能用带 reasoning 的模型（思考链会吃光额度、
+  # 首字还会慢半拍）。glm-4-flash 实测无 reasoning、1.0s 首字。
+  base_url: https://open.bigmodel.cn/api/paas/v4
+  api_key: ${ZHIPU_API_KEY}
+  model: glm-4-flash
   history_turns: 6
   max_tokens: 90
   temperature: 0.85
@@ -1462,9 +1468,10 @@ agent:
   require_confirm: true
   max_steps: 15
   llm:
-    base_url: https://dashscope.aliyuncs.com/compatible-mode/v1
-    api_key: ''
-    model: qwen3.8-flash
+    # Agent 要规划多步，用 4.7-flash（带 reasoning，实测工具调用正常）
+    base_url: https://open.bigmodel.cn/api/paas/v4
+    api_key: ${ZHIPU_API_KEY}
+    model: glm-4.7-flash
   vision_model: qwen3-vl-plus
   browser:
     enabled: true
@@ -1482,7 +1489,7 @@ agent:
   - baidu_html
 cloud_omni:
   model: ''
-  api_key: ''
+  api_key: ${DASHSCOPE_API_KEY}
   base_url: https://dashscope.aliyuncs.com
   ws_url: ''
   voice: ''
@@ -1510,7 +1517,7 @@ runtime:
   text_mode_only: false
 text_chat:
   fallback_to_duplex_gateway: true
-  manual_provider: ''
+  manual_provider: zai-glm
   mode: manual
   chat_presets:
     bailian_free:
@@ -1559,7 +1566,7 @@ text_chat:
     provider: openai
     timeout_s: 90
     _howto: 填你自己的服务商 Key 与 base_url；别把别人的 Key 打包进来
-  - api_key: ''
+  - api_key: ${ZHIPU_API_KEY}
     base_url: https://open.bigmodel.cn/api/paas/v4
     id: zai-glm
     model: glm-4-flash
@@ -1567,6 +1574,46 @@ text_chat:
     provider: openai
     timeout_s: 60
     _howto: 填你自己的服务商 Key 与 base_url；别把别人的 Key 打包进来
+  - api_key: ${ZHIPU_API_KEY}
+    base_url: https://open.bigmodel.cn/api/paas/v4
+    id: zai-glm-4.7-flash
+    model: glm-4.7-flash
+    name: 智谱 GLM-4.7-Flash（免费·带推理·人格更细）
+    provider: openai
+    timeout_s: 60
+    _howto: 免费档热门时段会限流，重试即可
+  - api_key: ${MODELSCOPE_API_KEY}
+    base_url: https://api-inference.modelscope.cn/v1
+    id: modelscope-ds
+    model: deepseek-ai/DeepSeek-V4-Flash-0731
+    name: 魔搭 DeepSeek-V4-Flash（2000 次/天·上下文强）
+    provider: openai
+    timeout_s: 60
+    _howto: 每天 0 点刷新额度；热门模型高峰 429 属正常
+  - api_key: ${TOKENHUB_API_KEY}
+    base_url: https://tokenhub.tencentmaas.com/v1
+    id: tokenhub-glm
+    model: glm-5.3-flash
+    name: TokenHub GLM-5.3-Flash（体验包·旗舰思考）
+    provider: openai
+    timeout_s: 60
+    _howto: 一次性体验额度，用完报 402
+  - api_key: ${AMD_API_KEY}
+    base_url: ${AMD_BASE_URL}
+    id: amd-ds
+    model: DeepSeek-V4-Flash
+    name: AMD Token Factory DeepSeek-V4-Flash（长期免费·20 RPM）
+    provider: openai
+    timeout_s: 60
+    _howto: 日限额 $1，重置时间北京 0:00
+  - api_key: ${DEEPSEEK_API_KEY}
+    base_url: https://api.deepseek.com/v1
+    id: deepseek-official
+    model: deepseek-flash
+    name: DeepSeek 官方 deepseek-flash（余额 ¥18.7·兜底要花钱）
+    provider: openai
+    timeout_s: 60
+    _howto: 全免费源都挂了才用；非高峰时段价格减半
   - api_key: ''
     base_url: https://openrouter.ai/api/v1
     id: openrouter-free
@@ -1591,11 +1638,11 @@ text_chat:
     api_key: ''
     _howto: 填你自己的服务商 Key 与 base_url；别把别人的 Key 打包进来
   - id: onboarding-llm
-    name: 云端 LLM（引导绑定）
+    name: 云端 LLM（引导绑定·智谱免费档）
     provider: openai
-    base_url: https://dashscope.aliyuncs.com/compatible-mode/v1
-    api_key: ''
-    model: qwen-plus
+    base_url: https://open.bigmodel.cn/api/paas/v4
+    api_key: ${ZHIPU_API_KEY}
+    model: glm-4-flash
     timeout_s: 60
     _howto: 填你自己的服务商 Key 与 base_url；别把别人的 Key 打包进来
 ui:
@@ -1616,7 +1663,7 @@ vision_models:
   screen_watch_enabled: false
   game_cloud_watch: true
   models:
-  - api_key: ''
+  - api_key: ${ZHIPU_API_KEY}
     base_url: https://open.bigmodel.cn/api/paas/v4
     id: zai-glm-4v-flash
     model: glm-4v-flash

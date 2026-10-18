@@ -92,7 +92,12 @@ def seal_tree(obj: object, path: str = "$") -> int:
     if isinstance(obj, dict):
         for k, v in obj.items():
             p = f"{path}.{k}"
-            if k in _SECRET_FIELDS and isinstance(v, str) and v and not is_sealed(v):
+            if (k in _SECRET_FIELDS and isinstance(v, str) and v
+                    and not is_sealed(v)
+                    # 【2026-10-18】`${VAR}` 是环境变量引用（见 config._expand_env_refs），
+                    # 本身不含密钥；加密它只会让配置文件里出现一段无意义密文，
+                    # 而且用户手改配置时看不出这里原本引用的是哪个变量。
+                    and not (v.startswith("${") and v.endswith("}"))):
                 try:
                     obj[k] = encrypt_secret(v)
                     n += 1

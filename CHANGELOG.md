@@ -38,6 +38,7 @@
 | `8f28cc0` | 11:2x | docs | C2 拍板（A 路线）+ 凭据日志卫生门禁 | 规划落档 |
 | `b87a8c1` | 11:5x | feat | C2-A 落地：NSIS 安装器 + 升级保留配置 | 见下方明细 |
 | `e624b6e` | 13:5x | feat | 代码签名管线 `--sign`（C10）：出包即签 + 签后核验 | 14 断言 + 2 刀变异；真机自签 E2E |
+| `TBD5` | 21:2x | fix | **主链路从失效的阿里云百炼迁到免费源**：`${ENV}` 引用（key 不落盘）+ 渠道探活进 doctor | 2 组新测试 + 7 刀变异 + 端到端真发出回复；门禁 36→39 项 |
 | `a1e2f17` | 14:0x | fix | doctor GBK 控制台不炸（符号降级 `?`） | [15] 行为测试 + 变异；真机包内复现→修复 |
 | `6094d95` | 15:1x | fix | 桌面双击启动即崩：None 流 → pywebview GBK devnull → rich 炸 | io_safe 三态测试 + 变异；真机 crash 日志取证 |
 | `94709d4` | 17:5x | fix | 微信通道「能收不能回」+ 回调无鉴权对外暴露 + 发消息卡死事件循环 | 6 断言 + 5 刀变异全红；门禁 28→30 项 |
@@ -51,7 +52,61 @@
 > 教训：并发会话各自只 `git add` 自己知道的文件，提交前先 `git log` 确认HEAD 没有
 > 在几分钟内被别人推进过。
 
-### 2026-10-18 · 主链路静默异常：9 处逐个定性 + 把闸门接上（并修闸门自己两个洞）
+### 2026-10-18 · 主链路从"全挂的阿里云"迁到免费源 + `${ENV}` 引用 + 渠道探活
+
+**用户的起点**：*"一开始我就难到了，因为我用的都是免费 Token 总账，阿里云没钱啊。"*
+
+**根因（三层叠加，任何一层都足以让它全哑）**：
+1. **渠道全指向阿里云百炼**，而百炼账户 `HTTP 400 "not in good standing"`（欠费/风控，
+   **账户级**：`GET /models` 仍能列出 176 个模型，chat 一律被拒）。实测 9 个渠道 7 个可用，
+   唯一死的就是它——而项目 defaults 全绑在它身上。
+2. **`api_key` 全是空串**。用户的安全约定是"完整 key 只存环境变量、不落盘"，
+   于是配置里从来没填过 → 级联大脑 `enabled = bool(base_url and api_key and model)`
+   恒 False → **通话不出声，日志里只有一条 warning**。
+3. **加载器只认字面量**，没有"从环境变量取"的通路，于是①和②互相锁死：
+   要填 key 就得破坏约定，不填就没有大脑。
+
+**改动**：
+- `src/config.py` 新增 `${VAR}` 引用：`api_key: ${ZHIPU_API_KEY}` → 内存里展开成明文，
+  `save()` 时把**没被用户改过**的字段还原成模板（改过的按新值走 DPAPI 加密）。
+  环境变量缺失 → 空串 + 一条 config_issue（doctor 可见），不抛异常。
+  `secret_box` 不加密模板（否则配置文件里只会多一段无意义密文）。
+- 主链路切到免费源（`config.yaml` + 进仓的 `config.release.yaml` 同步改）：
+  主聊天/通话大脑 → 智谱 `glm-4-flash`（永久免费不限量，实测 1.06s，**无 reasoning**
+  ——通话大脑 max_tokens 只有 90，推理模型会被思考链吃光）；Agent → `glm-4.7-flash`
+  （要规划多步）；视觉 active 本已是 `glm-4v-flash`，只差 key；`manual_provider`
+  显式指 `zai-glm`（否则按列表顺序会挑到百炼的空 key 端口）；补 5 个免费端口
+  （魔搭 2000 次/天、TokenHub 体验包、AMD 20RPM、DeepSeek 官方 ¥18.7 兜底）。
+- 附带修一个潜伏 bug：`OpenAIClient(cfg)` 的 `api_key`/`model` 默认值写成 `""`，
+  而判据是 `x if x is not None else 读配置` —— 空串不是 None，于是"不传就走
+  llm.openai"这条路**从来**读到空模型、`available` 恒 False。改默认值为 None。
+- `tools/doctor.py` 新增 **「模型渠道」探活**：对当前生效的三条链路各发一次最小请求，
+  按 HTTP 语义判级——429 判 PASS（限流说明 key 有效）、400/401/402/403 判 FAIL、
+  5xx 与超时/断网判 WARN（**断网时不能全红，否则 doctor 就废了**）。
+  顺带修它自己的显示 bug：f-string 里 `${...}` 被渲染成 `$Ellipsis`。
+
+**两处假警噪点**（都由新代码触发，修在源头）：
+- `check_package_secrets.py` 把 `${VAR}` 当"非空凭据"阻断打包 → 认引用（引用不是密钥）；
+  把 `dpapi:...` 当明文告警（`sticker.api_key` 就这样每次打包报一次）→ 认密文前缀。
+- `doctor` 的「密钥落盘」项同样要放过 `${...}`。
+
+**验证**：
+- 端到端：`tools/_qc_verify_free_channel.py` 用**项目自己的客户端**真发请求，
+  拿到 `'智能助手，知无不言。'`；doctor 显示 `主聊天（glm-4-flash）✓ 1133ms；
+  当前视觉（glm-4v-flash）✓ 541ms`。
+- 依赖盘点 `tools/_qc_bailian_reliance.py`：**17 处指向百炼，0 处正在生效**。
+- 新测试三组：`test_config_env_refs.py`（展开/缺失/保存不落盘/改过值优先）、
+  `test_doctor_llm_channel.py`（10 组判级 + 收集去重 + 接线在位）、
+  `test_package_secrets_scan.py`（正反 7 组，防闸门被改松）。
+- 变异 7 刀全红（`tools/_qc_channel_mutation.py`）：400 不判红 / 429 判红 /
+  断网判红 / 摘掉接线 / 去重失效 / 空 key 发包 / 5xx 判红。还原后 sha256 一致。
+- 门禁 36 → **39 项全过、0 跳过**。
+
+**踩的坑（第三次，记下来）**：Git Bash 的 heredoc 会把字符串里的 `\n` 换成字面 `/n`
+——第一版变异脚本因此把锚点写坏，报"命中 0 次"；`doctor.py` 是 CRLF 而锚点用 LF，
+也命中 0。多行锚点一律用 `chr(13)/chr(10)` 逐行拼，别用转义序列。
+
+---
 
 `check_silent_except.py` 从 10-17 就写好了、报告里也写了"可直接进 CI"，但**一直没接线**，
 9 处真静默（主链路 `except: pass` 且块内无注释）就那么放着。这轮收掉。

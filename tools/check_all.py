@@ -57,6 +57,8 @@ GATES: list[tuple[str, str, list[str], bool]] = [
     # CharacterAPI。任一层断掉都是"点了没反应"，控制台之外没有任何痕迹。
     ("前端桥接", PY_VENV, ["tools/check_bridge_methods.py"], False),
     ("凭据/隐私", PY_RUNTIME, ["tools/check_package_secrets.py"], False),
+    # ${ENV} 引用与 dpapi: 密文都不算泄漏（本轮修的两处假警噪点）
+    ("凭据扫描正反", PY_VENV, ["src/tests/test_package_secrets_scan.py"], False),
     ("凭据日志卫生", PY_RUNTIME, ["tools/check_log_leak.py"], False),
     ("依赖声明", PY_VENV, ["tools/check_requirements.py", "--strict"], True),
     ("导入冒烟", PY_VENV, ["tools/smoke_import.py", "--strict"], True),
@@ -70,6 +72,11 @@ GATES: list[tuple[str, str, list[str], bool]] = [
     ("日志轮转", PY_VENV, ["src/tests/test_log_rotate.py"], False),
     ("配置校验", PY_VENV, ["src/tests/test_config_schema.py"], False),
     ("doctor 自检结构", PY_VENV, ["src/tests/test_doctor.py"], False),
+    # 模型渠道探活的判级（本轮事故的直接教训：百炼账户 400 欠费，配置里却"填好了"）。
+    # 测试 ⑦ 组 + 变异 7 刀全红（tools/_qc_channel_mutation.py）。
+    ("渠道探活判级", PY_VENV, ["src/tests/test_doctor_llm_channel.py"], False),
+    # 配置里的 ${ENV} 引用：展开、缺失告警、保存不把明文 key 落盘。
+    ("配置环境变量引用", PY_VENV, ["src/tests/test_config_env_refs.py"], False),
     ("打包依赖分级", PY_VENV, ["src/tests/test_make_dist_deps.py"], False),
     ("队列语义", PY_VENV, ["src/tests/test_queue_util.py"], True),
     ("通话冒烟", PY_VENV, ["src/ui/tests/test_call_smoke.py"], True),
