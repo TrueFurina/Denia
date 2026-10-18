@@ -30,11 +30,12 @@ def check(cond, msg):
         FAIL += 1
 
 
-def make_cfg(model_path: str):
+def make_cfg(model_path: str, mic_enabled: bool = True):
     """造一个只有 ns.voice.asr.model_path 的假 cfg。"""
     asr = types.SimpleNamespace(model_path=model_path, sample_rate=16000,
                                 cmd_timeout_s=8)
-    voice = types.SimpleNamespace(asr=asr)
+    voice = types.SimpleNamespace(asr=asr, mic_enabled=mic_enabled,
+                                  muted=False, mode="clone")
     return types.SimpleNamespace(ns=types.SimpleNamespace(voice=voice))
 
 
@@ -93,6 +94,25 @@ print("\n5) 本机真实状态（不打桩，跑一遍看结论合不合理）")
 lv, item, detail, fix = doctor.check_asr(make_cfg(""))
 check(item == "语音识别", f"检查项名叫「语音识别」（实际 {item!r}）")
 check(lv in (doctor.PASS, doctor.WARN, doctor.FAIL), f"判级合法：{lv}")
+
+print("\n5b) 模型就绪 + 麦克风关着 → 必须 WARN 且说清是麦克风")
+_real_isdir = os.path.isdir
+try:
+    # 强制"sherpa 模型就绪"：让任何含 sherpa-onnx 的路径判定为存在。
+    # 不这么做，断言会取决于本机有没有vosk缓存——那种"有时过有时不过"的
+    # 断言等于没有断言（⑥b 变异刀一开始就是靠这个漏洞漏抓的）。
+    os.path.isdir = lambda p: True if "sherpa-onnx" in str(p) else _real_isdir(p)
+    lv, item, detail, fix = doctor.check_asr(make_cfg("", mic_enabled=False))
+    check(lv == doctor.WARN, f"WARN（实际 {lv}）：{detail}")
+    check("麦克风" in detail, f"说清是麦克风：{detail}")
+    check("mic_enabled" in fix, f"修复指路：{fix}")
+
+    print("\n5c) 模型就绪 + 麦克风开着 → PASS 且不误报麦克风")
+    lv, item, detail, fix = doctor.check_asr(make_cfg("", mic_enabled=True))
+    check(lv == doctor.PASS, f"PASS（实际 {lv}）：{detail}")
+    check("麦克风" not in detail, f"不误报：{detail}")
+finally:
+    os.path.isdir = _real_isdir
 
 print("\n6) 检查项必须真的接在 run_all 里（写成工具却没接线 = 没有）")
 import inspect  # noqa: E402

@@ -59,6 +59,13 @@ MUTS = [
        "                    (check_asr, cfg)):"),
      E("                    (check_voice_backend, cfg)):")),
 
+    ("⑥b doctor：麦克风关着也判 PASS（模型就绪但她照样听不见）",
+     DR, T2,
+     J("        if mic_note and level == PASS:",
+       "            return (WARN, \"语音识别\", f\"{detail}；{mic_note}\","),
+     J("        if False:",
+       "            return (WARN, \"语音识别\", f\"{detail}；{mic_note}\",")),
+
     ("⑥ doctor：没有模型也判 PASS（没网时假装听得见）",
      DR, T2,
      E("    return (WARN, \"语音识别\",\n"
@@ -100,7 +107,7 @@ def main() -> int:
         print(f"还原 {path}：字节一致={ok}")
         if not ok:
             bad += 1
-    print("六刀全红" if bad == 0 else f"有 {bad} 处异常")
+    print("七刀全红" if bad == 0 else f"有 {bad} 处异常")
     return 1 if bad else 0
 
 
