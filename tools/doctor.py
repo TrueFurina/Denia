@@ -979,6 +979,137 @@ def _takes_arg(fn: object) -> bool:
         return False
 
 
+# 需要本地 HTTP 服务的 TTS 引擎：值 = (默认端口, 服务名)
+_LOCAL_SERVICE_ENGINES = {
+    "voxcpm": (9881, "VoxCPM2"),
+    "gpt-sovits": (9880, "GPT-SoVITS"),
+}
+
+
+def check_voice_backend(cfg: object) -> tuple[str, str, str, str]:
+    """「她现在能说话吗」——解析当前角色的 TTS 引擎，**并真合成一次**。
+
+    【2026-10-19】实测发现最唬人的一类静默：`create_backend('')` 对
+    「engine 为空/未知」返回**静音后端**（_SilentBackend：接口齐全、不出声、
+    不联网，2026-10-16 发布口径）。于是角色 voice.engine 为空时，症状是
+    「AI 有回复但一个字都不说」——日志里一条都没有，因为框架层一切正常。
+    这和 LLM 渠道欠费是同一种坏法：**配置看着没填错，只是没被验证过**。
+
+    判级：
+      FAIL  落到静音后端（engine 空/未知）→ 她永远不说话，产品级失效
+      FAIL  绑了 pyttsx3 但本机 import 不到 → 同上
+      FAIL  真合成失败（后端声称可用却出不了声）
+      WARN  绑了需要本地服务的引擎（voxcpm/gpt-sovits）但端口没在听
+      WARN  绑了云端引擎但 api_key 为空
+      PASS  本地引擎（pyttsx3 等）真合成出非空音频
+    """
+    if cfg is None:
+        return (FAIL, "语音合成", "配置没加载成功，无法确认 TTS 引擎",
+                "先看上面「配置文件」一项")
+
+    try:
+        vc = cfg.get_active_voice_config()
+    except Exception as e:  # noqa: BLE001
+        return (FAIL, "语音合成", f"解析角色音色配置失败：{e}", "")
+
+    if vc is None:
+        return (FAIL, "语音合成",
+                "当前角色没有音色配置 → TTS 降级成 pyttsx3（能响但非角色音色）",
+                "给角色填 voice.engine")
+
+    engine = (getattr(vc, "engine", "") or "").strip()
+    label = f"engine={engine!r}"
+
+    # ① 空/未知引擎 → 静音后端（这是本轮要抓住的主角）
+    if not engine:
+        return (FAIL, "语音合成",
+                f"{label}：未绑定任何声音，落到「静音后端」——她有回复但不说一个字",
+                "在角色 voice 段填 engine: pyttsx3（本地免费、必响）"
+                " 或 voxcpm / openai_tts / dashscope_cosy")
+
+    try:
+        from src.voice.tts_backends import create_backend
+    except Exception as e:  # noqa: BLE001
+        return (FAIL, "语音合成", f"无法加载 tts_backends：{e}", "")
+    try:
+        be = create_backend(engine, vc)
+    except Exception as e:  # noqa: BLE001
+        return (FAIL, "语音合成", f"构造后端失败（{label}）：{e}", "检查该引擎的配置项")
+
+    if type(be).__name__ == "_SilentBackend":
+        return (FAIL, "语音合成",
+                f"{label} 不在引擎表里 → 静音后端，她永远不说话",
+                "可选：pyttsx3 / voxcpm / openai_tts / dashscope_cosy / fish_audio")
+
+    # ② 需要本地 HTTP 服务的引擎：先看端口在不在听
+    if engine in _LOCAL_SERVICE_ENGINES:
+        port, svc = _LOCAL_SERVICE_ENGINES[engine]
+        if not _port_listening(port):
+            return (WARN, "语音合成",
+                    f"{label}：本机 {svc} 服务没在 {port} 端口监听 → 合成时会失败",
+                    f"启动 {svc}（默认 http://127.0.0.1:{port}），"
+                    f"或把角色 voice.engine 改成 pyttsx3 先保证能出声")
+
+    # ③ 云端引擎没 key → 一定失败
+    api_url = (getattr(vc, "api_url", "") or "").strip()
+    key = (getattr(vc, "api_key", "") or "").strip()
+    if api_url.startswith("http") and not key:
+        return (WARN, "语音合成", f"{label}：云端引擎没配 api_key", "补 api_key")
+
+    # ④ 本地引擎真合成一次：**能出声**这种事必须听过才算数。
+    #    云端引擎不真合成——欠费/限流时会卡住整个 doctor。
+    if not api_url.startswith("http"):
+        try:
+            import asyncio
+            import tempfile
+
+            from src.voice.tts_backends import TTSBackend  # noqa: F401
+            out = os.path.join(tempfile.gettempdir(), "daniya_doctor_tts.wav")
+            if os.path.exists(out):
+                os.unlink(out)
+            fn = be.speak if hasattr(be, "speak") else be.synthesize
+            asyncio.run(_await_maybe(fn, "自检", out))
+            if not (os.path.exists(out) and os.path.getsize(out) > 800):
+                return (FAIL, "语音合成",
+                        f"{label}：合成返回了但产物为空/过小（{os.path.getsize(out) if os.path.exists(out) else 0} 字节）",
+                        "换一个 engine 试试；本机 pyttsx3 一定能响")
+            size = os.path.getsize(out)
+            try:
+                os.unlink(out)
+            except OSError:
+                pass
+            return (PASS, "语音合成", f"{label} · 真合成 OK（{size} 字节）", "")
+        except Exception as e:  # noqa: BLE001
+            return (FAIL, "语音合成", f"{label}：真合成失败 {type(e).__name__}: {e}",
+                    "换一个 engine 试试；本机 pyttsx3 一定能响")
+
+    return (PASS, "语音合成", f"{label}（云端，未真合成）", "")
+
+
+async def _await_maybe(fn, text: str, out: str):
+    """统一 await：后端方法可能是 async（如 DashScopeCosyBackend.synthesize）。
+
+    注意 asyncio 必须在**本函数内** import：调用方（check_voice_backend）是在
+    try 块里 import 的局部变量，作用域到不了这里。2026-10-19 实测 NameError。
+    """
+    import asyncio
+
+    res = fn(text, out)
+    if asyncio.iscoroutine(res):
+        await res
+    return res
+
+
+def _port_listening(port: int, host: str = "127.0.0.1") -> bool:
+    import socket
+
+    try:
+        with socket.create_connection((host, port), timeout=0.4):
+            return True
+    except OSError:
+        return False
+
+
 def run_all(config_path: str) -> list[tuple[str, str, str, str]]:
     """跑完全部检查；任何一项自己炸了都降级成 WARN，不让整体崩。"""
     results: list[tuple[str, str, str, str]] = []
@@ -1006,7 +1137,8 @@ def run_all(config_path: str) -> list[tuple[str, str, str, str]]:
                     (check_disk, None),
                     (check_logs, None),
                     (check_secret_storage, config_path),
-                    (check_llm_channel, cfg)):
+                    (check_llm_channel, cfg),
+                    (check_voice_backend, cfg)):
         try:
             # 按「函数自己声明的形参」决定传不传，而不是按参数值是否为 None。
             # 见 _takes_arg 的注释：那是本文件踩过的坑。
