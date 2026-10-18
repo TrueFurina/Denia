@@ -28,12 +28,31 @@
 | `add925a` | 20:26 | fix | 去掉写死盘符与 locale 编码依赖 | import 实测通过 |
 | `3fb4a71` | 20:26 | chore | `live2d/rig` 由 gitlink 改为真实跟踪 | 变异：删文件 → exit 1 |
 | `1207233` | 20:31 | chore | 打包闸双向化（也查"必须带的"） | 三组假包实测 |
+| — | 12:10 | fix | 桌宠后端默认值改回 auto（默认拿到真透明） | doctor PASS + 变异 3 项 FAIL |
 | `422f140` | 10:4x | fix | RPC 401 残留 body 污染 keep-alive（10053 假绿） | 720 次长连接 0 失败 |
 | `2035457` | 10:5x | security | 敏感配置 DPAPI 加密落盘（C9-1） | 20 断言 + 3 刀变异 |
 | `c216151` | 11:0x | perf | phash 自实现替换 ImageHash，甩 scipy（C9-3） | 208 图 bit 级对照；472→370MB |
 | `c010d83` | 11:1x | feat | wheelhouse 改 pip wheel，真离线化收口（C9-4） | 63 whl / 0 sdist；离线装全通 |
 | `8f28cc0` | 11:2x | docs | C2 拍板（A 路线）+ 凭据日志卫生门禁 | 规划落档 |
 | （本次） | 11:5x | feat | C2-A 落地：NSIS 安装器 + 升级保留配置 | 见下方明细 |
+
+### 2026-10-18 · C2-A 补强：装配漂移守卫 + 安装/卸载运行中检测
+
+**漂移守卫**：dist_stage 是旧装配、src/version.py 已 bump 时，原实现会
+出"安装包报新版本、里面是旧程序"的双口径。`build_installer` 现在读
+装配目录的 src/version.py 与注入版本比对，不一致或缺文件直接拒绝，
+makensis 根本不启动（先挡后跑）。测试：mismatch / 缺 version.py 两路
+断言 + argv 未被调用断言。
+
+**运行中检测**：应用在跑时升级/卸载会锁文件失败、装一半。安装与卸载
+段开头用 `FileOpen "$INSTDIR\python\python.exe" a` 写试探——被进程
+映射的 exe 写打开必然 sharing violation；打开成功立即 FileClose。
+挡下时 MessageBox 提示"先退出再装"，`/SD IDOK` 静默路径同样中止。
+**真机级验证**：ctypes CreateFileW 独占锁模拟运行中 → 卸载被挡（13
+条原样）；释放句柄重卸 → 完成（只剩 config.yaml）。
+
+**踩坑**：MessageBox 的 /SD 枚举是 `IDOK` 不是 `OK`——填错 makensis
+只报一串 modeflag 用法不报具体哪个词（第一次构建即炸，好逮）。
 
 ### 2026-10-18 · C2-A 收口：版本号单一真值注入（--installer 一步出包）
 
@@ -1149,6 +1168,34 @@ PROBE {"hasBridge":true,"psdType":"function","title":"看板娘[OK]","psdLen":41
 
 ---
 
+## 桌宠后端默认值改回 auto（2026-10-18 12:10）
+
+**问题**：上一轮把壳判成"本机不可用"、默认降到 webview。但自动退让落地后，
+"默认不试壳"等于把壳存在的唯一理由（真透明）默认关掉——AI 桌面伴侣的白底
+看板娘一直是这个项目最显眼的未兑现承诺。
+
+**改动**：
+- `src/ui/pet_backend.py` `DEFAULT = WEBVIEW` → `AUTO`，注释写清"为什么改回来"
+- `src/config_schema.py` / `config.yaml` / `config.release.yaml` 缺省值同步为 `auto`
+- `main.py` 帮助文案、`src/ui/main_window.py` 的 `run_webview()` 形参默认值同步
+- `tools/doctor.py` `_shell_required()`（二态）→ `_shell_mode()`（三态）
+
+**必须一起改的两处，否则是半截接线**：
+1. **doctor 必须和生产行为一致**。改完默认值才发现 doctor 的 `probe_shell()`
+   仍是裸启动，于是它报 `[WARN] 本机起不来：GPU process isn't usable`，
+   而用户真实启动是好的——自检工具又骗了一次人。已改成复刻生产的退让逻辑，
+   成功时点明"走了 GPU 回退开关"。
+2. **RPC 随默认值常开**（`wants_rpc(DEFAULT)` False → True），测试断言同步
+   改为"默认后端要起 RPC"，并注明这是 auto 的代价而不是漏改。
+
+**验证**：`test_pet_backend` / `test_config_schema` / `test_doctor` 全 PASS；
+`tools/doctor.py` → `[PASS] Electron 壳 配置为 auto，实起一次通过（走了 GPU 回退开关）`；
+`tools/check_all.py` → 27 项全过。
+
+**变异验证**：`DEFAULT` 改回 `WEBVIEW` → `test_pet_backend` FAIL 3 项；
+doctor 去掉回退重试（`if False`）→ 重新变成 `[WARN] 本机起不来`（假红）。
+
+---
 ## 待办（需要你决策）
 
 | 项 | 现状 | 需决定什么 |

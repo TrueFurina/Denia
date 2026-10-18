@@ -757,12 +757,10 @@ def read_app_version(root: str) -> str:
     正则读文本而不是 import：不执行模块代码、不依赖包内环境，
     构建机上有没有装 src 的依赖都能拿到版本号。
     """
-    path = os.path.join(root, "src", "version.py")
-    with open(path, encoding="utf-8") as fh:
-        m = re.search(r'^APP_VERSION\s*=\s*"([^"]+)"', fh.read(), re.M)
-    if not m:
+    ver = _read_version_file(os.path.join(root, "src", "version.py"))
+    if ver is None:
         raise SystemExit("✗ src/version.py 里找不到 APP_VERSION 字面量")
-    return m.group(1)
+    return ver
 
 
 _NSIS_CANDIDATES = (
@@ -780,6 +778,16 @@ def find_makensis(root: str) -> str | None:
     return None
 
 
+def _read_version_file(path: str) -> str | None:
+    """读单个 version.py 里的 APP_VERSION 字面量；读不到/没有返回 None。"""
+    try:
+        with open(path, encoding="utf-8") as fh:
+            m = re.search(r'^APP_VERSION\s*=\s*"([^"]+)"', fh.read(), re.M)
+        return m.group(1) if m else None
+    except OSError:
+        return None
+
+
 def build_installer(out_dir: str, root: str, nsis_exe: str | None = None,
                     version: str | None = None) -> bool:
     """把 out_dir 打成 NSIS 安装包（C2-A）。
@@ -787,8 +795,20 @@ def build_installer(out_dir: str, root: str, nsis_exe: str | None = None,
     版本号与装配目录都通过 /D 注入 tools/installer.nsi（脚本里有
     !ifndef 守卫，兜底 VERSION 是 0.0.0-dev 哨兵——忘注入会很难看，
     这是故意的）。产物落在 root/dist/ 下，名字由脚本 OutFile 决定。
+
+    漂移守卫：out_dir/src/version.py 必须存在且与注入版本一致——
+    装配目录是旧代码、version.py 已 bump 时，装出来就是"安装包报新
+    版本、里面是旧程序"，这类双口径必须在这里挡死。
     """
     version = version or read_app_version(root)
+    stage_ver = _read_version_file(os.path.join(out_dir, "src", "version.py"))
+    if stage_ver is None:
+        print(f"  ✗ 装配目录里没有 src/version.py，不像装配产物：{out_dir}")
+        return False
+    if stage_ver != version:
+        print(f"  ✗ 版本漂移：装配目录是 {stage_ver}，注入的是 {version}"
+              f"——先重新装配（--out {os.path.basename(out_dir)} …）再出包")
+        return False
     nsis = nsis_exe or find_makensis(root)
     if not nsis or not os.path.isfile(nsis):
         print("  ✗ 找不到 makensis：装到 .build_tools/nsis-3.10/ 或 Program Files (x86)/NSIS")

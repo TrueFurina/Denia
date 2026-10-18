@@ -595,7 +595,11 @@ def main() -> int:
         fake_nsis = os.path.join(scratch, "makensis.exe")
         open(fake_nsis, "w").close()
         stage = os.path.join(scratch, "mystage")
-        os.makedirs(stage)
+        os.makedirs(os.path.join(stage, "src"))
+        # 装配目录里的 version.py 必须与注入版本一致（漂移守卫）
+        with open(os.path.join(stage, "src", "version.py"), "w",
+                  encoding="utf-8") as fh:
+            fh.write(f'APP_VERSION = "{ver}"\n')
         captured: dict = {}
 
         def fake_run(argv, **kw):
@@ -624,6 +628,23 @@ def main() -> int:
         ok2 = make_dist.build_installer(stage, ROOT,
                                         nsis_exe=os.path.join(scratch, "nope.exe"))
         check(ok2 is False, "makensis 不存在时返回 False（不静默跳过）")
+
+        # 漂移守卫：装配目录的 src/version.py 与注入版本不一致 → 拒绝出包
+        bad_stage = os.path.join(scratch, "oldstage")
+        os.makedirs(os.path.join(bad_stage, "src"))
+        with open(os.path.join(bad_stage, "src", "version.py"), "w",
+                  encoding="utf-8") as fh:
+            fh.write('APP_VERSION = "0.0.1"\n')
+        captured.clear()
+        ok3 = make_dist.build_installer(bad_stage, ROOT, nsis_exe=fake_nsis)
+        check(ok3 is False, "装配目录版本与注入版本不一致时拒绝出包")
+        check("argv" not in captured,
+              "版本漂移时 makensis 根本没被调用（先挡后跑）")
+        # 装配目录缺 src/version.py（不是装配产物）→ 同样拒绝
+        empty_stage = os.path.join(scratch, "emptystage")
+        os.makedirs(empty_stage)
+        ok4 = make_dist.build_installer(empty_stage, ROOT, nsis_exe=fake_nsis)
+        check(ok4 is False, "装配目录缺 src/version.py 时拒绝出包")
     finally:
         shutil.rmtree(scratch, ignore_errors=True)
 

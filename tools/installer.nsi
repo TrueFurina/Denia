@@ -53,6 +53,20 @@ SetCompressor /SOLID lzma
 Section "Install"
   SetOutPath $INSTDIR
 
+  ; ---- 运行中检测：程序文件被占用说明应用在跑，硬铺会装一半 ----
+  ; python.exe 被进程映射时写打开必然失败（sharing violation）；
+  ; 打得开 = 没在跑（或刚退出），关掉句柄继续。
+  IfFileExists "$INSTDIR\python\python.exe" 0 NotRunning
+  ClearErrors
+  FileOpen $0 "$INSTDIR\python\python.exe" a
+  IfErrors 0 CloseProbe
+    MessageBox MB_OK|MB_ICONEXCLAMATION \
+        "检测到达妮娅正在运行，请先退出（托盘右键 → 退出）再安装。" /SD IDOK
+    Abort
+CloseProbe:
+  FileClose $0
+NotRunning:
+
   ; ---- 用户资产：永不覆盖（升级保留配置） ----
   SetOverwrite off
   File "${STAGE}\config.yaml"
@@ -104,6 +118,18 @@ SectionEnd
 ; ============================================================
 
 Section "Uninstall"
+  ; 运行中检测（同安装段：文件被占用会卸一半）
+  IfFileExists "$INSTDIR\python\python.exe" 0 NotRunningU
+  ClearErrors
+  FileOpen $0 "$INSTDIR\python\python.exe" a
+  IfErrors 0 CloseProbeU
+    MessageBox MB_OK|MB_ICONEXCLAMATION \
+        "检测到达妮娅正在运行，请先退出（托盘右键 → 退出）再卸载。" /SD IDOK
+    Abort
+CloseProbeU:
+  FileClose $0
+NotRunningU:
+
   ; 快捷方式
   Delete "$DESKTOP\${APPNAME}.lnk"
   Delete "$SMPROGRAMS\${APPNAME}\${APPNAME}.lnk"
