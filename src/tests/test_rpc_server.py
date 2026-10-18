@@ -216,6 +216,102 @@ def test_http_shape(info: dict) -> None:
         rpc_server.MAX_BODY = old
 
 
+def _raw_request(sock: socket.socket, info: dict, body: bytes,
+                 token: str | bool | None = None, path: str = "/rpc") -> None:
+    head = (
+        f"POST {path} HTTP/1.1\r\n"
+        "Host: 127.0.0.1\r\n"
+        "Content-Type: application/json\r\n"
+        f"Content-Length: {len(body)}\r\n"
+    ).encode()
+    if token is not False:
+        head += b"X-Daniya-Token: " + (token if token is not None else info["token"]).encode() + b"\r\n"
+    sock.sendall(head + b"\r\n" + body)
+
+
+def _read_response(sock: socket.socket) -> tuple[int, dict, dict]:
+    buf = b""
+    while b"\r\n\r\n" not in buf:
+        chunk = sock.recv(65536)
+        if not chunk:
+            raise RuntimeError("连接在响应头读全之前被关闭")
+        buf += chunk
+    head, rest = buf.split(b"\r\n\r\n", 1)
+    lines = head.decode("iso-8859-1").split("\r\n")
+    status = int(lines[0].split()[1])
+    headers: dict[str, str] = {}
+    for ln in lines[1:]:
+        k, _, v = ln.partition(":")
+        headers[k.strip().lower()] = v.strip()
+    need = int(headers.get("content-length") or 0)
+    while len(rest) < need:
+        chunk = sock.recv(65536)
+        if not chunk:
+            break
+        rest += chunk
+    try:
+        payload = json.loads(rest[:need].decode("utf-8"))
+    except Exception:  # noqa: BLE001
+        payload = {}
+    return status, headers, payload
+
+
+def _second_call_ok(sock: socket.socket, info: dict, body: bytes) -> tuple[bool, str]:
+    """同一条连接上的第二次调用是否还能拿到干净结果。"""
+    try:
+        _raw_request(sock, info, body)
+        status, _h, payload = _read_response(sock)
+    except Exception as e:  # noqa: BLE001
+        return False, f"{type(e).__name__}: {e}"
+    return (status == 200 and payload.get("result") == "pong"), f"状态 {status}"
+
+
+def test_keepalive_hygiene(info: dict) -> None:
+    """拒绝分支必须排空请求体，否则残留字节会被当成下一个请求。
+
+    这是真实故障的回归：401（鉴权失败）本来在读完 body 之前就 return，
+    残留 body 留在 keep-alive 连接的接收缓冲里，被解析成请求行。
+    在 Windows 上表现为客户端 WinError 10053，且令牌一错、后续调用全错。
+    """
+    print("[4] 拒绝分支不得污染长连接")
+    ok_body = json.dumps({"method": "ping", "args": [], "kwargs": {}}).encode()
+    addr = (info["host"], info["port"])
+
+    # 4.1 鉴权失败（body 未读）
+    with socket.create_connection(addr, timeout=15) as sock:
+        sock.settimeout(15)
+        _raw_request(sock, info, ok_body, token=False)
+        st, hd, _ = _read_response(sock)
+        check(st == 401, f"未授权被拒（{st}）")
+        check(hd.get("connection", "").lower() != "close", "401 不要求关闭连接")
+        ok, why = _second_call_ok(sock, info, ok_body)
+        check(ok, f"401 之后同一连接仍可正常调用（{why}）")
+
+    # 4.2 请求体超限（body 同样未读）
+    old = rpc_server.MAX_BODY
+    try:
+        rpc_server.MAX_BODY = 64
+        big = json.dumps({"method": "echo", "args": ["x" * 200], "kwargs": {}}).encode()
+        with socket.create_connection(addr, timeout=15) as sock:
+            sock.settimeout(15)
+            _raw_request(sock, info, big)
+            st, _hd, _ = _read_response(sock)
+            check(st == 413, f"超限请求体被拒（{st}）")
+            ok, why = _second_call_ok(sock, info, ok_body)
+            check(ok, f"413 之后同一连接仍可正常调用（{why}）")
+    finally:
+        rpc_server.MAX_BODY = old
+
+    # 4.3 POST 到错误路径（同样在读 body 之前返回）
+    with socket.create_connection(addr, timeout=15) as sock:
+        sock.settimeout(15)
+        _raw_request(sock, info, ok_body, path="/nope")
+        st, _hd, _ = _read_response(sock)
+        check(st == 404, f"错误路径返回 404（{st}）")
+        ok, why = _second_call_ok(sock, info, ok_body)
+        check(ok, f"404 之后同一连接仍可正常调用（{why}）")
+
+
 def main() -> int:
     api = FakeAPI()
     srv = RpcServer(api)
@@ -225,11 +321,12 @@ def main() -> int:
         test_parity(api, info)
         test_security(info)
         test_http_shape(info)
+        test_keepalive_hygiene(info)
     finally:
         srv.stop()
 
     # 停掉后端口必须真的关掉，否则换壳时会出现"端口占用"误判
-    print("[4] 关闭")
+    print("[5] 关闭")
     with socket.socket() as s:
         alive = s.connect_ex((info["host"], info["port"])) == 0
     check(not alive, "stop() 后端口已关闭")
