@@ -70,6 +70,10 @@ from .main_window import (  # 窗口创建/本地服务（2026-10-17 拆分，re
     _FREEZE_DUMPS, _GUI_STALL_S, _bailian_inject_loop, _ensure_web_server,
     _wv2_broadcast, create_bailian_console_window, create_desktop_companion,
     create_main_window, create_notify_window, run_webview,
+    # 卡死现场 dump 在 2026-10-17 随窗口代码一起搬去了 main_window，
+    # main.py 仍从 webapp 取这个名字 → 少了这一行就是**启动即 ImportError**。
+    # 2026-10-18 实测：main.py --help 直接崩，说明这条链路自那次拆分后就没跑通过。
+    _start_gui_liveness_probe,
 )
 
 # /local_img 路由的额外白名单目录（2026-10-03 聊天图片）：char_banners 之外，

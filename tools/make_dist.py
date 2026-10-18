@@ -39,6 +39,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import os
 import re
 import shutil
@@ -231,12 +232,33 @@ def parse_requirements(path: str) -> dict[str, list[str]]:
     return tiers
 
 
+def normalize_tier(upto: str) -> str:
+    """把用户传的档位收敛成 `_TIER_ORDER` 里的真名。
+
+    两件事必须做，否则"参数名会骗人"（质检 2026-10-18 第 7 条遗留）：
+      1. `all` 是"装到最高档"的别名 → 收敛成 `optional`，
+         别让调用方以为有一个叫 all 的档位；
+      2. **未知档位直接抛**。旧实现里 `upto != "all"` 的判断让
+         `upto="optinal"`（拼错）和 `upto="important"` 表现完全一样：
+         不装可选项、也不报错。参数名骗人的代价由用户在打包现场付。
+    """
+    text = str(upto or "").strip().lower()
+    if text == "all":
+        return _TIER_ORDER[-1]
+    if text in _TIER_ORDER:
+        return text
+    raise ValueError(
+        f"未知依赖档位 {upto!r}（可选：{', '.join(_TIER_ORDER)}；"
+        f"all 是 {_TIER_ORDER[-1]} 的别名）")
+
+
 def tier_specs(tiers: dict[str, list[str]], upto: str) -> list[str]:
     """取到某一档为止的全部依赖（包含更低档）。"""
+    stop = normalize_tier(upto)
     out: list[str] = []
     for t in _TIER_ORDER:
         out.extend(tiers.get(t, []))
-        if t == upto:
+        if t == stop:
             break
     return out
 
@@ -330,14 +352,16 @@ def install_deps(out_dir: str, upto: str = "important", offline: bool = False,
     if have_wheels:
         print(f"  · 从本地 wheelhouse 安装（离线）：{wh}")
 
+    # 先把档位收敛/校验：未知值在这里就炸，而不是带着一路装错东西
+    wanted = normalize_tier(upto)
     fatal = False
     for tier in _TIER_ORDER:
         specs = tiers.get(tier) or []
         if not specs:
             continue
-        if tier == "optional" and upto != "all":
+        if tier not in _TIER_ORDER[:_TIER_ORDER.index(wanted) + 1]:
             print(f"  - 跳过「{_TIER_LABEL[tier]}」档 {len(specs)} 项"
-                  f"（加 --tier all 才会装）")
+                  f"（到 {wanted} 档为止；加 --tier {_TIER_ORDER[-1]} 才会装）")
             continue
         print(f"  → 安装「{_TIER_LABEL[tier]}」档 {len(specs)} 项 …")
         args = ["install", "--no-warn-script-location", *specs]
@@ -751,6 +775,45 @@ def copy_items(items: list[tuple[str, str, bool]], out: str) -> None:
             shutil.copy2(src, dst)
 
 
+def src_fingerprint(root: str) -> str:
+    """【C9-5】装配源码指纹：root 下 src/**/*.py + main.py 的聚合 sha256。
+
+    输入是（相对路径 + 文件内容），排序后逐条喂 sha256。只看内容不看
+    mtime——git checkout / 重排工作区不会造成假阳性。main.py 不存在
+    （如测试假根）就只算 src/。
+    """
+    h = hashlib.sha256()
+    rels: list[str] = []
+    src_dir = os.path.join(root, "src")
+    for dirpath, dirnames, filenames in os.walk(src_dir):
+        dirnames.sort()
+        for fn in filenames:
+            if fn.endswith(".py"):
+                full = os.path.join(dirpath, fn)
+                rels.append(os.path.relpath(full, root).replace("\\", "/"))
+    if os.path.isfile(os.path.join(root, "main.py")):
+        rels.append("main.py")
+    for rel in sorted(rels):
+        with open(os.path.join(root, rel), "rb") as fh:
+            h.update(rel.encode("utf-8"))
+            h.update(b"\x00")
+            h.update(fh.read())
+            h.update(b"\x00")
+    return h.hexdigest()
+
+
+def write_src_fingerprint(root: str, out_dir: str) -> str:
+    """装配收尾时把源码指纹存档到 out_dir/.src_fingerprint（C9-5）。
+
+    build_installer 出包前重算比对——版本没 bump 但装配后源码继续改，
+    出来的包就是「安装包报这个版本、里面是旧程序」，指纹闸挡死它。
+    """
+    fp = src_fingerprint(root)
+    with open(os.path.join(out_dir, ".src_fingerprint"), "w", encoding="utf-8") as fh:
+        fh.write(fp + "\n")
+    return fp
+
+
 def read_app_version(root: str) -> str:
     """从 src/version.py 读 APP_VERSION（单一真值）。
 
@@ -809,6 +872,21 @@ def build_installer(out_dir: str, root: str, nsis_exe: str | None = None,
         print(f"  ✗ 版本漂移：装配目录是 {stage_ver}，注入的是 {version}"
               f"——先重新装配（--out {os.path.basename(out_dir)} …）再出包")
         return False
+    # 【C9-5】源码指纹闸：版本没 bump 但装配后 src/ 继续改，版本守卫看不见——
+    # 指纹看得见。装配目录必须带 .src_fingerprint 存档，且与当前 root 的
+    # src/ 重算结果一致，否则出来的包就是「报这个版本、里面是旧程序」。
+    fp_path = os.path.join(out_dir, ".src_fingerprint")
+    if not os.path.isfile(fp_path):
+        print(f"  ✗ 装配目录没有 .src_fingerprint 存档（旧装配产物）"
+              f"——重新装配一次（make_dist --out …）再出包")
+        return False
+    with open(fp_path, encoding="utf-8") as fh:
+        fp_saved = fh.read().strip()
+    fp_now = src_fingerprint(root)
+    if fp_saved != fp_now:
+        print(f"  ✗ 源码漂移：装配后 src/ 已被修改（存档 {fp_saved[:12]}… "
+              f"≠ 当前 {fp_now[:12]}…）——重新装配再出包")
+        return False
     nsis = nsis_exe or find_makensis(root)
     if not nsis or not os.path.isfile(nsis):
         print("  ✗ 找不到 makensis：装到 .build_tools/nsis-3.10/ 或 Program Files (x86)/NSIS")
@@ -852,8 +930,11 @@ def main() -> int:
                     help="内置运行时没装第三方包时视为失败（CI/正式发布建议开）")
     ap.add_argument("--install-deps", action="store_true",
                     help="组装后把依赖装进包内的 python/（让它拷到干净机器上也能跑）")
-    ap.add_argument("--tier", choices=("core", "important", "all"), default="important",
-                    help="--install-deps 装到哪一档：core=启动必需（默认 important）")
+    ap.add_argument("--tier", choices=("core", "important", "optional", "all"),
+                    default="important",
+                    help="--install-deps 装到哪一档（含更低档）：core=启动必需；"
+                         "important=+录音/托盘/音量/游戏（默认）；"
+                         "optional=+装了更好的可选项；all 是 optional 的别名")
     ap.add_argument("--wheelhouse", action="store_true",
                     help="把依赖连传递依赖下载成 wheel 放到 <out>/wheels/（供离线安装）")
     ap.add_argument("--offline", action="store_true",
@@ -900,6 +981,7 @@ def main() -> int:
         print(f"  ⚠ 目标已有**改过的** config.yaml，已备份：{os.path.basename(_bak)}")
         print("    （下个版本的用户解压覆盖不会经过这里——见 README 的升级说明）")
     copy_items(items, out)
+    write_src_fingerprint(root, out)  # 【C9-5】源码指纹存档，出包闸要用
     _stale = purge_stale_caches(out)
     if _stale:
         # 说出来而不是默默清掉：这提示"上一次装配后有人在包内跑过东西"

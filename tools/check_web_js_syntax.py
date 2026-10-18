@@ -1,10 +1,16 @@
 # -*- coding: utf-8 -*-
 """抽取 index.html 的 inline script 与外链 js，逐个交给 node --check 做真语法检查。
 语法错误会让整个 <script> 不执行 → 同一块里所有的按钮绑定全部失效（静默无反应）。"""
-import io, os, re, subprocess, sys
+import io, os, re, shutil, subprocess, sys
 
-ROOT = r"G:\ai对话\11"
-NODE = r"C:\Users\Administrator\.workbuddy\binaries\node\versions\22.22.2-3\node.exe"
+# 路径从脚本自身推，别写死构建机目录：以前这里是 `G:\ai对话\11`，
+# 换台机器直接 FileNotFoundError（2026-10-18 质检 P3）。
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+# node 也不写死：优先环境变量，其次 PATH，最后给个明确的报错
+NODE = os.environ.get("DANIYA_NODE") or shutil.which("node") or ""
+if not NODE:
+    print("找不到 node（用于 node --check 语法检查）；可用 DANIYA_NODE 指定")
+    raise SystemExit(2)
 os.chdir(ROOT)
 OUT = os.path.join(ROOT, "data", "_syntax_check")
 os.makedirs(OUT, exist_ok=True)

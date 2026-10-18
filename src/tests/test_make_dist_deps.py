@@ -600,6 +600,11 @@ def main() -> int:
         with open(os.path.join(stage, "src", "version.py"), "w",
                   encoding="utf-8") as fh:
             fh.write(f'APP_VERSION = "{ver}"\n')
+        # 【C9-5】装配时 make_dist 会写 .src_fingerprint；这里模拟装配产物
+        with open(os.path.join(stage, ".src_fingerprint"), "w",
+                  encoding="utf-8") as fh:
+            fh.write(make_dist.src_fingerprint(ROOT) + "
+")
         captured: dict = {}
 
         def fake_run(argv, **kw):
@@ -647,6 +652,140 @@ def main() -> int:
         check(ok4 is False, "装配目录缺 src/version.py 时拒绝出包")
     finally:
         shutil.rmtree(scratch, ignore_errors=True)
+
+    print()
+    print("[22] `upto=\"optional\"` 必须真的装可选项（质检第 7 条遗留的修复）")
+    # 真事故：install_deps 里 optional 档的门写的是 `upto != "all"`，
+    # 于是按参数名传 "optional" 的人拿到的是 "important" 的行为——
+    # 不装可选项、也不报错。参数名骗人，代价由打包现场付。
+    out22 = _mk_out(os.path.join(tmp, "o22"))
+    seen22: list[list[str]] = []
+
+    def _pip22(py, args):
+        seen22.append([a for a in args if ">=" in a])
+        return (0, [])
+
+    make_dist._pip = _pip22
+    make_dist.install_deps(out22, upto="optional", verify=False)
+    flat22 = [x for specs in seen22 for x in specs]
+    check(any(x.startswith("opencv-python") for x in flat22),
+          "upto=optional 装上了可选项")
+    check(all(x in flat22 for x in ("PyYAML>=6.0", "PyAudio>=0.2.14")),
+          "upto=optional 仍包含更低档（别变成只装可选）")
+
+    print("[23] all 与 optional 是同一档（别名，不是两个档位）")
+    s_all = make_dist.tier_specs(tiers, "all")
+    s_opt = make_dist.tier_specs(tiers, "optional")
+    check(s_all == s_opt, "tier_specs('all') == tier_specs('optional')")
+    check(make_dist.normalize_tier("all") == make_dist.normalize_tier("optional"),
+          "normalize_tier 把两者收敛到同一个真名")
+
+    print("[24] 拼错档位必须抛异常，不能静默按 important 处理")
+    # 这条是 [22] 的护栏：只修 "optional 能装" 不够，下次拼成 "optinal"
+    # 又会静默变成"不装可选项"。所以未知值要当场炸。
+    for bad in ("optinal", "IMPORTANT!", "", "core!", "corecore"):
+        try:
+            make_dist.normalize_tier(bad)
+            check(False, f"{bad!r} 应当抛 ValueError")
+        except ValueError:
+            check(True, f"{bad!r} → ValueError")
+    check(make_dist.normalize_tier(" CORE ") == "core", "大小写与空白被容忍")
+    # 空白是与容忍，不是与拼错同罪：带空格的合法值要被收进来
+    check(make_dist.normalize_tier("optional ") == "optional",
+          "尾随空白的合法值照样接受（先 strip 再判断）")
+    # install_deps 会先校验再动手：拼错时一个 pip 都不该跑
+    out24 = _mk_out(os.path.join(tmp, "o24"))
+    calls24: list[list[str]] = []
+    make_dist._pip = lambda py, args: (calls24.append(args), (0, ""))[1]
+    try:
+        make_dist.install_deps(out24, upto="optinal", verify=False)
+        check(False, "install_deps 收到未知档位应当抛 ValueError")
+    except ValueError:
+        check(True, "install_deps 未知档位 → ValueError")
+    check(not calls24, "校验失败时一次 pip 都没跑（校验在动手之前）")
+
+    print("[25] CLI 的 --tier 里必须能选到 optional")
+    src_txt = open(os.path.join(ROOT, "tools", "make_dist.py"),
+                   encoding="utf-8").read()
+    hit = [ln for ln in src_txt.splitlines() if '"--tier"' in ln]
+    check(bool(hit) and '"optional"' in hit[0],
+          f"--tier 的 choices 含 optional（否则用户根本传不进来）：{hit[0].strip()[:60]}")
+
+    print()
+    print("== [C9-5] 装配源码指纹（版本没 bump 但 src 过期也拦得住） ==")
+    # 自包含脚手架（C2-A 段的 scratch 已被 finally 清掉，不复用）。
+    scratch5 = tempfile.mkdtemp(prefix="itest_c95_")
+    fake_nsis5 = os.path.join(scratch5, "makensis.exe")
+    open(fake_nsis5, "w").close()
+
+    def _fake_run5(argv, **kw):
+        captured5["argv"] = argv
+        # 模拟 NSIS 产物：build_installer 收尾会检查
+        # root/dist/达妮娅AI桌面伴侣_Setup_v{version}.exe 存在
+        version_arg = next(a for a in argv if a.startswith("/DVERSION="))
+        v = version_arg.split("=", 1)[1]
+        script_path = argv[-1]
+        out_exe = os.path.join(os.path.dirname(os.path.dirname(script_path)),
+                               "dist", f"达妮娅AI桌面伴侣_Setup_v{v}.exe")
+        os.makedirs(os.path.dirname(out_exe), exist_ok=True)
+        open(out_exe, "w").close()
+        class _R:
+            returncode = 0
+            stdout = "ok"
+        return _R()
+
+    captured5: dict = {}
+    orig_run5 = make_dist.subprocess.run
+    make_dist.subprocess.run = _fake_run5
+    try:
+        # 指纹定义：root 下 src/**/*.py + main.py 的（相对路径+内容）聚合 sha256。
+        fake_root = os.path.join(scratch5, "fakeroot")
+        os.makedirs(os.path.join(fake_root, "src", "sub"))
+        a_py = os.path.join(fake_root, "src", "a.py")
+        b_py = os.path.join(fake_root, "src", "sub", "b.py")
+        with open(a_py, "w", encoding="utf-8") as fh:
+            fh.write("X = 1\n")
+        with open(b_py, "w", encoding="utf-8") as fh:
+            fh.write("Y = 2\n")
+        with open(os.path.join(fake_root, "main.py"), "w", encoding="utf-8") as fh:
+            fh.write("import os\n")
+        fp1 = make_dist.src_fingerprint(fake_root)
+        check(len(fp1) == 64 and all(c in "0123456789abcdef" for c in fp1),
+              "指纹是 64 位 hex（sha256 聚合）")
+        check(fp1 == make_dist.src_fingerprint(fake_root), "同内容同指纹（稳定）")
+        with open(a_py, "w", encoding="utf-8") as fh:
+            fh.write("X = 2\n")
+        check(fp1 != make_dist.src_fingerprint(fake_root), "改一个文件指纹就变（敏感）")
+
+        # build_installer 的指纹闸：装配目录存档 vs 当前 root 重算。
+        fp_stage = os.path.join(scratch5, "fpstage")
+        os.makedirs(os.path.join(fp_stage, "src"))
+        with open(os.path.join(fp_stage, "src", "version.py"), "w",
+                  encoding="utf-8") as fh:
+            fh.write(f'APP_VERSION = "{ver}"\n')
+        # 旧装配（无指纹存档）→ 拒绝
+        ok5 = make_dist.build_installer(fp_stage, fake_root, nsis_exe=fake_nsis5,
+                                        version=ver)
+        check(ok5 is False, "装配目录无 .src_fingerprint 存档时拒绝出包（旧装配必须重装配）")
+        # 有存档且一致 → 出包
+        with open(os.path.join(fp_stage, ".src_fingerprint"), "w",
+                  encoding="utf-8") as fh:
+            fh.write(make_dist.src_fingerprint(fake_root) + "\n")
+        captured5.clear()
+        ok6 = make_dist.build_installer(fp_stage, fake_root, nsis_exe=fake_nsis5,
+                                        version=ver)
+        check(ok6 is True and bool(captured5.get("argv")), "指纹一致时正常出包")
+        # 装配后源码被改 → 拒绝且 makensis 不启动
+        with open(b_py, "w", encoding="utf-8") as fh:
+            fh.write("Y = 3\n")
+        captured5.clear()
+        ok7 = make_dist.build_installer(fp_stage, fake_root, nsis_exe=fake_nsis5,
+                                        version=ver)
+        check(ok7 is False and "argv" not in captured5,
+              "装配后 src 被改 → 拒绝且 makensis 未被调用")
+    finally:
+        make_dist.subprocess.run = orig_run5
+        shutil.rmtree(scratch5, ignore_errors=True)
 
     print()
     if _fails:

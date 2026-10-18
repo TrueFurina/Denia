@@ -48,3 +48,4 @@ psd-tools
 # not-pip: qwen_tts       # Qwen3-TTS 仓库，qwen3tts_server.py 使用
 # not-pip: voxcpm         # VoxCPM 仓库，需另下模型权重到 voxcpm2_models/
 # not-pip: laya           # 关系判定实验后端，随对应仓库提供
+# not-pip: doctor         # tools/doctor.py 自检脚本，随本仓库提供，非 pip 包

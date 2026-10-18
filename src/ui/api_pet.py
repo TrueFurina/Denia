@@ -150,11 +150,27 @@ class PetAPI:
             return {"ok": False, "error": str(e)}
 
     def pet_drag_end(self) -> dict:
-        """拖动会话结束：复位拖动标志（mouseup 时前端调用）。"""
+        """拖动会话结束：复位拖动标志，并把最终位置**落盘**（mouseup 时前端调用）。
+
+        【阶段 A4】位置以前只在内存里（`_pet_pos` 是个 tuple），进程一退就没了，
+        用户每次开机都得重新摆人。这里只在拖动结束时写一次——拖拽过程中
+        `pet_move` 是高频调用，逐帧写盘没必要。
+        """
         try:
             self._pet_dragging = False
         except Exception:  # noqa: BLE001
             pass
+        try:
+            from .pet_state import save_physical
+
+            hwnd = _pet_find_hwnd()
+            if hwnd:
+                r = _wt.RECT()
+                if _u32.GetWindowRect(hwnd, _ct.byref(r)):
+                    save_physical(r.left, r.top,
+                                  r.right - r.left, r.bottom - r.top)
+        except Exception as _e:  # noqa: BLE001  存盘失败绝不能影响拖放手感
+            logger.debug("[桌宠] 拖动结束存盘失败：%s", _e)
         return {"ok": True}
 
     def pet_move(self, dx: float = 0, dy: float = 0) -> dict:

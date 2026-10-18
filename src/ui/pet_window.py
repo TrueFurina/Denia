@@ -44,6 +44,13 @@ def _hwnd_arg(v: int):
     return _wt.HWND(v & 0xFFFFFFFFFFFFFFFF if v < 0 else v)
 
 
+def _clamp(v: int, lo: int, hi: int) -> int:
+    """把 v 夹到 [lo, hi]；hi < lo 时退化为 lo（工作区比窗口还小的极端情况）。"""
+    if hi < lo:
+        return lo
+    return lo if v < lo else (hi if v > hi else v)
+
+
 class _POINT(_ct.Structure):
     _fields_ = [("x", _ct.c_long), ("y", _ct.c_long)]
 
@@ -249,8 +256,29 @@ def _finalize_pet_window() -> None:
         h_phys = rect.bottom - rect.top
         sw = user32.GetSystemMetrics(0)
         sh = user32.GetSystemMetrics(1)
-        x = max(0, sw - w_phys - 24)
-        y = max(0, sh - h_phys - 24)
+        # 【阶段 A4】优先回到用户上次拖到的位置（按工作区比例存盘，跨屏/改分辨率也成立）；
+        # 没有存档才用右下角默认位。存/取用同一组名义尺寸，避免几像素口径差被
+        # 「工作区 − 窗口尺寸」这个分母放大成几十像素漂移。
+        try:
+            from . import pet_state as _ps
+
+            _scale = _ps.screen_scale() or 1.0
+        except Exception:  # noqa: BLE001
+            _scale = 1.0
+        _lw = max(int(round(w_phys / _scale)), 1)
+        _lh = max(int(round(h_phys / _scale)), 1)
+        _def_x = max(0, int(round(sw / _scale)) - _lw - 24)
+        _def_y = max(0, int(round(sh / _scale)) - _lh - 24)
+        _lx, _ly = _def_x, _def_y
+        try:
+            # 还原必须和存盘用**同一组名义尺寸**（save_physical 用的就是 PET_W/PET_H）。
+            # 这里曾传实际窗口尺寸 _lw/_lh（实测 424×544），分母差 4px，
+            # 在右/下边缘会被放大成几像素偏移——正是本模块注释里警告过的坑。
+            _lx, _ly = _ps.restore_logical(_ps.PET_W, _ps.PET_H, (_def_x, _def_y))
+        except Exception:  # noqa: BLE001
+            logger.debug("[桌宠] 位置恢复失败，用默认位", exc_info=True)
+        x = _clamp(int(round(_lx * _scale)), 0, max(0, sw - w_phys))
+        y = _clamp(int(round(_ly * _scale)), 0, max(0, sh - h_phys))
         # NOSIZE|NOZORDER|NOACTIVATE|FRAMECHANGED（FRAMECHANGED 让 TOOLWINDOW 样式生效）
         user32.SetWindowPos(hwnd, 0, x, y, 0, 0, 0x0001 | 0x0004 | 0x0010 | 0x0020)
         style = user32.GetWindowLongW(hwnd, GWL_EXSTYLE)
