@@ -68,6 +68,10 @@ GATES: list[tuple[str, str, list[str], bool]] = [
     ("导入冒烟", PY_VENV, ["tools/smoke_import.py", "--strict"], True),
     ("壳层能力", PY_VENV, ["src/tests/test_win_shell.py"], True),
     ("RPC 通道", PY_VENV, ["src/tests/test_rpc_server.py"], False),
+    # WS 端口绑定契约（2026-10-20 03:11 启动崩溃的回归）：空闲一次起、被占先重试
+    # 再报人话（PID/退出指引）、占用探测不扰民。两刀变异已验：删重试→「确有重试」
+    # 红；改回裸 raise→三条诊断断言红。
+    ("WS 端口绑定", PY_VENV, ["src/tests/test_ws_port_bind.py"], False),
     ("壳桌宠回退", PY_VENV, ["src/tests/test_pet_shell_fallback.py"], False),
     ("桌宠后端决策", PY_VENV, ["src/tests/test_pet_backend.py"], False),
     ("桌宠位置持久化", PY_VENV, ["src/tests/test_pet_state.py"], False),
