@@ -618,8 +618,18 @@ def check_ports(cfg: object) -> tuple[str, str, str, str]:
 
 def check_config(path: str) -> tuple[str, str, str, str]:
     if not os.path.isfile(path):
+        # 【2026-10-20】源码包第一次跑必然撞这一条：包里有模板、没有实配。
+        # 原提示是"确认运行目录，或用 --config 指定路径"——等于让队友自己猜。
+        # 真正该做的动作只有一句：把模板复制成实配。模板就在旁边时直接说出来。
+        here = os.path.dirname(os.path.abspath(path))
+        for tpl in ("config.release.yaml", "config.example.yaml", "config.template.yaml"):
+            if os.path.isfile(os.path.join(here, tpl)):
+                return (FAIL, "配置文件",
+                        f"找不到 {os.path.basename(path)}（旁边有 {tpl} 模板，还没复制成实配）",
+                        f"复制模板再填 Key：copy {tpl} {os.path.basename(path)}")
         return (FAIL, "配置文件", f"找不到 {path}",
-                f"确认运行目录，或用 --config 指定路径")
+                f"确认运行目录，或用 --config 指定路径；"
+                f"从模板起一份：copy config.release.yaml {os.path.basename(path)}")
     try:
         from src.config import load_config
     except Exception as e:  # noqa: BLE001
@@ -1290,9 +1300,12 @@ def run_all(config_path: str) -> list[tuple[str, str, str, str]]:
         from src.config import load_config
 
         cfg = load_config(config_path)
-    except Exception as e:  # noqa: BLE001
-        results.append((FAIL, "配置文件", f"加载失败：{e}",
-                        "检查 YAML 语法与路径"))
+    except Exception:  # noqa: BLE001
+        # 不在这里补一条 FAIL：下面的 check_config 会再加载一次，并把"找不到 /
+        # 解析失败 / 缺字段"分场景说清楚。两边都报会让 --doctor 输出里出现两条
+        # 同名的「配置文件」，队友看到的第一反应是"到底哪个是真的"。
+        # （2026-10-20 源码包冒烟时实测到的重复行。）
+        cfg = None
 
     for fn, arg in ((check_runtime, None),
                     (check_runtime_isolation, None),
