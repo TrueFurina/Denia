@@ -85,6 +85,10 @@ GATES: list[tuple[str, str, list[str], bool]] = [
     # 写好很久但零调用（注释里承诺的"防重复搭话"实际只靠输出侧兜着），轨迹里
     # 堆满"在游戏；在游戏；在游戏"既烧 token 也更容易让模型顺着重复。
     ("屏幕摘要去重", PY_VENV, ["src/tests/test_screen_dedup.py"], False),
+    # 敏感窗口跳过：屏幕采集每 2s 抓一帧全屏，网银/密码管理器一旦进模型上下文
+    # 就撤不回来。这条守的是「命中时真的没抓屏」而不是「函数返回对不对」，
+    # 外加 main.py 两处装配都得传 foreground_check（漏一处那条路径就静默不设防）。
+    ("敏感窗口跳过", PY_VENV, ["src/tests/test_screen_skip_apps.py"], False),
     # 「发给队友的包里到底有什么」：包内容取 git ls-files（.gitignore 是单一事实源），
     # 再叠一层硬排除。这层防御在真实仓库上**一项都不会触发**（gitignore 早洗过了），
     # 所以必须直接对规则表喂路径来证明它是活的——变异 4 刀（规则恒 None / 删红线
