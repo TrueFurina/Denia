@@ -113,7 +113,7 @@ import threading
 import time
 import atexit
 from dataclasses import dataclass
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 # ── --doctor 必须在任何第三方依赖之前截住 ────────────────────────────────
 # 它的职责是"告诉用户缺了什么"，所以它自己绝不能因为缺依赖而崩。
@@ -367,6 +367,30 @@ def wire_foreground(bus: EventBus, monitor: ForegroundMonitor, capture: ScreenCa
 
     if monitor.enabled:
         bus.subscribe(EventType.FOREGROUND_CHANGED, _on_foreground_changed)
+
+
+def _make_foreground_check(monitor) -> Callable[[], tuple]:
+    """给 ScreenCapture 的「敏感窗口跳过」提供 (前台进程名, 前台窗口标题)。
+
+    【2026-10-20】屏幕采集默认每 2s 抓一帧全屏，而网银 / 密码管理器 / 支付确认页
+    一旦进模型上下文就撤不回来。判定放在采集**之前**，命中就整帧不生成。
+
+    两个接口都各自兜异常：前台标题在个别 UWP / 全屏窗口上会读不到（返回空串是
+    正常情况），不该因此把整条采集链路带停。
+    """
+
+    def _snapshot() -> tuple:
+        try:
+            _proc = monitor.foreground_process()[1]
+        except Exception:  # noqa: BLE001
+            _proc = ""
+        try:
+            _title = monitor.foreground_title()
+        except Exception:  # noqa: BLE001
+            _title = ""
+        return _proc, _title
+
+    return _snapshot
 
 
 def _step(n: int, total: int, msg: str, ok: bool = True, note: str = "") -> None:
@@ -1212,7 +1236,8 @@ async def _build_system(runtime: RuntimeHolder, cfg: Config) -> None:
     analyzer = VisionAnalyzer(vision_router, bus, cfg, monitor=monitor)
     # low_rate_check：与 throttle 同源，保证「不节流」时也不提升采样频率（防性能回退）。
     capture = ScreenCapture(bus, analyzer, cfg, throttle_check=_screen_throttle_check,
-                            low_rate_check=_game_check_or_locked)
+                            low_rate_check=_game_check_or_locked,
+                            foreground_check=_make_foreground_check(monitor))
     # 游戏识别组件（总开关 game_recognition.enabled=false 时整体下线：
     # OCR/音效/队伍HUD/分层视觉/游戏知识库不创建不启动，源码保留）。
     # 对局会话 game_session：仅在游戏识别或游戏 AI 互动启用时创建——关闭时
@@ -2846,7 +2871,8 @@ async def bootstrap_legacy(cfg: Config, video_path: str | None = None,
     analyzer = VisionAnalyzer(vision_router, bus, cfg, monitor=monitor)
     # low_rate_check：与 throttle 同源，保证「不节流」时也不提升采样频率（防性能回退）。
     capture = ScreenCapture(bus, analyzer, cfg, throttle_check=_screen_throttle_check,
-                            low_rate_check=_game_check_or_locked)
+                            low_rate_check=_game_check_or_locked,
+                            foreground_check=_make_foreground_check(monitor))
     # 游戏识别组件（总开关 game_recognition.enabled=false 时整体下线，源码保留）
     game_recognition = _game_recognition_enabled(cfg)
     knowledge: Optional[GameKnowledge] = None

@@ -1286,6 +1286,23 @@ perception:
     interval_jitter: 0.1
     interval_s: 2
     monitor_index: 1
+    # 「不看」清单：前台命中任一条就整帧不采集（进程名或窗口标题包含即可）。
+    # 默认挡密码管理器 / 网银 / 支付确认页——这类画面进了模型上下文撤不回来。
+    # 想关掉就写成 `skip_apps: []`（空列表 = 不拦任何窗口）。
+    skip_apps:
+    - keepass
+    - 1password
+    - bitwarden
+    - lastpass
+    - dashlane
+    - 网上银行
+    - 网银
+    - 转账
+    - 支付密码
+    - 支付宝
+    - 微信支付
+    - 银行卡
+    - 凭据管理器
     static_analyze_every: 1
     static_interval_scale: 0.5
     static_streak_s: 30

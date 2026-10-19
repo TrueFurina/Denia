@@ -17,7 +17,7 @@ from typing import Callable, Optional
 
 from ..config import Config
 from ..event_bus import EventBus
-from .privacy import privacy_mode
+from .privacy import privacy_mode, sensitive_skip_reason
 from .vision_analyzer import VisionAnalyzer
 
 logger = logging.getLogger(__name__)
@@ -26,11 +26,20 @@ logger = logging.getLogger(__name__)
 class ScreenCapture:
     def __init__(self, bus: EventBus, analyzer: VisionAnalyzer, cfg: Config,
                  throttle_check: Optional[Callable[[], bool]] = None,
-                 low_rate_check: Optional[Callable[[], bool]] = None) -> None:
+                 low_rate_check: Optional[Callable[[], bool]] = None,
+                 foreground_check: Optional[Callable[[], tuple]] = None) -> None:
         self._bus = bus
         self._analyzer = analyzer
         sc = cfg.ns.perception.screenshot
         self._interval: float = sc.interval_s
+        # 【敏感窗口跳过（2026-10-20）】取「前台进程名 + 窗口标题」的回调。
+        # 采集前先问一句"用户现在是不是在网银/密码管理器里"，是就整帧不抓。
+        # 回调由 main.py 装配时注入（monitor.foreground_process / foreground_title）；
+        # 没注入时本功能静默不生效，所以 tools/check_all.py 有一条闸门守"两处装配都传了"。
+        self._foreground_check = foreground_check
+        _skip_raw = getattr(sc, "skip_apps", None)
+        # None（字段缺失）→ 用默认清单；[]（用户显式清空）→ 关闭本功能
+        self._skip_apps = tuple(_skip_raw) if _skip_raw is not None else None
         # 【游戏前台/锁快照 让位回调（2026-08-25 修复抽帧/核显本卡炸）】
         self._throttle_check = throttle_check
         # 【低频档回调（2026-10-13）】与 throttle_check 解耦：throttle 决定"要不要
@@ -68,6 +77,10 @@ class ScreenCapture:
         self._event_trigger_count: int = 0              # 事件驱动抓屏次数
         self._analyze_task: Optional[asyncio.Task] = None  # 后台视觉分析任务
         self._analyze_drop: int = 0                     # 后台分析忙时丢帧计数
+        # 敏感窗口跳过统计（可审计：用户能查"到底因为什么没看"）
+        self._skip_count: int = 0                       # 累计因敏感窗口跳过次数
+        self._skip_last: str = ""                       # 最近一次命中的清单条目
+        self._skip_last_ts: float = 0.0                 # 最近一次跳过时刻
 
     def stop(self) -> None:
         self._running = False
@@ -128,6 +141,37 @@ class ScreenCapture:
                 interval *= self._static_scale
         return max(0.5, interval)
 
+    def _sensitive_reason(self) -> str:
+        """当前前台是否属于「不看」清单；命中返回命中的那条，否则空串。
+
+        【2026-10-20 立】为什么必须在抓屏**之前**问：
+        抓完再丢等于图已经进过内存、进过 JPEG 编码、进过日志，只是没送给模型。
+        "没送给模型"不等于"没采集"——网银页面停留 10 分钟，按 interval_s=2
+        就是 300 帧原始画面被生成过。真正的隐私保护是**不生成**。
+
+        回调异常时返回空（继续采集）并记 debug：判定器坏了不该让用户觉得
+        "她突然瞎了"。但装配缺失有闸门守着（tools/check_all.py 的
+        「敏感窗口跳过」一项），不会静默失效。
+        """
+        if not self._foreground_check:
+            return ""
+        try:
+            proc, title = self._foreground_check()
+        except Exception:  # noqa: BLE001
+            logger.debug("前台判定失败，本轮按正常采集处理", exc_info=True)
+            return ""
+        return sensitive_skip_reason(proc, title, self._skip_apps)
+
+    def _mark_skip(self, reason: str) -> None:
+        """记一次跳过（次数 + 命中条目 + 时刻），供调试台/审计查看。"""
+        prev = self._skip_last          # 先存旧值：赋值后再比较就是自己跟自己比
+        self._skip_count += 1
+        self._skip_last = reason
+        self._skip_last_ts = time.time()
+        # 只在**换了原因**时打一条 info，避免网银页面停留 10 分钟刷 300 行日志。
+        if reason != prev:
+            logger.info("敏感窗口跳过屏幕采集: 命中「%s」", reason)
+
     def snapshot(self) -> dict:
         """运行状态快照（供调试台轮询，线程安全）。"""
         static_s = 0.0
@@ -148,6 +192,11 @@ class ScreenCapture:
             "change_count": self._change_count,
             "analyze_count": self._analyze_count,
             "event_trigger_count": self._event_trigger_count,
+            # 敏感窗口跳过（2026-10-20）：用户能查"她为什么没看见"
+            "skip_count": self._skip_count,
+            "skip_last": self._skip_last,
+            "skip_last_ts": self._skip_last_ts,
+            "skip_apps": list(self._skip_apps) if self._skip_apps is not None else [],
             "analyzing": self._analyze_task is not None and not self._analyze_task.done(),
             "analyze_drop": self._analyze_drop,
         }
@@ -200,6 +249,12 @@ class ScreenCapture:
         永远不被视觉请求（无论云端还是本地回退）拖住。
         """
         if privacy_mode():
+            return
+        # 敏感窗口：事件驱动路径（前台切游戏等）同样要拦——否则"切到游戏"的
+        # 触发逻辑会把网银窗口顺手抓一遍。
+        _skip = self._sensitive_reason()
+        if _skip:
+            self._mark_skip(_skip)
             return
         async with self._grab_lock:
             sct = self._ensure_sct()
@@ -275,6 +330,17 @@ class ScreenCapture:
                     # 隐私模式：不抓屏不分析，模型拿不到新画面；恢复后自动继续
                     self._last_hash = None
                     self._last_interval = self._next_interval()
+                    await asyncio.sleep(self._last_interval)
+                    continue
+                # 【敏感窗口跳过（2026-10-20）】前台命中「不看」清单（密码管理器 /
+                # 网银 / 支付）时**整帧不抓**，不是抓完再丢。
+                # 与隐私模式的区别：隐私模式让她整体失明；这里只是"这一个窗口没看"，
+                # 用户离开该窗口后下一轮自动恢复（_last_hash 保持旧值 → 切回时
+                # 画面不同 → 正常判为变化并分析）。
+                _skip = self._sensitive_reason()
+                if _skip:
+                    self._mark_skip(_skip)
+                    self._last_interval = max(2.0, self._next_interval())
                     await asyncio.sleep(self._last_interval)
                     continue
                 # 【游戏前台/锁快照 让位（2026-08-25 修复抽帧/核显本卡炸）】
