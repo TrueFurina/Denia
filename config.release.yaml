@@ -4,12 +4,20 @@ voice_profiles:
 - name: 阿里云百炼
   group_id: ''
   id: tmu1ik64h
-  voice_id: cosyvoice-v3.5-plus-bailian-e683d3f934fe44fb8603d1266c748652
+  # 【2026-10-20 修复·出厂配置自带失效模型】原值是：
+  #   voice_id: cosyvoice-v3.5-plus-bailian-e683d3f934fe44fb8603d1266c748652
+  #   model:    cosyvoice-v3.5-plus
+  # 而 cosyvoice 全系列在百炼已下线（实测 400），qwen-audio-3.0-tts-* 同样下线，
+  # 只有 qwen3-tts-flash 返回 200。也就是说：**每个新用户装完就是一套失效配置**，
+  # 试听必 400，还会以为是自己音色 ID 填错了。克隆音色 id 绑的是旧模型族，换模型
+  # 后不再通用，故改用 qwen3-tts-flash 的官方预置音色 Cherry（实测可用）。
+  # 想要自己的音色：在百炼控制台用 qwen3-tts-flash 重新克隆，把新 id 填回 voice_id。
+  voice_id: Cherry
   api_url: https://dashscope.aliyuncs.com
-  model: cosyvoice-v3.5-plus
+  model: qwen3-tts-flash
   pitch_scale: 1.0
   engine: dashscope_cosy
-  # 备用云端克隆：账户欠费时不可用，充值后把角色 voice.engine 改成
+  # 备用云端音色：账户欠费时不可用，充值后把角色 voice.engine 改成
   # dashscope_cosy 即自动切回；当前主用本地 pyttsx3（见角色 voice.engine）
   api_key: ${DASHSCOPE_API_KEY}
 app:
@@ -1770,7 +1778,9 @@ voice:
       dashscope_cosy:
         api_key: ''
         group_id: ''
-        model_name: cosyvoice-v3.5-flash
+        # 2026-10-20：原值 cosyvoice-v3.5-flash 已下线（实测 400），见文件头
+        # voice_profiles 处的说明。qwen3-tts-flash 是当时唯一返回 200 的模型。
+        model_name: qwen3-tts-flash
         api_url: ''
   continuous_voice: false
   duplex_mute_apps:

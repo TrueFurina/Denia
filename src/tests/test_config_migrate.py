@@ -70,34 +70,38 @@ for bad in ({"voice": []}, {"voice": "x"}, {"cloud_tts": []},
         check(False, f"畸形结构抛了异常：{type(e).__name__}")
 
 print()
-print("[4] 音色档迁移：绑着已下线模型的档 → model 与 voice 一起换")
+print("[4] 音色档迁移：绑着已下线模型的档 → model 与 voice_id 一起换")
 raw4 = {"voice_profiles": [
     {"id": "p1", "engine": "dashscope_cosy", "model": "cosyvoice-v3.5-plus",
-     "voice": "longxiaochun"},
+     "voice_id": "cosyvoice-v3.5-plus-bailian-e683d3f9"},
     {"id": "p2", "engine": "dashscope_cosy", "model": "qwen3-tts-flash",
-     "voice": "Cherry"},
+     "voice_id": "Cherry"},
 ]}
 changed4 = cm.migrate_stale_voice_profiles(raw4)
 p1, p2 = raw4["voice_profiles"]
-check(p1["model"] == cm.TTS_MIGRATE_TO and p1["voice"] == cm.TTS_MIGRATE_VOICE,
-      "失效档的 model/voice 都已迁移")
-check(p2["model"] == cm.TTS_MIGRATE_TO and p2["voice"] == cm.TTS_MIGRATE_VOICE,
+# 【2026-10-20】音色字段是 voice_id，不是 voice（voice 在 minimax 那边是 fallback）。
+# 原实现写 prof["voice"]，真机实测迁移后 voice_id 原封不动 → 模型换了音色没换，
+# 请求照样 418（418 是 voice_id 不可用，与 model 无关）。
+check(p1["model"] == cm.TTS_MIGRATE_TO and p1["voice_id"] == cm.TTS_MIGRATE_VOICE,
+      "失效档的 model/voice_id 都已迁移")
+check("voice" not in p1, "不再往音色档里塞没人读的 voice 字段")
+check(p2["model"] == cm.TTS_MIGRATE_TO and p2["voice_id"] == cm.TTS_MIGRATE_VOICE,
       "已正确的档保持原样（幂等）")
 check(changed4 == ["voice_profile:p1"], f"只报真正改动的档（实际 {changed4}）")
 
 print()
-print("[5] 历史脏数据：模型名被填进 voice 字段也要救")
+print("[5] 历史脏数据：模型名被填进音色字段也要救")
 raw5 = {"voice_profiles": [
     {"id": "dirty", "engine": "dashscope_cosy", "model": "qwen3-tts-flash",
-     "voice": "cosyvoice-v2"}]}
+     "voice_id": "cosyvoice-v2"}]}
 check(cm.migrate_stale_voice_profiles(raw5) == ["voice_profile:dirty"],
-      "voice 里含 cosyvoice 子串 → 判为失效并迁移")
-check(raw5["voice_profiles"][0]["voice"] == cm.TTS_MIGRATE_VOICE, "已换成 Cherry")
+      "voice_id 里含 cosyvoice 子串 → 判为失效并迁移")
+check(raw5["voice_profiles"][0]["voice_id"] == cm.TTS_MIGRATE_VOICE, "已换成 Cherry")
 
 print()
 print("[6] 非 dashscope_cosy 引擎的档不许动（本地引擎没有模型下线问题）")
 raw6 = {"voice_profiles": [
-    {"id": "local", "engine": "pyttsx3", "model": "cosyvoice-v2", "voice": "x"}]}
+    {"id": "local", "engine": "pyttsx3", "model": "cosyvoice-v2", "voice_id": "x"}]}
 check(cm.migrate_stale_voice_profiles(raw6) == [], "pyttsx3 档不迁移")
 check(raw6["voice_profiles"][0]["model"] == "cosyvoice-v2", "原值未被改动")
 
@@ -107,10 +111,10 @@ raw7 = {"voice": {"clone": {"cloud": {"dashscope_cosy": {
     "model_name": "qwen-audio-3.0-tts-plus"}}}},
     "cloud_tts": {"dashscope_cosy": {"model_name": "cosyvoice-v3-flash"}},
     "voice_profiles": [{"id": "p", "engine": "dashscope_cosy",
-                        "model": "cosyvoice-v1", "voice": "v"}]}
+                        "model": "cosyvoice-v1", "voice_id": "v"}]}
 all_changed = cm.migrate_stale_tts_config(raw7)
 check(len(all_changed) == 3, f"三个点全部命中（实际 {len(all_changed)}: {all_changed}）")
-check(raw7["voice_profiles"][0]["voice"] == cm.TTS_MIGRATE_VOICE,
+check(raw7["voice_profiles"][0]["voice_id"] == cm.TTS_MIGRATE_VOICE,
       "音色档也在同一入口里被迁移（此前这一半从未被执行）")
 
 print()
@@ -122,7 +126,8 @@ try:
         f.write("voice:\n  clone:\n    cloud:\n      dashscope_cosy:\n"
                 "        model_name: qwen-audio-3.0-tts-plus\n"
                 "voice_profiles:\n  - id: p1\n    engine: dashscope_cosy\n"
-                "    model: cosyvoice-v3.5-plus\n    voice: longxiaochun\n")
+                "    model: cosyvoice-v3.5-plus\n"
+                "    voice_id: cosyvoice-v3.5-plus-bailian-e683d3f9\n")
     import yaml
     with open(p8, encoding="utf-8") as f:
         raw8 = yaml.safe_load(f)
@@ -132,7 +137,7 @@ try:
     cfg = load_config(p8)
     check(cfg.raw["voice"]["clone"]["cloud"]["dashscope_cosy"]["model_name"]
           == cm.TTS_MIGRATE_TO, "重新加载后模型名已是新值")
-    check(cfg.get_voice_profile("p1")["voice"] == cm.TTS_MIGRATE_VOICE,
+    check(cfg.get_voice_profile("p1")["voice_id"] == cm.TTS_MIGRATE_VOICE,
           "重新加载后音色档已是 Cherry")
 finally:
     os.unlink(p8)
@@ -198,6 +203,40 @@ cm_txt = open(os.path.join(ROOT, "src", "config_migrate.py"),
 entry = cm_txt.split("def migrate_stale_tts_config", 1)[-1].split("\ndef ", 1)[0]
 check("migrate_stale_tts_model(" in entry, "入口里调了模型迁移")
 check("migrate_stale_voice_profiles(" in entry, "入口里调了音色档迁移")
+
+print()
+print("[13] 根因闸门：出厂模板 config.release.yaml 不许自带失效 TTS 模型")
+# 迁移只是事后补救。真正让每个新用户一装就 400 的，是**出厂模板本身**写着已下线的
+# 模型（实测 config.release.yaml 里曾同时有 cosyvoice-v3.5-plus 与
+# cosyvoice-v3.5-flash）。这条闸门守的是根因：模板里再出现失效值就红。
+import yaml  # noqa: E402
+
+rel_path = os.path.join(ROOT, "config.release.yaml")
+rel = yaml.safe_load(open(rel_path, encoding="utf-8")) or {}
+stale_hits: list[str] = []
+
+
+def _scan(o, path="$"):
+    if isinstance(o, dict):
+        for k, v in o.items():
+            if (k in ("model", "model_name") and isinstance(v, str)
+                    and v.strip().lower() in cm.STALE_TTS_MODELS):
+                stale_hits.append(f"{path}.{k}={v}")
+            elif (k in ("voice_id", "voice") and isinstance(v, str)
+                  and ("cosyvoice" in v.lower() or "qwen-audio" in v.lower())):
+                stale_hits.append(f"{path}.{k}={v[:36]}…")
+            else:
+                _scan(v, f"{path}.{k}")
+    elif isinstance(o, list):
+        for i, x in enumerate(o):
+            _scan(x, f"{path}[{i}]")
+
+
+_scan(rel)
+check(not stale_hits, f"出厂模板无失效模型/音色（实际 {stale_hits}）")
+# 反向确认：模板里确实还写着正确的模型，不是被整段删了
+check("qwen3-tts-flash" in open(rel_path, encoding="utf-8").read(),
+      "模板里确实写着 qwen3-tts-flash（不是靠删配置过关）")
 
 print()
 if FAIL:

@@ -95,12 +95,21 @@ def migrate_stale_voice_profiles(raw: dict) -> list[str]:
         for prof in (raw.get("voice_profiles") or []):
             if not isinstance(prof, dict) or prof.get("engine") != "dashscope_cosy":
                 continue
-            v = str(prof.get("voice") or "").strip().lower()
+            # 音色字段是 `voice_id`（tts_backends 用 getattr(config, "voice_id", ...)
+            # 取），`voice` 在其它后端是 fallback_voice。两个都读，兼容历史脏数据。
+            v = str(prof.get("voice_id") or prof.get("voice") or "").strip().lower()
             m = str(prof.get("model") or "").strip().lower()
             if (v in STALE_TTS_MODELS or m in STALE_TTS_MODELS
                     or "cosyvoice" in v or "qwen-audio" in v):
                 prof["model"] = TTS_MIGRATE_TO
-                prof["voice"] = TTS_MIGRATE_VOICE
+                # 【2026-10-20 修复·字段名写错，迁移等于白做】
+                # 原实现写的是 prof["voice"] = "Cherry"——音色档根本不读这个字段，
+                # 真正的 voice_id 仍是 `cosyvoice-v3.5-plus-bailian-…`。
+                # 结果：model 换成了 qwen3-tts-flash，音色还是已失效的 cosyvoice
+                # 克隆 id → 请求照样 418（tts_backends.py 有实测注释：418 是
+                # voice_id 不可用，与 model 匹配无关，排查时别在 model 上打转）。
+                # 用真机配置实测确认过：修复前 voice_id 原封不动。
+                prof["voice_id"] = TTS_MIGRATE_VOICE
                 out.append("voice_profile:%s" % prof.get("id"))
     except Exception:  # noqa: BLE001
         logger.debug("[config_migrate] 音色档迁移跳过（配置结构异常）", exc_info=True)
