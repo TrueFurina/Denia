@@ -1763,6 +1763,12 @@
         <button class="cc-btn" id="csMute" title="关闭麦克风" type="button"><svg class="cc-ico" viewBox="0 0 24 24"><path d=""/></svg><span class="cc-lbl">麦克风</span></button>
         <button class="cc-btn" id="csSpk" title="关闭达妮娅的声音" type="button"><svg class="cc-ico" viewBox="0 0 24 24"><path d=""/></svg><span class="cc-lbl">免提</span></button>
       </div>
+    </div>
+    <!-- ↑【2026-10-20 补】这一层是 call-screen 视图的收尾，原先漏了。
+         后果不是"看不出来"：单工视图 simplexView 因此变成了 call-screen 的子节点，
+         而 callOverlay 自己也没被关上（靠浏览器在 </body> 处自动补），
+         于是 `#callOverlay` 的 hidden 开关会连带控制到单工视图。
+         用标签配平脚本量出来的：从 callOverlay 起算，到文件末尾深度停在 1。 -->
 
     <style>
     .call-simplex{display:flex;flex-direction:column;height:100%;background:#0f1115;color:#e8eaed;

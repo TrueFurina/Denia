@@ -53,6 +53,10 @@ GATES: list[tuple[str, str, list[str], bool]] = [
     # 而 check_web_js_syntax 原来打印完就 exit 0 —— 是装饰闸门。本机没 node 时
     # 按 77 跳过（单列「未验证」，不计通过）。
     ("前端 JS 语法", PY_RUNTIME, ["tools/check_web_js_syntax.py"], False),
+    # HTML 标签配平：`index.html` 的通话浮层 `#callOverlay` 曾经**从来没被关上**
+    # （call-screen 漏一个 </div>），靠浏览器在 </body> 处自动补，运行时毫无症状。
+    # 判据用「容错匹配」：只报真漏标签，放过浏览器能确定性恢复的错位嵌套。
+    ("前端 HTML 配平", PY_RUNTIME, ["tools/check_html_balance.py"], False),
     # 桥接三层：index.html 的 Backend.xxx → app_backend.js 的 call('py_name') →
     # CharacterAPI。任一层断掉都是"点了没反应"，控制台之外没有任何痕迹。
     ("前端桥接", PY_VENV, ["tools/check_bridge_methods.py"], False),
