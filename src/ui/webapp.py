@@ -236,55 +236,18 @@ _WATCH_STEP_LABELS = (
 # qwen-audio-3.0-tts-* 与 cosyvoice 全系列已下线（400/418）。
 # 旧版一键配置写入的默认值是 qwen-audio-3.0-tts-plus → 用户配置残留失效模型
 # → 试听永远失败，用户以为音色 ID 错了。
-_TTS_STALE = ("qwen-audio-3.0-tts-plus", "qwen-audio-3.0-tts-flash",
-              "qwen-audio-3.1-tts-flash", "cosyvoice-v3.5-plus",
-              "cosyvoice-v3.5-flash", "cosyvoice-v3-flash",
-              "cosyvoice-v2", "cosyvoice-v1")
-_TTS_MIGRATE_TO = "qwen3-tts-flash"
-
-
-def migrate_stale_tts_model(raw: dict) -> list:
-    """配置里失效的 TTS 模型名自动换 qwen3-tts-flash（幂等）。"""
-    out = []
-    try:
-        cosy = (((raw.get("voice") or {}).get("clone") or {}).get("cloud")
-                or {}).get("dashscope_cosy")
-        if isinstance(cosy, dict) and str(cosy.get("model_name") or "").strip() in _TTS_STALE:
-            cosy["model_name"] = _TTS_MIGRATE_TO
-            out.append("voice.clone.cloud.dashscope_cosy.model_name")
-        ct = raw.get("cloud_tts") or {}
-        b = ct.get("dashscope_cosy")
-        if isinstance(b, dict) and str(b.get("model_name") or "").strip() in _TTS_STALE:
-            b["model_name"] = _TTS_MIGRATE_TO
-            out.append("cloud_tts.dashscope_cosy.model_name")
-    except Exception:  # noqa: BLE001
-        pass
-    return out
-
-
-def migrate_stale_voice_profiles(raw: dict) -> list:
-    """把失效模型的音色档（voice_profiles）自动迁移到 qwen3-tts-flash + Cherry。
-
-    【2026-10-17】用户已建的音色档如果绑着已下线的模型（cosyvoice-v3.5-plus 等），
-    试听/聊天必然 400。启动时静默修复。
-    """
-    STALE = ("cosyvoice-v1", "cosyvoice-v2", "cosyvoice-v3", "cosyvoice-v3-plus",
-             "cosyvoice-v3-flash", "cosyvoice-v3.5-plus", "cosyvoice-v3.5-flash",
-             "qwen-audio-3.0-tts-plus", "qwen-audio-3.0-tts-flash")
-    out = []
-    try:
-        for prof in (raw.get("voice_profiles") or []):
-            if not isinstance(prof, dict) or prof.get("engine") != "dashscope_cosy":
-                continue
-            v = str(prof.get("voice") or "").strip().lower()
-            m = str(prof.get("model") or "").strip().lower()
-            if v in STALE or m in STALE or "cosyvoice" in v or "qwen-audio" in v:
-                prof["model"] = "qwen3-tts-flash"
-                prof["voice"] = "Cherry"
-                out.append("voice_profile:%s" % prof.get("id"))
-    except Exception:  # noqa: BLE001
-        pass
-    return out
+#
+# 【2026-10-19 合并后整改】迁移实现搬到 `src/config_migrate.py`：
+#   ① 原 `migrate_stale_voice_profiles` 在这里定义了却**从未被调用**（死代码），
+#      搬出去才能被轻量测试直接打；
+#   ② 原写盘是 `io.open(path, "w")` 裸写（非原子、不 fsync、不拿锁），与
+#      Config.save() 审计出的 P0「写出半个 YAML → 之后所有保存永久失败」同型。
+# 这里只导入真正要用的两个入口。原来的 `_TTS_STALE` / `migrate_stale_tts_model`
+# 等名字不再导出——全仓没有外部引用，留着只会让人以为 webapp 内部还在用它们。
+from ..config_migrate import (  # noqa: E402
+    dump_config_atomic,
+    migrate_stale_tts_config,
+)
 
 
 
@@ -304,18 +267,25 @@ class CharacterAPI(PetAPI, WindowAPI):
 
     def __init__(self, config_path: str = "config.yaml") -> None:
         self._config_path = config_path
-        # 【2026-10-17】失效 TTS 模型自动迁移
+        # 【2026-10-17 / 2026-10-19 接线】失效 TTS 模型 + 音色档自动迁移。
+        # 走 migrate_stale_tts_config 一次跑完两半——此前只跑了模型那一半，
+        # 音色档的迁移函数写好了却从没被调用（死代码）。
+        # 写盘走 dump_config_atomic（临时文件 + fsync + os.replace）：原来是
+        # `io.open(path,"w")` 裸写，与 Config.save() 审计出的 P0 同型。
         try:
             import yaml as _y_mig
-            _raw_mig = _y_mig.safe_load(io.open(self._config_path, encoding="utf-8")) or {}
-            _mig = migrate_stale_tts_model(_raw_mig)
+            with io.open(self._config_path, encoding="utf-8") as _f_mig:
+                _raw_mig = _y_mig.safe_load(_f_mig) or {}
+            _mig = migrate_stale_tts_config(_raw_mig)
             if _mig:
-                io.open(self._config_path, "w", encoding="utf-8").write(
-                    _y_mig.dump(_raw_mig, allow_unicode=True,
-                                default_flow_style=False, sort_keys=False))
-                logger.info("TTS 失效模型已自动迁移: %s", ", ".join(_mig))
+                if dump_config_atomic(self._config_path, _raw_mig):
+                    logger.info("TTS 失效配置已自动迁移: %s", ", ".join(_mig))
+                else:
+                    logger.warning(
+                        "TTS 失效配置未能写盘（下次启动会再试）: %s",
+                        ", ".join(_mig))
         except Exception:  # noqa: BLE001
-            pass
+            logger.debug("TTS 失效配置迁移跳过", exc_info=True)
         self._cfg: Optional[Config] = None
 
         # 运行时注入（main.py 启动时注入 dialogue / bus / loop）

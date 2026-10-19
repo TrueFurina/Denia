@@ -71,6 +71,12 @@ GATES: list[tuple[str, str, list[str], bool]] = [
     ("壳自愈端到端", PY_VENV, ["tools/pet_shell_selfheal_smoke.py"], True),
     ("日志轮转", PY_VENV, ["src/tests/test_log_rotate.py"], False),
     ("配置校验", PY_VENV, ["src/tests/test_config_schema.py"], False),
+    # 「能说」的入口体检：失效 TTS 模型 / 音色档的启动期迁移。2026-10-19 合并
+    # 队友工作树时抓到 migrate_stale_voice_profiles 是死代码（定义完整、注释完整、
+    # 零调用）——用户已建的音色档绑着下线模型，试听永远 400 而启动期从没人修。
+    # 这道测的重点是「接线」而不是「算得对」：唯一入口是否真跑两半、webapp 是否
+    # 真调了入口、写盘是否真是原子替换（不是原地截断）。
+    ("TTS 配置迁移", PY_VENV, ["src/tests/test_config_migrate.py"], False),
     ("doctor 自检结构", PY_VENV, ["src/tests/test_doctor.py"], False),
     # 「她现在能说话吗」：engine 为空会落到静音后端（不出声、不联网、零日志）。
     ("语音合成判级", PY_VENV, ["src/tests/test_doctor_voice_backend.py"], False),
