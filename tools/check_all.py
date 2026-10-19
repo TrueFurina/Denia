@@ -86,6 +86,11 @@ GATES: list[tuple[str, str, list[str], bool]] = [
     # 所以必须直接对规则表喂路径来证明它是活的——变异 4 刀（规则恒 None / 删红线
     # 文件名表 / 删 data 目录 / 少一项必需文件）全红。
     ("源码包排除规则", PY_VENV, ["src/tests/test_pack_for_teammate.py"], False),
+    # 「出厂状态」的守门人：新用户第一眼看到的东西（模板首启开关 / 默认唤醒词 /
+    # 应用图标 / 代码里的兜底角色名）。这几项在开发机上永远是对的，只有新用户
+    # 才会撞上，所以不能靠"我这儿跑着没问题"。变异 3 刀（首启开关 / 唤醒词 /
+    # 图标不进包清单）全红。
+    ("出厂模板与图标", PY_VENV, ["src/tests/test_release_template.py"], False),
     ("doctor 自检结构", PY_VENV, ["src/tests/test_doctor.py"], False),
     # 「她现在能说话吗」：engine 为空会落到静音后端（不出声、不联网、零日志）。
     ("语音合成判级", PY_VENV, ["src/tests/test_doctor_voice_backend.py"], False),

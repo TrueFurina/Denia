@@ -512,7 +512,7 @@ html[data-theme="dark"] #onbRoleRoot, #onbRoleRoot[data-theme="dark"]{
 
     <div class="donebox" id="clDone">
       <div class="d-t">克隆完成</div>
-      <div class="d-s" id="clDoneSub">音色已写入「小薇」，她说的话以后都是这个声音</div>
+      <div class="d-s" id="clDoneSub">音色已写入「达妮娅」，她说的话以后都是这个声音</div>
     </div>
 
     <div class="vm-foot">

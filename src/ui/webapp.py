@@ -1652,10 +1652,10 @@ class CharacterAPI(PetAPI, WindowAPI):
             return {"success": False, "error": f"加载悬浮层失败: {e}"}
 
         self._overlay_stop = threading.Event()
-        char_name = "小薇"
+        char_name = "达妮娅"
         if self._dialogue is not None:
             try:
-                char_name = self._dialogue.current_character_name or "小薇"
+                char_name = self._dialogue.current_character_name or "达妮娅"
             except Exception:  # noqa: BLE001
                 pass
         holder: dict = {"ov": None}
@@ -4418,7 +4418,7 @@ class CharacterAPI(PetAPI, WindowAPI):
     def set_continuous_voice(self, enabled: bool) -> dict:
         """热切换语音持续识别（免唤醒）：运行时立即生效 + 写入配置文件。
 
-        开启后不用喊"小薇"，说话即识别、随时对话（方便用户随时纠错 AI 说错的话）；
+        开启后不用喊"达妮娅"，说话即识别、随时对话（方便用户随时纠错 AI 说错的话）；
         关闭回到唤醒词模式。
         """
         asr = self._asr

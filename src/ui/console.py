@@ -21,7 +21,7 @@ logger = logging.getLogger(__name__)
 
 
 class ConsoleUI:
-    def __init__(self, bus: EventBus, persona_name: str = "小薇",
+    def __init__(self, bus: EventBus, persona_name: str = "达妮娅",
                  dialogue=None, tts=None) -> None:
         self._bus = bus
         self._persona = persona_name
