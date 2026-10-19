@@ -82,6 +82,11 @@ GATES: list[tuple[str, str, list[str], bool]] = [
     # 改单字+同音字语法 + 拼音容错匹配（娅/亚 同音也算中）。单测 + 变异 6 刀全红。
     ("唤醒词命中", PY_VENV, ["src/tests/test_wake_word.py"], False),
     ("唤醒词变异", PY_VENV, ["tools/_qc_wake_mutation.py"], False),
+    # 「醒了却不理你」：唤醒→指令识别→USER_TEXT 的链路闭环。sherpa 主路径与 vosk
+    # 回退路径都必须发出 USER_TEXT（喂给 LLM 的那一棒）。双引擎事件流单测 +
+    # 变异 3 刀（断模式切换 / 吞 sherpa 文本 / 吞 vosk 文本）全红。
+    ("ASR 事件流", PY_VENV, ["src/tests/test_asr_event_flow.py"], False),
+    ("ASR 事件流变异", PY_VENV, ["tools/_qc_asr_event_flow_mutation.py"], False),
     # 配置引用体检：路径指错 / 角色没绑引擎 → 红；可选功能（auto_start:false）
     # 与端口未就绪 → 只提示。扫进仓模板，CI 上也能跑。
     ("配置引用体检", PY_VENV, ["tools/_qc_path_refs.py", "config.release.yaml"], False),
