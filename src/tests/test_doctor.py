@@ -179,9 +179,41 @@ def main() -> int:
               f"配置加载失败时不该冒出内部异常（实际 {[r[:3] for r in internals]}）")
         check(any(r[1] == "配置文件" for r in rows),
               "至少有一条「配置文件」的 FAIL 说明真实原因")
+        # 【2026-10-20】源码包冒烟时发现 --doctor 里出现两条同名的「配置文件」：
+        # run_all 自己加载失败报一条，check_config 又报一条，队友看到的第一反应
+        # 是"到底哪个是真的"。现在只留 check_config 那条（它分场景说得更细）。
+        _cfg_rows = [r for r in rows if r[1] == "配置文件"]
+        check(len(_cfg_rows) == 1,
+              f"「配置文件」只报一条（实际 {len(_cfg_rows)} 条：{[r[2] for r in _cfg_rows]}）")
     finally:
         if os.path.exists(broken):
             os.remove(broken)
+
+    print("[6b] 源码包首跑：缺 config.yaml 时要给出下一步动作")
+    # 这是队友拿到包之后必然撞的第一件事（包里有模板、没有实配）。原提示是
+    # "确认运行目录，或用 --config 指定路径"——等于让他自己猜。真正的动作只有
+    # 一句：把模板复制成实配。断言的是"提示里有可照抄的命令"，不是"有提示"。
+    import tempfile as _tf2
+
+    pkg = _tf2.mkdtemp(prefix="doctor_cfg_")
+    try:
+        lvl, _name, msg, fix = doctor.check_config(os.path.join(pkg, "config.yaml"))
+        check(lvl == doctor.FAIL, "缺配置判 FAIL")
+        check("config.release.yaml" in fix and "copy" in fix.lower(),
+              f"旁边没有模板时也给出模板名兜底（fix={fix}）")
+
+        with open(os.path.join(pkg, "config.release.yaml"), "w", encoding="utf-8") as fh:
+            fh.write("app:\n  version: 0.2.0\n")
+        lvl, _name, msg, fix = doctor.check_config(os.path.join(pkg, "config.yaml"))
+        check(lvl == doctor.FAIL, "有模板但没实配仍判 FAIL")
+        check("config.release.yaml" in msg or "config.release.yaml" in fix,
+              f"提示点名了旁边那份模板（msg={msg}）")
+        check("copy config.release.yaml config.yaml" in fix,
+              f"给出可直接照抄的复制命令（fix={fix}）")
+    finally:
+        import shutil as _sh2
+
+        _sh2.rmtree(pkg, ignore_errors=True)
 
     print("[7] 包内运行时：依赖必须来自包内，不能借构建机")
     # 真事故（2026-10-18）：包内 python 是完整 Python 拷贝，会加载用户级
