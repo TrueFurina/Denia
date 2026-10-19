@@ -962,6 +962,9 @@ def build_installer(out_dir: str, root: str, nsis_exe: str | None = None,
     if not nsis or not os.path.isfile(nsis):
         print("  ✗ 找不到 makensis：装到 .build_tools/nsis-3.10/ 或 Program Files (x86)/NSIS")
         return False
+    # 输出目录必须自己建：新克隆的仓库没有 dist/，旧代码靠"上一次出包留下的
+    # 目录"蒙混过关，删掉 dist/ 后第一次出包直接失败（2026-10-19 清场时暴露）。
+    os.makedirs(os.path.join(root, "dist"), exist_ok=True)
     script = os.path.join(root, "tools", "installer.nsi")
     argv = [nsis,
             f"/DVERSION={version}",
