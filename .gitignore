@@ -62,3 +62,6 @@ tools/_*.png
 
 # NSIS 构建工具链（本地下载，不进版本库；构建入口 tools/installer.nsi）
 .build_tools/
+
+# 贴纸技能的素材包（67MB 图片，本地产物，不进仓库）
+tools/daniya_sticker_skill/data/
