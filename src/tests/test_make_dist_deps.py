@@ -594,6 +594,17 @@ def main() -> int:
     try:
         fake_nsis = os.path.join(scratch, "makensis.exe")
         open(fake_nsis, "w", encoding="utf-8").close()
+        # 用独立假根当 root：build_installer 的产物路径是 root/dist/…，若拿真仓库
+        # 当 root，假 subprocess 就得往 D:\Denia\dist 里写一个 0 字节、名字与真
+        # 安装包一模一样的假 exe——那东西是能被当成成品发出去的雷。假根里出假包。
+        c2a_root = os.path.join(scratch, "c2aroot")
+        os.makedirs(os.path.join(c2a_root, "src"))
+        with open(os.path.join(c2a_root, "src", "version.py"), "w",
+                  encoding="utf-8") as fh:
+            fh.write(f'APP_VERSION = "{ver}"\n')
+        with open(os.path.join(c2a_root, "main.py"), "w",
+                  encoding="utf-8") as fh:
+            fh.write("import os\n")
         stage = os.path.join(scratch, "mystage")
         os.makedirs(os.path.join(stage, "src"))
         # 装配目录里的 version.py 必须与注入版本一致（漂移守卫）
@@ -603,20 +614,35 @@ def main() -> int:
         # 【C9-5】装配时 make_dist 会写 .src_fingerprint；这里模拟装配产物
         with open(os.path.join(stage, ".src_fingerprint"), "w",
                   encoding="utf-8") as fh:
-            fh.write(make_dist.src_fingerprint(ROOT) + "\n")
+            fh.write(make_dist.src_fingerprint(c2a_root) + "\n")
         captured: dict = {}
+
+        def _mk_result(rc, out):
+            class R:
+                returncode = rc
+                stdout = out
+            return R()
 
         def fake_run(argv, **kw):
             captured["argv"] = argv
-            class R:
-                returncode = 0
-                stdout = "ok"
-            return R()
+            # 真 makensis 会按 OutFile 落盘，build_installer 收尾要 stat 它。
+            # 早先这里不产出文件，测试却一直是绿的——因为 D:\Denia\dist 里躺着
+            # 上一次真实出包留下的同名 exe。清场删掉 dist/ 后立刻转红，是假绿。
+            v = next(a for a in argv if a.startswith("/DVERSION=")).split("=", 1)[1]
+            out_exe = os.path.join(c2a_root, "dist",
+                                   f"达妮娅AI桌面伴侣_Setup_v{v}.exe")
+            if not os.path.isdir(os.path.dirname(out_exe)):
+                # 关键：这里绝不替调用方建目录。真 makensis 在 OutFile 的目录
+                # 不存在时就是报错退出（rc!=0），不会帮你 makedirs——假实现要是
+                # 顺手建了，下面的「自己建 dist/」就永远测不出来。
+                return _mk_result(1, "error opening file for writing")
+            open(out_exe, "w", encoding="utf-8").close()
+            return _mk_result(0, "ok")
 
         orig_run = make_dist.subprocess.run
         make_dist.subprocess.run = fake_run
         try:
-            ok = make_dist.build_installer(stage, ROOT, nsis_exe=fake_nsis)
+            ok = make_dist.build_installer(stage, c2a_root, nsis_exe=fake_nsis)
         finally:
             make_dist.subprocess.run = orig_run
         argv = captured.get("argv", [])
@@ -627,9 +653,13 @@ def main() -> int:
               "argv 带 /DSTAGE=（指向被装配的输出目录，绝对路径）")
         check(any(a.endswith("installer.nsi") for a in argv),
               "argv 最后一项是 installer.nsi 脚本")
+        # 清场后新克隆的仓库没有 dist/：build_installer 必须自己建，否则真
+        # makensis 写 OutFile 时直接失败（2026-10-19 清场时暴露的现场 bug）。
+        check(os.path.isdir(os.path.join(c2a_root, "dist")),
+              "root 没有 dist/ 时 build_installer 自己建（新克隆首包不炸）")
 
         # makensis 缺失 → 明确失败而不是静默跳过
-        ok2 = make_dist.build_installer(stage, ROOT,
+        ok2 = make_dist.build_installer(stage, c2a_root,
                                         nsis_exe=os.path.join(scratch, "nope.exe"))
         check(ok2 is False, "makensis 不存在时返回 False（不静默跳过）")
 
@@ -640,14 +670,14 @@ def main() -> int:
                   encoding="utf-8") as fh:
             fh.write('APP_VERSION = "0.0.1"\n')
         captured.clear()
-        ok3 = make_dist.build_installer(bad_stage, ROOT, nsis_exe=fake_nsis)
+        ok3 = make_dist.build_installer(bad_stage, c2a_root, nsis_exe=fake_nsis)
         check(ok3 is False, "装配目录版本与注入版本不一致时拒绝出包")
         check("argv" not in captured,
               "版本漂移时 makensis 根本没被调用（先挡后跑）")
         # 装配目录缺 src/version.py（不是装配产物）→ 同样拒绝
         empty_stage = os.path.join(scratch, "emptystage")
         os.makedirs(empty_stage)
-        ok4 = make_dist.build_installer(empty_stage, ROOT, nsis_exe=fake_nsis)
+        ok4 = make_dist.build_installer(empty_stage, c2a_root, nsis_exe=fake_nsis)
         check(ok4 is False, "装配目录缺 src/version.py 时拒绝出包")
     finally:
         shutil.rmtree(scratch, ignore_errors=True)
