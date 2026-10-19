@@ -185,11 +185,31 @@ header h1{letter-spacing:.05em}
 #exprFx.fx-pos-mode .fx-tear-p{animation:none;opacity:1}
 #exprFx.fx-pos-mode .fx-zzz span{animation:none;opacity:.95}
 #exprFx.fx-pos-mode::after{content:'拖动泪滴/zzz 到合适位置，松手自动保存';position:absolute;left:50%;bottom:8px;transform:translateX(-50%);font-size:12px;color:#fff;background:rgba(60,45,70,.75);padding:4px 12px;border-radius:10px;white-space:nowrap;pointer-events:none;z-index:7}
+/* ---- 感知指示点（2026-10-20）----
+   她正在看屏幕时右下角亮一个青点；隐私模式（全停）时转琥珀色常亮。
+   为什么要有它：屏幕采集每 2s 抓一帧全屏，而桌面上原本**没有任何可见迹象**
+   ——用户只能靠"信任"，没法靠"看见"。同类产品（Copilot Vision / 豆包 / Kimi）
+   全是显式共享 + 可见指示，没有一家是静默采集。
+   为什么这么小：形象带来在场感，但**不可关闭的遮挡 = 卸载理由**。
+   8px、右下角、pointer-events:none（不挡拖动、不抢焦点、不干扰 Live2D 渲染）。
+   为什么用 display 而不是 opacity 淡入：淡入 350ms 意味着"她已经开始看了，但用户
+   还有一小段时间不知道"——隐私指示的延迟本身就是缺陷。立刻出现，只让颜色做过渡。 */
+#eyeDot{position:fixed;right:14px;bottom:14px;width:8px;height:8px;border-radius:50%;
+  background:#5eead4;box-shadow:0 0 7px rgba(94,234,212,.85);
+  display:none;transition:background .35s ease;pointer-events:none;z-index:9999}
+#eyeDot.on{display:block;animation:eyePulse 2.4s ease-in-out infinite}
+#eyeDot.paused{display:block;background:#fbbf24;box-shadow:0 0 7px rgba(251,191,36,.8)}
+@keyframes eyePulse{
+  0%,100%{box-shadow:0 0 0 0 rgba(94,234,212,.5),0 0 7px rgba(94,234,212,.85)}
+  50%{box-shadow:0 0 0 5px rgba(94,234,212,0),0 0 9px rgba(94,234,212,.6)}
+}
 </style>
 <script src="/assets/icons.js?v=2"></script>
 <script src="/assets/companion.js?v=1"></script>
 </head>
 <body>
+<!-- 感知指示点：她正在看屏幕时亮起（2026-10-20）。轮询脚本在文末。 -->
+<div id="eyeDot" aria-hidden="true"></div>
 <header><h1>Anime2.5DRig</h1><span>PSDをドロップ → 自動リグ → その場で動く 2.5Dアバター</span><button class="btn" id="btnTogglePanel">面板</button><button class="btn" id="btnReadme" style="margin-left:auto">README</button></header>
 <div id="main">
   <div id="stage" class="checker">
@@ -1808,6 +1828,37 @@ if(isPet){
 </script>
 <script>
 try { if (window.DIcon && window.DIcon.mount) DIcon.mount(document); } catch(_) {}
+</script>
+<script>
+/* ---- 感知指示点（2026-10-20）----
+   走**页面主动轮询**，不用 Python 跨线程推送：main_window.py:454 有实测结论——
+   GUI 线程内同步调 evaluate_js 会「自己锁死自己」（它在等 WebView2 回执，而回执
+   只能由正被本调用堵住的消息泵派发），跨线程调同样不可靠。轮询是唯一不踩这条的形态。
+
+   拿不到 api（浏览器调试模式 / pywebview 桥还没注入）就什么都不做：不亮、不报错、
+   不重试刷屏。桥注入是异步的，setInterval 天然会等到它。
+   三态：青点呼吸＝正在看；琥珀常亮＝隐私模式（全停）；不显示＝看屏关着。 */
+(function(){
+  var dot = document.getElementById('eyeDot');
+  if(!dot) return;
+  var busy = false;
+  function tick(){
+    if(busy) return;
+    var api = window.pywebview && window.pywebview.api;
+    if(!api || typeof api.get_perception_state !== 'function') return;
+    busy = true;
+    Promise.resolve(api.get_perception_state()).then(function(s){
+      busy = false;
+      if(!s || s.success === false) return;
+      var paused = !!s.privacy;               // 隐私模式：全停
+      var on = !!s.watching && !paused;       // 正在看：呼吸
+      dot.classList.toggle('on', on);
+      dot.classList.toggle('paused', paused);
+    }).catch(function(){ busy = false; });
+  }
+  setTimeout(tick, 1200);   // 桥注入后尽快亮起来，不用等满一轮
+  setInterval(tick, 2500);
+})();
 </script>
 </body>
 </html>
