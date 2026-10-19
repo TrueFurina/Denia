@@ -89,6 +89,10 @@ GATES: list[tuple[str, str, list[str], bool]] = [
     # 就撤不回来。这条守的是「命中时真的没抓屏」而不是「函数返回对不对」，
     # 外加 main.py 两处装配都得传 foreground_check（漏一处那条路径就静默不设防）。
     ("敏感窗口跳过", PY_VENV, ["src/tests/test_screen_skip_apps.py"], False),
+    # 感知指示器：桌宠右下角那个点。守的不是"页面上有个点"，而是
+    # ①亮灭由后端真实状态决定（写死 class=on 就是骗人）②走页面轮询而不是
+    # 跨线程 evaluate_js（main_window.py:454 有自锁实锤）。
+    ("感知指示器", PY_VENV, ["src/tests/test_perception_indicator.py"], False),
     # 「发给队友的包里到底有什么」：包内容取 git ls-files（.gitignore 是单一事实源），
     # 再叠一层硬排除。这层防御在真实仓库上**一项都不会触发**（gitignore 早洗过了），
     # 所以必须直接对规则表喂路径来证明它是活的——变异 4 刀（规则恒 None / 删红线

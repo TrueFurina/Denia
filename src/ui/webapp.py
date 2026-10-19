@@ -1185,6 +1185,51 @@ class CharacterAPI(PetAPI, WindowAPI):
 
         return result
 
+    def get_perception_state(self) -> dict:
+        """桌面感知的「一句话状态」，供桌宠页/主窗口的指示器轮询（2–3s 一次）。
+
+        【2026-10-20 立】为什么需要它：屏幕采集每 2s 抓一帧全屏，但**桌面上没有任何
+        可见迹象**。竞品（Copilot Vision / 豆包 / Kimi）都是显式共享 + 可见指示，
+        而达妮娅是常驻静默采集——用户只能靠"信任"，没法靠"看见"。
+
+        为什么是**页面主动轮询**而不是 Python 推送：
+        `main_window.py:454` 有实测结论——GUI 线程内同步调 `evaluate_js` 会
+        「自己锁死自己」（等 WebView2 回执，而回执只能由被堵住的消息泵派发），
+        跨线程调同样不可靠。轮询是唯一不会踩这条的形态。
+
+        极轻：只读 ScreenCapture 的内存快照，不碰 WebView2、不做 IO、不建线程。
+        任何一环拿不到就降级成 watching=False（宁可少亮一个点，不能让页面卡）。
+        """
+        out: dict[str, Any] = {
+            "success": True,
+            "ts": time.time(),
+            "watching": False,      # 看屏总闸是否开着
+            "privacy": False,       # 隐私模式（全停）
+            "interval_s": 0.0,      # 采样间隔，供说明"多久看一眼"
+            "last_seen_ts": 0.0,    # 最近一次真正抓帧的时刻
+            "skip_last": "",        # 最近因哪个敏感窗口跳过（如「网银」）
+            "skip_count": 0,
+        }
+        try:
+            out["privacy"] = bool(privacy_mode())
+        except Exception:  # noqa: BLE001
+            pass
+        cap = getattr(self, "_capture", None)
+        if cap is None:
+            return out
+        try:
+            # enabled 是实时属性（每次求值读 runtime_status.vision_enabled），
+            # 不能用 snapshot 里那个构造期快照——设置页刚关掉开关时两者会不一致。
+            out["watching"] = bool(cap.enabled)
+            snap = cap.snapshot()
+            out["interval_s"] = float(snap.get("interval_s") or 0.0)
+            out["last_seen_ts"] = float(snap.get("last_ts") or 0.0)
+            out["skip_last"] = str(snap.get("skip_last") or "")
+            out["skip_count"] = int(snap.get("skip_count") or 0)
+        except Exception:  # noqa: BLE001
+            logger.debug("感知状态快照失败（指示器降级为不亮）", exc_info=True)
+        return out
+
     # ======== 记忆性能观测仪（D 步，2026-10-01） ========
     def get_memory_profile(self) -> dict:
         """记忆性能观测仪快照（供开发者页「记忆性能观测仪」面板轮询）。
