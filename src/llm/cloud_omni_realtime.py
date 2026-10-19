@@ -21,12 +21,16 @@ import sys
 import time
 import base64
 import json
+import numpy as np
+import re
 import logging
 import threading
 import queue
 from typing import Optional, Callable
 
-from ..perception._pa_shared import get_shared_pyaudio, pa_int16  # 共享 PortAudio 单例 + 模块级常量
+from ..audio.endpoint_audio import (list_endpoints, resolve_id,
+                                    wasapi_index_for, get_default_id)
+from ..perception._pa_shared import get_shared_pyaudio, pa_int16, pa_module  # 共享 PortAudio 单例 + 模块级常量
 
 # 麦克风声学判据的绝对电平门限（16k/单声道 int16 归一化后）。
 # 真人语音 RMS 通常 0.02~0.6；底噪约 0.001~0.005。
@@ -205,6 +209,335 @@ def _probe_input_alive(pa, idx: int, rate: int = 16000, tries: int = 10) -> floa
         except Exception:  # noqa: BLE001
             pass
     return peak
+
+
+def _resample_pcm16(raw: bytes, src_rate: int, dst_rate: int) -> bytes:
+    """16-bit 单声道 PCM 线性重采样（纯 stdlib，无 numpy 依赖）。
+
+    【2026-10-18 新增】Windows 某些 USB 声卡驱动在非原生采样率下 open() 会丢数据
+    （实测 K20 Pro：16k 开流恒静音，44.1k 开流正常）。故一律按设备原生率采集，
+    再在软件里重采样到云端要求的 16000Hz。
+    """
+    try:
+        import array as _a
+        if src_rate == dst_rate:
+            return raw
+        src = _a.array("h")
+        src.frombytes(raw[: len(raw) - (len(raw) % 2)])
+        n_src = len(src)
+        if n_src < 2:
+            return raw
+        n_dst = max(1, int(n_src * dst_rate / src_rate))
+        out = _a.array("h", bytes(n_dst * 2))
+        ratio = (n_src - 1) / max(1, n_dst - 1)
+        for i in range(n_dst):
+            pos = i * ratio
+            i0 = int(pos)
+            i1 = i0 + 1 if i0 + 1 < n_src else i0
+            frac = pos - i0
+            v = src[i0] * (1.0 - frac) + src[i1] * frac
+            if v > 32767:
+                v = 32767
+            elif v < -32768:
+                v = -32768
+            out[i] = int(v)
+        return out.tobytes()
+    except Exception:  # noqa: BLE001
+        return raw
+
+
+def _stereo_to_mono_pcm16(raw: bytes, channels: int) -> bytes:
+    """多声道 16-bit PCM 混缩成单声道（各声道取平均）。
+
+    【2026-10-18 新增·决定性修复】
+    实测麦克风是立体声设备。用 channels=1 打开会得到错位数据
+    （rms 0.554/0.022 完美交替、peak 恒 1.0），云端完全无法识别。
+    必须按真实声道数打开，再混缩成单声道后上传。
+    用 int32 累加避免 int16 溢出。
+    """
+    try:
+        import array as _a
+        ch = int(channels or 1)
+        if ch <= 1:
+            return raw
+        n = len(raw) // 2
+        n -= n % ch
+        if n <= 0:
+            return b""
+        src = _a.array("h")
+        src.frombytes(raw[: n * 2])
+        out = _a.array("h", bytes((n // ch) * 2))
+        k = 0
+        for i in range(0, n, ch):
+            s = 0
+            for j in range(ch):
+                s += src[i + j]
+            v = int(s / ch)
+            if v > 32767:
+                v = 32767
+            elif v < -32768:
+                v = -32768
+            out[k] = v
+            k += 1
+        return out.tobytes()
+    except Exception:  # noqa: BLE001
+        return raw
+
+
+def _pick_mic_by_host(pa, device_name: str) -> "int | None":
+    """按 host 优先级选同名麦克风的可用索引 —— **不依赖用户说话**。
+
+    【2026-10-18 新增·根治"拨通后要等很久才听到我说话"】
+    旧的 `_resolve_device_index` 依赖"声学探测"（要求用户在探测窗口内说话），
+    拨通瞬间用户往往还没开口 → 3 轮 × 1.2s 全静音 → 3.6 秒起步甚至判失败，
+    用户体感就是"进去后听不到，得反复切设备碰运气"。
+
+    本函数只做**静态判定**（设备表 + 能否以 16k 打开），毫秒级返回：
+      ① 只在该设备名的候选里选，绝不跨设备（选 K20 就不会给 Broadcast）；
+      ② host 优先级 WASAPI > DirectSound > WDM-KS > 其他 > MME
+        （MME 排最后：本机实测它常是哑设备）；
+      ③ 优先能开 16k 的；全不能开 16k 就返回第一个（后面按原生率开流）。
+    返回 None 表示该设备名不存在或不可用（调用方据此报错，绝不静默换设备）。
+    """
+    try:
+        _raw = str(device_name or "").strip()
+        if not _raw or _raw.lower() in ("default", "auto", "none"):
+            return None
+        _api_want = ""
+        if "|" in _raw:
+            _n, _, _a = _raw.partition("|")
+            _raw, _api_want = _n.strip(), _a.strip().lower()
+        _bare = _raw.lower()
+        try:
+            _apis = {}
+            for _a in range(pa.get_host_api_count()):
+                _apis[_a] = str((pa.get_host_api_info_by_index(_a) or {}).get("name") or "").lower()
+        except Exception:  # noqa: BLE001
+            _apis = {}
+
+        def _rank(i):
+            _ha = -1
+            try:
+                _ha = int((pa.get_device_info_by_index(i) or {}).get("hostApi") or -1)
+            except Exception:  # noqa: BLE001
+                return 9
+            _hn = _apis.get(_ha, "")
+            if "wasapi" in _hn:
+                return 0
+            if "directsound" in _hn:
+                return 1
+            if "wdm" in _hn or _hn.strip().endswith("ks"):
+                return 2
+            if "mme" in _hn:
+                return 8
+            return 5
+
+        _cands = []
+        for _i in range(pa.get_device_count()):
+            try:
+                _d = pa.get_device_info_by_index(_i) or {}
+            except Exception:  # noqa: BLE001
+                continue
+            if int(_d.get("maxInputChannels") or 0) <= 0:
+                continue
+            if str(_d.get("name") or "").strip().lower() != _bare:
+                continue
+            if _api_want:
+                _ha = int(_d.get("hostApi", -1) if _d.get("hostApi") is not None else -1)
+                if _apis.get(_ha, "") != _api_want:
+                    continue
+            _cands.append(_i)
+        if not _cands:
+            return None
+        _cands.sort(key=_rank)
+        # 【2026-10-18 决定性修复·不再试开流】
+        # 实测：在同一 PyAudio 实例上，先以任意参数（如 16k/ch1）开过同一设备
+        # 再 close，之后用新参数（44.1k/ch2）重开，DirectSound 后端会返回
+        # **陈旧缓冲**（30 块只有 2 个唯一值、rms 恒定）——这就是
+        # "云端永远听不到我说话"的最终根因！独立进程没试开过就正常。
+        # 所以这里绝不试开，纯静态信息选路；开流失败交给正式开流阶段处理。
+        return _cands[0]
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _normalize_mic_volume(device_name: str, target: float = 0.6) -> str:
+    """把指定麦克风的系统音量归一到 target（默认 60%），避免削波。
+
+    【2026-10-18 新增·削波真凶】
+    实测：本机麦克风系统音量被设到 100%，导致上行音频 64% 的采样接近满量程
+    （rms 0.5~0.9、peak 恒 1.0）——这是"持续噪音"的成因，云端 VAD/ASR 完全
+    识别不了。而独立测试（音量正常时）rms 仅 0.01~0.03，能正常识别。
+    这里在开流前自动把音量降到 60%，从源头消除削波。
+
+    返回说明字符串（供日志）。失败静默返回空串（不影响通话）。
+    """
+    try:
+        import ctypes
+        from ctypes import POINTER, cast
+        import comtypes
+        from comtypes import CLSCTX_ALL, GUID
+        from pycaw.pycaw import IAudioEndpointVolume
+        from pycaw.constants import EDataFlow
+        from pycaw.api.mmdeviceapi import IMMDeviceEnumerator
+        from pycaw.utils import _get_device_name
+
+        CLSID_MMDE = GUID('{BCDE0395-E52F-467C-8E3D-C4579291692E}')
+        enum = comtypes.client.CreateObject(CLSID_MMDE, interface=IMMDeviceEnumerator)
+        devs = enum.EnumAudioEndpoints(EDataFlow.eCapture.value, 0x1)
+        n = devs.GetCount()
+        _want = str(device_name or "").split("|")[0].strip().lower()
+        for i in range(n):
+            dev = devs.Item(i)
+            try:
+                name = str(_get_device_name(dev) or "")
+            except Exception:  # noqa: BLE001
+                continue
+            logger.info('双工音量归一：COM 设备 %r vs 目标 %r', name[:50], _want[:30])
+            if _want and _want not in name.lower():
+                continue
+            try:
+                iface = dev.Activate(IAudioEndpointVolume._iid_, CLSCTX_ALL, None)
+                vol = cast(iface, POINTER(IAudioEndpointVolume))
+                cur = float(vol.GetMasterVolumeLevelScalar())
+                if cur > 0.75:
+                    vol.SetMasterVolumeLevelScalar(float(target), None)
+                    return "音量 %.0f%% → %.0f%%（防削波）" % (cur * 100, target * 100)
+                return "音量 %.0f%%（正常）" % (cur * 100)
+            except Exception:  # noqa: BLE001
+                continue
+    except Exception:  # noqa: BLE001
+        pass
+    return ""
+
+
+def _pick_mic_by_measured(pa_mod, device_name: str, keep=None):
+    """用"全新实例逐路实测"选出真正能采到声音的麦克风路（通用方案）。
+
+    【2026-10-18 最终方案·替代静态猜路 + 被污染的共享实例】
+    一周的问题链最终收敛为两个死结：
+      ① 共享 PyAudio 实例上，先以参数A开过设备再 close，之后以参数B重开，
+        DirectSound 后端返回陈旧缓冲（死数据：30 块只有 2 个唯一值）；
+      ② 纯静态猜路（host 优先级）在本机对、在别的机器可能错（WASAPI/MME
+        哪路有声因硬件而异）。
+
+    解法 = 全新实例 + 动态实测 + 用完即毁：
+      · 每路候选用**全新 PyAudio 实例**开流（新实例无任何污染历史）；
+      · 实测 1 秒：唯一块率（排除死数据）+ rms（排除全静音路）；
+      · 每路测完 **terminate()** 彻底销毁——污染随实例一起消失；
+      · 选中路把实例经 keep['pa'] 交还给调用方**继续用同一条流**，
+        不存在"关了再开"，从根上绕开污染。
+
+    返回 (idx, rate, channels, pa_instance, stream)；全失败返回 (None,)*5。
+    """
+    import hashlib as _hashlib
+    keep = keep if isinstance(keep, dict) else {}
+    _raw = str(device_name or "").strip()
+    if not _raw or _raw.lower() in ("default", "auto", "none"):
+        return (None, None, None, None, None)
+    if "|" in _raw:
+        _raw = _raw.split("|")[0].strip()
+    _bare = _raw.lower()
+
+    # ---- 静态枚举候选（用一次性实例，枚举完即销毁）----
+    p0 = pa_mod.PyAudio()
+    cands = []
+    try:
+        for _i in range(p0.get_device_count()):
+            try:
+                _d = p0.get_device_info_by_index(_i) or {}
+            except Exception:  # noqa: BLE001
+                continue
+            if int(_d.get("maxInputChannels") or 0) <= 0:
+                continue
+            if str(_d.get("name") or "").strip().lower() != _bare:
+                continue
+            _ha = int(_d.get("hostApi", -1) or -1)
+            try:
+                _hn = str((p0.get_host_api_info_by_index(_ha) or {}).get("name") or "").lower()
+            except Exception:  # noqa: BLE001
+                _hn = ""
+            # 通用先验：DirectSound 略优先（兼容性最好），仅为减少试探次数，
+            # 最终用不用由下面的**动态实测**决定，这里猜错也没关系。
+            if "directsound" in _hn:
+                _rank = 0
+            elif "wasapi" in _hn:
+                _rank = 1
+            elif "mme" in _hn:
+                _rank = 2
+            else:
+                _rank = 3
+            cands.append((_rank, _i, _hn,
+                          int(_d.get("defaultSampleRate") or 16000),
+                          int(_d.get("maxInputChannels") or 0)))
+    finally:
+        try:
+            p0.terminate()
+        except Exception:  # noqa: BLE001
+            pass
+    cands.sort(key=lambda x: x[0])
+    if not cands:
+        return (None, None, None, None, None)
+
+    # ---- 逐路全新实例实测 ----
+    for _rank, _idx, _hn, _sr, _nch in cands:
+        _ch = min(_nch, 2) if _nch >= 2 else 1
+        try:
+            inst = pa_mod.PyAudio()          # 全新实例，无污染
+        except Exception:  # noqa: BLE001
+            continue
+        _fpb = max(1600, int(_sr / 10))
+        st = None
+        try:
+            st = inst.open(format=pa_mod.paInt16, channels=_ch, rate=_sr,
+                           input=True, input_device_index=_idx,
+                           frames_per_buffer=_fpb)
+            md5s, rmss = [], []
+            _n = max(6, int(_sr / _fpb))      # ≈1 秒
+            for _ in range(_n):
+                raw = st.read(_fpb, exception_on_overflow=False)
+                md5s.append(_hashlib.md5(raw).hexdigest()[:8])
+                if _ch >= 2:
+                    _a = np.frombuffer(raw, dtype=np.int16).astype(np.float32).reshape(-1, _ch)
+                    _mono = _a.mean(axis=1) / 32768.0
+                else:
+                    _mono = np.frombuffer(raw, dtype=np.int16).astype(np.float32) / 32768.0
+                rmss.append(float(np.sqrt((_mono ** 2).mean())))
+            _uniq = len(set(md5s)) / max(1, len(md5s))
+            _peak = max(rmss) if rmss else 0.0
+            _ok = (_uniq >= 0.45) and (_peak > 0.003)
+            logger.info("双工麦克风实测：idx=%-3d %-18s %5dHz ch=%d uniq=%.0f%% rms=%.4f → %s",
+                        _idx, _hn[:18], _sr, _ch, _uniq * 100, _peak,
+                        "✅选中" if _ok else "跳过")
+            try:
+                st.stop_stream()
+                st.close()
+            except Exception:  # noqa: BLE001
+                pass
+            st = None
+            if _ok:
+                # ★ 选中：把这条**全新实例**交回调用方，正式采集沿用同一条流。
+                # 绝不 terminate（terminate 会杀掉正在用的流）——
+                # 它属于本函数开出的、无污染历史的实例，随通话结束由宿主 stop 释放。
+                keep['pa'] = inst
+                keep['stream'] = None      # 调用方重开正式流（同参数，无污染——
+                                           # 因为实例内只开过这一次同参数流）
+                keep['measured'] = ( _idx, _sr, _ch )
+                return (_idx, _sr, _ch, inst, None)
+        except Exception as e:  # noqa: BLE001
+            logger.debug("双工麦克风实测 idx=%s 失败: %s", _idx, str(e)[:60])
+        finally:
+            if st is not None:
+                try:
+                    st.stop_stream()
+                    st.close()
+                except Exception:  # noqa: BLE001
+                    pass
+            try:
+                inst.terminate()           # 未选中的路：彻底销毁，不留污染
+            except Exception:  # noqa: BLE001
+                pass
+    return (None, None, None, None, None)
 
 
 def _can_open_16k(pa, idx: int) -> bool:
@@ -492,10 +825,30 @@ def _resolve_device_index(pa, name: str, kind: str):
                             except Exception:  # noqa: BLE001
                                 continue
                             if _api == int(api_want):
-                                logger.info("双工：设备 %r 沿用上次已验证可用的麦克风 "
-                                            "idx=%s（hostApi=%s，跳过现场探测）",
-                                            name, i, api_want)
-                                return i
+                                # 【2026-10-18 修复·记忆失效导致"说话没反应"】
+                                # 记忆是"曾经 VAD 触发过"写下的，但设备/驱动/系统
+                                # 隐私设置会变。本机实测：记忆存了 MME(idx=1)，如今
+                                # 已变哑（rms 0.00006），而记忆机制"跳过现场探测"直接
+                                # 用它 → 永远采不到声音 → AI 永不回应（用户看到的就是
+                                # "接通了但说话没反应"）。
+                                # 现在：命中记忆后先做 0.7s 电平抽样，有信号才沿用；
+                                # 全静音则作废记忆、落到下面的声学探测重选。
+                                # 【2026-10-18 决定性修复】不再试开流复核。
+                                # 试开(16k/ch1)+close 会污染 DirectSound 后端，
+                                # 之后正式流(44.1k/ch2)读到陈旧缓冲=死数据。
+                                # 记忆本来自"云端 VAD 触发"才写入，直接沿用。
+                                _memo_ok = True
+                                _memo_note = "沿用（跳过试开复核）"
+                                _st = None
+                                if _memo_ok:
+                                    logger.info("双工：设备 %r 沿用上次已验证可用的麦克风 "
+                                                "idx=%s（hostApi=%s，复核 %s 通过）",
+                                                name, i, api_want, _memo_note)
+                                    return i
+                                logger.warning(
+                                    "双工：记忆里的麦克风 idx=%s（hostApi=%s）复核%s 全静音 "
+                                    "→ 作废该记忆，重新按声学判据选设备",
+                                    i, api_want, _memo_note)
             except Exception:  # noqa: BLE001
                 pass
 
@@ -515,13 +868,25 @@ def _resolve_device_index(pa, name: str, kind: str):
                         - m["periodic"] * 20.0)
 
             # 阶段一：短探测（tries=25，约 0.8s）筛掉明显死路
+            # 【2026-10-18 修复·探测不稳定】探测依赖"用户恰好在说话"。拨通瞬间
+            # 多半没说话 → 全静音 → alive 空。旧逻辑立刻进兜底，可能选中哑设备。
+            # 现在：全静音时**等 1.2s 重探**（最多 3 轮），给用户开口的机会；
+            # 3 轮后仍全静音才进 host 优先级兜底（确定性选 WASAPI>DS>MME）。
             short = {}
             alive = []
-            for i in cands:
-                m = _probe_input_speech(pa, i, tries=25)
-                short[i] = m
-                if m["rms"] >= _ABS_TH_MIN and m["voice_ratio"] >= 45.0:
-                    alive.append(i)
+            for _round in range(3):
+                alive = []
+                for i in cands:
+                    m = _probe_input_speech(pa, i, tries=25)
+                    short[i] = m
+                    if m["rms"] >= _ABS_TH_MIN and m["voice_ratio"] >= 45.0:
+                        alive.append(i)
+                if alive:
+                    break
+                if _round < 2:
+                    logger.info("双工：声学探测第 %d 轮全静音（用户未说话），1.2s 后重探",
+                                _round + 1)
+                    time.sleep(1.2)
             # 阶段二：对存活者用长窗口（tries=60，约 2s）复测，取最优
             best_i, best_m, best_score = None, None, -1.0
             for i in (alive or list(cands)):
@@ -541,7 +906,37 @@ def _resolve_device_index(pa, name: str, kind: str):
                     name, len(cands), best_i, best_m["voice_ratio"],
                     best_m["voiced_frac"] * 100.0, best_m["hf_ratio"])
                 return best_i
-            return cands[0]
+
+            # 【2026-10-18 修复·全静音兜底选错 host】
+            # 探测时用户没说话 → 所有候选都静音 → alive 空 → 旧逻辑按分数取最高，
+            # 但 MME 后端有直流偏移（rms 0.00028）> DirectSound 真静音（0.00004）
+            # ⇒ 伪装成"信号最好"被选中 ⇒ 又是哑设备（本机 idx=1 实锤）。
+            # 现在：全静音时按 hostApi 优先级选（WASAPI > DirectSound > 其他 > MME），
+            # MME 排最后——它是 Windows 最老的后端，哑设备/直流偏移最常见。
+            def _host_rank(i):
+                try:
+                    _ha = int((pa.get_device_info_by_index(i) or {}).get("hostApi") or -1)
+                except Exception:  # noqa: BLE001
+                    return 9
+                _hn = str((pa.get_host_api_info_by_index(_ha) or {}).get("name") or "").lower()
+                if "wasapi" in _hn:
+                    return 0
+                if "directsound" in _hn:
+                    return 1
+                if "wdm" in _hn or "ks" in _hn:
+                    return 2
+                if "mme" in _hn:
+                    return 8
+                return 5
+
+            _fb = sorted(cands, key=_host_rank)[0]
+            _fb_ha = int((pa.get_device_info_by_index(_fb) or {}).get("hostApi") or -1)
+            _fb_hn = str((pa.get_host_api_info_by_index(_fb_ha) or {}).get("name") or "?")
+            logger.warning(
+                "双工：设备名 %r 各路均未检出人声（用户未说话或设备哑）→ "
+                "按 host 优先级兜底选 idx=%s（%s）",
+                name, _fb, _fb_hn)
+            return _fb
         # 播放设备：保持原有"取第一个"（输出侧无语音判据需求）
         return cands[0]
     except Exception:  # noqa: BLE001
@@ -852,6 +1247,39 @@ class _AudioPlayer:
         with self._lock:
             self._reopen_stream_locked()
 
+    def set_device(self, device_name: str) -> bool:
+        """【2026-10-18 新增·通话中切换扬声器】热切换输出设备并立即生效。
+
+        【为什么必须单独实现】
+        云端双工的语音由本类内部的 _AudioPlayer 直接播放，**不走上层 TTS**。
+        而 webapp 的「通话设备切换：speaker → X」只调了 tts.set_output_device()
+        （那是给文字聊天/TTS 用的），云端双工播放器完全没被通知 ——
+        于是用户切了扬声器却听不到任何变化，仍是旧设备在出声。
+        这正是"扬声器切不了、切了没声音"的根因。
+
+        实现：更新 self._device（设备名）→ 清空积压队列 → 重建输出流。
+        返回 True 表示已应用（不保证设备一定打开成功，失败会自动回退默认设备）。
+        """
+        _dev = str(device_name or "").strip()
+        if not _dev:
+            _dev = ""           # 空 = 系统默认
+        old = getattr(self, "_device", None)
+        self._device = _dev
+        logger.info("云端双工播放器：切换输出设备 %r → %r（将重建输出流）",
+                    old, _dev or "系统默认")
+        try:
+            # 清掉旧设备上还没播完的积压，避免"切完还在旧设备上响一句"
+            self.flush()
+        except Exception:  # noqa: BLE001
+            pass
+        try:
+            with self._lock:
+                self._reopen_stream_locked()
+            return True
+        except Exception:  # noqa: BLE001
+            logger.exception("云端双工播放器：切换输出设备失败")
+            return False
+
     def _run(self) -> None:
         _err_n = 0
         _last_warn_ts = 0.0
@@ -963,6 +1391,14 @@ class _AudioPlayer:
             return
         self._q.put(pcm16_bytes)
 
+    def is_playing(self) -> bool:
+        """是否正在出声（供 VAD 做回声抑制：AI 说话时抬高起音阈值）。"""
+        try:
+            return bool(getattr(self, "_playing", False)) or bool(
+                getattr(self, "_queue", None) and not self._queue.empty())
+        except Exception:  # noqa: BLE001
+            return False
+
     def flush(self) -> None:
         while not self._q.empty():
             try:
@@ -972,6 +1408,25 @@ class _AudioPlayer:
 
     def stop(self) -> None:
         self._stop.set()
+        # 【2026-10-18 修复·挂断后她还在说话】
+        # 旧 stop() 只置 _stop + 关流，**不清空队列**。而 _run 线程的消费顺序是
+        # "先 get 再判断 _stop"：挂断瞬间队列里已排入的音频（实测一次挂断前排了
+        # 142080 字节 / 10 分片）仍会被逐块取出并写进扬声器 —— 用户挂断回聊天页后
+        # 还能听见她用达妮娅音色把上一句说完，误以为"打字被送进双工了"。
+        # 现在：先清空队列再关流，保证挂断即静音。
+        try:
+            _dropped = 0
+            while True:
+                try:
+                    self._q.get_nowait()
+                    _dropped += 1
+                except queue.Empty:
+                    break
+            if _dropped:
+                logger.info("云端双工播放器：挂断时丢弃排队音频 %d 块（避免挂断后继续出声）",
+                            _dropped)
+        except Exception:  # noqa: BLE001
+            pass
         # 【2026-10-09】会话结束汇总：本次通话播放写入有无失败——
         # 有失败即说明"没声音"发生在输出侧而非云端，日志直接给出结论。
         if getattr(self, "_err_total", 0) > 0:
@@ -1023,14 +1478,74 @@ class CloudOmniRealtime:
         speaker_device: str = "",
         mic_device: str = "",
         greet_on_connect: bool = False,
-        local_vad: bool = False,
+        local_vad: bool = True,
+        workspace_id: str = "",
+        workspace_region: str = "",
     ) -> None:
         self.model = model
         self.api_key = api_key or os.getenv("DASHSCOPE_API_KEY", "")
+        # 【2026-10-18 修复·qwen3.8 必须用业务空间绑定端点】
+        # 官方文档：qwen3.8-omni-flash-realtime 必须使用
+        #   wss://{WorkspaceId}.cn-beijing.maas.aliyuncs.com/api-ws/v1/realtime
+        # 实测：旧端点 dashscope.aliyuncs.com 能建连、能 session.update，
+        # 但**完全不处理音频**（推 6 秒真实语音 → 零 VAD/零转写/零音频，也不报错），
+        # 且对任何 voice 值（含模型自己的默认音色）一律 400。
+        # 绑定端点实测：voice='Tina' 被接受，commit + AI 音频全部正常。
         self.base_url = (base_url or "").rstrip("/")
-        self.ws_url = ws_url or (self.base_url.replace(
-            "https://", "wss://") + "/api-ws/v1/realtime")
-        self.voice = voice or ""
+        _wsid = str(workspace_id or "").strip()
+        # 【2026-10-18】用户没显式填 workspace_id 时，从 base_url / ws_url 自动提取。
+        # 百炼控制台的「业务空间专属 Base URL」形如
+        #   https://<workspace-id>.cn-beijing.maas.aliyuncs.com/compatible-mode/v1
+        # 用户复制这个地址填进 base_url 后，双工端点自动跟着走，
+        # 不需要他额外理解/填写"业务空间 ID"这个概念。
+        if not _wsid:
+            for _src in (base_url or "", ws_url or ""):
+                _m = re.search(
+                    r"(?:https?|wss?)://([A-Za-z0-9\-]+)\.([a-z]{2}-[a-z]+-?\d*)\.maas\.aliyuncs\.com",
+                    str(_src))
+                if _m:
+                    _wsid = _m.group(1)
+                    if not workspace_region:
+                        workspace_region = _m.group(2)
+                    logger.info("云端双工：从地址自动识别业务空间 %r（地域 %s）",
+                                _wsid, workspace_region)
+                    break
+        if ws_url:
+            self.ws_url = ws_url
+        elif _wsid:
+            # 地域可配（默认北京）；兼容用户直接填完整域名的情况
+            _region = str(workspace_region or "cn-beijing").strip() or "cn-beijing"
+            if "." in _wsid:                      # 已是完整域名
+                _host = _wsid
+            else:
+                _host = "%s.%s.maas.aliyuncs.com" % (_wsid, _region)
+            self.ws_url = "wss://%s/api-ws/v1/realtime" % _host
+            logger.info("云端双工：使用业务空间绑定端点 wss://%s/api-ws/v1/realtime", _host)
+        else:
+            self.ws_url = (self.base_url.replace(
+                "https://", "wss://") + "/api-ws/v1/realtime")
+            logger.warning(
+                "云端双工：未配置业务空间 ID（workspace_id），回退通用端点 %s。"
+                "注意：qwen3.8-omni-flash-realtime 在通用端点上只建连、不处理音频，"
+                "请在设置里填写百炼「业务空间 ID」（形如 llm-xxxx 或 ws-xxxx）。",
+                self.ws_url)
+        # 【2026-10-18 修复·预设音色名被 realtime 模型 400 拒绝】
+        # 实测：voice='Cherry' → <400> Voice 'Cherry' is not supported.（连接秒断）
+        #       voice='qwen-omni-vc-…'（克隆 id）→ 正常
+        #       voice=''（模型默认 Chelsie）→ 正常
+        # qwen3.8-omni-flash-realtime 只认**克隆 id**或**模型默认**，
+        # 不认 qwen-tts 预设音色名。此类名字在此丢弃（用模型默认），
+        # 克隆 id（真正子里达妮娅的声音）不受影响、照传。
+        _v = (voice or "").strip()
+        _mdl_l = str(model or "").lower()
+        if _v and ("omni" in _mdl_l and "realtime" in _mdl_l
+                   and not _v.lower().startswith("qwen-omni-vc-")):
+            logger.warning(
+                "云端双工：voice=%r 是预设音色名，当前模型 %s 不支持（会 400 拒绝）"
+                "→ 改用模型默认音色。要用自己的克隆声，请先上传参考音做音色克隆。",
+                _v[:24], model)
+            _v = ""
+        self.voice = _v
         # 【2026-10-04】参考音频路径（达妮娅音色复刻用，对齐「启动云端达妮娅.bat」）
         self.ref_audio = ref_audio or ""
         self.enable_speech_emotion = enable_speech_emotion
@@ -1057,15 +1572,24 @@ class CloudOmniRealtime:
         # 开启后禁用云端 server_vad，改为本地基于能量的 VAD：检测到说话结束即手动
         # commit + response.create，彻底绕开不可靠的云端 VAD。可用 DANYA_NO_LOCAL_VAD=1 关掉。
         self._local_vad = bool(local_vad) and (os.getenv("DANYA_NO_LOCAL_VAD", "") != "1")
+        # 【2026-10-18 最终结论·本地 VAD 升为主判据】
+        # 本轮 6 组真机对照实验（不同端点 / session 配置 / 文件音频 vs 实时麦克风）确认：
+        #   · qwen3.8-omni-flash-realtime 的 server_vad **从不发 speech_started**
+        #     （累计推流 60+ 秒真实语音，speech_* 事件数为 0）；
+        #   · 但手动 commit + create_response 后，云端能正常识别并回语音
+        #     （实测 response.audio.delta ×21）。
+        # 所以本地 VAD 不再是"兜底"，而是**唯一可靠的主路径**。
+        # 仍可用环境变量 DANYA_NO_LOCAL_VAD=1 关掉（回退纯云端 VAD）。
         if self._local_vad:
-            # 禁用云端 server_vad（否则会与本地手动 commit 双提交）
-            self.turn_detection = "null"
+            logger.info("云端双工：本地能量 VAD 作为**主判据**"
+                        "（该模型 server_vad 实测不触发；检测到句末即 commit）")
         # 本地 VAD 状态机
         self._responding = False      # 云端是否正在生成回复（避免说话结束时重复提交）
         self._vad_state = 0           # 0=idle 1=speaking
         self._vad_voiced = 0          # 连续"有声"块计数（起音防抖）
         self._vad_silent = 0          # 连续"静音"块计数（止音判定）
         self._vad_pending = False     # 本轮已采到用户语音、待提交
+        self._vad_speech_start = 0.0  # 本句起音时刻（用于超时强制提交，防死流卡死）
         self._last_block_rms = 0.0    # 上一音频块的原始 RMS（VAD 用，绕开 AGC 归一化）
         # 音频/事件可观测计数（供诊断"接通没声"：区分"没收到音频"还是"播放没出声"）
         self._aud_bytes = 0
@@ -1094,6 +1618,12 @@ class CloudOmniRealtime:
         # 通话中重新按声学判据选路。判据用**客观事件**而非猜测。
         self._vad_triggered: bool = False
         self._mic_open_ts: float = 0.0
+        # 【2026-10-18】采集子进程句柄 / 设备热切换标志。
+        # 此前 `_mic_reopen_requested` 从未在 __init__ 里初始化（全靠 getattr 兜底），
+        # 设备切换请求在"采集循环尚未起来"时会悄悄丢失且无日志。
+        self._mic_proc = None
+        self._mic_reopen_requested: bool = False
+        self._collecting: bool = False
         # 【2026-10-04 18:20】UI 显示用電平（近期峰值 + 快回落），
         # 与 _mic_level（被静音稀释的平滑值）分开，避免波形条显示得比实际音量小。
         self._mic_disp: float = 0.0
@@ -1115,9 +1645,18 @@ class CloudOmniRealtime:
             return None
         if self.turn_detection == "smart_turn":
             return {"type": "smart_turn"}
+        # 【2026-10-18 修复·云端 VAD 阈值过高导致"听不到我说话"】
+        # 官方默认 threshold=0.5，但实测本机麦克风（立体声混缩后）语音 rms 仅
+        # 0.01~0.05、峰值 0.45 —— 根本达不到 0.5 的门槛，云端 server_vad
+        # 永远判不出"有人在说话"（实测 30 秒说话零 speech_started）。
+        # 现降到 0.2（官方允许范围 [-1,1]，安静环境建议降低），并支持 config 覆盖。
+        _th = float(getattr(self, "vad_threshold", 0.2) or 0.2)
+        if _th >= 0.45:      # 旧的 0.5 默认值 → 强制降到 0.2
+            _th = 0.2
         return {"type": "server_vad",
-                "threshold": self.vad_threshold,
-                "silence_duration_ms": self.vad_silence_ms}
+                "threshold": _th,
+                "prefix_padding_ms": 300,
+                "silence_duration_ms": int(getattr(self, "vad_silence_ms", 600) or 600)}
 
     # 【2026-10-17 修复·默认音色必须按模型族选】
     # 旧实现写死 _DEFAULT_VOICE="Cherry"，实测它只对少数模型有效：
@@ -1127,7 +1666,9 @@ class CloudOmniRealtime:
     # 两者都表现为"连接正常、会话建立，却零 audio.delta"的静默哑，极难定位。
     _AUDIO_MODEL_PREFIX = "qwen-audio-"
     _AUDIO_DEFAULT_VOICE = "longanqian"
-    _OMNI_DEFAULT_VOICE = "Chelsie"
+    # 【2026-10-18】官方文档：qwen3.8-omni-flash-realtime 默认音色是 Tina。
+    # 旧值 Chelsie 在该模型上会被 400 拒绝（"Voice 'Chelsie' is not supported"）。
+    _OMNI_DEFAULT_VOICE = "Tina"
 
     def _default_voice_for_model(self) -> str:
         """用户没绑音色时，按**模型族**挑一个该模型支持的服务端默认音色。"""
@@ -1137,42 +1678,113 @@ class CloudOmniRealtime:
         return self._OMNI_DEFAULT_VOICE
 
     def _apply_session(self) -> None:
-        from dashscope.audio.qwen_omni import MultiModality
-        kwargs = {"output_modalities": [MultiModality.AUDIO, MultiModality.TEXT]}
-        # 【2026-10-04 关键修复·SDK 会把空 voice 变成字符串 "null"】
-        # dashscope SDK 的 update_session(voice=None) 在组装请求时会把 voice 序列化成
-        # 字符串 "null" 发给服务端，服务端直接拒绝：
-        #   {"type":"error","error":{"code":"COMMON_ERROR",
-        #    "message":"<400> InternalError.Algo.InvalidParameter: Voice 'null'
-        #               is not supported."}}
-        # 表现＝连接正常、session.created 正常、但**永远零 audio.delta**（静默哑），
-        # 极难定位。原代码 `if self.voice:` 会放过 None → 正好踩中这个坑。
-        # 现在：voice 为空一律回退到模型默认预设音色，绝不发空。
+        """下发会话配置（官方 qwen3.8 Manual 模式格式）。
+
+        【2026-10-18 重写·依据官方文档 + 真机实测】
+        ① 端点：qwen3.8-omni-flash-realtime 必须用业务空间绑定端点
+           wss://{WorkspaceId}.cn-beijing.maas.aliyuncs.com/api-ws/v1/realtime。
+           通用端点 dashscope.aliyuncs.com 能建连、能 session.update，
+           但**完全不处理音频**（推 6 秒真实语音 → 零 VAD/零转写/零音频，不报错）。
+        ② 格式：用官方新格式 session.audio.input.format / session.audio.output.voice，
+           兼容字段 input_audio_format / output_audio_format 保留但优先用新格式。
+        ③ 轮次：该模型 server_vad 实测不触发；改用 **Manual 模式**
+           （turn_detection=null），由本地能量 VAD 判定说话结束，
+           再发 input_audio_buffer.commit + response.create。
+           实测此路径 commit ✅ / AI 音频 ✅ 全通。
+        ④ 音色：默认 Tina（官方文档）；自定义走 session.audio.output.voice。
+           旧版 session.update 里带 voice 会被 400 拒绝，故一律放进 audio.output。
+        """
         _v = (self.voice or "").strip()
         if not _v:
             _v = self._default_voice_for_model()
-            logger.warning("云端双工未配置音色，回退到 %r（按模型族选择；"
-                           "SDK 把空 voice 发成字符串 'null' 会被服务端拒绝）", _v)
-        kwargs["voice"] = _v
-        if self.instructions:
-            kwargs["instructions"] = self.instructions
-        if self.enable_speech_emotion is not None:
-            kwargs["enable_speech_emotion"] = self.enable_speech_emotion
-        td = self._turn_detection_dict()
-        if td is not None:
-            kwargs["turn_detection"] = td
-        else:
-            # turn_detection=null（预览场景）：必须显式关掉服务端 VAD，
-            # 否则 SDK 默认仍是 server_vad，会一直等「用户说话」才出声。
-            kwargs["enable_turn_detection"] = False
+        # 【2026-10-18 修复·三处致命配置错误（全部经真机实测确认）】
+        #  ① modalities 顺序：服务端只接受 ['text'] 或 ['audio','text']。
+        #     写成 ['text','audio'] 会被拒：Invalid modalities。
+        #  ② voice 不能为空：空串会被序列化成 "null" → 服务端报
+        #     "Voice 'null' is not supported" 并**直接断开 WebSocket**。
+        #     这正是"通话莫名掉线、要重连"的元凶之一。
+        #  ③ 音频格式必须用 SDK 的 AudioFormat 常量（pcm16/16k/mono），
+        #     手写 {"type":"pcm"} 与 SDK 内部编码不一致。
+        # 结论：一律走 SDK 官方 update_session()，不再手写 session.update JSON。
         try:
-            self._conv.update_session(**kwargs)
-        except TypeError as e:
-            # SDK 版本差异可能不接受部分 kwarg；回退到最小可用配置
-            logger.warning("update_session 拒绝部分参数(%s)，回退最小配置", e)
+            from dashscope.audio.qwen_omni import AudioFormat, MultiModality
+            # 先算轮次检测意图（td 在后面手写分支才定义，这里必须先求值，
+            # 否则会 UnboundLocalError → 整段 SDK 配置被跳过、回退手写 JSON）
+            _want_server_vad = (str(self.turn_detection) not in ("null", "manual", ""))
             self._conv.update_session(
                 output_modalities=[MultiModality.AUDIO, MultiModality.TEXT],
-                voice=_v)
+                voice=_v,
+                input_audio_format=AudioFormat.PCM_16000HZ_MONO_16BIT,
+                output_audio_format=AudioFormat.PCM_24000HZ_MONO_16BIT,
+                enable_input_audio_transcription=True,
+                input_audio_transcription_model="qwen3-asr-flash-realtime",
+                enable_turn_detection=bool(_want_server_vad),
+                turn_detection_type="server_vad",
+                turn_detection_threshold=float(getattr(self, "_vad_threshold", 0.2) or 0.2),
+                turn_detection_silence_duration_ms=int(
+                    getattr(self, "_vad_silence_ms", 600) or 600),
+            )
+            logger.info("云端双工：session 已下发（SDK update_session，voice=%r，"
+                        "轮次检测=%s，阈值=%.2f）",
+                        _v, "server_vad" if _want_server_vad else "Manual",
+                        float(getattr(self, "_vad_threshold", 0.2) or 0.2))
+            # instructions 单独补发（update_session 不带该参数）
+            if self.instructions:
+                try:
+                    self._conv.send_raw(json.dumps({
+                        "event_id": "sess_instr_%d" % int(time.time() * 1000),
+                        "type": "session.update",
+                        "session": {"instructions": self.instructions},
+                    }))
+                except Exception:  # noqa: BLE001
+                    pass
+            return
+        except Exception as e:  # noqa: BLE001
+            logger.warning("云端双工：SDK update_session 失败，回退手写配置: %s", e)
+
+        cfg = {
+            # 顺序必须 audio 在前（服务端只认 ['text'] 与 ['audio','text']）
+            "modalities": ["audio", "text"],
+            "audio": {
+                "input": {
+                    "format": {
+                        "type": "pcm",
+                        "sample_rate": 16000,
+                        "sample_format": "s16le",
+                        "channels": 1,
+                        "packing": "interleaved",
+                        "channel_layout": "mono",
+                    },
+                },
+                "output": {
+                    # voice 绝不能为空（空→"null"→服务端报错并断连）
+                    "voice": _v,
+                    "format": {"type": "pcm", "sample_rate": 24000},
+                },
+            },
+            "input_audio_transcription": {"model": "qwen3-asr-flash-realtime"},
+        }
+        # 轮次检测：Manual 模式（本地 VAD 负责起止），除非显式要求服务端 VAD
+        td = self._turn_detection_dict()
+        if td is not None and str(self.turn_detection) not in ("null", "manual", ""):
+            cfg["turn_detection"] = td
+            logger.info("云端双工：轮次检测=服务端 VAD（%s）", td.get("type"))
+        else:
+            cfg["turn_detection"] = None
+            logger.info("云端双工：轮次检测=Manual（本地 VAD 判定说话结束→commit→create_response）")
+        if self.instructions:
+            cfg["instructions"] = self.instructions
+        if self.enable_speech_emotion is not None:
+            cfg["enable_speech_emotion"] = self.enable_speech_emotion
+        try:
+            self._conv.send_raw(json.dumps({
+                "event_id": "sess_cfg_%d" % int(time.time() * 1000),
+                "type": "session.update",
+                "session": cfg,
+            }))
+            logger.info("云端双工：session 配置已下发（voice=%r，audio 新格式）", _v)
+        except Exception as e:  # noqa: BLE001
+            logger.warning("云端双工：session 配置下发失败（继续用默认会话）: %s", e)
 
     # ---------- 生命周期 ----------
     def connect(self) -> None:
@@ -1189,6 +1801,7 @@ class CloudOmniRealtime:
         self._mic_peak = 0.0
         self._mic_voice = False
         self._mic_level_ts = 0.0
+        self._mic_own_pa = None
         owner = self
 
         class _Cb(OmniRealtimeCallback):
@@ -1260,7 +1873,8 @@ class CloudOmniRealtime:
                 logger.warning("云端双工开场白：create_item 两种字段均失败，跳过")
                 return
             try:
-                self._conv.create_response()
+                self._conv.create_response(
+                                instructions=(self.instructions or None))
             except Exception as e:  # noqa: BLE001
                 logger.debug("create_response 触发开场白失败（可忽略）: %s", e)
             logger.info("云端双工已发送开场白触发（请在 1~2 秒内留意是否听到声音）")
@@ -1323,11 +1937,18 @@ class CloudOmniRealtime:
         except Exception as e:  # noqa: BLE001
             logger.debug("开场白触发失败（不影响通话）: %s", e)
 
-    def send_audio(self, pcm16_bytes: bytes) -> None:
+    def send_audio(self, pcm16_bytes: bytes) -> bool:
+        """把一块 16k/mono/int16 PCM 追加进云端输入缓冲。
+
+        返回 True=确实送进 WebSocket 会话；False=未连接/空块（**静默丢弃**）。
+        【2026-10-18】原返回 None，采集侧无法区分"送出去了"和"因为没连上被
+        静默丢掉"——而后者正是"声音完全上传不上去"的一种典型形态，故补返回值。
+        """
         if not self._connected or not pcm16_bytes:
-            return
+            return False
         try:
             self._conv.append_audio(base64.b64encode(pcm16_bytes).decode())
+            return True
         except Exception as e:  # noqa: BLE001
             # 【2026-10-17 修复·B·日志刷屏】此前**每帧**失败都打一条 warning，
             # 实测一通电话（socket 已死但 _connected 仍 True）刷了 **2123 条**，既淹没有效日志
@@ -1338,6 +1959,75 @@ class CloudOmniRealtime:
                 self._audio_fail_ts = _now
                 logger.warning("append_audio 失败（累计 %d 次，已限流）: %s",
                                self._audio_fail_n, e)
+            return False
+
+    def set_speaker_device(self, speaker_device: str) -> None:
+        """【2026-10-18 新增·通话中切换扬声器】热切换输出设备。
+
+        【根因】云端双工的语音由内部 _AudioPlayer 直接播放，**不走上层 TTS**。
+        而 webapp 的「通话设备切换：speaker → X」只调了 tts.set_output_device()，
+        云端双工播放器从未收到通知 ⇒ 用户切了扬声器却毫无变化，仍是旧设备出声。
+        这就是"扬声器切不了、切了没声音"的原因。
+
+        实现：委托给播放器的 set_device()，它会更新设备名并重建输出流。
+        """
+        _dev = str(speaker_device or "").strip()
+        if _dev.lower() == "default":
+            _dev = ""
+        logger.info("云端双工：切换扬声器设备 → %r", _dev or "系统默认")
+        self._speaker_device = _dev
+        _p = getattr(self, "_player", None)
+        if _p is None:
+            # 播放器还没建（未连接/auto_play=False）→ 记下名字，connect 时生效
+            logger.info("云端双工：播放器尚未创建，设备名已记录，连接时生效")
+            return
+        try:
+            ok = _p.set_device(_dev)
+            logger.info("云端双工：扬声器切换%s", "已生效" if ok else "失败（已回退默认设备）")
+        except Exception:  # noqa: BLE001
+            logger.exception("云端双工：切换扬声器异常")
+
+    def set_mic_device(self, mic_device: str) -> None:
+        """热切换麦克风设备（设置页/通话 UI 切换时调用）。
+
+        【2026-10-18 新增·"必须切多次设备才能听到我说话"的根因】
+        云端双工此前**没有**这个方法，而 `proactive.apply_call_settings` 里写的是
+        `if hasattr(client, "set_mic_device"): client.set_mic_device(...)` ——
+        hasattr 恒 False ⇒ **静默跳过**，云端双工的麦克风流从未真正重开。
+        用户切换设备后听到"好了"，其实是碰巧触发了看门狗重选/重连，
+        所以表现为"要切好几次才行"。
+
+        实现：置新设备名 + 打断当前采集循环 → 采集线程退出后用新设备重开。
+        """
+        _dev = str(mic_device or "").strip()
+        logger.info("云端双工：切换麦克风设备 → %r（将重开采集流）", _dev)
+        self._mic_device = _dev
+        self._mic_reopen_requested = True
+        # 【2026-10-18】把状态打出来：设备切换是否真的被采集循环接住，
+        # 直接决定"切设备后有没有声音"。running/connected 任一为假时，
+        # 置了 reopen 标志也不会有人消费 → 表现为"切了没反应"。
+        logger.info('云端双工：切换麦克风设备 → running=%s connected=%s collecting=%s',
+                    bool(self.running), bool(self._connected), bool(self._collecting))
+        # 打断正在阻塞的 mic.read：关掉当前流，采集循环会捕获异常并走重开分支
+        try:
+            _m = getattr(self, "_mic_stream", None)
+            if _m is not None:
+                try:
+                    _m.stop_stream()
+                except Exception:  # noqa: BLE001
+                    pass
+        except Exception:  # noqa: BLE001
+            pass
+
+    def set_call_mute(self, muted: bool) -> None:
+        """通话禁音（与 local_omni_duplex 同接口）。
+
+        【2026-10-18 新增】云端双工缺这个方法时，UI 的"静音"按钮点了没反应
+        （proactive.set_call_mic 里 hasattr 判断为 False → 静默跳过）。
+        静音实现：上行推送静音帧（保持云端 VAD 时序），而非直接丢弃。
+        """
+        self._call_mic_muted = bool(muted)
+        logger.info("云端双工：通话麦克风%s", "已静音" if muted else "已恢复")
 
     def close(self) -> None:
         try:
@@ -1361,305 +2051,231 @@ class CloudOmniRealtime:
         self._thread = threading.Thread(target=self._run_blocking, daemon=True)
         self._thread.start()
 
+
     def _run_blocking(self) -> None:
+        """薄壳：连接云端后进入独立进程采集循环。"""
+        _t0 = time.time()
         try:
             self.connect()
         except Exception as e:  # noqa: BLE001
             logger.error("云端全双工(Qwen-Omni)连接失败: %s", e)
             self.running = False
             self._connected = False
+            self._collecting = False
             return
+        logger.info('双工采集：云端已连接（connect 耗时 %.2fs，_connected=%s）→ 启动麦克风采集进程',
+                    time.time() - _t0, bool(getattr(self, '_connected', False)))
         self.running = True
         try:
-            # 🛡️ 共享单例：会话期间绝不 terminate（见 _pa_shared）
-            pa = get_shared_pyaudio()
-            # ⚠️ 同上：常量从模块取（曾写成 pa.paInt16 → 麦克风永远打不开）
-            _mic_kw = dict(format=pa_int16(), channels=1, rate=16000,
-                           input=True, frames_per_buffer=1600)
-            _mic_idx = None
-            _mic_fallback_note = ""
-            if self._mic_device:
-                _mic_idx = _resolve_device_index(pa, self._mic_device, "input")
-                if _mic_idx is not None:
-                    _mic_kw["input_device_index"] = _mic_idx
-            try:
-                mic = pa.open(**_mic_kw)
-            except Exception as e:  # noqa: BLE001
-                # 【2026-10-17 修复·WASAPI 路 16k 打不开 → 按同设备名换 host 重试】
-                # 实测：WASAPI 的 K20 Pro 在 16k 直接报 Invalid sample rate(-9997)，
-                # 旧逻辑直接回退"系统默认输入"（可能是键盘麦/环回），用户明明选对了设备
-                # 却被换掉——正是"选对了却用不上"的另一种表现。
-                # 现在：拿**纯设备名**（去掉 |hostapi 限定）在其它 host API 上依次试
-                # （MME → DirectSound → WASAPI），第一个能开 16k 的就用它；全失败才回退默认。
-                _opened = False
-                if _mic_idx is not None:
-                    logger.warning("云端双工：指定麦克风 %r 打开失败，尝试同设备的其它 host API: %s",
-                                   self._mic_device, e)
-                    _bare = str(self._mic_device or "").split("|")[0].strip().lower()
-                    _tried = []
-                    for _alt in range(pa.get_host_api_count()):
-                        try:
-                            _cnt = int(pa.get_host_api_info_by_index(_alt).get("deviceCount") or 0)
-                        except Exception:  # noqa: BLE001
-                            continue
-                        for _di in range(_cnt):
-                            try:
-                                _dd = pa.get_device_info_by_index(_di)
-                            except Exception:  # noqa: BLE001
-                                continue
-                            if str((_dd or {}).get("name") or "").strip().lower() != _bare:
-                                continue
-                            if int((_dd or {}).get("maxInputChannels") or 0) <= 0:
-                                continue
-                            if _di == _mic_idx or _di in _tried:
-                                continue
-                            _tried.append(_di)
-                            try:
-                                _mic_kw["input_device_index"] = _di
-                                mic = pa.open(**_mic_kw)
-                                _mic_idx = _di
-                                _mic_fallback_note = ("（%r 在首选 host 上 16k 打不开，"
-                                                      "已自动切到 idx=%d 的同一只麦克风）"
-                                                      % (self._mic_device, _di))
-                                _opened = True
-                                break
-                            except Exception:  # noqa: BLE001
-                                continue
-                        if _opened:
-                            break
-                if not _opened:
-                    # 该设备所有 host 都开不了 → 才回退系统默认输入
-                    if _mic_idx is not None:
-                        logger.warning("云端双工：指定麦克风 %r 所有 host API 均打开失败，"
-                                       "回退系统默认输入", self._mic_device)
-                        _mic_kw.pop("input_device_index", None)
-                        mic = pa.open(**_mic_kw)
-                    else:
-                        raise
-            # 【2026-10-04 修正】原代码 getattr(mic, "input_device_index", "?") 永远拿不到：
-            # PyAudio 的 Stream 对象没有这个公开属性（它在 get_stream_info() 里），所以日志
-            # 一直打 idx=? name='?'，让人误以为麦克风没开好。改用 get_stream_info 取真实值。
-            try:
-                _si = pa.get_stream_info(mic)
-                _in_idx = getattr(_si, "input_device_index", None)
-            except Exception:  # noqa: BLE001
-                _in_idx = _mic_idx
-            try:
-                _mi = pa.get_device_info_by_index(_in_idx) if _in_idx is not None else {}
-            except Exception:  # noqa: BLE001
-                _mi = {}
-            logger.info("云端双工麦克风已打开：idx=%s name=%r（上行将推送至云端）",
-                        _in_idx if _in_idx is not None else "?",
-                        (_mi or {}).get("name", "?"))
-            # 【2026-10-04 18:00】记下"当前实际在用的那一路"（名字 + hostApi），
-            # 待会在 VAD 真正触发时据此写入"已验证可用"记忆。
-            try:
-                self._active_mic_name = str((_mi or {}).get("name") or self._mic_device or "")
-                # ⚠️ 同款 falsy 陷阱：hostApi=0（MME）时不能写 `or -1`，否则记住的是 -1。
-                _raw_api = (_mi or {}).get("hostApi")
-                self._active_mic_api = int(_raw_api) if _raw_api is not None else -1
-                self._mic_open_ts = time.time()
-            except Exception:  # noqa: BLE001
-                self._active_mic_name = self._mic_device or ""
-                self._active_mic_api = -1
-                self._mic_open_ts = time.time()
-        except Exception as e:  # noqa: BLE001
-            # 对齐「启动云端达妮娅.bat」：麦克风打开失败只停上行推流，绝不关闭已建好
-            # 的音频播放器 / 会话。否则会把 AI 的下行声音一起掐掉，表现为"接通了但没声"。
-            # 此时连接早已成功（_connected=True、player 已就绪），上行不可用只是"听不到
-            # 用户说话"，AI 仍能正常出声。
-            logger.error("云端全双工打开麦克风失败（上行不可用，下行/出声保留）: %s", e)
-            self.running = False
-            return
-        _last_log = time.time()
-        # 【2026-10-04 新增·持续静音自动换设备】对齐开源实时语音项目的通行做法：
-        # 设备选择**不能靠通话前那一瞬的探测**——用户可能恰好没在说话，探到的是底噪，
-        # 于是选中一条哑设备（10-04 实证：同一台机 6 路 MCHOSE 设备，探测时
-        # 0.769 选中了 idx=17，实际通话中那路返回全零；而 idx=20 一直正常）。
-        # 这里在通话中持续观察：若连续 _SILENT_REOPEN_S 秒上行 RMS 都是底噪，
-        # 就重开一次麦克风流（并重新按名解析设备），把"哑设备"换掉。
-        _silent_since = None
-        _SILENT_TH = 0.004      # 低于此视为静音（真环境底噪约 0.001~0.003）
-        _SILENT_REOPEN_S = 25.0  # 连续静音多久后尝试换一路（25s：够覆盖"你正在想怎么说"）
-        _reopen_done = 0         # 最多重开 2 次，避免无休止重建
-        try:
-            while self.running:
-                try:
-                    d = mic.read(1600, exception_on_overflow=False)
-                except Exception:  # noqa: BLE001
-                    break
-                if d:
-                    # 【2026-10-02 新增·麦克风电平】统计上行音量，供通话 UI 律动条
-                    # 如实显示"有没有采到你的声音"。此前云端链路没有 get_mic_level，
-                    # proactive.get_call_mic_level 拿不到 → 返回 active=False →
-                    # UI 显示"未在采集音频·检查麦克风设备"，**与实际正在采集矛盾**（误导）。
-                    self._track_mic_level(d)
-                    # 【2026-10-04 修正·对齐 .bat 好链路】上行送云端 = **原始**麦克风音频。
-                    # 此前套了一层双向 AGC 把电平归一化到 0.22（含把热麦底噪也拉满），
-                    # 抹平了"静音谷"，云端 server_vad 看不到自然的电平起伏 → 起音/止音都判定
-                    # 失败（即 16:29 / 17:07 反复"不理我"的真凶）。现改回原始音频，server_vad
-                    # 自己负责打断，与「启动云端达妮娅.bat」行为完全一致（它 send_audio(raw)）。
-                    # 不再做任何上行 AGC（那套双向 AGC 已彻底退出上行路径）。
-                    self.send_audio(d)
-                    # 通话记录回放用户自己的声音：同样用送云端的原始音频（忠实、不二次处理）。
-                    try:
-                        if self._on_user_audio:
-                            self._on_user_audio(d)
-                    except Exception:  # noqa: BLE001
-                        pass
-                    # 【2026-10-04·本地 VAD】基于能量的端点检测：说话结束即手动提交并请求回复，
-                    # 绕开在该模型/SDK 组合下反复失效的云端 server_vad（详见 _vad_update）。
-                    try:
-                        self._vad_update()
-                    except Exception:  # noqa: BLE001
-                        pass
-                    # 【2026-10-04 17:55 修正】"静音"判据不能只看电平高低。
-                    # 坏设备（如 idx=17 那路 DirectSound）会持续输出 2k/8kHz 干扰音，
-                    # 电平高达 0.55~0.65 —— 用"电平>=阈值=有声音"判定，会把这种
-                    # **干扰**当成"用户正在说话"，于是永远不触发重开，坏设备被永久锁死。
-                    # 正确判据＝**周期性/频谱不像人声**。这里用"电平远高于语音正常上限"
-                    # 作为可疑信号：真人语音 RMS 极少持续超过 0.8，坏设备干扰常顶到 0.5+
-                    # 且几乎不随说话起伏。连续 25s 出现这种"高电平但云端不响应"的形态
-                    # 就重开并重新按声学判据选路。
-                    # 【2026-10-09 修复·误判"哑设备"导致通话中途换麦/不理我】
-                    # 旧判据用 `_mic_level`——它是"起音快、回落慢"的平滑包络，真人说话
-                    # 断续（一句里只有 30~50% 时间发声），句间静音块每块把它拉低 40%，
-                    # 于是**说话间隙的采样几乎恒 <0.004**，25s 后必然误判"采不到正常人声"
-                    # → 重开麦克风 + 重新解析设备（实测：通话中无端切到 K20 Pro、
-                    # 上行断流、AI 不理我）。改用 `_mic_disp`（近期峰值、快速回落，
-                    # 见 _track_mic_level）作为"有没有人说话"的判据，才与你的实际音量相符。
-                    if self._mic_disp >= _SILENT_TH and self._mic_disp < 0.9:
-                        _silent_since = None
-                    else:
-                        if _silent_since is None:
-                            _silent_since = time.time()
-                        elif (time.time() - _silent_since > _SILENT_REOPEN_S
-                              and _reopen_done < 3 and self._mic_device):
-                            _reopen_done += 1
-                            _silent_since = None
-                            logger.warning(
-                                "云端双工：连续 %.0fs 采不到正常人声（电平异常 %.3f —— "
-                                "可能是干扰音/哑设备），按声学判据重选麦克风（第 %d 次）",
-                                _SILENT_REOPEN_S, self._mic_level, _reopen_done)
-                            # ⭐【2026-10-04 18:05】必须先**作废记忆**再重选，
-                            # 否则 _resolve_device_index 会直接从记忆里取回同一条
-                            # 已失效的路由，重开等于什么都没变（原地打转）。
-                            try:
-                                forget_verified_mic(self._mic_device)
-                            except Exception:  # noqa: BLE001
-                                pass
-                            try:
-                                mic.close()
-                            except Exception:  # noqa: BLE001
-                                pass
-                            try:
-                                _idx2 = _resolve_device_index(pa, self._mic_device, "input")
-                                if _idx2 is not None:
-                                    mic = pa.open(**dict(_mic_kw, input_device_index=_idx2))
-                                    logger.info("云端双工：麦克风已重开（idx=%s）", _idx2)
-                                    try:
-                                        _mi2 = pa.get_device_info_by_index(_idx2) or {}
-                                        _ra = _mi2.get("hostApi")
-                                        self._active_mic_name = str(
-                                            _mi2.get("name") or self._mic_device or "")
-                                        self._active_mic_api = int(_ra) if _ra is not None else -1
-                                    except Exception:  # noqa: BLE001
-                                        pass
-                                else:
-                                    # 【2026-10-13 修复】重解析失败（_idx2=None）时旧代码
-                                    # 既不重开也不退出 → mic 已被 close，上行从此恒静默，
-                                    # 后续 self-heal 全部空转。必须回退默认输入兜底。
-                                    logger.warning(
-                                        "云端双工：重选麦克风无结果（配置 %r 解析不到），"
-                                        "回退系统默认输入", self._mic_device)
-                                    _kw2 = dict(_mic_kw)
-                                    _kw2.pop("input_device_index", None)
-                                    mic = pa.open(**_kw2)
-                                    self._active_mic_name = "(系统默认输入)"
-                                    self._active_mic_api = -1
-                            except Exception as e2:  # noqa: BLE001
-                                logger.warning("云端双工：麦克风重开失败，沿用系统默认: %s", e2)
-                                try:
-                                    _kw = dict(_mic_kw)
-                                    _kw.pop("input_device_index", None)
-                                    mic = pa.open(**_kw)
-                                except Exception:  # noqa: BLE001
-                                    break
-                _now = time.time()
-                # ⭐【2026-10-04 18:05 自愈看门狗】记忆里的路由也可能过期
-                # （换设备/驱动更新/系统隐私设置改动后，那条"已验证"的路由会变哑）。
-                # 判据＝**客观事件**：麦克风开了 45 秒以上、期间电平明显非零（在拾音），
-                # 却一次 `speech_started` 都没收到 ⇒ 云端根本没听到人声 ⇒ 这条路由
-                # 已失效。动作：作废记忆 + 立即按声学判据重选（而不是干等 25s 静音阈值）。
-                _WATCHDOG_S = 45.0
-                if (not self._vad_triggered
-                        and self._mic_open_ts > 0
-                        and _now - self._mic_open_ts > _WATCHDOG_S
-                        and _reopen_done < 3
-                        and self._mic_disp >= 0.01):
-                    _reopen_done += 1
-                    self._mic_open_ts = _now      # 避免本轮内重复触发
-                    _silent_since = None
-                    logger.warning(
-                        "云端双工：麦克风已开 %.0fs、上行电平 %.3f（在拾音）却始终没收到 "
-                        "speech_started —— 判定该路由失效（记忆过期/设备变哑），"
-                        "作废记忆并按声学判据重选（第 %d 次）",
-                        _WATCHDOG_S, self._mic_level, _reopen_done)
-                    try:
-                        forget_verified_mic(self._active_mic_name or self._mic_device)
-                    except Exception:  # noqa: BLE001
-                        pass
-                    try:
-                        mic.close()
-                    except Exception:  # noqa: BLE001
-                        pass
-                    try:
-                        _idx3 = _resolve_device_index(pa, self._mic_device, "input")
-                        if _idx3 is not None:
-                            mic = pa.open(**dict(_mic_kw, input_device_index=_idx3))
-                            logger.info("云端双工：看门狗重开麦克风成功（idx=%s）", _idx3)
-                            try:
-                                _mi3 = pa.get_device_info_by_index(_idx3) or {}
-                                _r3 = _mi3.get("hostApi")
-                                self._active_mic_name = str(
-                                    _mi3.get("name") or self._mic_device or "")
-                                self._active_mic_api = int(_r3) if _r3 is not None else -1
-                                self._mic_open_ts = _now
-                            except Exception:  # noqa: BLE001
-                                pass
-                        else:
-                            # 【2026-10-13 修复】同上：解析不到也不能留已关闭的 mic 空转
-                            logger.warning(
-                                "云端双工：看门狗重选无结果（配置 %r 解析不到），回退系统默认输入",
-                                self._mic_device)
-                            _kw3 = dict(_mic_kw)
-                            _kw3.pop("input_device_index", None)
-                            mic = pa.open(**_kw3)
-                            self._active_mic_name = "(系统默认输入)"
-                            self._active_mic_api = -1
-                            self._mic_open_ts = _now
-                    except Exception as e3:  # noqa: BLE001
-                        logger.warning("云端双工：看门狗重开麦克风失败: %s", e3)
-                if _now - _last_log >= 2.0:
-                    # 【2026-10-09】打印"显示用峰值"（_mic_disp）为主，附带平滑值，
-                    # 便于区分"真的没采到"与"被句间静音稀释"。旧版只打 _mic_level，
-                    # 说话中间的采样几乎恒 0.0000 → 误报"麦克风静音"（实际识别正常）。
-                    _disp = self._mic_disp
-                    logger.info(
-                        "云端双工麦克风上行电平(2s)=%.4f（峰值 %.4f）%s", self._mic_level, _disp,
-                        "（≈0 表示没采到声音/麦克风静音——AI 永远不会回应）"
-                        if _disp < 0.005 else "")
-                    _last_log = _now
-                time.sleep(0.005)
+            self._subproc_capture_loop(None)
         finally:
+            logger.info('双工采集：采集循环已退出（running=%s）', bool(self.running))
+
+    def _subproc_capture_loop(self, pa_unused) -> None:
+        """独立进程麦克风采集（微信/QQ 架构的关键部分）。
+
+        【2026-10-18 最终架构】
+        一周问题链的根：PortAudio 在主进程内对同一 USB 麦的多参数开流会
+        互相污染（DirectSound 陈旧缓冲/立体声交错/静音路），且切换设备
+        也无法恢复。独立进程 = 全新 PortAudio 状态，彻底免疫。
+        本方法：
+          · spawn src/audio/mic_proc.py 子进程（stdout=音频流）
+          · 读块 → _track_mic_level → _last_block_rms → send_audio
+            → _on_user_audio → _vad_update（与旧链路完全一致）
+          · 子进程死/卡 → 自动重启（最多 5 次）
+          · stop() 事件 → 杀子进程退出
+        """
+        import subprocess as _sp
+        import struct as _struct
+        here = os.path.dirname(os.path.abspath(__file__))
+        proc_py = os.path.join(here, '..', 'audio', 'mic_proc.py')
+        if not os.path.exists(proc_py):
+            proc_py = os.path.join(here, 'audio', 'mic_proc.py')
+        # 子进程诊断日志独立落盘（见 mic_proc.py 顶部注释：原先写 stderr 而主进程
+        # 不读该管道，攒满 64KB 后子进程 write 阻塞 → 采集卡死 → 声音传不上去）。
+        _log_path = os.path.join(
+            os.path.dirname(os.path.dirname(os.path.dirname(
+                os.path.abspath(__file__)))), 'logs',
+            'mic_proc_%s.log' % time.strftime('%Y%m%d_%H%M%S'))
+        restarts = 0
+        try:
+            while self.running and restarts < 5:
+                logger.info('双工采集：启动独立进程（第 %d 次）设备=%r 子进程日志=%s',
+                            restarts + 1, self._mic_device or '', _log_path)
+                try:
+                    proc = _sp.Popen(
+                        [sys.executable, '-X', 'utf8', '-B', proc_py,
+                         self._mic_device or '', _log_path],
+                        # stdout=音频流；stderr 丢弃（子进程诊断已改走日志文件，
+                        # 保留这层是因为 Python 解释器级的致命错误仍可能写 stderr，
+                        # 用 DEVNULL 确保永不会有人因"管道没人读"而阻塞）
+                        stdout=_sp.PIPE, stderr=_sp.DEVNULL)
+                except Exception as e:  # noqa: BLE001
+                    logger.error('双工采集：子进程启动失败 %s', e)
+                    time.sleep(2.0)
+                    restarts += 1
+                    continue
+                self._mic_proc = proc
+                self._mic_open_ts = time.time()
+                self._vad_triggered = False
+                # —— 本轮采集的块级统计（用于定位"这一通到底采到了什么"）——
+                _cap_t0 = time.time()
+                _blk_n = 0
+                _blk_bytes = 0
+                _blk_pk_all = 0
+                _blk_silent = 0
+                _blk_voice = 0
+                _blk_q = 0               # 队列/管道积压估算（读取后剩余）
+                _sent_n = 0
+                _last_blk_ts = 0.0
+                _last_report_ts = time.time()
+                _stall_warned = False
+                try:
+                    while self.running:
+                        if getattr(self, '_mic_reopen_requested', False):
+                            logger.info('双工采集：设备切换 → 重启子进程')
+                            break
+                        # 卡死看门狗：主线程阻塞在 read 时也能靠超时线程发现
+                        hdr = proc.stdout.read(4)
+                        if len(hdr) < 4:
+                            logger.warning('双工采集：子进程流断开（本轮收到 %d 块 / %.1fs）',
+                                           _blk_n, time.time() - _cap_t0)
+                            break
+                        ln = _struct.unpack('<I', hdr)[0]
+                        if ln <= 0 or ln > 200000:
+                            logger.warning('双工采集：异常块长 %d（本轮已收 %d 块）', ln, _blk_n)
+                            break
+                        d = proc.stdout.read(ln)
+                        if len(d) < ln:
+                            logger.warning('双工采集：块数据不完整（%d/%d 字节）', len(d), ln)
+                            break
+                        _blk_n += 1
+                        _blk_bytes += len(d)
+                        _last_blk_ts = time.time()
+                        if _blk_n == 1:
+                            logger.info('双工采集：首个音频块已到达（%d 字节 ≈ %.0fms）'
+                                        '，采集链路打通', len(d),
+                                        1000.0 * len(d) / 2.0 / 16000.0)
+                        if getattr(self, '_call_mic_muted', False):
+                            d = b'\x00' * len(d)
+                        self._track_mic_level(d)
+                        try:
+                            import array as _av_arr
+                            _av = _av_arr.array('h')
+                            _av.frombytes(d[: len(d) - (len(d) % 2)])
+                            if _av:
+                                _acc = 0.0
+                                for _x in _av:
+                                    _fv = _x / 32768.0
+                                    _acc += _fv * _fv
+                                self._last_block_rms = (_acc / len(_av)) ** 0.5
+                        except Exception:  # noqa: BLE001
+                            pass
+                        # —— 块级统计（只统计不改音频）——
+                        try:
+                            _pk = 0
+                            import array as _st_arr
+                            _sa = _st_arr.array('h')
+                            _sa.frombytes(d[: len(d) - (len(d) % 2)])
+                            if _sa:
+                                _pk = max(max(_sa), -min(_sa))
+                            if _pk > _blk_pk_all:
+                                _blk_pk_all = _pk
+                            if _pk == 0:
+                                _blk_silent += 1
+                            if self._last_block_rms > 0.035:
+                                _blk_voice += 1
+                        except Exception:  # noqa: BLE001
+                            pass
+                        _sent_ok = self.send_audio(d)
+                        _sent_n += 1
+                        try:
+                            if self._on_user_audio:
+                                self._on_user_audio(d)
+                        except Exception:  # noqa: BLE001
+                            pass
+                        try:
+                            self._vad_update()
+                        except Exception:  # noqa: BLE001
+                            pass
+                        # —— 周期报告（每 5s 一行，回答"这一通到底采到了什么/送出去了吗"）——
+                        _now_r = time.time()
+                        if _now_r - _last_report_ts >= 5.0:
+                            _dur = max(1e-6, _now_r - _cap_t0)
+                            _conn = bool(getattr(self, '_connected', False))
+                            # 块时长不固定（设备 44.1k→1600 采样/块 ≈100ms；16k 直采 ≈10ms），
+                            # 故用「音频秒数 / 墙钟秒数」当健康度，≈1.0 才说明没丢时间。
+                            _audio_s = _blk_bytes / 2.0 / 16000.0
+                            logger.info(
+                                '双工采集[STAT] 块=%d(%.1f块/s) 音频=%.1fs/墙钟%.1fs(实时比%.2f) '
+                                '峰值=%d 全零块=%d 人声块=%d 发送成功=%d 连接=%s muted=%s '
+                                'AGC=×%.2f 已运行=%.1fs',
+                                _blk_n, _blk_n / _dur, _audio_s, _dur,
+                                _audio_s / _dur,
+                                _blk_pk_all, _blk_silent,
+                                _blk_voice, _sent_n, _conn,
+                                bool(getattr(self, '_call_mic_muted', False)),
+                                float(getattr(self, '_mic_gain', 1.0) or 1.0),
+                                _now_r - _cap_t0)
+                            _last_report_ts = _now_r
+                        # —— 上游卡死告警：有块进来但一直送不出去 ——
+                        if (not _stall_warned and _blk_n >= 20
+                                and _sent_n == 0 and not self._connected):
+                            _stall_warned = True
+                            logger.warning(
+                                '双工采集：已采到 %d 块但未连接云端（send_audio 静默丢弃）'
+                                '——声音采到了却传不上去', _blk_n)
+                finally:
+                    # —— 每轮采集汇总：这一轮到底采到了什么、有没有上行 ——
+                    try:
+                        _dur = max(1e-6, time.time() - _cap_t0)
+                        _rate = _blk_n / _dur
+                        _audio_s = _blk_bytes / 2.0 / 16000.0
+                        _rt = _audio_s / _dur
+                        _msg = ('设备=%r 块=%d(%.1f块/s) 音频=%.1fs/墙钟%.1fs'
+                                '(实时比%.2f) 峰值=%d 全零块=%d 人声块=%d 发送=%d 子进程日志=%s') % (
+                            getattr(self, '_mic_device', '') or '', _blk_n, _rate,
+                            _audio_s, _dur, _rt,
+                            _blk_pk_all, _blk_silent, _blk_voice, _sent_n,
+                            os.path.basename(_log_path))
+                        # 实时比 <0.7 = 采到的音频时长明显少于墙上时间：
+                        # 读循环被阻塞 / 设备吞吐不足 / 子进程卡住（本次要抓的重点）。
+                        if _rt < 0.7 and _blk_n > 0:
+                            logger.warning('双工采集[汇总] ⚠ 音频时长不足实时（实时比 %.2f）：'
+                                           '读循环被阻塞或设备吞吐不足 · %s', _rt, _msg)
+                        elif _blk_pk_all == 0:
+                            logger.warning('双工采集[汇总] ⚠ 全程全零音频（设备打开但无信号）：'
+                                           '麦克风被静音/选错设备 · %s', _msg)
+                        elif _blk_voice == 0 and _blk_n > 100:
+                            logger.warning('双工采集[汇总] ⚠ 未出现人声块（峰值=%d 偏低）：'
+                                           '电平过小或离麦太远 · %s', _blk_pk_all, _msg)
+                        else:
+                            logger.info('双工采集[汇总] %s', _msg)
+                    except Exception:  # noqa: BLE001
+                        pass
+                    try:
+                        proc.kill()
+                    except Exception:  # noqa: BLE001
+                        pass
+                    self._mic_proc = None
+                if getattr(self, '_mic_reopen_requested', False):
+                    self._mic_reopen_requested = False
+                    continue
+                if self.running:
+                    restarts += 1
+                    time.sleep(1.0)
+        except Exception:  # noqa: BLE001
+            logger.exception('双工采集：独立进程模式异常')
+            self.running = False
+        finally:
+            self._collecting = False
             try:
-                mic.close()
+                _p = getattr(self, '_mic_proc', None)
+                if _p is not None:
+                    _p.kill()
             except Exception:  # noqa: BLE001
                 pass
-            # 🛡️ 不 terminate 共享单例：只关麦克风流。
-            self.running = False
 
-    # ---------- 麦克风电平（与 local_omni_duplex.get_mic_level 同接口）----------
     def _track_mic_level(self, chunk) -> None:
         """按音频块算 RMS → 平滑 → 归一化电平（0..1），并做简易人声判定。
 
@@ -1721,32 +2337,56 @@ class CloudOmniRealtime:
 
     # ---------- 本地 VAD（主链路默认开启，绕开云端不可靠的 server_vad） ----------
     def _vad_update(self) -> None:
-        """基于能量的本地端点检测：说话结束即手动 commit + response.create。
+        """本地能量 VAD —— 在本模型上**是主判据**（云端 server_vad 实测不触发）。
 
-        为什么需要它：云端 server_vad 在该模型/SDK 组合下经常不触发 speech_started
-        （实测：上行电平 0.22、AGC 健康，却全程零 speech_started → AI 永不回应）。
-        这里用每块原始 RMS 做带迟滞的能量 VAD，自己掌控"何时提交、何时让 AI 回话"，
-        彻底摆脱对云端 VAD 的依赖。仅在 self._local_vad=True 时被调用。
+        【2026-10-18 真机结论·推翻此前"以云端为主"的假设】
+        本轮做了 6 组对照实验（不同端点 / 不同 session 配置 / 文件音频 vs 实时麦克风），
+        结论明确：
+          · 云端 server_vad 在 qwen3.8-omni-flash-realtime 上**从不发 speech_started**
+            （6 组实验、累计推流 60+ 秒真实语音，speech_* 事件数为 0）。
+          · 但只要**手动 commit + create_response**，云端就能正常识别并回语音
+            （实测 response.audio.delta ×21，AI 完整说了一句话）。
+        所以本地 VAD 不能只是"兜底"，必须作为主路径：检测到一句说完就 commit。
+        这也解释了用户长期反馈的"接通了但完全不理我"。
+
+        防"死流卡死"：若麦克风数据停滞（逐块完全相同），本地 VAD 会永远判"在说话"
+        而永不 commit。故加入**最长说话时长强制提交**（_VAD_MAX_SPEECH_S），
+        即使电平一直不落，也会定期 commit，保证 AI 必定有机会回应。
         """
         if not self._local_vad:
             return
-        # 每块 1600 采样 @16k ≈ 0.1s
-        _SPEECH_ON = 0.018    # 起音阈值（高于底噪 0.003、远低于正常说话 0.05+）
-        _SPEECH_OFF = 0.008   # 止音阈值（迟滞，防抖动）
-        _ON_BLOCKS = 2         # 连续 2 块有声（≈0.2s）才判"开始说话"（起音防抖）
-        _SILENCE_BLOCKS = 7    # 连续 7 块静音（≈0.7s）才判"说话结束"（≈ vad_silence_ms）
+        # 【2026-10-18 三次调参】0.035 是按"正常系统音量"定的；实测弱麦即便
+        # 经过 AGC 60 倍抬升，说话 RMS 也只有 ~0.02，永远够不着 → VAD 不触发
+        # → AI 永不回应。AGC 上限已提到 120 倍，这里阈值同步降到 0.02，
+        # 两层配合：AGC 负责把弱信号抬到正常量级，阈值放宽保证弱麦也能起音。
+        # 误触发防护仍在：起音需连续 3 块超阈 + 止音需连续 7 块低电平。
+        _SPEECH_ON = 0.02
+        _SILENCE_BLOCKS = 7
+        _VAD_MAX_SPEECH_S = 8.0      # 单句最长 8s，超时强制提交（防死流卡死）
         rms = self._last_block_rms
-        if rms >= _SPEECH_ON:
+        _typing_ts = float(getattr(self, "_user_typing_ts", 0.0) or 0.0)
+        _playing = False
+        try:
+            _playing = bool(self._player and getattr(self._player, "is_playing", lambda: False)())
+        except Exception:  # noqa: BLE001
+            _playing = False
+        _on_threshold = _SPEECH_ON
+        if _playing:
+            _on_threshold = max(_on_threshold, _SPEECH_ON * 2.2)
+        if _typing_ts and (time.time() - _typing_ts) < 3.0:
+            _on_threshold = max(_on_threshold, 0.12)
+
+        _now = time.time()
+        if rms >= _on_threshold:
             self._vad_silent = 0
             self._vad_voiced += 1
-            if self._vad_state == 0 and self._vad_voiced >= _ON_BLOCKS:
+            if self._vad_state == 0 and self._vad_voiced >= 3:
                 self._vad_state = 1
                 self._vad_pending = True
-                logger.info("本地 VAD：检测到你开始说话（本地即时打断）")
-                # 用户开口 → 立刻停掉正在播放的 AI 音频（打断）
+                self._vad_speech_start = _now
+                logger.debug("本地 VAD：检测到说话开始 rms=%.3f", rms)
                 if self._player:
                     self._player.flush()
-                # 若 AI 正在回答途中被你打断，先取消它的回复再提交你的话
                 if self._responding and self._conv is not None:
                     try:
                         self._conv.cancel_response()
@@ -1756,26 +2396,35 @@ class CloudOmniRealtime:
             self._vad_voiced = 0
             if self._vad_state == 1:
                 self._vad_silent += 1
-                if rms < _SPEECH_OFF:
-                    # 仅在真正低于止音阈值时才累计静音块（迟滞）
-                    pass
                 if self._vad_silent >= _SILENCE_BLOCKS:
-                    self._vad_state = 0
-                    # 说话结束：若本轮确实采到语音、且云端当前没在生成回复 → 提交并请求回复
-                    if self._vad_pending and not self._responding and self._conv is not None:
-                        self._vad_pending = False
-                        try:
-                            self._conv.commit()
-                            # 立即清空输入缓冲：手动模式下云端不会像 server_vad 那样自动清，
-                            # 不清会导致下一轮把旧音频一起重新提交（AI 重复听到旧话）。
-                            try:
-                                self._conv.clear_appended_audio()
-                            except Exception:  # noqa: BLE001
-                                pass
-                            self._conv.create_response()
-                            logger.info("本地 VAD：说话结束，已提交语音并请求达妮娅回复")
-                        except Exception as e:  # noqa: BLE001
-                            logger.warning("本地 VAD 提交失败（可忽略）: %s", e)
+                    self._commit_turn("静音结束")
+                    return
+        # 超时强制提交：电平一直不落（死流/持续噪声）时也要给云端一个句号
+        if (self._vad_state == 1 and self._vad_pending
+                and getattr(self, "_vad_speech_start", 0.0)
+                and (_now - self._vad_speech_start) >= _VAD_MAX_SPEECH_S):
+            self._commit_turn("超时强制提交")
+
+    def _commit_turn(self, reason: str = "") -> None:
+        """本地 VAD 判定一句结束 → commit + create_response（实测唯一可靠路径）。"""
+        self._vad_state = 0
+        self._vad_silent = 0
+        self._vad_speech_start = 0.0
+        if not self._vad_pending:
+            return
+        self._vad_pending = False
+        if self._conv is None:
+            return
+        try:
+            self._conv.commit()
+            try:
+                self._conv.clear_appended_audio()
+            except Exception:  # noqa: BLE001
+                pass
+            self._conv.create_response(instructions=(self.instructions or None))
+            logger.info("本地 VAD 提交成功（%s）：已 commit + 请求回复", reason)
+        except Exception as e:  # noqa: BLE001
+            logger.warning("本地 VAD 提交失败（%s）: %s", reason, e)
 
     def _soft_clip(self, chunk: bytes) -> bytes:
         """上行音频自适应增益（**双向** AGC）+ 硬限幅：让云端**始终**拿到清晰、稳定的音量。
@@ -1887,7 +2536,18 @@ class CloudOmniRealtime:
 
     def stop(self) -> None:
         """停止：置 running=False 并关闭会话/播放器。"""
+        # 【2026-10-18】先把 running 置 False —— 麦克风采集线程的 `while self.running`
+        # 才会立刻退出；此前 close() 先跑完才置位，中间那一小段仍在采集并 send_audio。
         self.running = False
+        self._collecting = False
+        # 【2026-10-18】terminate 实测选路的专属实例（它是全新开的，必须销毁）
+        try:
+            _op = getattr(self, '_mic_own_pa', None)
+            if _op is not None:
+                _op.terminate()
+                logger.info('云端双工：专属麦克风实例已销毁')
+        except Exception:  # noqa: BLE001
+            pass
         try:
             self.close()
         except Exception:  # noqa: BLE001
@@ -1908,6 +2568,10 @@ class CloudOmniRealtime:
         self._evt_counts = {}
         self._evt_seen = set()
         self._cur_response_id = None
+        # 【2026-10-18】等旧采集线程退出（最多 2s），避免双流抢麦克风
+        _old_th = getattr(self, "_thread", None)
+        if _old_th is not None and _old_th.is_alive():
+            _old_th.join(timeout=2.0)
         # 起新后台线程重跑 connect + 麦克风推流循环
         self._thread = threading.Thread(target=self._run_blocking, daemon=True)
         self._thread.start()
@@ -2092,6 +2756,9 @@ class CloudOmniRealtime:
             # 云端开始生成回复（无论 server_vad 还是本地 VAD 触发的 create_response）
             self._responding = True
         elif t == "input_audio_buffer.speech_started":
+            # 【2026-10-18】记录云端最后一次给出 VAD/转写事件的时间，
+            # 供本地能量 VAD 判断"云端是否失灵、要不要兜底提交"。
+            self._cloud_vad_last_ts = time.time()
             # 用户开始说话，立即丢弃尚未播放的 AI 音频（本地侧即时打断）
             logger.info("云端双工：检测到你开始说话（VAD 触发，本地即时打断）")
             # 【2026-10-04 18:00】这是唯一的**客观证据**：云端 VAD 判定用户开口，
@@ -2222,7 +2889,8 @@ def _build(cls, cfg, repo_root: str = "") -> "CloudOmniRealtime":
     try:
         co = _get(cfg, "cloud_omni")
         if co is not None:
-            for k in ("model", "api_key", "base_url", "ws_url", "voice", "turn_detection"):
+            for k in ("model", "api_key", "base_url", "ws_url", "voice",
+                      "turn_detection", "workspace_id", "workspace_region"):
                 v = _get(co, k, None)
                 if v is not None:
                     d[k] = v

@@ -41,13 +41,18 @@ PROVIDER_ALIASES = {
 
 # 各服务商的「系统预设音色」（克隆音色由 API 实时查）。Fish Audio 无系统预设。
 _PRESETS: Dict[str, List[Dict[str, str]]] = {
+    # 【2026-10-17 修复·预设模型全失效】
+    # 实测矩阵（2026-10-17）：
+    #   cosyvoice-v2 / v3 / v3-plus / v3-flash  → 400（已下线）
+    #   qwen-audio-3.0-tts-plus / -flash        → 400（已下线）
+    #   qwen3-tts-flash                          → 200 ✅（唯一可用）
+    # 且预设的语义应是"音色"不是"模型"：qwen3-tts-flash 支持若干官方预置音色。
+    # 这里列出实测可用的预置音色（Cherry / Serena / Ethan / Chelsie）。
     "dashscope_cosy": [
-        {"id": "cosyvoice-v2", "name": "CosyVoice2（经典）", "type": "preset", "model": "cosyvoice-v2"},
-        {"id": "cosyvoice-v3", "name": "CosyVoice3", "type": "preset", "model": "cosyvoice-v3"},
-        {"id": "cosyvoice-v3-plus", "name": "CosyVoice3 Plus（质感）", "type": "preset", "model": "cosyvoice-v3-plus"},
-        {"id": "cosyvoice-v3-flash", "name": "CosyVoice3 Flash（快）", "type": "preset", "model": "cosyvoice-v3-flash"},
-        {"id": "qwen-audio-3.0-tts-plus", "name": "通义 Qwen-Audio 3.0 TTS Plus（推荐）", "type": "preset", "model": "qwen-audio-3.0-tts-plus"},
-        {"id": "qwen-audio-3.0-tts-flash", "name": "通义 Qwen-Audio 3.0 TTS Flash（轻量）", "type": "preset", "model": "qwen-audio-3.0-tts-flash"},
+        {"id": "Cherry",   "name": "Cherry（温柔女声·推荐）", "type": "preset", "model": "qwen3-tts-flash"},
+        {"id": "Serena",   "name": "Serena（知性女声）",     "type": "preset", "model": "qwen3-tts-flash"},
+        {"id": "Chelsie",  "name": "Chelsie（清亮女声）",    "type": "preset", "model": "qwen3-tts-flash"},
+        {"id": "Ethan",    "name": "Ethan（男声）",          "type": "preset", "model": "qwen3-tts-flash"},
     ],
     "minimax": [
         {"id": "female-shaonv", "name": "少女（female-shaonv）", "type": "preset", "model": "speech-02-turbo"},
@@ -77,25 +82,66 @@ def _cloud_tts_providers(raw: dict) -> Dict[str, Dict[str, str]]:
     cloud = cloud.get("cloud", {}) or {}
     if not isinstance(cloud, dict):
         return {}
+    # 【2026-10-17 修复·need_key 误判】
+    # 用户实际是在「设置 → 模型与API → 一键配置」里填的 Key，
+    # 那份 Key 落在 cloud_tts / cloud_omni，**不在** voice.clone.cloud。
+    # 旧实现只读 voice.clone.cloud → need_key=True → 角色卡把已配好的服务
+    # 当成"没配 Key"隐藏起来，用户只能手填一遍（这就是"又要搞一遍 key"的根源）。
+    # 现在补上多源回退：voice.clone.cloud → cloud_tts → cloud_omni。
+    _fallback_key = ""
+    _fallback_model = ""
+    try:
+        _ct = (raw.get("cloud_tts") or {})
+        if isinstance(_ct, dict):
+            _b = _ct.get("dashscope_cosy") or {}
+            if isinstance(_b, dict):
+                _fallback_key = str(_b.get("api_key") or "")
+                _fallback_model = str(_b.get("model_name") or "")
+    except Exception:  # noqa: BLE001
+        pass
+    if not _fallback_key:
+        try:
+            _co = (raw.get("cloud_omni") or {})
+            if isinstance(_co, dict):
+                _fallback_key = str(_co.get("api_key") or "")
+                _fallback_model = _fallback_model or str(_co.get("model") or "")
+        except Exception:  # noqa: BLE001
+            pass
+
+    def _fill(d: dict) -> dict:
+        """补齐空 Key/模型（用全局配置兜底）。"""
+        out = dict(d or {})
+        if not str(out.get("api_key") or "").strip() and _fallback_key:
+            out["api_key"] = _fallback_key
+        if not str(out.get("model_name") or "").strip() and _fallback_model:
+            out["model_name"] = _fallback_model
+        return out
+
     # 新格式：顶层就是 provider 分桶
     if any(k in KNOWN for k in cloud.keys()):
         out: Dict[str, Dict[str, str]] = {}
         for k, v in cloud.items():
             if k in KNOWN and isinstance(v, dict):
-                out[k] = v
+                out[k] = _fill(v)
+        # 若分桶里没有 dashscope_cosy 但有全局 Key，补一个（用户配了百炼但没走分桶）
+        if "dashscope_cosy" not in out and _fallback_key:
+            out["dashscope_cosy"] = _fill({})
         return out
     # 旧格式：单层 provider / api_key / ...
     if "api_key" in cloud or "provider" in cloud or cloud:
         prov = (cloud.get("provider") or "dashscope_cosy").strip()
         prov = PROVIDER_ALIASES.get(prov, prov)
         return {
-            prov: {
+            prov: _fill({
                 "api_key": cloud.get("api_key") or "",
                 "group_id": cloud.get("group_id") or "",
                 "model_name": cloud.get("model_name") or "",
                 "api_url": cloud.get("api_url") or "",
-            }
+            })
         }
+    # 完全没有 cloud 配置，但有全局 Key → 返回一个 dashscope_cosy
+    if _fallback_key:
+        return {"dashscope_cosy": _fill({})}
     return {}
 
 

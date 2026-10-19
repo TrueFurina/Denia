@@ -298,6 +298,20 @@ class ProactiveStrategy:
         except (TypeError, ValueError):
             return 0.0
 
+    def _note_user_typing(self) -> None:
+        """用户正在打字聊天 → 记下时间戳，双工 VAD 据此在短时间内忽略键盘声。
+
+        【2026-10-18 新增·打字与语音隔离】
+        用户反馈"打字聊天时云端双工也用达妮娅音色回我"。经查：文字**没有**进双工
+        （dialogue 已隔离 source=='duplex'），真正进入的是**声音** —— 双工拨通后
+        麦克风一直采，打字时的键盘声/呼吸/环境声越过本地 VAD 阈值就会 commit，
+        云端随即用达妮娅音色回一句。这里记录打字时刻，供 VAD 抬高阈值用。
+        """
+        try:
+            self._duplex_user_typing_ts = time.time()
+        except Exception:  # noqa: BLE001
+            pass
+
     def _in_call(self) -> bool:
         """是否处于语音/视频通话中（双工被通话占用）。
 
@@ -1627,18 +1641,35 @@ class ProactiveStrategy:
                     audio_source=("mic" if self._in_call() else "system"),
                     source="proactive")
 
-    def apply_call_settings(self, mic_device=None, camera_device=None):
+    def apply_call_settings(self, mic_device=None, camera_device=None,
+                            speaker_device=None):
         """热切换通话设备（设置页保存后即时生效）。"""
         if mic_device is not None:
             self._duplex_mic_device = mic_device
         if camera_device is not None:
             self._duplex_camera_device = camera_device
+        if speaker_device is not None:
+            # 记进 config 命名空间，下次构造客户端时也用它
+            try:
+                _pro = getattr(getattr(self._cfg, "ns", None), "proactive", None)
+                if _pro is not None:
+                    setattr(_pro, "duplex_speaker_device", speaker_device)
+            except Exception:  # noqa: BLE001
+                pass
         client = self._active_duplex_client()
         if client is not None and mic_device is not None and hasattr(client, "set_mic_device"):
             try:
                 client.set_mic_device(mic_device)
             except Exception:  # noqa: BLE001
                 logger.debug("apply_call_settings: 设麦克风设备失败", exc_info=True)
+        # 【2026-10-18 修复·"扬声器切不了"】云端双工的语音由内部 _AudioPlayer 播放，
+        # 不走上层 TTS；必须显式通知它重建输出流，否则切了设备毫无变化。
+        if client is not None and speaker_device is not None and hasattr(
+                client, "set_speaker_device"):
+            try:
+                client.set_speaker_device(speaker_device)
+            except Exception:  # noqa: BLE001
+                logger.debug("apply_call_settings: 设扬声器设备失败", exc_info=True)
 
     def _duplex_speaker_device_name(self) -> str:
         """云端双工扬声器设备名（config: proactive.duplex_speaker_device，'default'=系统默认）。
@@ -2320,6 +2351,31 @@ class ProactiveStrategy:
         t = re.sub(r'【观察】.*', '', t)
         t = re.sub(r'\[观察\].*', '', t)
         t = re.sub(r'[\u200b\u200c\u200d\ufeff\n\r\t]+', ' ', t)
+        # 【2026-10-18 新增·双工念符号的代码级兜底】
+        # 用户实测："听得清清楚楚，漂泊者 ~" 后面还多念了一个横杠。
+        # 提示词约束（DUPLEX_SPEECH_RULE）只能"降低概率"，模型偶尔仍会写符号；
+        # 而实时双工的 TTS 是逐字朗读 → 符号会被念成"波浪号""横杠""破折号"。
+        # 这里在**上屏/朗读前**把朗读型符号统一替换成停顿（逗号）或直接删除，
+        # 保证用户永远不会听到符号名。只动符号、不删任何文字内容。
+        _SYMBOL_TO_PAUSE = (
+            # 横线类（破折号/连字符/长短横/下划线）→ 逗号停顿
+            (r'[—–―‒‑\-_]{1,}', '，'),
+            # 波浪号/省略号 → 逗号停顿
+            (r'[～~]+', '，'),
+            (r'[…]+|\.{3,}', '，'),
+            # 引号/括号/星号/井号/斜杠/反引号/竖线 → 删除（保留其中的文字）
+            (r'[*#`|\\/<>\[\]{}]', ''),
+            (r'[（）()]', ''),
+            (r'[""''"\'"\'「」『』]', ''),
+        )
+        for _pat, _rep in _SYMBOL_TO_PAUSE:
+            t = re.sub(_pat, _rep, t)
+        # 收敛重复标点："，，" → "，"，"，。" → "。"
+        t = re.sub(r'[，,]{2,}', '，', t)
+        t = re.sub(r'，([。？！])', r'\1', t)
+        # 【2026-10-18】句尾孤立逗号（符号被替换成逗号后常见："漂泊者 ，"）→ 补句号
+        t = re.sub(r'[，,]\s*$', '。', t)
+        t = re.sub(r'^[，。？！\s]+', '', t)
         t = re.sub(r'\s+', ' ', t).strip()
         return t
 
@@ -4610,7 +4666,10 @@ class ProactiveStrategy:
                     for _k, _v in _s.items():
                         _merged.setdefault(_k, _v)
                 else:
+                    # 【2026-10-18】补上 workspace_id / workspace_region：
+                    # 漏了它们会让 ns 分支丢掉业务空间 ID → 回退通用端点 → 云端不处理音频。
                     for _k in ("api_key", "model", "base_url", "ws_url", "voice",
+                              "workspace_id", "workspace_region",
                               "enable_speech_emotion", "turn_detection",
                               "vad_threshold", "vad_silence_ms"):
                         _v = getattr(_s, _k, None)
@@ -4720,6 +4779,16 @@ class ProactiveStrategy:
                 api_key=getattr(co, "api_key", "") or "",
                 base_url=getattr(co, "base_url", "") or "",
                 ws_url=getattr(co, "ws_url", "") or "",
+                # 【2026-10-18 修复·"接通了却不理我"的真凶】
+                # config.yaml 的 cloud_omni 下明明写了 workspace_id（ws-xxxx），
+                # 但此处构造时**从未传进去** → CloudOmniRealtime 认为"未配置"→
+                # 回退通用端点 wss://dashscope.aliyuncs.com/api-ws/v1/realtime。
+                # 而 qwen3.8-omni-flash-realtime 在通用端点上**只建连、不处理音频**：
+                # 表现为能接通、能听到开场白，但用户说话云端毫无反应（无 speech_started、
+                # 无 committed、无转写），听起来就像"我的声音完全没上传上去"。
+                # 本地采集一切正常（峰值 ~29000、发送成功=块数），所以一直误判成麦克风问题。
+                workspace_id=getattr(co, "workspace_id", "") or "",
+                workspace_region=getattr(co, "workspace_region", "") or "",
                 voice=voice,
                 enable_speech_emotion=bool(getattr(co, "enable_speech_emotion", True)),
                 turn_detection=getattr(co, "turn_detection", "server_vad") or "server_vad",
@@ -4735,12 +4804,13 @@ class ProactiveStrategy:
                 on_fatal=self._on_cloud_omni_fatal,
                 auto_play=True,
                 greet_on_connect=True,
-                # 【2026-10-04 修正·对齐 .bat 好链路】不再开本地 VAD，直接用云端 server_vad
-                # 原生打断（与「启动云端达妮娅.bat」完全一致：同模型 / 同 SDK，.bat 一直好用）。
-                # 此前自造的本地能量 VAD 会在热麦底噪下卡在"说话中"永不提交 → 反复不理我；
-                # 而上行的双向 AGC 把电平归一化到 0.22、抹平了"静音谷"，也会让 server_vad 失效。
-                # 现恢复 server_vad + 上行送原始音频，两条都对齐 .bat（见 cloud_omni_realtime）。
-                local_vad=False,
+                # 【2026-10-18 修正·本地 VAD 改为主判据】
+                # 此前设为 False（对齐 .bat、依赖云端 server_vad），但本轮 6 组真机
+                # 对照实验证明：qwen3.8-omni-flash-realtime 的 server_vad **从不触发**
+                # （推流 60+ 秒真实语音，speech_started 数为 0）→ 用户说话云端毫无反应，
+                # 表现为"接通了但完全不理我"。而手动 commit + create_response 实测
+                # 能正常识别并回语音。故改为 True：由本地能量 VAD 判句末并 commit。
+                local_vad=True,
                 # 【2026-10-02 修复】设备名从 config 读（proactive.duplex_speaker_device，
                 # 设置页 setCallAudioDevice 写入处）。此前误调不存在的 _call_speaker_device_raw()
                 # → 构造 AttributeError → 云端双工永远起不来 → UI 卡拨号页。
@@ -5050,13 +5120,38 @@ class ProactiveStrategy:
         logger.warning("角色参考音频不存在（已试 %d 个位置）: %r", len(cands), ref)
         return ""
 
+    # 【2026-10-18】双工模型**不接受**老 TTS 克隆体系（qwen-audio-3.0 / cosyvoice）
+    # 注册的音色 id —— 实锤日志：<400> InvalidParameter: Voice
+    # 'qwen-audio-3.0-tts-plus-bailian-…' is not supported → 连接秒断、无开场白。
+    # 这些 id 只属于旧 TTS 链路；双工链路的正确音色 = 用参考音频向**当前实时模型**
+    # 即时克隆（_clone_voice_for_character，缓存键=音频md5+模型名）。
+    _DEAD_VOICE_PREFIXES = ("qwen-audio-3.0", "cosyvoice")
+
+    @staticmethod
+    def _voice_id_dead_for_omni(v: str) -> bool:
+        low = str(v or "").strip().lower()
+        return any(low.startswith(p) or (p + "-") in low for p in
+                   ("qwen-audio-3.0", "cosyvoice"))
+
     def _resolve_cloud_omni_voice(self) -> str:
-        """解析云端双工音色：当前角色克隆音色优先，逐级回落。"""
+        """解析云端双工音色：当前角色克隆音色优先，逐级回落。
+
+        【2026-10-18 修复·拨通秒断/无开场白】角色 cloud_voice_id 若属于已下线的
+        老 TTS 克隆体系（qwen-audio-3.0 / cosyvoice-*），双工模型会 400 拒绝
+        （'Voice … is not supported'）→ 连接建立即断 → 全程无声音。
+        这类 id 在此**跳过**，正确回落到 ②：用角色参考音频向当前实时模型即时克隆
+        —— 这才是"上传参考音、云端克隆"的设计路径。
+        """
         char = self._cfg.get_active_character() if self._cfg is not None else None
         if char is not None:
             cv = (getattr(char, "cloud_voice_id", "") or "").strip()
             if cv:
-                return cv
+                if self._voice_id_dead_for_omni(cv):
+                    logger.warning(
+                        "云端双工音色：角色 cloud_voice_id=%r 属于已下线模型（qwen-audio-3.0/cosyvoice），"
+                        "双工模型会 400 拒绝 → 跳过，改用参考音频实时克隆", cv[:60])
+                else:
+                    return cv
             ref = self._resolve_ref_audio_path(getattr(char, "ref_audio", "") or "")
             if ref and os.path.exists(ref):
                 v = self._clone_voice_for_character(ref, getattr(char, "name", "char") or "char")

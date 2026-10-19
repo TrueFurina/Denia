@@ -803,7 +803,21 @@
         duplex_model: (document.getElementById("capDupM")||{}).value || ""
       };
       if (!payload.api_key){ if (B&&B.toast) B.toast("请先填入阿里云百炼 API Key","warn"); return; }
-      doSet(payload);
+      /* 【2026-10-17 修复·引导页「一键启用」点了没反应】
+         旧实现：doSet(payload) 里 cap==='aliyun' 会走 **真实探测**
+         （Backend.testLlm(chat_model)），探测失败就**不保存**，只弹一个 toast。
+         而 payload 里根本没有 model 字段（只有 chat_model/tts_model/duplex_model），
+         于是 model 回落成 chat_model（如 qwen3.8-max）→ 探测该模型 →
+         若账号没该模型权限/免费额度用尽 → 探测失败 → Key 一个字都没写进去。
+         用户看到的就是：填了 Key、点了按钮、灯不亮、体检页"未配置"，
+         完全不知道发生了什么（toast 一闪而过）。
+
+         「阿里云一键」的语义是**批量写入 4 个配置节点**（对话/看屏/TTS/双工），
+         不该被单个模型的连通性卡住 —— 各槽位自己的「测试连接」按钮才是干这个的。
+         故这里 skipProbe:true 直接落盘；写完立刻回读并显示真实结果。 */
+      doSet(payload, {skipProbe:true});
+      // 落盘后主动刷新一次，让用户马上看到状态变化（而不是等 load 轮询）
+      setTimeout(function(){ try{ load(); }catch(e){} }, 800);
     });
   }
 
@@ -900,7 +914,23 @@
     if (!hasB()){ if (B&&B.toast) B.toast("后端未连接，无法保存","err"); return; }
     Backend.setCapabilitySlot(payload).then(function(r){
       if (r && r.success){
-        if (B&&B.toast) B.toast("已保存：" + (r.message||""), "ok");
+        if (B&&B.toast) B.toast("✅ 已保存：" + (r.message||""), "ok");
+        /* 【2026-10-17】把后端返回的分项结果（sub/parts）也显示出来，
+           让用户明确知道"哪几处写进去了"，而不是只看到一句"已保存"。 */
+        try{
+          var parts = r.parts || {};
+          var names = {chat:'对话模型', tts:'语音合成', duplex:'实时通话'};
+          var okList = [], badList = [];
+          Object.keys(parts).forEach(function(k){
+            (parts[k] ? okList : badList).push(names[k] || k);
+          });
+          if (okList.length && B && B.toast){
+            B.toast("已接通：" + okList.join(' / '), "ok");
+          }
+          if (badList.length && B && B.toast){
+            B.toast("未接通：" + badList.join(' / ') + "（去对应槽位检查 Key/模型）", "warn");
+          }
+        }catch(e){}
         closeSlot(); closePicker(); load();
       } else if (r && r.offline){
         if (B&&B.toast) B.toast("后端未连接，无法保存","err");

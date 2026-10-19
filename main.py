@@ -19,6 +19,32 @@ from __future__ import annotations
 # (e.g. the "✓" checkmark) even when launched from a GBK codepage console
 # (e.g. double-clicking a .bat on Chinese Windows). Without this, console
 # output raises UnicodeEncodeError and crashes the startup thread.
+
+# ============ 【2026-10-17 关键修复·GBK 崩溃】============
+# main.py 用 rich.console 打印带 ✓ 的进度，而 Windows 控制台默认 GBK。
+# 当 stdout 是 GBK（或 pythonw.exe 下为 None）时：
+#   UnicodeEncodeError: 'gbk' codec can't encode character '\u2713'
+# → asyncio 初始化线程直接崩 → runtime.ready 永不 set
+# → 主线程 180s 超时 → "系统初始化失败，无法启动 GUI"
+# → 用户双击图标后**闪一下就没了**（crash 日志实锤）。
+# 这里在任何 import 之前强制把 stdio 切成 UTF-8，并容忍失败。
+import sys as _sys_boot, os as _os_boot
+try:
+    _os_boot.environ.setdefault("PYTHONIOENCODING", "utf-8")
+    _os_boot.environ.setdefault("PYTHONUTF8", "1")
+except Exception:  # noqa: BLE001
+    pass
+for _name_boot in ("stdout", "stderr"):
+    _st = getattr(_sys_boot, _name_boot, None)
+    try:
+        if _st is not None and hasattr(_st, "reconfigure"):
+            _st.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:  # noqa: BLE001
+        pass
+del _sys_boot, _os_boot
+# ========================================================
+
+
 import sys as _sys
 try:
     if hasattr(_sys.stdout, "reconfigure"):
@@ -1887,13 +1913,23 @@ def _startup_supervisor(runtime: RuntimeHolder, cfg: Config,
         async_thread.start()
         runtime.async_thread = async_thread
 
-        # 3. 等 asyncio 初始化就绪（最多 60s）
-        if not runtime.ready.wait(timeout=60.0):
-            logger.error("系统初始化超时，请检查日志")
-            progress.fail("系统初始化超时，请查看日志")
-            time.sleep(2.0)
-            _destroy_all_webview_windows()
-            return
+        # 3. 等 asyncio 初始化就绪
+        # 【2026-10-17 修复·首启超时误杀】旧值是 60s，而首次启动在慢机器/冷缓存下
+        # 要探测环境(ollama/vosk/麦克风/视觉)、装配配置、初始化 TTS/ASR/OCR/主动策略，
+        # 60s 经常不够 → 直接 `_destroy_all_webview_windows()` 退出，用户看到
+        # 「打开就没了 / 卡在加载页」（实锤日志：20:34:24 就绪 → 20:35:24 超时退出）。
+        # 现在：① 放宽到 180s；② **超时不退出**，降级继续开主窗口让用户能操作，
+        #      并在 UI 上如实提示"部分功能仍在初始化"。
+        _READY_TIMEOUT = 180.0
+        if not runtime.ready.wait(timeout=_READY_TIMEOUT):
+            logger.error("系统初始化超时（%.0fs），降级继续启动（部分功能可能不可用）",
+                         _READY_TIMEOUT)
+            progress.fail("初始化较慢，正在以受限模式启动…")
+            # 不销毁窗口、不 return —— 继续往下走，让用户至少能进界面
+            try:
+                runtime.init_error = runtime.init_error or "初始化超时（受限模式）"
+            except Exception:  # noqa: BLE001
+                pass
 
         # 3.1 检查 asyncio 线程是否崩溃（如端口被占用）
         if runtime.init_error or runtime.dialogue is None:

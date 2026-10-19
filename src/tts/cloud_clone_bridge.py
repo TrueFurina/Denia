@@ -27,7 +27,7 @@ from pathlib import Path
 
 # ----------------------------- 配置（必须由用户显式提供，不写死任何免费第三方） -----------------------------
 DANIYA_REF = os.getenv("DANIYA_REF_WAV", r"H:\daniya_ref.wav")
-CACHE_DIR = Path(os.getenv("DANIYA_TTS_CACHE", r"G:/ai对话/11/deliverables/tts_cache"))
+CACHE_DIR = Path(os.getenv("DANIYA_TTS_CACHE", r"deliverables/tts_cache"))
 # 以下两个端点**必须**由你自己的环境变量显式提供；默认留空，绝不写死免费第三方服务。
 HF_SPACE = os.getenv("DANIYA_HF_SPACE", "").strip()        # 你自己的 CosyVoice2 Space（需代理）
 MODESCOPE_MODEL = os.getenv("DANIYA_MS_MODEL", "").strip()  # 你自己的 ModelScope 模型
@@ -125,7 +125,7 @@ if __name__ == "__main__":
     sample = "达娅在吗？我刚打完一把游戏，想跟你说说话。"
     out = synthesize(sample)
     if out:
-        dst = Path(r"G:/ai对话/11/deliverables/daniya_cloud_sample.wav")
+        dst = Path(r"deliverables/daniya_cloud_sample.wav")
         dst.write_bytes(out)
         print(f"✅ 已生成达娅云端样片: {dst} ({len(out)} bytes)")
     else:

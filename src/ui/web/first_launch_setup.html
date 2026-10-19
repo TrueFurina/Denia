@@ -7,8 +7,8 @@
 <link rel="stylesheet" href="redesign/design_tokens.css?v=20261013e">
 <link rel="stylesheet" href="redesign/pages.css">
 <!-- 首启引导页独立加载 Backend 桥接：避免 iframe 内访问 window.parent.Backend 失败导致所有按钮无响应 -->
-<script src="redesign/app_backend.js?v=20261015f"></script>
-<script src="redesign/voice_profile_picker.js?v=20261008a"></script>
+<script src="redesign/app_backend.js?v=20261019e"></script>
+<script src="redesign/voice_profile_picker.js?v=20261019e"></script>
 <style>
   /* 兼容旧变量名 → 映射到 design_tokens（JS 内联样式仍用 --muted/--good 等） */
   :root{
@@ -498,7 +498,7 @@
 <script src="/redesign/download_tray.js?v=20261015e"></script>
 <script src="/redesign/model_downloader.js?v=20261015e"></script>
 <script src="/redesign/ui_skeleton.js?v=20261013a"></script>
-<script src="/onboarding_role.js?v=20261012"></script>
+<script src="/onboarding_role.js?v=20261019e"></script>
 </head>
 <body>
 <div class="aurora"></div>
@@ -671,12 +671,15 @@
         <div class="field" id="ttsUrlField" style="display:none"><label>接口地址</label><input id="ttsUrl" type="text" placeholder="https://..." autocomplete="off"></div>
         <div class="field" id="ttsModelField" style="display:none"><label>模型名</label><input id="ttsModel" type="text" placeholder="如 gpt-4o-mini-tts" autocomplete="off"></div>
         <div class="field" id="ttsVoiceIdField" style="display:none">
-          <label>voice_id（已克隆的音色 id，可选）</label>
+          <label>voice_id（已克隆的音色 id）</label>
           <div style="display:flex;gap:8px">
+            <select id="bailianVoiceSelect" style="flex:1;display:none"></select>
             <input id="ttsVoiceId" type="text" placeholder="例如：cosyvoice-xxxxx 或 qwen-audio-3.0-tts-plus-xxx" autocomplete="off" style="flex:1">
-            <button type="button" class="mdl-btn" id="bailianQueryBtn" style="width:auto;padding:9px 12px;white-space:nowrap">查询我的克隆音色</button>
+            <button type="button" class="mdl-btn" id="bailianQueryBtn" style="width:auto;padding:9px 12px;white-space:nowrap">重新读取</button>
           </div>
-          <div class="hint" id="bailianQueryStatus" style="margin-top:6px">在百炼控制台克隆了达妮娅本音但找不到 id？填好上面的 Key 点这里，会自动列出你账号下所有克隆音色，点一下即可填入。</div>
+          <!-- 【2026-10-18 改版·自动拉取】填完 Key 失焦即自动查询账号下的克隆音色，
+               拉到就变成下拉选择（免手输）；手动输入框保留兜底（拉取失败/想粘贴新 id）。 -->
+          <div class="hint" id="bailianQueryStatus" style="margin-top:6px">填好上面的 Key 后会自动读取你账号下的克隆音色，选一个即可；也可以手动粘贴 voice_id。</div>
           <div id="bailianVoiceList" style="display:none;margin-top:8px;border:1px solid var(--line,#ddd);border-radius:10px;max-height:210px;overflow:auto;background:var(--bg-1,#fff)"></div>
         </div>
         <div class="field" id="ttsRefAudioField">
@@ -1069,6 +1072,12 @@
   var LLM_PAYLOAD = null, LLM_TESTED = false;
   var SELECTED_QUANT = 'Q4_K_M';
   var gateReady = {vision:false, full:false};
+  /* 【2026-10-17 修复·云端已配却被强制下载本地模型】
+     用户绑定了云端 TTS/对话后，本地模型完全不是必需品；
+     但 canAdvance('screenVisionDl') 旧逻辑只认「下载完」或「手动跳过」
+     → 用户被卡在这一步，只能"随便选个占用最小的"下 2.4GB（实测反馈）。
+     现在额外记录「云端能力已就绪」，作为第三条放行条件。 */
+  var __cloudReady = false;
   var PROVIDER_OK = false, PROVIDER_PAYLOAD = null;
   // 2026-10-09：百炼屏实测通过后缓存的「真实语音合成 payload」（见 _finish 第三参）。
   // 落盘时优先把它塞进 payload.tts，让百炼 Key 同时写进 voice.clone.cloud.api_key。
@@ -1557,8 +1566,10 @@
   function esc(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;'); }
 
   // 达妮娅内置参考音 + 参考文本，给所有需要参考音频的克隆卡做默认预填
+  // 【2026-10-18 修复·写死了开发机绝对路径】别的机器上该路径必然不存在。
+  // 改为相对路径（后端按安装根目录解析），任何机器都指向内置参考音。
   const DEFAULT_REF_TEXT = "我讨厌吃生的东西！特别是那种摆好盘的切片肉类。";
-  const DEFAULT_REF_AUDIO = "G:\\ai对话\\11\\assets\\voices\\daniya_ref.wav";
+  const DEFAULT_REF_AUDIO = "assets/voices/daniya_ref.wav";
 
   function buildSteps(mode){
     let labels;
@@ -1609,7 +1620,25 @@
     /* B4（2026-10-12）：能力槽步不设硬门槛（全跳过也能进软件，体检屏会如实提示）；
        下载步：模型就绪 或 用户显式跳过本地 → 放行。 */
     if(id==='screenSlots') return true;
-    if(id==='screenVisionDl') return gateReady.vision || !!window.__visionSkipped;
+    /* 【2026-10-17 修复】本地模型屏放行条件增加「云端已就绪」：
+       · 已下载本地模型            → 放行
+       · 用户显式跳过               → 放行
+       · **云端能力已配好**（TTS/对话/双工任一 ok）→ 放行 ← 新增
+       理由：用户绑定了云端 TTS 就说明"出声"走云端，本地模型只是可选的离线增强，
+       不该成为必经门槛（实测反馈：只能随便选个占用最小的模型才能继续）。 */
+    /* 【2026-10-17 二次修复·下完 TTS 模型也进不了下一步】
+       实测反馈：用户把「千问3-TTS」下载完（卡片显示"已就绪 / ✓已安装"），
+       「下一步」依然灰着。原因：这一步的门槛只认 gateReady.vision（**视觉**模型），
+       而本地 TTS 模型下完设的是 LOCAL_TTS_READY —— 两套状态互不相通。
+       现改为「任一本地方案就绪」即放行：
+         · 视觉模型下完           gateReady.vision
+         · 本地 TTS 模型下完      LOCAL_TTS_READY   ← 新增
+         · 用户手动跳过           __visionSkipped
+         · 云端能力已配           __cloudReady
+       这一步的语义是"本地模型（可选增强）"，不是"必须下视觉模型"。 */
+    if(id==='screenVisionDl') return gateReady.vision || !!window.__visionSkipped
+      || __cloudReady
+      || (typeof LOCAL_TTS_READY !== 'undefined' && !!LOCAL_TTS_READY);
     if(id==='screenMode') return !!(chosenMode.textContent && chosenMode.textContent!=='—');
     if(id==='screenProvider') return PROVIDER_OK;
     // 2026-09-25：声音屏只要求「选了分支」（本地/云端/先不配置），真正的门槛在各自子屏
@@ -2063,8 +2092,19 @@
           renderLocalTtsCards();
           // 用户要求「本地下了后自动接入」：下载完成直接落盘并切到该引擎，不必再手动点应用
           setLocalTtsMsg('下载完成，正在自动接入…', false);
-          applyLocalTts(TTS_DL.engine);
-          if(typeof refreshNav==='function') refreshNav();
+          /* 【2026-10-17 修复·下完模型「下一步」仍灰】
+             旧写法：applyLocalTts()（异步）+ 紧接着 refreshNav()。
+             但 LOCAL_TTS_READY 是在 applyLocalTts **内部**才置 true 的，
+             所以 refreshNav 执行时它还是 false → 下一步保持禁用，
+             而之后再没有人刷新导航 → 用户被永久卡住（实测：卡片显示"已就绪/✓已安装"却进不去）。
+             现在 await 它完成再刷新。 */
+          Promise.resolve(applyLocalTts(TTS_DL.engine))
+            .then(function(){
+              if(typeof refreshNav==='function') refreshNav();
+            })
+            .catch(function(){
+              if(typeof refreshNav==='function') refreshNav();
+            });
           return;
         }
         if(s.status==='manual' || s.status==='error'){
@@ -2084,7 +2124,7 @@
     let r = null;
       try{ if(typeof BK==='undefined' || !BK){ r = null; } else { r = await BK.setCloneEngine(engine); } }catch(e){ r = null; }
     if(!r || !r.success){ setLocalTtsMsg('应用失败：'+((r&&r.error)||'后端无响应'), true); return; }
-    LOCAL_TTS_READY = true; LOCAL_TTS_APPLIED_ENGINE = engine;
+    LOCAL_TTS_READY = true; try{ refreshNav(); }catch(e){} LOCAL_TTS_APPLIED_ENGINE = engine;
     // 已由 setCloneEngine 直接落盘 voice.clone_local_engine，最终提交无需再套一次 TTS
     VOICE_PAYLOAD = null;
     const mm = LOCAL_TTS_MODELS.find(x=>x.id===engine);
@@ -2353,7 +2393,22 @@
         // 选单里的 speech-02-hd/turbo 是 model，voice_id 走默认系统音色 female-shaonv（无需参考音频）。
         payload = {backend:'minimax', api_key:key, group_id:groupId, model:pickTTSModel, voice_id:'female-shaonv'};
       } else if(v.id === 'dashscope-tts'){
-        const key = $('ttsKey').value.trim();
+        /* 【2026-10-19 修复·"已绑定百炼却报未配置 API Key"】
+           旧实现只读声音屏的 ttsKey 输入框。但用户从「角色配置弹窗」路径进来时
+           （第 1 步连引擎绑过 Key → 建角色 → 克隆弹窗选音色 → 保存），弹窗里
+           没有 Key 输入框，ttsKey 是空的 → 试听必失败（日志实锤：
+           "试听合成失败: 阿里云百炼 CosyVoice 未配置 API Key"）。
+           现在三段取 Key：① 声音屏输入框 ② 后端已存配置（get_tts_provider_key，
+           与软件内聊天 TTS 同源）③ 都没有才提示。applyVoice 本就是 async，
+           这里 await 拿 Key 不改变函数签名与后续流程。 */
+        let key = $('ttsKey').value.trim();
+        const B = bk();
+        if(!key && B && B.getTtsProviderKey){
+          try{
+            const kr = await B.getTtsProviderKey('dashscope_cosy');
+            if(kr && kr.success && kr.api_key) key = String(kr.api_key).trim();
+          }catch(e){ /* 静默：拿不到就走原有提示 */ }
+        }
         if(!key){ if(st){st.textContent='请先填阿里云百炼 API Key'; st.className='test-status bad';} _voiceApplying=false; return; }
         payload = {backend:'dashscope_cosyvoice', api_key:key, model:pickTTSModel, voice_id:$('ttsVoiceId').value.trim(),
                    reference_audio:refAudio, reference_text:refText};
@@ -2413,37 +2468,63 @@
   }
   if($('voiceApplyBtn')) $('voiceApplyBtn').addEventListener('click', applyVoice);
 
-  // 百炼：查询账号下全部克隆音色，点选一键回填 voice_id
-  if($('bailianQueryBtn')) $('bailianQueryBtn').addEventListener('click', async ()=>{
+  // 百炼：查询账号下全部克隆音色 → 自动渲染成下拉选择（免手输 voice_id）
+  // 【2026-10-18 改版】原先是"点按钮 → 出列表 → 点一条回填"三层操作；
+  // 现在抽成 autoFetchBailianVoices()：Key 输入框失焦自动触发，拉到即出下拉。
+  async function autoFetchBailianVoices(silent){
     const B=bk(); const st=$('bailianQueryStatus'); const list=$('bailianVoiceList');
-    const key=$('ttsKey').value.trim();
-    if(!key){ if(st){st.textContent='请先在上方填百炼 API Key'; st.style.color='var(--bad,#d33)';} return; }
-    if(!B||!B.listBailianVoices){ if(st){st.textContent='预览模式不可用（软件运行时生效）';} return; }
-    if(st){ st.textContent='查询中…'; st.style.color=''; }
-    list.style.display='none';
+    const sel=$('bailianVoiceSelect'); const inp=$('ttsVoiceId');
+    const key=($('ttsKey')||{}).value ? $('ttsKey').value.trim() : '';
+    if(!key){ if(!silent&&st){st.textContent='请先在上方填百炼 API Key'; st.style.color='var(--bad,#d33)';} return; }
+    if(!B||!B.listBailianVoices){ if(!silent&&st){st.textContent='预览模式不可用（软件运行时生效）';} return; }
+    if(!silent&&st){ st.textContent='正在自动读取你账号下的克隆音色…'; st.style.color=''; }
+    if(list) list.style.display='none';
     try{
       const r=await B.listBailianVoices(key);
       if(r&&r.success){
         const vs=r.voices||[];
-        if(!vs.length){ if(st){st.textContent=r.message||'没有克隆音色'; st.style.color='var(--bad,#d33)';} list.style.display='none'; return; }
-        if(st){ st.textContent='点击下面的音色一键填入 voice_id：'; st.style.color=''; }
-        list.innerHTML = vs.map(v=>`<div class="bailian-v" data-v="${esc(v.voice_id)}" style="padding:8px 10px;cursor:pointer;border-bottom:1px solid var(--line,#eee)">
-          <div style="font-family:monospace;font-size:12px;word-break:break-all">${esc(v.voice_id)}</div>
-          <div style="font-size:11px;color:var(--ink-2,#888)">${esc(v.status||'')}${v.gmt_create?' · '+esc(v.gmt_create):''}</div>
-        </div>`).join('');
-        list.style.display='block';
-        list.querySelectorAll('.bailian-v').forEach(el=>{
-          el.addEventListener('mouseenter', ()=> el.style.background='rgba(127,127,127,.12)');
-          el.addEventListener('mouseleave', ()=> el.style.background='');
-          el.addEventListener('click', ()=>{
-            $('ttsVoiceId').value = el.getAttribute('data-v');
-            list.style.display='none';
-            if(st){ st.textContent='已填入：'+el.getAttribute('data-v'); st.style.color=''; }
-          });
-        });
-      } else { if(st){ st.textContent=' '+(r&&r.error||'查询失败'); st.style.color='var(--bad,#d33)'; } list.style.display='none'; }
-    }catch(e){ if(st){ st.textContent=' '+(e&&e.message||e); st.style.color='var(--bad,#d33)'; } }
-  });
+        if(!vs.length){
+          if(st){st.textContent=(r.message||'该账号下没有克隆音色')+' · 可手动粘贴 voice_id'; st.style.color='var(--bad,#d33)';}
+          if(sel) sel.style.display='none'; if(inp) inp.style.display='';
+          return;
+        }
+        // 渲染下拉：显示"模型 · 建立时间"，value=voice_id；选中即回填输入框
+        if(sel){
+          sel.innerHTML = vs.map(v=>{
+            const label = (v.target_model||'模型未知') + (v.gmt_create? ' · '+v.gmt_create : '') + ' · ' + v.voice_id.slice(-8);
+            return '<option value="'+esc(v.voice_id)+'">'+esc(label)+'</option>';
+          }).join('') + '<option value="__manual__">手动输入其它 voice_id…</option>';
+          sel.style.display='';
+          if(inp) inp.style.display='none';
+          const cur=(inp&&inp.value||'').trim();
+          if(cur){ sel.value=cur; }
+          if(st){ st.textContent='已读取到 '+vs.length+' 个克隆音色，选一个即可（也可点右侧切回手动输入）'; st.style.color=''; }
+          sel.onchange = ()=>{
+            if(sel.value==='__manual__'){
+              if(inp){ inp.style.display=''; inp.focus(); }
+              if(sel) sel.style.display='none';
+              if(st){ st.textContent='手动输入模式：粘贴 voice_id 即可'; }
+            } else {
+              if(inp) inp.value = sel.value;
+              if(st){ st.textContent='已选择音色：'+sel.value; }
+            }
+          };
+        }
+        // 保留旧的可点击列表（不展示，仅作为数据备份，防止下拉样式异常时无路可走）
+        if(list){
+          list.innerHTML = vs.map(v=>`<div class="bailian-v" data-v="${esc(v.voice_id)}" style="padding:8px 10px;cursor:pointer;border-bottom:1px solid var(--line,#eee)">
+            <div style="font-family:monospace;font-size:12px;word-break:break-all">${esc(v.voice_id)}</div>
+            <div style="font-size:11px;color:var(--ink-2,#888)">${esc(v.status||'')}${v.gmt_create?' · '+esc(v.gmt_create):''}</div>
+          </div>`).join('');
+        }
+      } else { if(st){ st.textContent=' '+(r&&r.error||'查询失败')+' · 可手动粘贴 voice_id'; st.style.color='var(--bad,#d33)'; } }
+    }catch(e){ if(st){ st.textContent=' '+(e&&e.message||e)+' · 可手动粘贴 voice_id'; st.style.color='var(--bad,#d33)'; } }
+  }
+  if($('bailianQueryBtn')) $('bailianQueryBtn').addEventListener('click', ()=>autoFetchBailianVoices(false));
+  // Key 失焦自动拉取（静默：失败不打扰，仍可手动点按钮重试）
+  if($('ttsKey')) $('ttsKey').addEventListener('blur', ()=>{ setTimeout(()=>autoFetchBailianVoices(true), 150); });
+  // 页面进入声音屏时若 Key 已填（回退导航），也自动拉一次
+  if($('bailianQueryBtn')) $('bailianQueryBtn').dataset.autobind='1';
 
   // 参考音频：用后端 pickReferenceAudio 拿真实路径（浏览器 <input type=file> 拿不到路径，是 B3 根因）
   if($('aliAudioBtn')) $('aliAudioBtn').addEventListener('click', async ()=>{
@@ -2572,6 +2653,11 @@
     $('ttsUrlField').style.display = needsUrl ? '' : 'none';
     $('ttsModelField').style.display = needsModel ? '' : 'none';
     $('ttsVoiceIdField').style.display = needsVoiceId ? '' : 'none';
+    // 【2026-10-18 改版·自动拉取】切到百炼时若 Key 已填，自动读一次账号下的克隆音色
+    if (needsVoiceId && $('ttsKey') && $('ttsKey').value.trim()
+        && typeof autoFetchBailianVoices === 'function') {
+      setTimeout(()=>autoFetchBailianVoices(true), 100);
+    }
     $('ttsRefAudioField').style.display = needsRef ? '' : 'none';
     $('ttsRefTextField').style.display = needsRef ? '' : 'none';
     const keyLabel = $('ttsKeyLabel');
@@ -2982,7 +3068,42 @@
       }catch(e){}
     }, 5000);
   }
+  /* 【2026-10-17】进入「下模型」屏时，先查云端能力是否已就绪。
+     就绪 → 直接放行并给出提示，不再逼用户下本地模型。 */
+  async function _probeCloudReady(){
+    try{
+      const B = bk();
+      if(!B || !B.getCapabilitySlots) return false;
+      const r = await Promise.resolve(B.getCapabilitySlots());
+      if(!r || !r.success) return false;
+      const slots = r.slots || {};
+      // 任一云端能力 ok 即视为"云端可用"（用户配了 Key 且模型非空）
+      for(const k of ['tts','chat','duplex']){
+        const s = slots[k] || {};
+        if(s.state === 'ok') return true;
+      }
+      // 兜底：health 里任一 ok
+      const h = r.health || {};
+      for(const k of ['tts','chat','duplex']){
+        if(h[k] === 'ok') return true;
+      }
+      return false;
+    }catch(e){ return false; }
+  }
+
   function enterVisionDl(){
+    /* 云端已就绪 → 直接提示并放行，不逼用户下本地模型 */
+    _probeCloudReady().then(function(ok){
+      if(!ok) return;
+      __cloudReady = true;
+      try{
+        const g = $('visionGate');
+        if(g) gateUI(g, true, '云端能力已就绪（语音/对话走云端）——本地模型可选，直接下一步即可');
+        const hint = document.getElementById('visionSkipHint');
+        if(hint) hint.textContent = '检测到云端能力已配置：本地模型不是必需品，可直接「下一步」。';
+      }catch(_e){}
+      refreshNav();
+    });
     if(window.__dbg) window.__dbg('enterVisionDl()');
     if(PREVIEW_MODE){ gateReady.vision=true; if($('visionDlLog')) $('visionDlLog').textContent='预览模式：已模拟本地模型就绪（跳过真实下载验证）'; markGate('vision'); return; }
     /* v8 修（2026-10-12）：原实现「已过门禁 / 已就绪」时直接 return，导致
@@ -3298,8 +3419,25 @@
     rows.push({label:'声音绑定', status: (_ttsSt==='ok')?'ok':'warn',
                detail: (_ttsSt==='ok')?('已连通（'+txOf('tts')+'）'):((_ttsSt==='bad')?'当前静音（能力槽可解）':'未绑定——达妮娅暂不出声，打字聊天照常；能力槽配 TTS 即可开口'),
                fix:'screenSlots'});
-    rows.push({label:'本地模型', status: gateReady.vision?'ok':'warn',
-               detail: gateReady.vision?'已下载就绪（本地看屏/语音可用)':(window.__visionSkipped?'已跳过——之后在「设置 → 模型与API → 本地模型」安装':'未安装——可返回上一步下载，或跳过走云端'),
+    /* 【2026-10-17 修复·体检屏与门槛口径不一致】
+       旧实现只认 gateReady.vision（视觉模型），于是：
+         · 用户下完本地 TTS 模型（LOCAL_TTS_READY=true）→ canAdvance 已放行，
+           但体检屏仍显示「未安装 ⚠」→ 用户以为没配好，反复折腾。
+         · 用户云端已配（__cloudReady）→ 同样显示"未安装"。
+       现与 canAdvance 保持同一口径：任一就绪即 ok。 */
+    const _localOk = gateReady.vision || window.__visionSkipped || __cloudReady
+                     || (typeof LOCAL_TTS_READY !== 'undefined' && !!LOCAL_TTS_READY);
+    const _localDetail = gateReady.vision
+        ? '已下载就绪（本地看屏/语音可用）'
+        : (window.__visionSkipped
+            ? '已跳过——之后在「设置 → 模型与API → 本地模型」安装'
+            : (__cloudReady
+                ? '云端已就绪（本地模型可选，不影响使用）'
+                : ((typeof LOCAL_TTS_READY !== 'undefined' && LOCAL_TTS_READY)
+                    ? '本地语音模型已就绪（TTS 可本地跑）'
+                    : '未安装——可返回上一步下载，或跳过走云端')));
+    rows.push({label:'本地模型', status: _localOk?'ok':'warn',
+               detail: _localDetail,
                fix:'screenVisionDl'});
     rows.push({label:'麦克风', status: MIC_PAYLOAD?'ok':'warn', detail: MIC_PAYLOAD?('已选：'+(MIC_PAYLOAD.device||'默认')):'可跳过（达妮娅听不见你说话，设置里随时开）', fix:'screenMic'});
     rows.push({label:'角色', status: ROLE_CONFIRMED?'ok':'ok', detail: ROLE_CONFIRMED?'已选/已建':'用预设达妮娅（可在软件角色页随时换）', fix:'screenRole'});
@@ -4090,7 +4228,9 @@ BK.generateCharacter({ name: name, hint: ((m.querySelector('#eAiHint')||{}).valu
       tts: null,
       llm: null,
       cloud_omni: null,
-      local_vision_ready: !!gateReady.vision,
+      /* 【2026-10-17】本地视觉就绪标记已删除：后端
+         从不读这个键（全项目 0 次引用），是死字段。本地模型是否就绪由
+         gateReady.vision / LOCAL_TTS_READY 在体检屏如实展示即可。 */
       model_dir: MODEL_DIR.vision || null
     };
     // 2026-09-25 修「完成点了没反应」：cfgSummary 原在旧 screenVoice 屏里（已被移出流程），
@@ -4123,7 +4263,7 @@ BK.generateCharacter({ name: name, hint: ((m.querySelector('#eAiHint')||{}).valu
       showSummary('<b>配置完成（演示）</b><br>方向：'+esc(payload.mode||'-')+
         ' · 服务商：'+esc(payload.provider?payload.provider.prov:'无（本机）')+
         ' · 角色：'+esc(payload.role?(payload.role.preset||payload.role.name):'无')+
-        ' · 本地视觉：'+(payload.local_vision_ready?'已就绪':'未下载'), 6000);
+        ' · 本地视觉：'+((gateReady.vision||window.__visionSkipped||__cloudReady)? '已就绪/走云端' : '未下载'), 6000);
     }
   }
   // 从配置器返回（?from=custom）→ 自动选中「自定义配置」并沿用已保存的模块，

@@ -174,8 +174,82 @@ def _blank() -> Dict[str, Any]:
     return {"themes": {}, "bindings": {}}
 
 
+def _heal_theme_urls(data: Dict[str, Any]) -> None:
+    """【2026-10-19 新增·主题图路径自愈】就地修复失效的图片 URL。
+
+    根因：_slot_url 生成时把**当时的绝对路径**固化进 themes.json。
+    换机器 / 换安装目录后（实测：H:\\aibanlv → H:\\Jiyulian），这些路径全部
+    指向不存在的位置 → 壁纸/头像/立绘全 404，连带"从壁纸自动取色"失败
+    → 表现为"达妮娅压根没有主题色和主题壁纸"。
+    而图片文件本体其实随包分发（data/char_banners/themes/<id>/<slot>/）。
+
+    修法：加载时逐图位检查 url 指向的文件是否存在；不存在则按约定路径
+    <data>/char_banners/themes/<id>/<slot>/<file> 重建——文件在就直接修好，
+    顺手把修好的 URL 写回 json（save_all），下次启动零成本。
+    """
+    themes = data.get("themes")
+    if not isinstance(themes, dict):
+        return
+    changed = False
+    base = os.path.abspath(os.path.join(data_dir(), "char_banners"))
+    for tid, th in themes.items():
+        if not isinstance(th, dict):
+            continue
+        imgs = th.get("images")
+        if not isinstance(imgs, dict):
+            continue
+        for slot in ("hero", "stand", "avatar", "cover"):
+            v = imgs.get(slot)
+            cur_url = (v or {}).get("url") if isinstance(v, dict) else None
+            # 已有效（url 非空 且 文件存在 且 **在当前安装的白名单内**）→ 跳过
+            # 【2026-10-19 关键修正】只查"文件存在"不够——实测 H:\aibanlv 旧安装
+            # 残留目录里同文件名图片也存在，文件存在但 /local_img 白名单会拒掉它
+            # （白名单只放行**当前安装根**的 data/char_banners）→ 依然 404 无壁纸。
+            # 有效性 = 文件存在 **且** 位于当前 data_dir()/char_banners 之下。
+            if cur_url and "path=" in cur_url:
+                try:
+                    from urllib.parse import unquote
+                    _p = os.path.abspath(unquote(cur_url.split("path=", 1)[-1])
+                                         .replace("/", os.sep))
+                    if os.path.isfile(_p) and _p.startswith(base + os.sep):
+                        continue
+                except Exception:  # noqa: BLE001
+                    pass
+            # 尝试约定路径
+            cand = os.path.join(theme_images_dir(tid), slot,
+                                "%s.png" % slot)
+            if not os.path.isfile(cand):
+                # 再试 jpg 变体
+                cand = os.path.join(theme_images_dir(tid), slot,
+                                    "%s.jpg" % slot)
+            if os.path.isfile(cand):
+                new_url = _slot_url(cand)
+                if new_url:
+                    if not isinstance(v, dict):
+                        v = {}
+                    v["url"] = new_url
+                    v["file"] = "%s/%s" % (slot, os.path.basename(cand))
+                    imgs[slot] = v
+                    changed = True
+            elif cur_url:
+                # 文件确实不在：清掉死 URL（避免前端一直请求 404）
+                if isinstance(v, dict):
+                    v["url"] = ""
+                    imgs[slot] = v
+                    changed = True
+    if changed:
+        try:
+            save_all(data)
+        except Exception:  # noqa: BLE001
+            pass
+
+
 def load_all() -> Dict[str, Any]:
-    """读整个 themes.json。文件不存在/损坏都返回空骨架（不抛，前端仍能用）。"""
+    """读整个 themes.json。文件不存在/损坏都返回空骨架（不抛，前端仍能用）。
+
+    【2026-10-19】加载后执行主题图路径自愈（_heal_theme_urls）——
+    换机/换目录后固化在 json 里的绝对路径会全部失效，这里统一修复。
+    """
     p = themes_json_path()
     with _LOCK:
         try:
@@ -185,6 +259,7 @@ def load_all() -> Dict[str, Any]:
                 return _blank()
             d.setdefault("themes", {})
             d.setdefault("bindings", {})
+            _heal_theme_urls(d)
             return d
         except FileNotFoundError:
             return _blank()

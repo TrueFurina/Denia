@@ -307,8 +307,8 @@
 <script src="/redesign/gsap.min.js"></script>
 <script type="module" src="/redesign/morph_icons.js"></script>
 <script src="/redesign/ui_confirm.js?v=1"></script>
-<script src="/redesign/app_backend.js?v=20261015f"></script>
-<script src="/redesign/voice_profile_picker.js?v=20261008a"></script>
+<script src="/redesign/app_backend.js?v=20261019d"></script>
+<script src="/redesign/voice_profile_picker.js?v=20261019d"></script>
 
 <script>
 /* 统一提示出口（P1-5：替代原生 alert —— 系统灰白框与暗色界面割裂，且阻塞交互）。
@@ -426,13 +426,35 @@ function pillsHtml(c){
   const label = voicePillText(c);
   ps.push(label ? '<span class="pill">音色 ' + esc(label) + '</span>'
                 : '<span class="pill off">未配音色</span>');
-  ps.push(c.cloud_voice_id ? '<span class="pill">双工已配</span>'
+  ps.push((c.cloud_voice_id || window.__duplexReady) ? '<span class="pill">双工已配</span>'
                            : '<span class="pill off">未配双工</span>');
   if (c.model_3d && c.model_3d.enabled) ps.push('<span class="pill">Live2D</span>');
   return ps.join('');
 }
 
+/* 【2026-10-17 修复·配了双工却显示"未配双工"】
+   旧判定只看 c.cloud_voice_id（角色级克隆音色 ID）。
+   但用户"配双工"通常是在「设置 → 模型与API」填云端双工的 Key+模型，
+   那是全局能力槽，与角色级 voice_id 是两件事 → 能打通却显示"未配双工"。 */
+window.__duplexReady = false;
+(function(){
+  try{
+    const B = (typeof bk === 'function') ? bk() : (window.pywebview && window.pywebview.api);
+    if(!B || !B.getCapabilitySlots) return;
+    Promise.resolve(B.getCapabilitySlots()).then(function(r){
+      try{
+        const slots = (r && r.success && r.slots) || {};
+        window.__duplexReady = ((slots.duplex && slots.duplex.state) === 'ok');
+        if (window.__duplexReady && window.__lastChars){
+          renderChars(window.__lastChars.list, window.__lastChars.activeId);
+        }
+      }catch(_e){}
+    });
+  }catch(_e){}
+})();
+
 function renderChars(list, activeId){
+  window.__lastChars = {list: list, activeId: activeId};
   grid.innerHTML='';
 
   /* 绑定关系：角色 → 其绑定主题的图位，统一经 themeArtOf() 取
@@ -755,26 +777,31 @@ function openEditor(c){
               '</div>'+
               '<div id="eVoiceTip" class="ch-hint"></div>'+
 
+              /* 【2026-10-17 重构·音色绑定不该让用户重填一遍 Key】
+                 用户原话："我不是选的阿里云百炼吗，为什么角色绑定里面是这么复杂的…
+                 又要搞一遍 key 和模型名字，按理来说一个 id 即可"。
+                 旧表单让用户手填 api_key + voice_id + model —— 但这些在
+                 「设置 → 模型与API」早就配好了，重复劳动且容易填错。
+                 现在改为两级联动：
+                   ① 服务：只列**用户已配置好的**（云端看 list_cloud_voices，
+                      本地看已下载的模型）
+                   ② 音色：选了服务后，从该服务的**真实可用列表**里选
+                   ③ Key / model 全部由后端从全局配置取，前端不碰
+              */
               '<div id="eVoiceNewBox" style="display:none;margin-top:10px;padding:12px;border:1px solid var(--line-2);border-radius:12px;background:var(--bg-2)">'+
                 '<div style="font-size:13px;font-weight:600;margin-bottom:8px">新建音色档</div>'+
-                '<div class="form-row2">'+
-                  '<div class="fg"><label>名称 <span class="req">*</span></label><input id="eVNName" placeholder="如 达妮娅·甜"></div>'+
-                  '<div class="fg"><label>引擎</label><select id="eVNEngine">'+
-                    '<option value="edge-tts">Edge 微软语音</option>'+
-                    '<option value="dashscope_cosy">百炼 CosyVoice</option>'+
-                    '<option value="minimax">MiniMax</option>'+
-                    '<option value="openai_tts">OpenAI TTS</option>'+
-                    '<option value="gpt-sovits">GPT-SoVITS</option>'+
-                    '<option value="voxcpm">VoxCPM</option>'+
-                    '<option value="mimo_tts">小米 MiMo</option>'+
-                    '<option value="pyttsx3">pyttsx3（离线）</option>'+
-                  '</select></div>'+
+                '<div class="fg" style="margin-bottom:8px"><label>名称 <span class="req">*</span></label>'+
+                  '<input id="eVNName" placeholder="如 达妮娅·甜"></div>'+
+                '<div class="fg" style="margin-bottom:8px"><label>声音服务 <span style="color:var(--ink-3);font-weight:400">（只列你已配置好的）</span></label>'+
+                  '<select id="eVNProvider"><option value="">正在读取你已配置的服务…</option></select>'+
+                  '<div id="eVNProviderTip" class="ch-hint" style="margin-top:4px"></div>'+
                 '</div>'+
-                '<div class="form-row2" style="margin-top:8px">'+
-                  '<div class="fg"><label>云端 Key / 本地音色名</label><input id="eVNApiKey" placeholder="云端引擎填 api_key；本地克隆填 voice"></div>'+
-                  '<div class="fg"><label>voice_id / 模型</label><input id="eVNVoiceId" placeholder="云端填 voice_id；可再填 model"></div>'+
+                '<div class="fg" id="eVNVoiceRow" style="margin-bottom:8px;display:none"><label>音色</label>'+
+                  '<select id="eVNVoices"><option value="">请先选服务</option></select>'+
+                  '<div id="eVNVoiceTip" class="ch-hint" style="margin-top:4px"></div>'+
                 '</div>'+
-                '<div id="eVoiceNewTip" class="ch-hint" style="margin-top:8px">详细字段（参考音、group_id 等）可在「设置 → 声音」页继续编辑。</div>'+
+                '<div id="eVoiceNewTip" class="ch-hint" style="margin-top:8px">'+
+                  'Key 与模型会复用你在「设置 → 模型与API」里配好的，这里不用再填。</div>'+
                 '<div style="display:flex;gap:8px;margin-top:8px">'+
                   '<button type="button" class="btn primary sm" id="eVoiceNewSave">保存音色档</button>'+
                   '<button type="button" class="btn ghost sm" id="eVoiceNewCancel">取消</button>'+
@@ -1121,6 +1148,228 @@ if (window.gsap && !reduce && !window.__SPA_NAV){
 }
 </script>
 
-<script src="/redesign/theme_manager.js?v=20261013d"></script>
+<script src="/redesign/theme_manager.js?v=20261013d">
+
+/* ============================================================================
+   【2026-10-17 新增·音色档两级联动】
+   背景：旧版「新建音色档」表单让用户手填 api_key + voice_id + model，
+   但这些在「设置 → 模型与API」早已配好 —— 重复劳动、容易填错，
+   而且旧代码**只有 HTML 没有事件绑定**（点"保存音色档"完全没反应）。
+
+   现在：
+     ① 打开面板 → 读 list_cloud_voices（云端已配服务 + 可用音色）
+                  读本地已下载模型
+     ② 选服务   → 联动刷新音色下拉
+     ③ 选音色   → 保存（Key/model 后端自己取，前端不碰）
+   ============================================================================ */
+(function initVoiceProfileForm(){
+  var box   = document.getElementById('eVoiceNewBox');
+  var btnNew= document.getElementById('eVoiceNew');
+  var btnSave = document.getElementById('eVoiceNewSave');
+  var btnCancel = document.getElementById('eVoiceNewCancel');
+  if(!box || !btnNew || !btnSave) return;
+
+  var selProvider = document.getElementById('eVNProvider');
+  var selVoices   = document.getElementById('eVNVoices');
+  var rowVoices   = document.getElementById('eNVoiceRow') || document.getElementById('eVNVoiceRow');
+  var tipProvider = document.getElementById('eVNProviderTip');
+  var tipVoice    = document.getElementById('eVNVoicesTip') || document.getElementById('eNVoiceTip');
+  var inpName     = document.getElementById('eVNName');
+
+  // 缓存：provider -> {label, voices:[{id,name,type,model}]}
+  var CACHE = {};
+
+  function setTip(el, msg, isErr){
+    if(!el) return;
+    el.textContent = msg || '';
+    el.style.color = isErr ? 'var(--danger, #e5484d)' : '';
+  }
+
+  // ---------- ① 读取用户已配置的服务 ----------
+  async function loadProviders(){
+    CACHE = {};
+    selProvider.innerHTML = '<option value="">正在读取你已配置的服务…</option>';
+    setTip(tipProvider, '');
+    var added = 0;
+
+    // 1) 云端（list_cloud_voices）
+    try{
+      var r = null;
+      if(window.Backend && Backend.listCloudVoices){
+        r = await Backend.listCloudVoices({context: 'tts'});
+      } else if(window.Backend && Backend.call){
+        r = await Backend.call('list_cloud_voices', {context: 'tts'});
+      }
+      if(r && r.success && r.providers && r.providers.length){
+        r.providers.forEach(function(pv){
+          if(!pv || !pv.provider) return;
+          if(pv.need_key) return;              // 没配 Key 的不列
+          if(!pv.voices || !pv.voices.length) return;
+          CACHE[pv.provider] = {
+            label: pv.label || pv.provider,
+            kind: 'cloud',
+            voices: pv.voices
+          };
+          added++;
+        });
+      }
+    }catch(e){ /* 云端读取失败不挡本地 */ }
+
+    // 2) 本地：已下载的 TTS 引擎（从本地模型扫描结果拿）
+    try{
+      var LOCAL_ENGINES = [
+        {id:'qwen3tts',  name:'千问3-TTS（本地）'},
+        {id:'cosyvoice', name:'CosyVoice（本地）'},
+        {id:'voxcpm',    name:'VoxCPM（本地）'}
+      ];
+      // 探测哪些已下载（借 checkCloneEngine）
+      var readyLocal = [];
+      for(var li=0; li<LOCAL_ENGINES.length; li++){
+        var le = LOCAL_ENGINES[li];
+        try{
+          var ck = null;
+          if(window.Backend && Backend.checkCloneEngine){
+            ck = await Backend.checkCloneEngine(le.id);
+          }
+          if(ck && ck.success && ck.ready){
+            readyLocal.push({id: le.id, name: le.name, type: 'local', model: ''});
+          }
+        }catch(e2){ /* 单个引擎探测失败不影响其它 */ }
+      }
+      if(readyLocal.length){
+        CACHE['__local__'] = {
+          label: '本地引擎（已下载 ' + readyLocal.length + ' 个）',
+          kind: 'local',
+          voices: readyLocal
+        };
+        added++;
+      }
+    }catch(e){ /* 本地读取失败不挡云端 */ }
+
+    // ---------- 渲染下拉 ----------
+    if(!added){
+      selProvider.innerHTML = '<option value="">未检测到可用服务</option>';
+      setTip(tipProvider,
+        '你还没有配置任何声音服务。请先到「设置 → 模型与API」填好 Key（云端）或下载本地模型。',
+        true);
+      if(rowVoices) rowVoices.style.display = 'none';
+      return;
+    }
+    var html = '<option value="">请选择服务…</option>';
+    Object.keys(CACHE).forEach(function(k){
+      html += '<option value="' + k + '">' + CACHE[k].label + '</option>';
+    });
+    selProvider.innerHTML = html;
+    setTip(tipProvider, '共 ' + added + ' 个可用服务（都来自你已配置的设置）');
+  }
+
+  // ---------- ② 选服务 → 加载音色 ----------
+  async function onProviderChange(){
+    var k = selProvider.value;
+    if(!k){
+      if(rowVoices) rowVoices.style.display = 'none';
+      return;
+    }
+    var ent = CACHE[k];
+    if(!ent) return;
+    if(rowVoices) rowVoices.style.display = '';
+    selVoices.innerHTML = '<option value="">正在读取音色…</option>';
+    setTip(tipVoice, '');
+
+    var vs = ent.voices || [];
+    if(!vs.length){
+      selVoices.innerHTML = '<option value="">该服务下没有可用音色</option>';
+      setTip(tipVoice, ent.kind === 'cloud'
+        ? '这个服务账号下还没有音色。请到对应控制台复刻一个，或用官方预设音色。'
+        : '本地还没有可用的音色/模型。', true);
+      return;
+    }
+    var html = '<option value="">请选择音色…</option>';
+    vs.forEach(function(v, idx){
+      var label = v.name || v.id || ('音色 ' + (idx+1));
+      if(v.type === 'preset') label += '（官方预设）';
+      else if(v.type === 'cloned') label += '（克隆）';
+      html += '<option value="' + esc(v.id || '') + '" data-idx="' + idx + '">'
+            + esc(label) + '</option>';
+    });
+    selVoices.innerHTML = html;
+    setTip(tipVoice, '共 ' + vs.length + ' 个音色');
+  }
+
+  // ---------- ③ 保存 ----------
+  async function onSave(){
+    var name = (inpName.value || '').trim();
+    var prov = selProvider.value;
+    var vidx = selVoices.selectedOptions && selVoices.selectedOptions[0]
+             ? selVoices.selectedOptions[0].getAttribute('data-idx') : null;
+    if(!name){ setTip(document.getElementById('eVoiceNewTip'), '请填写名称', true); return; }
+    if(!prov){ setTip(document.getElementById('eVoiceNewTip'), '请选择声音服务', true); return; }
+    var ent = CACHE[prov];
+    var v = (vidx !== null && ent && ent.voices[parseInt(vidx, 10)]) || null;
+    if(!v){ setTip(document.getElementById('eVoiceNewTip'), '请选择音色', true); return; }
+
+    btnSave.disabled = true;
+    btnSave.textContent = '保存中…';
+    try{
+      var r = null;
+      if(ent.kind === 'cloud'){
+        // 云端：只传 provider + voice_id + name，Key/model 后端自己取
+        if(window.Backend && Backend.ensureCloudVoiceProfile){
+          r = await Backend.ensureCloudVoiceProfile({
+            provider: prov,
+            voice_id: v.id || '',
+            name: name,
+            model: v.model || ''
+          });
+        } else if(window.Backend && Backend.call){
+          r = await Backend.call('ensure_cloud_voice_profile', {
+            provider: prov, voice_id: v.id || '', name: name, model: v.model || ''
+          });
+        }
+      } else {
+        // 本地：直接存一条 voice_profile
+        if(window.Backend && Backend.saveVoiceProfile){
+          r = await Backend.saveVoiceProfile({
+            name: name,
+            engine: v.id || '',
+            voice: v.id || ''
+          });
+        } else if(window.Backend && Backend.call){
+          r = await Backend.call('save_voice_profile', {
+            name: name, engine: v.id || '', voice: v.id || ''
+          });
+        }
+      }
+      if(r && r.success){
+        box.style.display = 'none';
+        if(window.Backend && Backend.toast) Backend.toast('音色档已保存：' + name);
+        // 刷新音色下拉
+        if(typeof loadProfiles === 'function') { try{ await loadProfiles(); }catch(e){} }
+        if(typeof refreshVoiceSelect === 'function') { try{ refreshVoiceSelect(); }catch(e){} }
+      } else {
+        setTip(document.getElementById('eVoiceNewTip'),
+               '保存失败：' + ((r && r.error) || '未知错误'), true);
+      }
+    }catch(e){
+      setTip(document.getElementById('eVoiceNewTip'), '保存失败：' + e, true);
+    }finally{
+      btnSave.disabled = false;
+      btnSave.textContent = '保存音色档';
+    }
+  }
+
+  // ---------- 绑定 ----------
+  btnNew.addEventListener('click', function(){
+    box.style.display = (box.style.display === 'none' || !box.style.display) ? '' : 'none';
+    if(box.style.display !== 'none') loadProviders();
+  });
+  selProvider.addEventListener('change', onProviderChange);
+  btnSave.addEventListener('click', onSave);
+  if(btnCancel){
+    btnCancel.addEventListener('click', function(){ box.style.display = 'none'; });
+  }
+})();
+
+</script>
 </body>
 </html>

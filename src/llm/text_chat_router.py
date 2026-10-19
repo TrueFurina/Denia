@@ -275,7 +275,30 @@ class TextChatRouter(LLMClient):
             return text
         except Exception as exc:  # noqa: BLE001
             self._mark_fail(e["id"], str(exc))
-            logger.warning("手动聊天端口 %s 失败: %s", e["id"], exc)
+            # 【2026-10-19 修复·额度耗尽被当成"普通失败"】
+            # 实测：主模型免费额度用尽时服务端返回 403
+            #   AllocationQuota.FreeTierOnly / "Free quota exhausted"
+            # 旧实现只打一条 "手动聊天端口 X 失败" 就 raise，用户在界面上只看到
+            # 一句 HTTP 403，根本不知道"是额度用完了、该换模型"——于是反复重试、
+            # 以为是软件坏了。这里复用 vision_router 已在用的共享分类器
+            # （error_classify），把 quota/auth 这类"确定性失败"明确区分出来。
+            try:
+                from .error_classify import classify_error, human_reason, KIND_QUOTA, KIND_AUTH
+                _kind = classify_error(str(exc))
+            except Exception:  # noqa: BLE001
+                _kind = ""
+            if _kind in ("quota", "auth"):
+                try:
+                    _why, _fix = human_reason(str(exc))
+                except Exception:  # noqa: BLE001
+                    _why, _fix = "模型不可用", "请更换模型或检查 Key"
+                logger.error(
+                    "聊天模型「%s」(%s) 不可用：%s。建议：%s。"
+                    "（可换用实测有额度的模型：qwen3.7-plus / qwen3.6-plus / "
+                    "qwen-flash / qwen-plus）原始错误: %s",
+                    e["name"], e["model"], _why, _fix, str(exc)[:200])
+            else:
+                logger.warning("手动聊天端口 %s 失败: %s", e["id"], exc)
             raise
 
     # ==================== 后台 / 批处理任务的容错调用 ====================

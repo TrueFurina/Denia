@@ -202,7 +202,35 @@ class TTS:
         voice_cfg = self._cfg.get_active_voice_config()
         if voice_cfg:
             self._attach_emotion_shell(voice_cfg)
-            self._backend = create_backend(voice_cfg.engine, voice_cfg)
+            # 【2026-10-17 根治·绑音色后聊天不理人】
+            # 旧实现 create_backend 无保护：角色绑了失效音色（如已下线的
+            # cosyvoice-v3.5-plus 系）或缺 Key 时，这里抛异常 → 事件订阅线程崩
+            # → 之后所有消息都没人处理 → 用户看到"聊天页面不理人"。
+            # 现在：创建失败 → 降级 edge-tts 兜底（文本照常回复，出声用默认音色），
+            # 并把原因记日志/埋点，用户至少能继续用。
+            try:
+                self._backend = create_backend(voice_cfg.engine, voice_cfg)
+            except Exception as e:  # noqa: BLE001
+                # 【2026-10-17 修正·降级目标】edge-tts 已按发布口径下架（不在引擎表里，
+                # create_backend 会给"静音后端"），降级必须用**离线 pyttsx3**：
+                # 不联网、不需要 Key、Windows 自带 SAPI —— 永不失败。
+                logger.error(
+                    "TTS 后端创建失败（engine=%s），降级 pyttsx3 离线兜底: %s",
+                    getattr(voice_cfg, "engine", "?"), e)
+                _ctrace("tts_fallback", engine=getattr(voice_cfg, "engine", "?"),
+                        error=str(e)[:120])
+                try:
+                    _fb_cfg = SimpleNamespace(
+                        engine="pyttsx3", voice="",
+                        rate="+0%", pitch="+0Hz", volume="+0%",
+                        api_key="", api_url="", voice_id="", group_id="",
+                        model="", reference_audio="", reference_text="",
+                        language="zh", fallback_pyttsx3=True, speed=1.0,
+                    )
+                    self._backend = create_backend("pyttsx3", _fb_cfg)
+                except Exception:  # noqa: BLE001
+                    logger.exception("pyttsx3 兜底也失败 → 用静音后端（文本照常回复）")
+                    self._backend = create_backend("__silent__", voice_cfg)
             self._sovits_down = self._probe_sovits()
             # 换后端（换角色/换引擎）= 新的音色/服务，解除「主后端失效」记忆
             self._primary_down = False

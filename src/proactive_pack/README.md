@@ -260,7 +260,7 @@ if _pk is not None and _pk.enabled:
 ## 自测
 
 ```
-cd G:\ai对话\11
+cd <项目根目录>
 python -m src.proactive_pack.selftest
 # → 104 PASS / 0 FAIL
 ```

@@ -9,7 +9,7 @@ import subprocess
 
 # WinGet 安装的完整版 ffmpeg（Trae 自带的精简版不支持 mp3 解码，不能用于 mp3→wav）
 _WINGET_FFMPEG = (
-    r"C:\Users\Administrator\AppData\Local\Microsoft\WinGet\Packages"
+    r"AppData\Local\Microsoft\WinGet\Packages"
     r"\Gyan.FFmpeg_Microsoft.Winget.Source_8wekyb3d8bbwe\ffmpeg-8.1.1-full_build\bin\ffmpeg.exe"
 )
 

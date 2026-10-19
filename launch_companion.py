@@ -1,6 +1,6 @@
 import glob, os, subprocess, sys
 
-# locate project dir: G:/ai对话/11
+# locate project dir: 11
 cands = glob.glob("G:/ai*")
 proj = None
 for c in cands:

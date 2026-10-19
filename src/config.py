@@ -6,6 +6,7 @@
 """
 from __future__ import annotations
 
+import time
 import logging
 import os
 import ssl
@@ -324,15 +325,60 @@ class Config:
         logger.warning("降级: %s", msg)
 
     def save(self) -> None:
-        """把当前 raw 写回配置文件（内存修改持久化）。无 path 时忽略。"""
+        """把当前 raw 写回配置文件（内存修改持久化）。无 path 时忽略。
+
+        【2026-10-19 修复·与 webapp._save_config 同一套原子写】
+        此前这里是无锁直写。切换角色会经 _sync_active_character_voice_to_duplex
+        → _cfg.save()，与 apply_onboarding_voice 等其它线程的保存**并发**——
+        审计实测：apply 刚写入的百炼 Key / voice_id 会被稍晚的旧快照全量覆盖回去
+        （表现为"引导页应用成功、盘上却没有"）。现在：
+          ① 同一把进程级锁（webapp._runtime_lock 是 RLock，跨模块取同一把）
+          ② 原子写（临时文件 + fsync + os.replace），杜绝半截文件
+        """
         if not self.path:
             return
+        _lock = None
         try:
-            with open(self.path, "w", encoding="utf-8") as f:
-                yaml.dump(self.raw, f, allow_unicode=True,
-                          default_flow_style=False, sort_keys=False)
+            import threading as _th
+            # 复用 webapp 的运行时锁（RLock 可重入；跨实例同进程内是同一把）
+            import src.ui.webapp as _w  # noqa: PLC0415
+            _api = getattr(_w, "_LAST_API_INSTANCE", None)
+            _lock = getattr(_api, "_runtime_lock", None) if _api else None
         except Exception:  # noqa: BLE001
-            logger.exception("保存配置失败: %s", self.path)
+            _lock = None
+        if _lock is None:
+            _lock = threading.RLock()
+        with _lock:
+            try:
+                import tempfile as _tf
+                import os as _os
+                _d = _os.path.dirname(_os.path.abspath(self.path)) or "."
+                _fd, _tmp = _tf.mkstemp(prefix=".config_", suffix=".tmp", dir=_d)
+                try:
+                    with _os.fdopen(_fd, "w", encoding="utf-8") as f:
+                        yaml.dump(self.raw, f, allow_unicode=True,
+                                  default_flow_style=False, sort_keys=False)
+                        f.flush()
+                        _os.fsync(f.fileno())
+                    _last = None
+                    for _i in range(5):
+                        try:
+                            _os.replace(_tmp, self.path)
+                            _last = None
+                            break
+                        except PermissionError as pe:
+                            _last = pe
+                            time.sleep(0.05 * (2 ** _i))
+                    if _last is not None:
+                        raise _last
+                except Exception:
+                    try:
+                        _os.unlink(_tmp)
+                    except OSError:
+                        pass
+                    raise
+            except Exception:  # noqa: BLE001
+                logger.exception("保存配置失败: %s", self.path)
 
 
 def load_config(path: str) -> Config:
@@ -393,9 +439,19 @@ def check_openai_compatible(cfg: Config) -> None:
             "OpenAI 兼容服务未配置（base_url/model 为空），请到 config.yaml 的 llm.openai 填写"
         )
         return
+    # 【2026-10-17 修复·空 Key 发请求导致 401 刷日志】
+    # 旧实现：api_key 为空时 headers 里不带 Authorization，但仍发 GET /models。
+    # 阿里云 compatible-mode 对无鉴权请求返回 **401**，于是启动日志出现
+    #   "HTTP Request: GET .../models 401 Unauthorized"
+    #   "降级: OpenAI 兼容服务不可用"
+    # 用户看到一堆红字以为软件坏了，实际只是"这段还没配"。
+    # 现在：**没有 Key 就不探测**（未配置 ≠ 不可用），直接静默跳过。
+    if not str(api_key or "").strip():
+        logger.debug("llm.openai 未填 api_key，跳过云端探测（不算降级）")
+        return
     try:
         import httpx
-        headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
+        headers = {"Authorization": f"Bearer {api_key}"}
         r = httpx.get(f"{base_url}/models", headers=headers, timeout=10)
         r.raise_for_status()
     except Exception as e:  # noqa: BLE001

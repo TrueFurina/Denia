@@ -437,6 +437,28 @@
       <div><div class="sub" id="setCrumb">总览</div></div>
       <div class="right"><div class="set-search" id="setSearchWrap"><input class="set-search-input" id="setSearch" type="search" autocomplete="off" placeholder="搜索设置项… 按 / 聚焦" aria-label="搜索设置项" /><button class="set-search-clear" id="setSearchClear" type="button" title="清空搜索" hidden>&times;</button></div></div>
     </header>
+    <!-- 【2026-10-19 新增·额度/Key 状态提示条】
+         设计约束（沿用 2026-10-02 用户决策：额度耗尽是持续状态，不能反复弹窗）：
+           · 不弹模态框、不遮挡内容，只占一条细条，可一键收起
+           · 只在"确实有问题"时出现；一切正常时整条隐藏（不占视觉噪音）
+           · 说清楚三件事：哪个模型出问题 / 影响什么 / 怎么修 -->
+    <div id="quotaBar" style="display:none;margin:0 0 2px;padding:9px 14px;border-radius:10px;
+         background:rgba(255,176,32,.12);border:1px solid rgba(255,176,32,.38);
+         font-size:12.5px;line-height:1.5">
+      <div style="display:flex;align-items:flex-start;gap:10px">
+        <span style="flex:none;font-size:15px;line-height:1.2">⚠️</span>
+        <div style="flex:1;min-width:0">
+          <div id="quotaBarTitle" style="font-weight:600;margin-bottom:2px"></div>
+          <div id="quotaBarBody" style="color:var(--ink-2,#8b93a3)"></div>
+          <div id="quotaBarDetail" style="display:none;margin-top:6px;padding-top:6px;border-top:1px dashed rgba(255,176,32,.35)"></div>
+        </div>
+        <div style="flex:none;display:flex;gap:6px;align-items:center">
+          <button type="button" id="quotaBarMore" class="btn ghost sm" style="white-space:nowrap">详情</button>
+          <button type="button" id="quotaBarRecheck" class="btn ghost sm" style="white-space:nowrap">重新检测</button>
+          <button type="button" id="quotaBarClose" class="btn ghost sm" style="white-space:nowrap" title="本次不再提示">收起</button>
+        </div>
+      </div>
+    </div>
     <section class="content settings-content">
       <div class="ov-screen" id="overview"></div>
       <div class="scopebar" id="scopebar">
@@ -1262,10 +1284,13 @@
           <div id="vcloudPickCloneBox" style="display:none">
             <div class="field"><label>③ voice_id（云端已克隆的音色 id）</label>
               <div style="display:flex;gap:8px;align-items:center">
+                <!-- 【2026-10-18 改版·自动拉取】填好 Key 后自动读取账号下克隆音色变成下拉，
+                     免手输；手动输入框保留兜底。 -->
+                <select id="vcloudPickVoiceSelect" style="flex:1;display:none"></select>
                 <input id="vcloudPickVoiceId" placeholder="如 cosyvoice-v3-xxxxx / qwen-audio-3.0-tts-plus-xxxxx" style="flex:1">
-                <button type="button" class="btn ghost sm" id="vcloudPickQueryBtn" style="white-space:nowrap;flex:none">查询我的克隆音色</button>
+                <button type="button" class="btn ghost sm" id="vcloudPickQueryBtn" style="white-space:nowrap;flex:none">重新读取</button>
               </div>
-              <div class="field-hint" id="vcloudPickQueryStatus">先去厂商控制台用 10~30 秒录音复刻一次，把拿到的 id 粘到这里 —— 一次克隆、长期复用。</div>
+              <div class="field-hint" id="vcloudPickQueryStatus">填好上方 Key 后自动读取你账号下的克隆音色，选一个即可；也可以手动粘贴 voice_id。</div>
               <div id="vcloudPickVoiceList" style="display:none;max-height:190px;overflow:auto;border:1px solid var(--line-2);border-radius:10px;margin-top:8px;background:var(--bg-2)"></div>
             </div>
           </div>
@@ -1306,7 +1331,7 @@
 <script src="/redesign/gsap.min.js"></script>
 <script type="module" src="/redesign/morph_icons.js"></script>
   <script src="/redesign/ui_confirm.js?v=1"></script>
-<script src="/redesign/app_backend.js?v=20261015f"></script>
+<script src="/redesign/app_backend.js?v=20261019d"></script>
 <script src="/redesign/llm_write.js?v=20261008a"></script>
 <script src="/redesign/voice_tier.js"></script>
 <script>
@@ -1343,6 +1368,95 @@
   }
   //  SPA 铁律：子页脚本经 new Function 执行，顶层函数不在 window 上，必须显式挂载
   window.setSwitchState = setSwitchState;
+
+  /* ============ 【2026-10-19 新增】额度 / Key 状态提示条 ============
+     非打扰设计：只在真有问题时显示一条细提示，可收起、可展开详情。
+     不做轮询、不弹模态框 —— 进设置页时查一次（后端缓存 30 分钟）。 */
+  const QUOTA_LABEL = {
+    quota: '免费额度已用尽', auth: 'Key 无效或无权限',
+    rate: '被限流', error: '调用失败', unconfigured: '未配置',
+    ok: '正常'
+  };
+  const QUOTA_KIND_LABEL = {
+    chat: '打字聊天', vision: '看屏 / 看图', tts: '语音合成'
+  };
+  let _quotaClosed = false;   // 本次进入页面后用户点了"收起" → 不再自动弹
+
+  function renderQuotaBar(r){
+    const bar = document.getElementById('quotaBar');
+    if (!bar) return;
+    if (!r || !r.success || !r.has_problem || _quotaClosed){
+      bar.style.display = 'none';
+      return;
+    }
+    const bad = (r.items || []).filter(x => x.status && x.status !== 'ok');
+    if (!bad.length){ bar.style.display = 'none'; return; }
+
+    const title = document.getElementById('quotaBarTitle');
+    const body = document.getElementById('quotaBarBody');
+    const detail = document.getElementById('quotaBarDetail');
+
+    // 标题：一句话说清"哪几项受影响"
+    const kinds = Array.from(new Set(bad.map(x => QUOTA_KIND_LABEL[x.kind] || x.kind)));
+    if (title) title.textContent = '以下功能受影响：' + kinds.join('、');
+
+    // 正文：只列第一条最关键的影响（避免长文吓人）
+    if (body){
+      const first = bad[0];
+      body.textContent = (first.impact || '') + '。点「详情」看原因与解决办法。';
+    }
+
+    // 详情：逐条列 模型 / 状态 / 影响 / 修复
+    if (detail){
+      detail.innerHTML = bad.map(x => {
+        const st = QUOTA_LABEL[x.status] || x.status;
+        const nm = x.model || x.name || '';
+        return '<div style="margin-bottom:7px">'
+          + '<div style="font-weight:600">' + (QUOTA_KIND_LABEL[x.kind] || x.kind)
+          + ' · ' + escapeHtml(nm) + ' <span style="color:#d9534f">（' + st + '）</span></div>'
+          + '<div style="color:var(--ink-3,#9aa3b2);font-size:12px;margin-top:1px">'
+          + escapeHtml(x.impact || '') + '</div>'
+          + '<div style="color:var(--ink-2,#8b93a3);font-size:12px;margin-top:1px">'
+          + '解决：' + escapeHtml(x.fix || '') + '</div>'
+          + '</div>';
+      }).join('');
+    }
+    bar.style.display = '';
+  }
+
+  function escapeHtml(s){
+    return String(s == null ? '' : s).replace(/[&<>"']/g, c => (
+      { '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c]));
+  }
+
+  function refreshQuota(force){
+    if (!window.Backend || typeof Backend.getQuotaStatus !== 'function') return;
+    Promise.resolve(Backend.getQuotaStatus(!!force)).then(r => {
+      renderQuotaBar(r);
+    }).catch(() => { /* 静默：额度检测失败不打扰用户 */ });
+  }
+  window.__refreshQuota = refreshQuota;
+
+  (function bindQuotaBar(){
+    const bar = document.getElementById('quotaBar');
+    if (!bar) return;
+    const more = document.getElementById('quotaBarMore');
+    const recheck = document.getElementById('quotaBarRecheck');
+    const close = document.getElementById('quotaBarClose');
+    const detail = document.getElementById('quotaBarDetail');
+    if (more && detail) more.addEventListener('click', () => {
+      const open = detail.style.display !== 'none';
+      detail.style.display = open ? 'none' : '';
+      more.textContent = open ? '详情' : '收起详情';
+    });
+    if (recheck) recheck.addEventListener('click', () => refreshQuota(true));
+    if (close) close.addEventListener('click', () => {
+      _quotaClosed = true;
+      bar.style.display = 'none';
+    });
+    // 进设置页查一次（后端 30 分钟缓存，不会频繁打网络）
+    setTimeout(() => refreshQuota(false), 800);
+  })();
 
   /* 拉一次健康状态并套用到所有已登记开关（幂等；on/off 由各自 IIFE 负责，这里只叠“是否生效”） */
   function applySwitchHealth(){
@@ -5113,7 +5227,16 @@
     function closeVcloudPicker(){ if (pickModal) pickModal.classList.remove('open'); }
     /* voice_id 前缀编码了「克隆时用的模型」（如 qwen-audio-3.0-tts-plus-bailian-xxxx），
        合成必须用同一个 model，否则百炼直接 400。这里按前缀自动对齐模型选择，防用户选错。 */
-    const VP_MODELS = ['qwen-audio-3.0-tts-plus','qwen-audio-3.0-tts-flash','cosyvoice-v3.5-plus','cosyvoice-v3-flash','cosyvoice-v2','cosyvoice-v1'];
+    /* 【2026-10-18 修复·音色档 model 与 voice_id 不一致 → 百炼 400】
+       旧列表漏了 cosyvoice-v3.5-flash / cosyvoice-v3-plus，
+       于是 `cosyvoice-v3.5-flash-bailian-xxxx` 这种 voice_id 识别不出模型，
+       自动对齐失效 → 保留旧 model（如 qwen-audio-3.0-tts-plus）→ 合成 400。
+       现补全在售模型；匹配时按长度倒序（长前缀优先，避免 v3 抢先匹配 v3.5）。 */
+    const VP_MODELS = ['qwen-audio-3.0-tts-plus','qwen-audio-3.0-tts-flash',
+                       'cosyvoice-v3.5-plus','cosyvoice-v3.5-flash',
+                       'cosyvoice-v3-plus','cosyvoice-v3-flash',
+                       'cosyvoice-v2','cosyvoice-v1',
+                       'qwen3-tts-flash','qwen3-tts-plus'];
     function modelFromVoiceId(vid){
       const s = String(vid || '').trim(); if (!s) return '';
       const hit = VP_MODELS.filter(m => s === m || s.indexOf(m + '-') === 0).sort((a,b)=>b.length-a.length)[0];
@@ -5132,16 +5255,56 @@
       } catch(err){ console.error('[v6] alignModelToVoiceId 异常:', err); return ''; }
     }
 
-    /* ---- ③ 查询账号下已克隆的音色（百炼），点一下回填 voice_id ---- */
-    function queryTtsClones(){
+    /* ---- ③ 查询账号下已克隆的音色（百炼）→ 自动渲染成下拉（免手输） ---- */
+    /* 【2026-10-18 改版】拉到音色后优先显示为下拉选择；下拉含"手动输入"逃生口。
+       pVoiceId 输入框保留（下拉选中/手动粘贴都写它），提交逻辑不用改。 */
+    const pVoiceSelect = document.getElementById('vcloudPickVoiceSelect');
+    function renderVoiceSelect(vs){
+      if (!pVoiceSelect) return false;
+      if (!vs || !vs.length) return false;
+      pVoiceSelect.innerHTML = vs.map(x => {
+        const label = (x.target_model || '模型未知') + (x.gmt_create ? (' · ' + x.gmt_create) : '') + ' · ' + x.voice_id.slice(-8);
+        return '<option value="' + esc(x.voice_id) + '" data-m="' + esc(x.target_model || '') + '">' + esc(label) + '</option>';
+      }).join('') + '<option value="__manual__">手动输入其它 voice_id…</option>';
+      const cur = ((pVoiceId && pVoiceId.value) || '').trim();
+      if (cur) { try { pVoiceSelect.value = cur; } catch(e){} }
+      pVoiceSelect.style.display = '';
+      if (pVoiceId) pVoiceId.style.display = 'none';
+      pVoiceSelect.onchange = () => {
+        if (pVoiceSelect.value === '__manual__'){
+          /* 【2026-10-19 修复·"选了手动输入就回不去"】两控件并存，下拉不再隐藏 */
+          if (pVoiceId){ pVoiceId.style.display = ''; pVoiceId.focus(); }
+          if (pQueryStatus) pQueryStatus.textContent = '手动输入模式：粘贴 voice_id 即可；改选上面的下拉可随时切回';
+        } else {
+          if (pVoiceId){ pVoiceId.value = pVoiceSelect.value; pVoiceId.style.display = 'none'; }
+          const m = pVoiceSelect.options[pVoiceSelect.selectedIndex] &&
+                    pVoiceSelect.options[pVoiceSelect.selectedIndex].getAttribute('data-m') || '';
+          if (m && pModelT){ pModelT.value = m; pickTTSModel = m; pickForceFirst = true; renderVcloudModels(); }
+          if (pQueryStatus) pQueryStatus.textContent = '已选择音色：' + pVoiceSelect.value + (m ? ('（模型 ' + m + '）') : '');
+        }
+      };
+      /* 手动输入 → 下拉同步（保证随时可切回选择器） */
+      if (pVoiceId) pVoiceId.addEventListener('input', () => {
+        let has = false;
+        [...(pVoiceSelect.options || [])].forEach(o => { if (o.value === '__manual__') has = true; });
+        if (has) pVoiceSelect.value = '__manual__';
+      });
+      return true;
+    }
+    function queryTtsClones(silent){
       const key = ((pKey && pKey.value) || '').trim() || ((pickEditingProfile && pickEditingProfile.api_key) || '');
-      if (!key){ if (pQueryStatus) pQueryStatus.textContent = '请先在上面的「API Key」里填好 Key 再查询'; return; }
-      if (pQueryStatus) pQueryStatus.textContent = '查询中…';
+      if (!key){ if (!silent && pQueryStatus) pQueryStatus.textContent = '请先在上面的「API Key」里填好 Key 再查询'; return; }
+      if (!silent && pQueryStatus) pQueryStatus.textContent = '正在自动读取你账号下的克隆音色…';
       if (pVoiceList) pVoiceList.style.display = 'none';
       Backend.listBailianVoices(key).then(r => {
         if (r && r.success){
           const vs = r.voices || [];
-          if (!vs.length){ if (pQueryStatus) pQueryStatus.textContent = (r.message || '该账号下还没有已克隆的音色'); return; }
+          if (!vs.length){ if (pQueryStatus) pQueryStatus.textContent = (r.message || '该账号下还没有已克隆的音色') + ' · 可手动粘贴 voice_id'; return; }
+          if (renderVoiceSelect(vs)){
+            if (pQueryStatus) pQueryStatus.textContent = '已读取到 ' + vs.length + ' 个克隆音色，选一个即可（也可切回手动输入）';
+            return;
+          }
+          /* 下拉渲染失败（旧 DOM）→ 回退可点击列表 */
           if (pQueryStatus) pQueryStatus.textContent = '点下面的音色即可填入 voice_id：';
           if (pVoiceList){
             pVoiceList.innerHTML = vs.map(x => '<div class="tts-clone-item" data-v="' + esc(x.voice_id) + '" data-m="' + esc(x.target_model || '') + '">'
@@ -5151,11 +5314,13 @@
             pVoiceList.style.display = 'block';
           }
         } else {
-          if (pQueryStatus) pQueryStatus.textContent = ' ' + ((r && r.error) || '查询失败');
+          if (pQueryStatus) pQueryStatus.textContent = ' ' + ((r && r.error) || '查询失败') + ' · 可手动粘贴 voice_id';
         }
       }).catch(() => { if (pQueryStatus) pQueryStatus.textContent = ' 查询失败（后端未连接）'; });
     }
-    if (pQueryBtn) pQueryBtn.addEventListener('click', queryTtsClones);
+    if (pQueryBtn) pQueryBtn.addEventListener('click', () => queryTtsClones(false));
+    /* 【自动拉取】Key 输入框失焦时静默拉一次（失败不打扰，仍可点按钮重试） */
+    if (pKey) pKey.addEventListener('blur', () => { setTimeout(() => queryTtsClones(true), 150); });
     if (pVoiceList) pVoiceList.addEventListener('click', e => {
       const it = e.target.closest('.tts-clone-item'); if (!it) return;
       const vid = it.getAttribute('data-v');

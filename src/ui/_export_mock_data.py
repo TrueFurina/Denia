@@ -15,7 +15,7 @@ import json
 import sys
 from pathlib import Path
 
-sys.path.insert(0, r"G:\ai对话\11")
+sys.path.insert(0, r"11")
 from src.ui.sticker_bridge import get_sticker_bridge  # noqa: E402
 
 try:
@@ -23,7 +23,7 @@ try:
 except Exception:  # noqa: BLE001
     Image = None
 
-OUT = Path(r"G:\ai对话\11\src\ui\_mock")
+OUT = Path(r"src\ui\_mock")
 OUT.mkdir(parents=True, exist_ok=True)
 
 MAX_SIDE = 200          # 缩略图最长边。240 配 96 色要 4.4MB；200 视觉几乎无差、体积更省。

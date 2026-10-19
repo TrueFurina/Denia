@@ -438,8 +438,11 @@ html[data-theme="dark"] #onbRoleRoot, #onbRoleRoot[data-theme="dark"]{
       <div class="cd-steps" id="cdSteps"></div>
       <div class="vm-field">
         <label for="cdVid">音色编号 voice_id（克隆完成后在服务商后台复制）</label>
+        <!-- 【2026-10-18 改版·自动拉取】选阿里云时自动读取账号下已克隆音色，
+             渲染成下拉选择，免手输；手动输入框保留兜底。 -->
+        <select id="cdVidSelect" style="display:none;width:100%"></select>
         <input id="cdVid" type="text" placeholder="qwen-audio-3.0-tts-plus-bailian-..." spellcheck="false">
-        <div class="aihint">形如 <code>qwen-audio-3.0-tts-plus-bailian-c64fdf07</code>；Fish Audio 填克隆模型的 <code>_id</code>（上方「模型」一起改）</div>
+        <div class="aihint" id="cdVidHint">形如 <code>qwen-audio-3.0-tts-plus-bailian-c64fdf07</code>；Fish Audio 填克隆模型的 <code>_id</code>（上方「模型」一起改）</div>
       </div>
     </div>
 
@@ -1428,6 +1431,8 @@ function selectCdVendor(id){
       return '<div class="cd-step" style="animation-delay:'+(i*0.075)+'s"><span class="cs-n">'+(i+1)+'</span><div>'+t+'</div></div>';
     }).join("");
     $("cdVid").value = (_cdChar && _cdChar.demo && _cdChar.demo.vid) || "";
+    /* 【2026-10-18】选中百炼后自动读取账号下克隆音色（下拉），免手输 */
+    setTimeout(function(){ try{ fetchCdVoices(true); }catch(e){} }, 120);
   } else {
     $("cdClone").style.display = "none";
     $("cdNoClone").style.display = "";
@@ -1454,9 +1459,167 @@ function openCloudDetail(c){
   $("cdNoClone").style.display = "none";
   $("cdMask").classList.add("on");
   var _vm = document.querySelector("#cdMask .vmodal"); if (_vm) _vm.scrollTop = 0;
+  /* 【2026-10-19 修复·"打开看不到音色选择"】
+     旧实现打开弹窗后**不选中任何商家**，cdClone 区（含 voice_id 输入框）一直
+     隐藏 —— 用户必须先手动点一下卡片才展开，很容易以为"这里没有音色可选"。
+     现在自动选中一家：优先"已配置 + 可克隆"（通常就是已绑好的阿里云），
+     其次任意可克隆的。选中后立刻触发克隆区展示 + 自动拉取音色下拉。 */
+  setTimeout(function(){
+    try{
+      var list = TTS_PROVIDERS || [];
+      var pick = null;
+      for (var i=0;i<list.length;i++){
+        if (list[i].clone === "y" && list[i].configured){ pick = list[i]; break; }
+      }
+      if (!pick){
+        for (var j=0;j<list.length;j++){
+          if (list[j].clone === "y"){ pick = list[j]; break; }
+        }
+      }
+      if (pick) selectCdVendor(pick.id);
+    }catch(e){}
+  }, 60);
 }
 $("cdClose").addEventListener("click", function(){ $("cdMask").classList.remove("on"); });
 $("cdLater").addEventListener("click", function(){ $("cdMask").classList.remove("on"); });
+
+/* ---------- 【2026-10-18 新增】自动拉取百炼克隆音色 → 下拉选择 ----------
+   原先 voice_id 只能手动粘贴，用户要去控制台复制一长串 id，容易贴错。
+   现在：选中阿里云 + 有 Key → 自动调 listBailianVoices，拉到就渲染下拉。
+   下拉含「手动输入其它 voice_id…」逃生口；拉不到自动退回输入框。 */
+function cdVendorKey(p){
+  var card = p ? document.querySelector('.cdv[data-vid="'+p.id+'"]') : null;
+  var k = card && card.querySelector(".cdv-key") ? card.querySelector(".cdv-key").value.trim() : "";
+  if (k) return k;
+  /* 已绑定 TTS（表单隐藏）时没有 Key 输入框：
+     路径① S.slots（getCapabilitySlots 映射缓存，api_key 已随映射保留）
+     路径② TTS_PROVIDERS（同一数据源）
+     路径③ 后端 get_tts_provider_key（voice.clone.cloud 配置同源——最可靠，
+            因为能力槽接口**故意**不回传 Key，只有这里能拿到真值） */
+  try{
+    var slots = S.slots || {};
+    var tts = slots.tts || {};
+    var provs = tts.providers || [];
+    for (var i=0;i<provs.length;i++){
+      if (provs[i] && provs[i].id === (p && p.id) && provs[i].api_key) return String(provs[i].api_key).trim();
+    }
+    if (tts.api_key) return String(tts.api_key).trim();
+  }catch(e){}
+  try{
+    for (var j=0;j<(TTS_PROVIDERS||[]).length;j++){
+      if (TTS_PROVIDERS[j] && TTS_PROVIDERS[j].id === (p && p.id) && TTS_PROVIDERS[j].api_key)
+        return String(TTS_PROVIDERS[j].api_key).trim();
+    }
+  }catch(e){}
+  return "";   /* ③ 是异步的，由 fetchCdVoices 直接调后端，不在这里走 */
+}
+var _cdVidFetching = false;
+function fetchCdVoices(silent){
+  var p = _cdVendor ? findProv(_cdVendor) : null;
+  if (!p || p.id !== "dashscope_cosy") return;      /* 只有百炼有"列举已克隆音色"接口 */
+  var B = _b();
+  var sel = $("cdVidSelect"), inp = $("cdVid"), hint = $("cdVidHint");
+  if (!B || !B.listBailianVoices){ return; }
+  var key = cdVendorKey(p);
+  /* 【2026-10-19 关键修复】本地路径拿不到 Key 时，直接问后端要
+     （voice.clone.cloud 同源，与"测试语音"用的同一个 Key）。
+     此前这里直接 return → 已绑定 TTS 的用户（绝大多数）下拉永远不出现。 */
+  if (!key){
+    if (B.getTtsProviderKey){
+      if (!silent && hint) hint.textContent = "正在读取已绑定的百炼 Key…";
+      Promise.resolve(B.getTtsProviderKey(p.id)).then(function(kr){
+        var kk = kr && kr.success ? String(kr.api_key || "").trim() : "";
+        if (kk){ fetchCdVoicesWithKey(p, kk, silent); }
+        else if (hint) hint.textContent = (kr && kr.error || "尚未绑定百炼 Key")
+          + "——请先在第 1 步「连引擎」绑定，或在上方填 Key。也可直接粘贴 voice_id。";
+      }).catch(function(){
+        if (hint) hint.textContent = "读取 Key 失败 · 可直接粘贴 voice_id";
+      });
+    } else if (hint){
+      hint.textContent = "还没读到百炼 Key——请先在第 1 步「连引擎」绑定阿里云，或在上方填 Key。也可以直接粘贴 voice_id。";
+    }
+    return;
+  }
+  fetchCdVoicesWithKey(p, key, silent);
+}
+
+function fetchCdVoicesWithKey(p, key, silent){
+  var B = _b();
+  var sel = $("cdVidSelect"), inp = $("cdVid"), hint = $("cdVidHint");
+  if (!B || !B.listBailianVoices || !key) return;
+  if (_cdVidFetching) return;
+  _cdVidFetching = true;
+  if (!silent && hint) hint.textContent = "正在自动读取你账号下的克隆音色…";
+  Promise.resolve(B.listBailianVoices(key)).then(function(r){
+    _cdVidFetching = false;
+    if (r && r.success){
+      var vs = r.voices || [];
+      if (!vs.length){
+        if (hint) hint.textContent = (r.message || "该账号下没有克隆音色") + " · 可手动粘贴 voice_id";
+        if (sel) sel.style.display = "none";
+        if (inp) inp.style.display = "";
+        return;
+      }
+      if (!sel) return;
+      sel.innerHTML = vs.map(function(x){
+        var label = (x.target_model || "模型未知") + (x.gmt_create ? (" · " + x.gmt_create) : "") + " · " + String(x.voice_id).slice(-8);
+        return '<option value="' + String(x.voice_id).replace(/"/g,"&quot;") + '" data-m="' +
+               String(x.target_model || "").replace(/"/g,"&quot;") + '">' + label + '</option>';
+      }).join("") + '<option value="__manual__">手动输入其它 voice_id…</option>';
+      sel.style.display = "";
+      /* 初始只有下拉可见；若输入框已有值（编辑旧角色）则匹配下拉，
+         匹配不上时两个都显示（下拉作导航、输入框保留原值可编辑） */
+      var cur = inp && inp.value.trim();
+      if (cur){
+        var matched = false;
+        [].forEach.call(sel.options, function(o){ if (o.value === cur) matched = true; });
+        if (matched){ sel.value = cur; if (inp) inp.style.display = "none"; }
+        else { sel.value = "__manual__"; if (inp) inp.style.display = ""; }
+      } else {
+        if (inp) inp.style.display = "none";
+      }
+      if (hint) hint.textContent = "已读取到 " + vs.length + " 个克隆音色，选一个即可（也可切回手动输入）";
+      sel.onchange = function(){
+        if (sel.value === "__manual__"){
+          /* 【2026-10-19 修复·"选了手动输入就回不去"】
+             旧实现把下拉隐藏掉 → 没有任何路回到选择器。
+             现在两个控件**并存**：下拉留在原处（选中项停在"手动输入"上，
+             随时可以改选其它音色），只把输入框显示出来聚焦。 */
+          if (inp){ inp.style.display = ""; inp.focus(); }
+          if (hint) hint.textContent = "手动输入模式：粘贴 voice_id 即可；改选上面的下拉可随时切回已克隆音色";
+        } else {
+          if (inp){ inp.value = sel.value; inp.style.display = "none"; }
+          var op = sel.options[sel.selectedIndex];
+          var m = op ? op.getAttribute("data-m") : "";
+          /* 同步上方「模型」下拉：百炼要求合成模型与克隆模型一致，否则 400 */
+          if (m){
+            var card = document.querySelector('.cdv[data-vid="'+p.id+'"]');
+            var msel = card && card.querySelector(".cdv-model");
+            if (msel){
+              var hit = false;
+              [].forEach.call(msel.options, function(o){ if (o.value === m){ msel.value = m; hit = true; } });
+              if (!hit){ try{ msel.value = m; }catch(e){} }
+            }
+          }
+          if (hint) hint.textContent = "已选择：" + sel.value + (m ? ("（模型 " + m + "）") : "");
+        }
+      };
+      /* 手动输入与下拉双向同步：输入框打字时，下拉切到"手动输入"项，
+         保证保存逻辑（读 inp）与显示状态一致，也方便随时改选回下拉。 */
+      if (inp) inp.addEventListener('input', function(){
+        var hasManualOpt = false;
+        [].forEach.call(sel.options, function(o){ if (o.value === '__manual__') hasManualOpt = true; });
+        if (!hasManualOpt) return;
+        sel.value = '__manual__';
+      });
+    } else {
+      if (hint) hint.textContent = " " + ((r && r.error) || "读取失败") + " · 可手动粘贴 voice_id";
+    }
+  }).catch(function(){
+    _cdVidFetching = false;
+    if (hint) hint.textContent = " 读取失败（后端未连接）· 可手动粘贴 voice_id";
+  });
+}
 
 /* 保存：先写能力槽（setCapabilitySlot），可克隆的再把 voice_id 落角色（saveCharacter） */
 $("cdSave").addEventListener("click", function(){
@@ -1866,9 +2029,20 @@ function loadFromBackend(){
             base_url: p.base_url || '',
             models: (p.models || []).map(function(m){ return (typeof m === 'string') ? {id:m} : m; }),
             needs_group: !!p.needs_group, hint: p.hint || '',
-            configured: !!p.configured, active: !!p.active
+            configured: !!p.configured, active: !!p.active,
+            /* 【2026-10-19 关键修复·"已绑定时自动拉取音色失效"的根因】
+               cdVendorKey() 从 S.slots.tts.providers 读 Key，但此前映射时
+               **丢掉了 api_key 字段** → S.slots 又从未赋值 → 已绑定 TTS 的
+               用户（引导页第 1 步绑过百炼的，正是绝大多数人）走到克隆弹窗时
+               拿不到 Key → fetchCdVoices 静默返回 → 下拉永远不出现，
+               用户只能手填 voice_id。
+               现在把 Key 一并映射进 TTS_PROVIDERS，并同步存到 S.slots，
+               cdVendorKey 两条读取路径都通了。 */
+            api_key: p.api_key || ''
           };
         });
+        /* 同步缓存到 S.slots，供 cdVendorKey 在"已绑定、无 Key 输入框"时读取 */
+        S.slots = { tts: { providers: TTS_PROVIDERS, api_key: (tts.api_key || '') } };
       }
       var st = String(tts.state || 'none');
       S.engine = (st === 'ok') ? 'cloud' : (st === 'warn' ? 'local' : 'none');
