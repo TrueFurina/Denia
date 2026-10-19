@@ -17,6 +17,10 @@ import types
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 
+# 判定链断点记录在 _probe 上：main() 里用 global 覆盖它，FakeLLM.chat 读它。
+# 模块级先定义，全局引用才显式（静态名完整性检查也认这条链）。
+_probe = None
+
 PASS = 0
 FAIL = 0
 SKIP = 0

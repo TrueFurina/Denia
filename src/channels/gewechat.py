@@ -11,9 +11,11 @@ Gewechat 是一个 Docker 服务，对外暴露 REST API（默认 http://<host>:
 from __future__ import annotations
 
 import asyncio
+import hmac
 import json
 import logging
 import threading
+import urllib.parse
 import urllib.request
 from typing import Any, Optional
 
@@ -23,10 +25,20 @@ except Exception:  # noqa: BLE001
     ThreadingHTTPServer = None  # type: ignore[assignment]
 
 from ..event_bus import Event, EventType
+from ..queue_util import put_drop_oldest_async
 from .base import Channel
 from . import media_ingest as media
 
 logger = logging.getLogger("channels.gewechat")
+
+# 入站消息队列上限（条）。群聊刷屏时先丢最旧，保证最新消息仍会被处理。
+_INBOX_MAX = 200
+
+# 回环主机名白名单：只有这些值才算"不对外暴露"。
+# Gewechat 回调是**无签名**的裸 JSON POST，绑 0.0.0.0 等于让局域网任意主机
+# 伪造一条"微信消息"——AI 会当成真人说的去回复、甚至调工具。
+# 与 OneBot(reverse) 的边界同一套标准（见 src/channels/onebot.py:32）。
+_LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1"}
 
 
 class GeweClient:
@@ -93,8 +105,11 @@ class GewechatChannel(Channel):
             getattr(gw, "base_url", "") or "http://127.0.0.1:2531",
             getattr(gw, "token", "") or "",
         )
-        self._callback_host = getattr(gw, "callback_host", "") or "0.0.0.0"
+        self._callback_host = getattr(gw, "callback_host", "") or "127.0.0.1"
         self._callback_port = int(getattr(gw, "callback_port", 9912) or 9912)
+        # 回调共享令牌：Gewechat 的回调没有签名机制，只能靠 URL 里的共享密钥
+        # （后台回调地址写 http://<host>:<port>/?token=xxx）。空 = 仅允许回环监听。
+        self._callback_token = str(getattr(gw, "callback_token", "") or "")
         self._allow_users = [str(x) for x in (getattr(gw, "allow_users", []) or [])]
         self._block_users = [str(x) for x in (getattr(gw, "block_users", []) or [])]
         mcfg = getattr(gw, "media", None)
@@ -102,7 +117,10 @@ class GewechatChannel(Channel):
         self._ingest_urls = bool(getattr(mcfg, "ingest_urls", True)) if mcfg else True
         self._watch_videos = bool(getattr(mcfg, "watch_videos", False)) if mcfg else True
         self._store_to_memory = bool(getattr(mcfg, "store_to_memory", True)) if mcfg else True
-        self._queue: "asyncio.Queue[dict]" = asyncio.Queue()
+        # 入站消息上限：回调 HTTP 线程只管往队列塞，主循环每条要走一遍 AI 决策，
+        # 高峰期（群聊刷屏）消费必然慢于生产。无界会一路涨；丢最旧可保证
+        # 「最新的消息一定被处理」，旧的过期消息本来也没回复价值。
+        self._queue: "asyncio.Queue[dict]" = asyncio.Queue(maxsize=_INBOX_MAX)
         self._loop: Optional[asyncio.AbstractEventLoop] = None
         self._httpd = None
 
@@ -120,11 +138,50 @@ class GewechatChannel(Channel):
                 continue
             await self._handle_inbound(item)
 
+    def _authorized(self, handler) -> bool:
+        """回调鉴权：配了 token 就必须带对；没配 token 只允许回环监听（启动时已拦）。
+
+        token 走三处任一：`?token=` / `X-GEWECHAT-TOKEN` 头 / `Authorization: Bearer`。
+        用 compare_digest 做定长比较，别给时序侧信道。
+        """
+        if not self._callback_token:
+            return True
+        tok = ""
+        try:
+            qs = urllib.parse.urlsplit(getattr(handler, "path", "") or "").query
+            tok = (urllib.parse.parse_qs(qs).get("token") or [""])[0]
+        except Exception:  # noqa: BLE001  路径解析失败 → 视为未带 token
+            tok = ""
+        if not tok:
+            tok = handler.headers.get("X-GEWECHAT-TOKEN") or ""
+        if not tok:
+            auth = handler.headers.get("Authorization") or ""
+            if auth.lower().startswith("bearer "):
+                tok = auth[7:].strip()
+        return bool(tok) and hmac.compare_digest(tok, self._callback_token)
+
     def _start_callback_server(self) -> None:
         channel = self
+        # fail-closed：非回环监听却没配令牌 = 把"AI 的耳朵"接到局域网上，拒绝启动。
+        if self._callback_host not in _LOOPBACK_HOSTS and not self._callback_token:
+            logger.error(
+                "Gewechat 回调服务未启动：callback_host=%s（非回环）但 callback_token 为空。"
+                "回调是无签名 POST，任何能连到本机 %s 端口的主机都能伪造微信消息。"
+                "修法二选一：① 把 callback_host 改回 127.0.0.1（Gewechat 与本程序同机时够用）；"
+                "② 配 callback_token，并在 Gewechat 后台把回调地址写成 "
+                "http://<本机IP>:%s/?token=<同一个值>。",
+                self._callback_host, self._callback_port, self._callback_port)
+            return
 
         class _Handler(BaseHTTPRequestHandler):
             def do_POST(self) -> None:  # noqa: N802
+                if not channel._authorized(self):
+                    logger.warning("Gewechat 回调被拒绝（令牌不匹配）：来源 %s",
+                                   self.client_address[0] if self.client_address else "?")
+                    self.send_response(401)
+                    self.end_headers()
+                    self.wfile.write(b'{"error":"unauthorized"}')
+                    return
                 try:
                     n = int(self.headers.get("Content-Length", 0) or 0)
                     raw = self.rfile.read(n) if n else b""
@@ -133,7 +190,9 @@ class GewechatChannel(Channel):
                     data = {}
                 try:
                     if channel._loop is not None:
-                        channel._loop.call_soon_threadsafe(channel._queue.put_nowait, data)
+                        # 有界投递：满了丢最旧，且不阻塞回调线程
+                        channel._loop.call_soon_threadsafe(
+                            put_drop_oldest_async, channel._queue, data)
                 except Exception:  # noqa: BLE001
                     pass
                 self.send_response(200)
@@ -146,7 +205,9 @@ class GewechatChannel(Channel):
         try:
             self._httpd = ThreadingHTTPServer((self._callback_host, self._callback_port), _Handler)
             threading.Thread(target=self._httpd.serve_forever, daemon=True).start()
-            logger.info("Gewechat 回调服务已启动 http://%s:%s", self._callback_host, self._callback_port)
+            logger.info("Gewechat 回调服务已启动 http://%s:%s（鉴权：%s）",
+                        self._callback_host, self._callback_port,
+                        "已开启 token" if self._callback_token else "仅回环")
         except Exception:  # noqa: BLE001
             logger.exception("Gewechat 回调服务启动失败（不影响登录/发消息）")
 
@@ -236,19 +297,29 @@ class GewechatChannel(Channel):
         if text:
             await self._safe_post(self._client.post_text, to_wxid, text)
         for m in (d.get("media") or []):
-            self._send_media_item(to_wxid, m)
+            await self._send_media_item(to_wxid, m)
 
-    def _send_media_item(self, to_wxid: str, m: dict) -> None:
+    async def _send_media_item(self, to_wxid: str, m: dict) -> None:
         f = m.get("file") or m.get("url") or ""
         if not f:
             return
         if m.get("type") == "video":
-            self._client.post_video(to_wxid, f)
+            await self._safe_post(self._client.post_video, to_wxid, f)
         else:
-            self._client.post_image(to_wxid, f)
+            await self._safe_post(self._client.post_image, to_wxid, f)
 
-    def _safe_post(self, fn, *args) -> None:
+    async def _safe_post(self, fn, *args) -> None:
+        """发消息一律走线程池。
+
+        【2026-10-18 修】两处叠加缺陷：
+        ① 原实现是同步 def，调用点却写着 `await self._safe_post(...)` →
+           `await None` 抛 TypeError，被事件总线 catch 后只留一行日志，
+           **微信回复从来没真正发出去过**（能收不能回，症状像"AI 不理人"）。
+        ② 即便去掉 await，urllib 是同步阻塞调用（超时 15s）→ 在事件循环线程里
+           直接发，网关慢/挂时整个桌宠一起卡死（TTS、对话、桌宠动画全停）。
+        改为 async + asyncio.to_thread：语义正确，且阻塞落在工作线程。
+        """
         try:
-            fn(*args)
+            await asyncio.to_thread(fn, *args)
         except Exception:  # noqa: BLE001
             logger.exception("Gewechat 发送失败")

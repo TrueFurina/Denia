@@ -10,12 +10,21 @@
   7. 幂等：连跑两次结果一致
 """
 import sys, os, json, copy
-sys.path.insert(0, r"G:\ai对话\11")
 
-# 直接加载 webapp 里的三个纯函数（不 import 整个 webapp，避免拉起 GUI 依赖）
-import importlib.util
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if ROOT not in sys.path:
+    sys.path.insert(0, ROOT)
 
-SRC = r"G:\ai对话\11\src\ui\webapp.py"
+# 【2026-10-17】这 5 个函数已从 webapp.py 抽到 src/ui/bailian_key.py，
+# 直接 import 即可——不再用 AST 从 webapp 里抠源码，也不再依赖本机绝对路径。
+from src.ui.bailian_key import (  # noqa: E402
+    _collect_bailian_keys,  # noqa: F401
+    _diffuse_bailian_key,   # noqa: F401
+    _key_unify_enabled,
+    _looks_like_bailian_key,
+    _unify_bailian_key,
+)
+
 OUT = []
 
 
@@ -23,39 +32,7 @@ def log(*a):
     OUT.append(" ".join(str(x) for x in a))
 
 
-# --- 从 webapp.py 抽出这几个纯函数（它们不依赖 self，可独立执行）---
-import ast, textwrap
-
-with open(SRC, encoding="utf-8") as f:
-    tree = ast.parse(f.read())
-
-WANT = {"_key_unify_enabled", "_looks_like_bailian_key", "_collect_bailian_keys",
-        "_unify_bailian_key", "_diffuse_bailian_key"}
-
-src_lines = open(SRC, encoding="utf-8").read().splitlines(keepends=True)
-chunks = []
-for node in tree.body:
-    if isinstance(node, ast.FunctionDef) and node.name in WANT:
-        chunks.append("".join(src_lines[node.lineno - 1: node.end_lineno]))
-    if isinstance(node, ast.Assign):
-        pass
-
-ns = {}
-# logger 桩
-class _L:
-    def info(self, *a, **k): pass
-    def warning(self, *a, **k): pass
-ns["logger"] = _L()
-
-code = "\n\n".join(chunks)
-exec(compile(code, "extracted", "exec"), ns)
-
-_key_unify_enabled = ns["_key_unify_enabled"]
-_looks_like_bailian_key = ns["_looks_like_bailian_key"]
-_collect_bailian_keys = ns["_collect_bailian_keys"]
-_unify_bailian_key = ns["_unify_bailian_key"]
-
-log("=== 抽取函数成功，共 %d 个 def ===" % len(chunks))
+log("=== 已从 src.ui.bailian_key 加载 5 个函数 ===")
 log("")
 
 # --- 构造测试 config：模拟当前真实情况（3 把不同百炼 Key + 干扰项）---
@@ -242,4 +219,5 @@ log("=" * 60)
 log("总计: PASS=%d  FAIL=%d" % (PASS, FAIL))
 log("=" * 60)
 
-open(r"G:\ai对话\11\docs\_p1test.txt", "w", encoding="utf-8").write("\n".join(OUT))
+print("\n".join(OUT))
+sys.exit(0 if FAIL == 0 else 1)

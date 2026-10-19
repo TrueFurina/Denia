@@ -10,7 +10,14 @@ import queue
 
 import sounddevice as sd
 
+from ..queue_util import put_drop_oldest
+
 logger = logging.getLogger(__name__)
+
+# 采集缓冲上限（帧数）。blocksize=8000 @16kHz 时一帧 0.5s，32 帧 ≈ 16 秒。
+# 识别线程卡住超过这个时长，丢掉最旧的音频比无限涨内存合理 —— 迟到的语音
+# 本来也不该再被识别。回调线程绝不能 put() 阻塞，只能用 put_nowait 丢最旧。
+_MAX_QUEUE_FRAMES = 32
 
 
 class AudioIO:
@@ -19,13 +26,19 @@ class AudioIO:
         self._sample_rate = sample_rate
         self._blocksize = blocksize
         self._device = device  # None=系统默认输入设备；int=指定索引
-        self._queue: queue.Queue[bytes] = queue.Queue()
+        self._queue: queue.Queue[bytes] = queue.Queue(maxsize=_MAX_QUEUE_FRAMES)
+        self._dropped = 0
         self._stream = None
 
     def _callback(self, indata, frames, time, status) -> None:  # noqa: A002
         if status:
             logger.debug("音频输入状态: %s", status)
-        self._queue.put(bytes(indata))
+        if put_drop_oldest(self._queue, bytes(indata)):
+            self._dropped += 1
+            # 每 100 帧报一次，避免回调里刷日志反过来拖慢音频线程
+            if self._dropped % 100 == 1:
+                logger.warning("麦克风缓冲已满，累计丢弃 %d 帧（识别线程跟不上采集）",
+                               self._dropped)
 
     def start(self) -> None:
         self._stream = sd.RawInputStream(

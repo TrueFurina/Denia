@@ -1,0 +1,18 @@
+# 导入冒烟白名单：只收「确认过不影响主程序启动」的模块，每项必须写原因。
+# 定期跑 tools/smoke_import.py，出现「白名单里已不再失败的条目」就删掉对应行。
+#
+# 2026-10-17 首次全量扫描：155 个模块，149 通过，6 失败，全部在本名单内。
+
+# ---- tkinter 系：两个运行时（python/ 与 .venv，后者由前者创建）都没有 _tkinter.pyd ----
+# 调用点自身已做 try/except 并返回 {"success": false, "error": "tkinter 不可用"}，
+# 不会崩，但功能实际不可用 —— 属产品层面待决策，不是导入缺陷。
+src.ui.chat_overlay        # 需要 tkinter；主程序延迟导入且有错误返回
+src.ui.ocr_calibrator      # 需要 tkinter；同上
+
+# ---- 可选 TTS 后端：由 main.py 以子进程按需拉起，不参与主程序导入 ----
+src.voice.cosyvoice_server # 需要 CosyVoice 仓库内的 ref_audio_util
+src.voice.qwen3tts_server  # 同上
+src.voice.voxcpm_server    # 需要本地模型权重（voxcpm2_models），未下载时抛 RuntimeError
+
+# ---- 离线开发脚本：造语音样片用，不进发布包 ----
+src.tts.gen_daniya_cosy_sample  # 需要 torch（CosyVoice2 推理环境）

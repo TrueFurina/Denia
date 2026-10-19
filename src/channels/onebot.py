@@ -14,8 +14,10 @@
 from __future__ import annotations
 
 import asyncio
+import hmac
 import json
 import logging
+import urllib.parse
 import urllib.request
 from typing import Any, Optional
 
@@ -24,6 +26,12 @@ from .base import Channel
 from . import media_ingest as media
 
 logger = logging.getLogger("channels.onebot")
+
+# 【2026-10-17 安全修复】reverse 模式原来默认监听 0.0.0.0 且完全不校验连入方——
+# 同局域网任何人都能连上 WS 伪造 QQ 消息，而消息会进聊天上下文、进而写入长期记忆
+# （等于可以往记忆库投毒）。现在：默认只听回环；非回环监听必须配 access_token，
+# 否则一律拒绝并打明确日志。access_token 走 Authorization: Bearer 或 ?access_token=。
+_LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1", "0:0:0:0:0:0:0:1"}
 
 
 class OneBotChannel(Channel):
@@ -36,7 +44,7 @@ class OneBotChannel(Channel):
             raise ValueError("config.channels.qq.onebot 缺失")
         self._mode = (getattr(ob, "mode", "forward") or "forward").lower()
         self._ws_url = getattr(ob, "ws_url", "") or "ws://127.0.0.1:3001"
-        self._listen_host = getattr(ob, "listen_host", "") or "0.0.0.0"
+        self._listen_host = getattr(ob, "listen_host", "") or "127.0.0.1"
         self._listen_port = int(getattr(ob, "listen_port", 3002) or 3002)
         self._token = getattr(ob, "access_token", "") or ""
         self._http_url = getattr(ob, "http_url", "") or "http://127.0.0.1:3000"
@@ -96,12 +104,67 @@ class OneBotChannel(Channel):
 
     async def _serve_reverse(self) -> None:
         from websockets.asyncio.server import serve as ws_serve
+        if self._listen_host not in _LOOPBACK_HOSTS and not self._token:
+            logger.error(
+                "OneBot(reverse) 监听 %s 但未配置 access_token：所有连入都会被拒绝。"
+                "要么把 channels.qq.onebot.listen_host 改回 127.0.0.1，"
+                "要么配置 access_token（NapCat 侧同时带同一个令牌）。",
+                self._listen_host,
+            )
         logger.info("OneBot(reverse) 监听 ws://%s:%s", self._listen_host, self._listen_port)
         async with ws_serve(self._on_reverse_conn, self._listen_host, self._listen_port):
             while self._running:
                 await asyncio.sleep(1)
 
+    @staticmethod
+    def _handshake(ws) -> tuple[Any, str]:
+        """取握手头与请求路径（兼容 websockets 新老版本的属性名）。"""
+        req = getattr(ws, "request", None)
+        if req is not None:
+            return getattr(req, "headers", None), getattr(req, "path", "") or ""
+        return getattr(ws, "request_headers", None), ""
+
+    def _inbound_authorized(self, ws) -> bool:
+        """入站鉴权：无 token 时只允许本机回环；配了 token 则校验 Bearer / query。"""
+        if not self._token:
+            return self._listen_host in _LOOPBACK_HOSTS
+        headers, path = self._handshake(ws)
+        auth = ""
+        if headers is not None:
+            try:
+                auth = headers.get("Authorization") or ""
+            except Exception:  # noqa: BLE001  某些实现返回非 mapping，按未授权处理
+                auth = ""
+            if not auth and hasattr(headers, "items"):
+                # dict / 普通 mapping 不区分大小写，补一次小写匹配
+                for k, v in headers.items():
+                    if str(k).lower() == "authorization":
+                        auth = v or ""
+                        break
+        if auth.lower().startswith("bearer "):
+            if hmac.compare_digest(auth[7:].strip(), self._token):
+                return True
+        try:
+            qs = urllib.parse.parse_qs(urllib.parse.urlsplit(path).query)
+            tok = (qs.get("access_token") or [""])[0]
+            if tok and hmac.compare_digest(tok, self._token):
+                return True
+        except Exception:  # noqa: BLE001  路径解析失败 → 视为未带 token
+            pass
+        return False
+
     async def _on_reverse_conn(self, ws) -> None:
+        if not self._inbound_authorized(ws):
+            logger.warning(
+                "OneBot(reverse) 拒绝未授权连入（来源 %s，token=%s）",
+                getattr(ws, "remote_address", "?"),
+                "已配置" if self._token else "未配置且非回环监听",
+            )
+            try:
+                await ws.close(code=1008, reason="unauthorized")
+            except Exception:  # noqa: BLE001
+                pass
+            return
         self._conns.add(ws)
         logger.info("OneBot(reverse) 收到 NapCat 连入（当前 %d 个）", len(self._conns))
         try:

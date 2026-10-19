@@ -30,20 +30,6 @@ from types import SimpleNamespace
 from typing import Any, Optional
 
 
-def _path_has_non_ascii(p: str) -> bool:
-    """路径是否含非 ASCII 字符（中文/日文/韩文/特殊符号等）。
-
-    C++ 引擎（llama-server / Comni worker）用 fopen 打开模型文件，多字节
-    中文路径在无 manifest 的进程里会乱码 → failed to open GGUF → 引擎起不来、
-    双工模型永远挂不上。任何非 ASCII 都视为不可加载，要求纯英文/数字路径。
-    """
-    if not p:
-        return False
-    try:
-        p.encode("ascii")
-        return False
-    except UnicodeEncodeError:
-        return True
 
 import yaml
 
@@ -55,10 +41,44 @@ from . import mode_gates as _mode_gates   # 档位×功能 门槛矩阵（单一
 
 logger = logging.getLogger(__name__)
 
+
+# ---- 自 webapp.py 抽出的模块（2026-10-17 拆分，逐字迁移、未改逻辑）----
+from .ui_fmt import (  # noqa: E402
+    _fmt_file_ts, _fmt_ts, _img_data_url, _path_has_non_ascii, _status_done_summary,
+)
+from .bailian_key import (  # noqa: E402
+    _collect_bailian_keys, _diffuse_bailian_key, _key_unify_enabled,
+    _looks_like_bailian_key, _unify_bailian_key,
+)
+from .wv2_env import (  # noqa: E402
+    _harden_webview2, _install_clr_crash_guard, _patch_webview2_unique_user_data,
+    _run_coroutine_sync, _safe_js_api, _stable_wv2_folder_key,
+    _sweep_legacy_wv2_folders, _sweep_wv2_caches,
+)
+from .notify_geom import (  # noqa: E402
+    _notify_current_monitor_rect, _notify_geom, _notify_park_out,
+    _notify_rects_for_monitor, _notify_set_pos, _notify_show_in, _notify_slide,
+)
+from .ui_state import STATE  # 窗口/运行时共享状态（原模块级全局，2026-10-17 收敛）
+from .api_pet import PetAPI  # 桌宠 API mixin（2026-10-17 拆分）
+from .api_window import WindowAPI  # 窗口 API mixin（2026-10-17 拆分）
+from .pet_window import (  # 桌宠 Win32 操作（2026-10-17 拆分）
+    _POINT, _attach_pet_no_taskbar, _pet_find_main_hwnd, _pet_find_hwnd,
+    _pet_apply_topmost, _pet_install_topmost_guard, _pet_set_capture_hidden,
+)
+from .main_window import (  # 窗口创建/本地服务（2026-10-17 拆分，re-export 给 main.py）
+    _FREEZE_DUMPS, _GUI_STALL_S, _bailian_inject_loop, _ensure_web_server,
+    _wv2_broadcast, create_bailian_console_window, create_desktop_companion,
+    create_main_window, create_notify_window, run_webview,
+    # 卡死现场 dump 在 2026-10-17 随窗口代码一起搬去了 main_window，
+    # main.py 仍从 webapp 取这个名字 → 少了这一行就是**启动即 ImportError**。
+    # 2026-10-18 实测：main.py --help 直接崩，说明这条链路自那次拆分后就没跑通过。
+    _start_gui_liveness_probe,
+)
+
 # /local_img 路由的额外白名单目录（2026-10-03 聊天图片）：char_banners 之外，
 # 聊天发图落盘目录（ActivityStore root/images/chat，root 可能被配置自定义）
 # 由 _save_chat_images() 首次落盘时注册进来；HTTP handler 运行时读取本列表。
-_LOCAL_IMG_EXTRA_DIRS: list = []
 
 
 def register_local_img_dir(path: str) -> bool:
@@ -76,8 +96,8 @@ def register_local_img_dir(path: str) -> bool:
         _abs = os.path.abspath(path)
         if not os.path.isdir(_abs):
             return False
-        if _abs not in _LOCAL_IMG_EXTRA_DIRS:
-            _LOCAL_IMG_EXTRA_DIRS.append(_abs)
+        if _abs not in STATE.local_img_extra_dirs:
+            STATE.local_img_extra_dirs.append(_abs)
         return True
     except Exception:  # noqa: BLE001
         return False
@@ -155,71 +175,12 @@ class LoadingAPI:
         return self._progress.snapshot()
 
 
-def _img_data_url(path: str) -> str:
-    """本地图片 → base64 data URL（file:// 协议下前端无法直接访问本地文件）。"""
-    import base64
-    if not path or not os.path.exists(path):
-        return ""
-    with open(path, "rb") as f:
-        b64 = base64.b64encode(f.read()).decode("ascii")
-    return f"data:image/png;base64,{b64}"
 
 
-def _fmt_ts(ts: float) -> str:
-    """时间戳 → 'YYYY-MM-DD HH:MM:SS'（本地时区）。"""
-    try:
-        d = time.localtime(float(ts or 0))
-        return time.strftime("%Y-%m-%d %H:%M:%S", d)
-    except Exception:  # noqa: BLE001
-        return "--"
 
 
-def _fmt_file_ts(ts: float) -> str:
-    """时间戳 → 'YYYYMMDD_HHMMSS'（用于文件名，无特殊字符）。"""
-    try:
-        d = time.localtime(float(ts or 0))
-        return time.strftime("%Y%m%d_%H%M%S", d)
-    except Exception:  # noqa: BLE001
-        return "00000000_000000"
 
 
-def _diffuse_bailian_key(node, new_key: str) -> int:
-    """递归把配置树里所有「百炼形态」的 api_key 统一替换为 new_key，返回替换处数。
-
-    【2026-10-04 新增】百炼 Key 形如 `sk-...`（工作空间形态为 `sk-ws-...`）。用户换账号时，
-    旧 Key 会残留在 config.yaml 的**各个角落**（cloud_omni / vision_models.models[*] /
-    text_chat.providers[*] / llm.openai / agent.llm / cascade / voice.clone.cloud /
-    voice_profiles[*]…）。此前引导页只固定扩散三个段、且只对 provider 白名单生效，导致
-    "引导页显示已填 Key、实际双工仍用旧 Key" → 双工静默哑、视觉 403（10-04 实锤：
-    旧 Key 残留 26 处、新 Key 只写入 2 处）。此函数让**一处填、全域生效**。
-
-    保守规则（宁可漏改也不要误伤别人的 Key）：
-      · **凡值是以 `sk-` 开头的字符串就替换**（键名无关）。实测 config 里 key 有两种写法：
-        ① `api_key: sk-...` ② `llm.openai: sk-...` / `cascade: sk-...` / `agent.llm: sk-...`
-        ——键名本身就长得像 key。只按 `api_key` 匹配会漏掉 ②，导致仍指向旧 Key。
-      · **跳过 `sk-api-` 开头者**（MiniMax 等独立服务商的 Key，不属于百炼）。
-    """
-    if not new_key:
-        return 0
-    n = 0
-
-    def _walk(x):
-        nonlocal n
-        if isinstance(x, dict):
-            for k, v in list(x.items()):
-                if isinstance(v, str) and v.strip().startswith("sk-") and v != new_key:
-                    if v.strip().startswith("sk-api-"):
-                        continue          # MiniMax 等独立服务商，不在扩散范围
-                    x[k] = new_key
-                    n += 1
-                else:
-                    _walk(v)
-        elif isinstance(x, list):
-            for v in x:
-                _walk(v)
-
-    _walk(node)
-    return n
 
 
 # ============================================================================
@@ -247,73 +208,12 @@ def _diffuse_bailian_key(node, new_key: str) -> int:
 #      MiniMax 的 sk-api-、ollama 的空 key。
 # ============================================================================
 
-def _key_unify_enabled(raw) -> bool:
-    """读 `key_unify.enabled` 开关；缺省关闭（保持既有行为）。"""
-    try:
-        node = (raw or {}).get("key_unify") or {}
-        if not isinstance(node, dict):
-            return False
-        return bool(node.get("enabled", False))
-    except Exception:  # noqa: BLE001
-        return False
 
 
-def _looks_like_bailian_key(s: str) -> bool:
-    """是否是「百炼形态」的 Key（可参与统一）。
-
-    百炼工作空间 Key 形如 `sk-ws-...`（实测 115~117 位）；普通百炼 Key 形如 `sk-...`。
-    排除：`sk-api-...`（MiniMax 等独立服务商）、非 sk- 开头（智谱 49 位短 key 等）。
-
-    【必须同时卡前缀 + 最小长度】否则 `sk-` / `sk-api` 这种「只有前缀的残缺值」会被
-    判为合法，扩散出去等于把 28 处配置全改成 `sk-` —— 不可逆灾难（2026-10-08 自测抓到）。
-    """
-    if not isinstance(s, str):
-        return False
-    v = s.strip()
-    if not v.startswith("sk-"):
-        return False
-    if v.startswith("sk-api-"):
-        return False
-    # 最小长度：真实百炼 Key 至少 40 位；只有前缀的残缺值一律拒绝
-    if len(v) < 40:
-        return False
-    return True
 
 
-def _collect_bailian_keys(node, _acc=None):
-    """递归收集配置树里所有「百炼形态」的 Key 值（去重，保持首次出现顺序）。"""
-    if _acc is None:
-        _acc = []
-    if isinstance(node, dict):
-        for _k, v in node.items():
-            if isinstance(v, str) and _looks_like_bailian_key(v):
-                if v not in _acc:
-                    _acc.append(v)
-            else:
-                _collect_bailian_keys(v, _acc)
-    elif isinstance(node, list):
-        for v in node:
-            _collect_bailian_keys(v, _acc)
-    return _acc
 
 
-def _unify_bailian_key(raw, new_key: str, source: str = "") -> int:
-    """把配置树里的百炼 Key 统一为 `new_key`；返回替换处数（0 = 未做任何改动）。
-
-    仅当 `key_unify.enabled` 打开且 `new_key` 是合法百炼 Key 时才动手；
-    否则原样返回 0 —— **这是「不改变既有行为」的保证**。
-    """
-    if not _key_unify_enabled(raw):
-        return 0
-    if not _looks_like_bailian_key(new_key):
-        return 0
-    _nk = new_key.strip()
-    _before = _collect_bailian_keys(raw)
-    _n = _diffuse_bailian_key(raw, _nk)
-    if _n:
-        logger.info("key_unify[%s]：百炼 Key 已统一为 %s...（替换 %d 处；统一前存在 %d 种不同 Key）",
-                    source or "-", _nk[:12], _n, len(_before))
-    return _n
 
 
 # 「陪你看视频」进度卡的时间线（2026-10-05）：后端按 stage 顺序补进 meta.steps，
@@ -327,38 +227,6 @@ _WATCH_STEP_LABELS = (
 )
 
 
-def _status_done_summary(meta: dict, fallback: str = "") -> str:
-    """把已完成的状态卡压成一行历史摘要（刷新后仍可读）。
-
-    例：操作卡 → 「✓ 已打开 汽水音乐 · 查看窗口 等 2 项」；观看卡 → 「✓ 看完 4 帧」。
-    """
-    steps = [s for s in (meta.get("steps") or []) if isinstance(s, dict)]
-    # 【2026-10-05】观看卡优先判定（此前放在 steps 分支之后，steps 非空时永远走不到）
-    wk = meta.get("watch") or {}
-    if wk or meta.get("phase") == "watch_done":
-        n = len(steps)
-        return "✓ 视频已看完（%d 步）" % n if n else "✓ 视频已看完"
-    if steps:
-        # 优先用 step.result（工具真实返回，如「已通过开始菜单启动：汽水音乐」），
-        # 其次才是 label/tool —— 避免摘要退化成 "✓ open_app" 这种英文工具名。
-        def _pick(s):
-            r = str(s.get("result") or "").strip()
-            if r:
-                return r
-            lb = str(s.get("label") or "").strip()
-            if lb and not re.fullmatch(r"[A-Za-z0-9_.]+", lb):
-                return lb
-            return ""
-        done_steps = [s for s in steps
-                      if s.get("state") in ("done", "err") and _pick(s)]
-        if done_steps:
-            head = "✓ " + _pick(done_steps[0])
-            if len(done_steps) > 1:
-                head += " 等 %d 项" % len(done_steps)
-            return head
-    if meta.get("error"):
-        return "✗ 操作未完成"
-    return "✓ " + (fallback.replace("⚙️ ", "").strip() or "已完成")
 
 
 
@@ -420,7 +288,7 @@ def migrate_stale_voice_profiles(raw: dict) -> list:
 
 
 
-class CharacterAPI:
+class CharacterAPI(PetAPI, WindowAPI):
     """角色管理 API（供 pywebview 前端调用）。"""
 
     # 【2026-10-05】状态卡"节奏"相关字段的**类级默认值**。
@@ -541,7 +409,9 @@ class CharacterAPI:
         # 桌宠模式：主窗口 / 桌面桌宠窗口引用（main.py 创建窗口后注入）+ 桌宠位置缓存
         self._main_win: Optional[Any] = None
         self._pet_win: Optional[Any] = None
-        self._pet_bubble_q: "queue.Queue" = queue.Queue()  # 双工看屏互动气泡文本队列（桌宠窗轮询取走显示）
+        # 上限 20 条：pop_pet_bubble 只显示最新一条并清空积压，桌宠窗隐藏时
+        # 生产端（双工线程）仍在推，无界会一路涨。
+        self._pet_bubble_q: "queue.Queue" = queue.Queue(maxsize=20)
         self._duplex_output_log: list = []   # 双工输出对话日志（调试台「双工输出」板块展示，存 {"ts":float,"text":str}）
         self._pet_pos: Optional[tuple] = None   # 桌宠窗口逻辑坐标缓存 (x, y)（仅 pet_show 暂存，拖动已不依赖）
         self._pet_base: Optional[tuple] = None  # 拖动基准：窗口左上角物理像素
@@ -585,9 +455,6 @@ class CharacterAPI:
     # ======== 页面渲染确认（2026-08-24 黑屏排查） ========
     # 前端页面加载完成后由内联脚本 setTimeout 调用此方法，绕过 pywebview
     # evaluate_js 的线程/事件时序限制，真正确认页面在渲染进程里渲染成功。
-    def on_page_loaded(self, html_len: int = -1) -> dict:
-        logger.info("[页面已加载] 主窗口前端页面渲染成功, innerHTML长度=%s", html_len)
-        return {"ok": True, "html_len": html_len}
 
     # ======== UI 心跳看门狗（2026-09-03 卡死排查） ========
     # 前端主窗口 JS 每 5s 调一次 ui_ping()，后端记录时间戳。若前端渲染进程挂死，
@@ -596,759 +463,34 @@ class CharacterAPI:
     UI_RECOVER_GRACE_S: float = 120.0  # 启动宽限期：前 120s 只记日志，绝不触发恢复
     UI_PING_INTERVAL: float = 5.0  # 守护线程自身轮询间隔
 
-    def ui_ping(self) -> dict:
-        """前端存活心跳。幂等、极低开销，前端可安全高频调用。
 
-        【2026-09-12 通话心跳契约】通话期间（_duplex_app_call_active=True）本方法
-        兼任「通话看门狗」的心跳源：每 5s 续期 proactive._last_call_poll_ts。
-        背景：前端只在**拨号振铃期间**以 ~350ms 轮询 get_call_status
-        （src/ui/web/index.html:901-922，接通即 break），接通后零轮询；
-        若没有这里续期，通话必然在阈值后被锁循环误判"前端消失"而强制解锁
-        （表现：音频源被切 system 听不见用户 + 桌面静默不出声 + AI 自言自语）。
-        ⚠️ 契约：本心跳 5s 一跳（redesign/app_backend.js:431），
-        对应 proactive.CALL_FRONTEND_GONE_S=25s。改任一侧必须同步另一侧。
-        """
-        now = time.time()
-        # ① 新增逻辑一律外裹 try/except，且放在 _last_ui_ping 更新【之前】：
-        #    绝不能因续期失败打断 UI 心跳（不更新 → UI 看门狗误报前端无响应
-        #    → 触发窗口重载）。内层在 _touch_call_heartbeat 里再兜一层。
-        try:
-            self._touch_call_heartbeat(now)
-        except Exception:  # noqa: BLE001
-            pass
-        if not self._ui_ping_armed:
-            self._ui_ping_armed = True
-            logger.info("[UI心跳] 看门狗已就绪（前端开始上报存活）")
-            self._last_ui_ping = now
-            return {"success": True, "ts": now}
-        prev = self._last_ui_ping
-        self._last_ui_ping = now
-        # 心跳恢复：之前报过无响应，现在又来了 → 记一条恢复（用恢复前的间隔算时长）
-        if self._ui_unresponsive_logged:
-            self._ui_unresponsive_logged = False
-            lag = now - prev
-            logger.warning("[UI心跳] 前端心跳已恢复（无响应约 %.0fs 后重新连接）", lag)
-        return {"success": True, "ts": now}
 
-    def _touch_call_heartbeat(self, now: float) -> None:
-        """通话看门狗续期：通话标志为真时刷新 proactive._last_call_poll_ts。
 
-        只门控「通话标志」_duplex_app_call_active，**不门控** _duplex_call_ready：
-        ready 会在会话报错/重连期间翻 False（proactive.py:1690-1692），门控它会让
-        续期在重连窗口中断 → 仍被误判"前端消失"；"拨了号但从没接通"由
-        _dead_connect（90s，与前端振铃上限 CALL_TIMEOUT_MS 对齐）单独兜底，
-        不依赖本心跳。
 
-        调用方：ui_ping（前端每 5s，src/ui/web/redesign/app_backend.js:431）。
-        前端真死 → 不再有 ui_ping → proactive 侧阈值到点自愈解锁（自愈不失效）。
-
-        异常策略：内部全兜，绝不向上抛——保护 UI 心跳看门狗（见 ui_ping 内注释）。
-        """
-        pro = getattr(self, "_proactive", None)
-        if pro is None:
-            # 预览模式 / 独立启动（create_*_window(api=None) 自建实例）无主动策略。
-            return
-        try:
-            if getattr(pro, "_duplex_app_call_active", False):
-                pro._last_call_poll_ts = now
-        except Exception:  # noqa: BLE001
-            logger.debug("[通话心跳] 续期失败（忽略，不影响 UI 心跳）", exc_info=True)
-
-    def get_ui_health(self) -> dict:
-        """返回 UI 健康诊断快照（开发者页健康面板调用）。
-
-        ⚠️ 必须低开销、绝不阻塞 GUI 线程：只读时间戳/计数器，不调 evaluate_js、不碰 WebView2。
-        字段：
-          gui_beat_ms      GUI 线程最近一次心跳距今毫秒（mode_notify._last_poll）
-          gui_ok/gui_stalled  GUI 线程是否活跃
-          frontend_ping_ms 前端最近一次心跳距今毫秒
-          frontend_ok     前端是否活跃
-          wv2_windows     WebView2 窗口数（>2 警惕泄漏）
-          last_send_chat 最近一次发消息诊断
-          freeze_dumps    GUI 冻结现场 dump 文件列表（卡死发生后可在此取到栈）
-        """
-        now = time.time()
-        try:
-            from . import mode_notify as _mn
-            gui_last = _mn._last_poll[0]
-        except Exception:
-            gui_last = 0.0
-        gui_gap = (now - gui_last) if gui_last else -1.0
-        fe_gap = (now - self._last_ui_ping) if self._last_ui_ping else -1.0
-        wv2 = 0
-        try:
-            wv2 = len(_WV2_CONTROLS)
-        except Exception:
-            pass
-        return {
-            "success": True,
-            "gui_beat_ms": int(gui_gap * 1000) if gui_gap >= 0 else -1,
-            "gui_ok": bool(gui_last and gui_gap < _GUI_STALL_S),
-            "gui_stalled": bool(gui_last and gui_gap >= _GUI_STALL_S),
-            "frontend_ping_ms": int(fe_gap * 1000) if fe_gap >= 0 else -1,
-            "frontend_ok": bool(self._ui_ping_armed and fe_gap < self.UI_PING_TIMEOUT),
-            "frontend_armed": bool(self._ui_ping_armed),
-            "wv2_windows": wv2,
-            "uptime_ms": int((now - self._boot_ts) * 1000),
-            "last_send_chat": dict(self._last_send_chat),
-            "freeze_dumps": list(_FREEZE_DUMPS)[-6:],
-        }
-
-    def _ui_watchdog_loop(self) -> None:
-        """守护线程：周期性检查前端心跳是否中断。
-
-        【2026-09-03 加固】不再「只记日志不干预」：首次判定 UI 无响应即尽力重载卡死
-        的 WebView2 窗口（渲染进程还活着时 Reload 可救回），并持续周期记录方便排查。
-        关键前提：_wv2_broadcast 已改为非阻塞推送，即便 UI 真死，后端（双工/聊天/
-        心跳）也不再被拖垮，看门狗日志可正常落盘。
-        """
-        while True:
-            try:
-                time.sleep(self.UI_PING_INTERVAL)
-                if not self._ui_ping_armed:
-                    continue  # 前端尚未上报过首跳（预览/未连接），不误报
-                gap = time.time() - self._last_ui_ping
-                if gap > self.UI_PING_TIMEOUT:
-                    if not self._ui_unresponsive_logged:
-                        self._ui_unresponsive_logged = True
-                        logger.warning(
-                            "[UI心跳] ⚠️ 前端无响应（心跳中断 %.0fs，阈值 %.0fs）"
-                            " — 判定为 UI 卡死/渲染进程挂死，尝试重载窗口恢复",
-                            gap, self.UI_PING_TIMEOUT,
-                        )
-                        if time.time() - self._boot_ts < self.UI_RECOVER_GRACE_S:
-                            logger.warning("[UI心跳] 启动宽限期内（模型加载会饿前端心跳），"
-                                           "只记日志不触发恢复")
-                        else:
-                            self._recover_stuck_windows()
-                    else:
-                        # 仍在无响应：周期提醒，便于用户/日志定位
-                        logger.warning(
-                            "[UI心跳] 前端仍无响应（已中断 %.0fs），重载未生效或渲染进程已退出",
-                            gap,
-                        )
-            except Exception as exc:  # 看门狗自身绝不能崩
-                try:
-                    logger.error("[UI心跳] 看门狗异常: %s", exc)
-                except Exception:
-                    pass
-                time.sleep(self.UI_PING_INTERVAL)
-
-    def _recover_stuck_windows(self) -> None:
-        """尽力重载卡死的 WebView2 窗口（UI 卡死自救，best-effort）。
-
-        【2026-09-03 加固】避免重载风暴把 UI 拖死：
-          - 全局冷却 30s，一次判定无响应只重载一轮；若重载本身卡在 UI 线程等待
-            已挂死的渲染进程，反复重载反而雪崩；
-          - 跳过桌宠窗：其卡顿多来自本地模型抢占 GPU，重载不仅无效还会雪崩，
-            留待其自然恢复更稳。
-        仅当渲染进程仍 IsConnected 时才 Reload（真正死了重载无效，须重启软件）。
-        调用在守护线程上、且全程 try/except，绝不影响后端事件循环。
-        """
-        global _PET_RECOVER_LAST
-        now = time.time()
-        if now - _PET_RECOVER_LAST < 30.0:
-            return
-        _PET_RECOVER_LAST = now
-        # 【2026-09-04 16:55 冻结实锤】看门狗线程直接调 cv2.Reload()（WebView2 要求
-        # 必须在 GUI 线程调用，跨线程调它 → 整个进程冻结：日志 16:55:50 起全停 4 分钟+，
-        # 所有线程无输出）。默认禁用自动 Reload；确要启用设环境变量 UI_RELOAD_RECOVER=1，
-        # 且经控件 BeginInvoke 封送到 GUI 线程执行。
-        import os as _os
-        if _os.environ.get("UI_RELOAD_RECOVER") != "1":
-            logger.warning("[UI心跳] 自动 Reload 恢复保持禁用（跨线程 Reload 曾冻结整个进程，"
-                           "16:55:50 实证）；前端无响应仅记录，不影响后端运行")
-            return
-        pet_uid = getattr(getattr(self, "_pet_win", None), "uid", None)
-        for uid, ctrl in list(_WV2_CONTROLS.items()):
-            if uid == pet_uid:
-                continue  # 桌宠窗不重载（GPU 争用卡顿，重载雪崩）
-            try:
-                # 【2026-09-05 冻结修复】原实现在守护线程上先读 ctrl.CoreWebView2 /
-                # cv2.IsConnected（跨套间 COM 同步封送→阻塞），再 BeginInvoke(Reload)。整体
-                # 移入 BeginInvoke，在 GUI 线程执行所有 COM 访问；调用线程只碰 BeginInvoke，
-                # 绝不碰任何 COM 属性。
-                def _reload():
-                    try:
-                        cv2 = getattr(ctrl, "CoreWebView2", None)
-                        if cv2 is None:
-                            return
-                        if getattr(cv2, "IsConnected", False):
-                            cv2.Reload()
-                            logger.info("[UI心跳] 已对窗口 %s 触发 Reload 尝试恢复", uid)
-                        else:
-                            logger.warning(
-                                "[UI心跳] 窗口 %s 渲染进程已断开，Reload 无效（需重启软件）", uid)
-                    except Exception as exc:  # noqa: BLE001
-                        logger.warning("[UI心跳] 窗口 %s 重载失败（best-effort）: %s", uid, exc)
-
-                from System import Action as _Act
-                ctrl.BeginInvoke(_Act(_reload))
-            except Exception as exc:  # noqa: BLE001
-                logger.warning("[UI心跳] 窗口 %s 重载排队失败（best-effort）: %s", uid, exc)
 
     # ======== 看板娘 ========
-    def get_live2d_psd(self) -> str:
-        """返回看板娘 PSD 的 base64 data URL（软件用 file:// 加载，前端无法直接 fetch 本地文件）。
 
-        无模型文件时返回空字符串，前端静默跳过。也支持读取 models 目录下最新的
-        model_fixed.psd（修复层名版），便于替换验证。
-        """
-        import base64
-        base = os.path.join(os.path.dirname(__file__), "web", "live2d", "models")
-        for name in ("model.psd", "model_fixed.psd"):
-            p = os.path.join(base, name)
-            if os.path.exists(p):
-                with open(p, "rb") as f:
-                    data = f.read()
-                if data:
-                    return "data:application/octet-stream;base64," + base64.b64encode(data).decode("ascii")
-        return ""
 
-    def get_live2d_prop(self) -> str:
-        """返回看板娘道具图（models/prop_bowl.png）的 base64 data URL，供 rig 合成道具层。
-
-        没有该文件时返回空字符串，前端静默跳过（不影响看板娘加载）。
-        """
-        import base64
-        p = os.path.join(os.path.dirname(__file__), "web", "live2d", "models", "prop_bowl.png")
-        if os.path.exists(p):
-            with open(p, "rb") as f:
-                data = f.read()
-            if data:
-                return "data:image/png;base64," + base64.b64encode(data).decode("ascii")
-        return ""
-
-    def quit_app(self) -> None:
-        """关闭全部窗口并退出程序（桌面看板娘双击退出用）。
-
-        【2026-09-04 修复】主窗口挂了 events.closing 拦截（点 X → 隐藏到托盘），
-        本方法 destroy 主窗会被拦成"隐藏"，导致"退出程序"根本退不掉、窗口凭空
-        消失。先置 _app_quitting=True 让拦截器放行真实关闭。
-        """
-        import webview
-        self._app_quitting = True
-        logger.info("收到退出程序请求（quit_app）→ 真实关闭全部窗口")
-        try:
-            for w in list(webview.windows):
-                w.destroy()
-        except Exception:  # noqa: BLE001
-            pass
 
     # ======== 桌宠模式（桌面浮动看板娘窗口：点击互动 / 拖动 / 右键面板） ========
-    def set_windows(self, main_win=None, pet_win=None) -> None:
-        """注入主窗口 / 桌宠窗口引用（main.py 创建窗口后调用）。"""
-        global _PET_WIN, _MAIN_WIN
-        self._main_win = main_win
-        self._pet_win = pet_win
-        _PET_WIN = pet_win
-        _MAIN_WIN = main_win
-        self._main_win_closed = False
-        self._pet_pos = None
-        self._pet_base = None
-        self._pet_dragging = False
-        self._pet_visible = False
-        logger.info("已注册窗口引用: 主窗口=%s 桌宠=%s",
-                    "有" if main_win else "无", "有" if pet_win else "无")
 
-    def mark_main_window_closed(self) -> None:
-        """主窗口已关闭回调（main.py 的 closed 事件回调调用，供恢复时重建窗口）。"""
-        self._main_win_closed = True
-        logger.info("主窗口已标记为关闭（_main_win_closed=True）")
 
-    def recreate_main_window(self) -> Optional[Any]:
-        """重建主窗口（主窗口已关闭后从托盘/桌宠恢复时调用）。
 
-        create_main_window 在线程中调用会走 pywebview 的非主线程创建路径，
-        与启动时加载完主窗口的路径一致。重建后重新挂载"关闭→桌宠接管"回调。
 
-        后台线程建窗偶发失败（pywebview 非主线程创建依赖一个存活实例），
-        这里对 create 失败做一次重试，并把每一步失败原因完整落日志，便于定位。
-        """
-        import time as _time
-        logger.info("recreate_main_window: 开始重建主窗口")
-        # 【2026-09-05 稳定性根治】若主窗仍存活（仅隐藏、未真正销毁），直接 show 复用，
-        # 不再二次 create_window（STA 死锁根因）。FormClosing 拦截成功时主窗从不销毁，
-        # 这条快速路径就是常态恢复路径。
-        _existing = self._main_win
-        if _existing is not None:
-            _fw = getattr(_existing, "_window", None)
-            _alive = _fw is not None and not getattr(_fw, "IsDisposed", True)
-            if _alive:
-                try:
-                    _existing.show()
-                    self.set_windows(main_win=_existing, pet_win=self._pet_win)
-                    logger.info("recreate_main_window: 主窗仍存活，直接 show 复用（跳过重建）")
-                    return _existing
-                except Exception:  # noqa: BLE001
-                    logger.warning("recreate_main_window: 复用存活主窗失败，回退重建", exc_info=True)
-        # 【2026-09-05 加固·修复 WebView2 进程泄漏】重建前先释放旧主窗口的 WebView2
-        # browser 实例，否则每次重建都会泄漏一个 msedgewebview2 进程；累积到 WebView2
-        # 的 UserDataFolder 锁被占满，下次启动主窗 WebView2 初始化会直接卡死（整进程冻结）。
-        _old = self._main_win
-        if _old is not None:
-            try:
-                _old.destroy()
-                logger.info("recreate_main_window: 已释放旧主窗口 WebView2 实例（防泄漏）")
-            except Exception:  # noqa: BLE001
-                logger.debug("recreate_main_window: 释放旧主窗口失败（可忽略）", exc_info=True)
-        for _attempt in (1, 2):
-            try:
-                win = create_main_window(api=self)
-                if win is None:
-                    logger.error("recreate_main_window: 第%d次 create_main_window 返回 None", _attempt)
-                    if _attempt == 1:
-                        _time.sleep(1.0)
-                        continue
-                    return None
-                logger.info("recreate_main_window: create_main_window 成功 (attempt=%d, win=%s)",
-                            _attempt, win)
-                self.set_windows(main_win=win, pet_win=self._pet_win)
 
-                # 重新挂载主窗口关闭回调：关闭 → 标记已关闭 + 桌宠接管
-                def _on_main_closed(_win=None):
-                    try:
-                        self.mark_main_window_closed()
-                        self.pet_show()
-                    except Exception:  # noqa: BLE001
-                        logger.warning("主窗口关闭后显示桌宠失败", exc_info=True)
-                win.events.closed += _on_main_closed
 
-                try:
-                    win.show()
-                    logger.info("recreate_main_window: win.show() 已调用 (attempt=%d)", _attempt)
-                except Exception as e:  # noqa: BLE001
-                    logger.warning("recreate_main_window: win.show() 失败: %s", e)
 
-                # 校验窗口确已注册并显示，避免"返回了对象但实际未显示"的假成功
-                import webview as _webview
-                _reg = any(getattr(w, "uid", None) == win.uid for w in _webview.windows)
-                _shown = win.events.shown.wait(5)
-                if _reg and _shown:
-                    logger.info("recreate_main_window: 主窗口重建完成并已显示 (attempt=%d)", _attempt)
-                    return win
-                logger.error("recreate_main_window: 窗口未实际显示（registered=%s shown=%s），"
-                             "视为失败处理 (attempt=%d)", _reg, _shown, _attempt)
-                if _attempt == 1:
-                    _time.sleep(1.0)
-                    continue
-                return None
-            except Exception as e:  # noqa: BLE001
-                logger.exception("recreate_main_window: 第%d次重建主窗口异常", _attempt)
-                if _attempt == 1:
-                    _time.sleep(1.0)
-                    continue
-                return None
 
-    def pet_show(self) -> dict:
-        """显示桌面桌宠浮窗（透明 / 无边框 / 置顶）。"""
-        if self._pet_win is None:
-            return {"ok": False, "error": "桌宠窗口未初始化"}
-        try:
-            self._pet_win.show()
-            # 刷新位置缓存（拖动时按增量移动，避免每次查询窗口位置）
-            try:
-                self._pet_pos = (int(self._pet_win.x), int(self._pet_win.y))
-            except Exception:  # noqa: BLE001
-                self._pet_pos = None
-            self._pet_visible = True
-            logger.info("桌宠已显示")
-            return {"ok": True, "visible": True}
-        except Exception as e:  # noqa: BLE001
-            logger.warning("显示桌宠失败: %s", e)
-            return {"ok": False, "error": str(e)}
 
-    def pet_hide(self) -> dict:
-        """隐藏桌面桌宠浮窗。"""
-        if self._pet_win is None:
-            return {"ok": False, "error": "桌宠窗口未初始化"}
-        try:
-            self._pet_win.hide()
-            self._pet_visible = False
-            logger.info("桌宠已隐藏")
-            return {"ok": True, "visible": False}
-        except Exception as e:  # noqa: BLE001
-            logger.warning("隐藏桌宠失败: %s", e)
-            return {"ok": False, "error": str(e)}
 
-    def pet_toggle_always_on_top(self) -> dict:
-        """切换桌宠窗口置顶（直接用 pywebview 原生 window.on_top 控 Form.TopMost）。
 
-        为什么不用裸 SetWindowPos + 读 WS_EX_TOPMOST：本窗是 frameless+transparent 的
-        WebView2 窗，WS_EX_TOPMOST 样式读取/设置在该类窗上不稳定（实测出现"窗口已钉但
-        读不到 WS_EX_TOPMOST、取消不掉"）。pywebview 的 on_top 直接操作正确的窗口对象，
-        取消 100% 生效、且 window.on_top 可直读真实状态 → 右键文案与窗口永远一致。
-        钉上时仍起每 1s 保活线程重新 on_top=True，恒盖过音乐软件等其它 TopMost 窗口。
-        """
-        global _PET_TOPMOST, _PET_KEEPALIVE_ON
-        try:
-            _PET_TOPMOST = not _PET_TOPMOST
-            if _PET_TOPMOST:
-                _pet_install_topmost_guard()   # 钉最前：启动每 1s 保活
-            else:
-                _PET_KEEPALIVE_ON = False       # 关保活线程
-            _pet_apply_topmost()
-            # 直读 window.on_top 真实状态（不再读 WS_EX_TOPMOST）
-            on_top = _PET_TOPMOST
-            if self._pet_win is not None:
-                try:
-                    on_top = bool(self._pet_win.on_top)
-                except Exception:  # noqa: BLE001
-                    pass
-            logger.info("桌宠置顶: %s (win_on_top=%s)", _PET_TOPMOST, on_top)
-            return {"ok": True, "on_top": on_top}
-        except Exception as e:  # noqa: BLE001
-            logger.warning("切换桌宠置顶失败: %s", e)
-            return {"ok": False, "error": str(e), "on_top": _PET_TOPMOST}
 
-    def pet_is_on_top(self) -> dict:
-        """返回桌宠当前是否真的置顶（直读 window.on_top 真实状态，而非 Python 标志）。"""
-        try:
-            if self._pet_win is not None:
-                return {"ok": True, "on_top": bool(self._pet_win.on_top)}
-        except Exception:  # noqa: BLE001
-            pass
-        return {"ok": True, "on_top": _PET_TOPMOST}
 
-    def pet_set_capture_hidden(self, hidden: bool) -> dict:
-        """切换桌宠对屏幕捕获是否隐身（截图/录屏/共享都抓不到；自己屏上照常可见）。"""
-        try:
-            ok = _pet_set_capture_hidden(bool(hidden))
-            return {"ok": ok, "hidden": _PET_CAPTURE_HIDDEN}
-        except Exception as e:  # noqa: BLE001
-            logger.warning("切换桌宠截屏隐身失败: %s", e)
-            return {"ok": False, "error": str(e)}
 
-    def pet_is_capture_hidden(self) -> dict:
-        """返回桌宠是否对屏幕捕获隐身（供右键菜单显示真实状态）。"""
-        return {"ok": True, "hidden": _PET_CAPTURE_HIDDEN}
 
-    def pet_set_char_hidden(self, hidden: bool) -> dict:
-        """桌宠右键「隐藏角色」持久化（rig 页面 hidechar 菜单项调用）。"""
-        try:
-            flag = bool(hidden)
-            if self._cfg is not None:
-                self._cfg.raw.setdefault("ui", {})["pet_char_hidden"] = flag
-                try:
-                    self._save_config()
-                except Exception:  # noqa: BLE001
-                    pass
-            return {"success": True, "hidden": flag}
-        except Exception as e:  # noqa: BLE001
-            return {"success": False, "error": str(e)}
-
-    def pet_get_char_hidden(self) -> dict:
-        """读角色隐藏状态（rig 启动时恢复用）。"""
-        try:
-            flag = bool(((self._cfg.raw.get("ui") or {}).get("pet_char_hidden"))
-                        if self._cfg else False)
-            return {"success": True, "hidden": flag}
-        except Exception as e:  # noqa: BLE001
-            return {"success": False, "error": str(e)}
-
-    def pet_toggle(self) -> dict:
-        """切换桌宠显示/隐藏。"""
-        if self._pet_win is None:
-            return {"ok": False, "error": "桌宠窗口未初始化"}
-        try:
-            if self._pet_visible:
-                return self.pet_hide()
-            return self.pet_show()
-        except Exception as e:  # noqa: BLE001
-            return {"ok": False, "error": str(e)}
-
-    def pet_is_visible(self) -> bool:
-        """桌宠窗口当前是否可见。"""
-        return self._pet_visible
-
-    def pet_drag_start(self) -> dict:
-        """桌宠拖动会话开始：用 Win32 物理像素记录窗口基准 + 光标基准。
-
-        前端 mousedown 一次；后续 pet_move 完全在物理像素空间用 GetCursorPos 增量
-        定位，彻底避开 pywebview 逻辑像素(x/y 滞后且不随 SetWindowPos 更新)与
-        SetWindowPos 物理像素之间的 DPI 缩放错位——这正是"按下即瞬移/拖飞"的根因。
-        """
-        if self._pet_win is None:
-            return {"ok": False, "error": "桌宠窗口未初始化"}
-        try:
-            hwnd = _pet_find_hwnd()
-            bx, by = 0, 0
-            if hwnd:
-                r = _wt.RECT()
-                if _u32.GetWindowRect(hwnd, _ct.byref(r)):
-                    bx, by = r.left, r.top
-            cur = _POINT()
-            _u32.GetCursorPos(_ct.byref(cur))
-            self._pet_base = (bx, by)
-            self._pet_cursor0 = (cur.x, cur.y)
-            self._pet_dragging = True
-            return {"ok": True}
-        except Exception as e:  # noqa: BLE001
-            logger.warning("记录桌宠拖动基准失败: %s", e)
-            return {"ok": False, "error": str(e)}
-
-    def pet_drag_end(self) -> dict:
-        """拖动会话结束：复位拖动标志（mouseup 时前端调用）。"""
-        try:
-            self._pet_dragging = False
-        except Exception:  # noqa: BLE001
-            pass
-        return {"ok": True}
-
-    def pet_move(self, dx: float = 0, dy: float = 0) -> dict:
-        """拖动中绝对定位：窗口新位置 = 基准(物理) + 光标物理位移，抓取点零漂移。
-
-        dx/dy 不再使用（由后端用 GetCursorPos 自行计算，保证与基准同处物理像素空间，
-        在 4K/150% 等缩放下也 1:1 跟手、按下不瞬移）。
-        SWP_NOSIZE|NOZORDER|NOACTIVATE 保持尺寸/置顶/不抢焦点——拖动不影响置顶状态。
-        """
-        if self._pet_win is None:
-            return {"ok": False, "error": "桌宠窗口未初始化"}
-        try:
-            if not getattr(self, "_pet_dragging", False) or self._pet_base is None:
-                return {"ok": False, "error": "未进入拖动"}
-            bx, by = self._pet_base
-            cx0, cy0 = self._pet_cursor0
-            cur = _POINT()
-            _u32.GetCursorPos(_ct.byref(cur))
-            nx = bx + (cur.x - cx0)
-            ny = by + (cur.y - cy0)
-            hwnd = _pet_find_hwnd()
-            if hwnd:
-                _u32.SetWindowPos(hwnd, 0, nx, ny, 0, 0, 0x0001 | 0x0004 | 0x0010)
-            return {"ok": True}
-        except Exception as e:  # noqa: BLE001
-            logger.warning("移动桌宠失败: %s", e)
-            return {"ok": False, "error": str(e)}
-
-    def pet_hit_rect(self, rects: list) -> dict:
-        """前端上报角色命中矩形（窗口客户区物理像素矩形列表）→ 窗体层画矩形提供命中。
-
-        结论：TransparencyKey 分层窗口命中只认"窗体自绘非 key 像素"（WebView2
-        内容不计入），因此角色矩形(非品红)画到窗体层——被角色像素覆盖视觉不可见、
-        又提供命中；矩形外品红 key 色系统自动挖空+点击穿透。前端 reportPetBody
-        在模型渲染稳定后一次性用 gl.readPixels 算角色包围盒（固定矩形，覆盖整个
-        人物），此后不再计算上报，避免逐像素抠像的计算负担和晃动时卡黑边。
-        """
-        try:
-            logger.debug("[PET] 命中形状上报: %d 个矩形", len(rects) if rects else 0)
-            native = getattr(self._pet_win, "native", None)
-            if native is not None and hasattr(native, "set_pet_hit_rect"):
-                native.set_pet_hit_rect(rects)
-        except Exception as e:  # noqa: BLE001
-            logger.warning("更新桌宠命中区失败: %s", e)
-        return {"ok": True}
-
-    def prevent_window_close(self) -> dict:
-        """阻止窗口关闭，改为最小化到托盘。"""
-        logger.info("阻止窗口关闭，最小化到托盘")
-        return {"success": True, "message": "窗口已最小化到托盘"}
     
-    def hide_window(self) -> dict:
-        """隐藏窗口而不是关闭。"""
-        logger.info("隐藏窗口而不是关闭")
-        self.main_ui_expected_visible = False   # 窗口守护：主动隐藏不算异常消失
-        if self._main_win is not None:
-            try:
-                # 尝试多种方法来隐藏窗口
-                methods = []
-                
-                # 方法1: 直接调用hide方法
-                if hasattr(self._main_win, 'hide'):
-                    self._main_win.hide()
-                    methods.append("hide")
-                
-                # 方法2: 尝试设置窗口不可见
-                if hasattr(self._main_win, '_window') and hasattr(self._main_win._window, 'setVisible'):
-                    self._main_win._window.setVisible(False)
-                    methods.append("window.setVisible")
-                
-                logger.info(f"已尝试隐藏方法: {methods}")
-                
-                if methods:
-                    logger.info("窗口已隐藏")
-                    return {"success": True, "message": "窗口已隐藏"}
-                else:
-                    logger.warning("窗口对象没有隐藏方法")
-                    return {"success": False, "error": "窗口对象没有隐藏方法"}
-            except Exception as e:
-                logger.error("隐藏窗口失败: %s", e)
-                return {"success": False, "error": str(e)}
-        else:
-            logger.warning("主窗口不存在")
-            return {"success": False, "error": "主窗口不存在"}
     
-    def pet_open_main(self) -> dict:
-        """回到主窗口：隐藏桌宠并恢复/聚焦主窗口；主窗口已关闭时自动重建。"""
-        if self._pet_win is not None:
-            try:
-                self._pet_win.hide()
-                self._pet_visible = False
-            except Exception:  # noqa: BLE001
-                pass
 
-        win = self._main_win
-        if win is None or self._main_win_closed:
-            win = self.recreate_main_window()
-        if win is not None:
-            try:
-                # pywebview show() 内部会 Show()+Activate()，即带回前台聚焦
-                win.show()
-                self.main_ui_expected_visible = True   # 窗口守护：恢复显示即重置期望
-                return {"ok": True}
-            except Exception as e:  # noqa: BLE001
-                logger.warning("恢复主窗口失败: %s", e)
-        return {"ok": True, "note": "主窗口不可恢复（可能已关闭）"}
-
-    def pet_interact(self, context: str = "click") -> dict:
-        """桌宠互动：触发AI生成个性化对话和动作。
-        
-        Args:
-            context: 互动上下文，如 "click", "double_click", "drag" 等
-            
-        Returns:
-            {"success": bool, "text": str, "action": str, "expression": str}
-        """
-        if self._dialogue is None:
-            return {"success": False, "error": "对话系统未注入"}
-        if self._bus is None:
-            return {"success": False, "error": "事件总线未注入"}
-        if self._loop is None or not self._loop.is_running():
-            return {"success": False, "error": "主事件循环未运行"}
-        
-        try:
-            # 检查缓存
-            import time
-            now = time.time()
-            cache_key = self._generate_cache_key(context)
-            
-            # 检查是否有有效的缓存
-            cached_response = self._get_cached_response(cache_key, now)
-            if cached_response:
-                # 使用缓存响应，不记录到历史（避免重复）
-                self._add_to_conversation_history(context, cached_response['text'], 
-                                                cached_response['action'], cached_response['expression'])
-                
-                # 发送缓存响应事件到总线
-                async def _publish_cached():
-                    await self._bus.publish(Event(EventType.AI_DECISION, {
-                        "text": cached_response['text'],
-                        "action": cached_response['action'],
-                        "emotion": cached_response['expression'],
-                        "source": "pet_interaction_cached",
-                        "user_activity": f"桌宠{context}互动（缓存）",
-                    }, "webapp"))
-                
-                self._run_coro(_publish_cached())
-                
-                return {
-                    "success": True,
-                    "text": cached_response['text'],
-                    "action": cached_response['action'],
-                    "expression": cached_response['expression'],
-                    "cached": True
-                }
-            
-            # 更新互动时间
-            self._pet_last_interaction = now
-            
-            # 构建包含上下文的提示词
-            prompt = self._build_pet_interaction_prompt_with_context(context)
-            
-            # 异步调用AI生成对话
-            async def _generate_response():
-                # 构建丰富的上下文信息
-                temp_context = {
-                    "type": context,
-                    "character": getattr(self._cfg, 'character', '达妮娅'),
-                    "personality": getattr(self._cfg, 'personality', '慵懒俏皮'),
-                    "time_of_day": self._get_time_of_day(),
-                    "interaction_count": len(self._pet_conversation_history) + 1,
-                    "recent_interactions": self._get_recent_interactions(3),  # 最近3次互动
-                    "user_activity": f"桌宠{context}互动",
-                }
-                
-                # 调用对话系统
-                if hasattr(self._dialogue, 'generate_response'):
-                    response = await self._dialogue.generate_response(
-                        user_message=prompt,
-                        context=temp_context,
-                        mode="pet_interaction"
-                    )
-                    return response
-                else:
-                    # 回退到简单响应
-                    return self._get_fallback_pet_response(context)
-            
-            # 投递到主线程执行
-            response = self._run_coro(_generate_response())
-            
-            if response and isinstance(response, dict):
-                # 解析响应并返回结构化数据
-                text = response.get('text', '')
-                action = response.get('action', '')
-                # 【2026-10-11】generate_response 返回的主键是 `emotion`（`expression` 为兼容
-                #   别名）；此前只读 expression ⇒ 表情会丢成空串（实测泄漏条目 emotion=''）。
-                expression = response.get('expression') or response.get('emotion') or ''
-                # 桌宠气泡同样会上屏 + 被 TTS 念：去动作/场景描写 + 剥 markdown，
-                #   别把「（懒洋洋地翻了个身）」这类旁白念出来；顺带兜一道万一漏进来的 JSON 残骸。
-                if self._dialogue is not None:
-                    try:
-                        text = self._dialogue._strip_markdown(text)
-                        text = self._dialogue._strip_stage_directions(text)
-                    except Exception:  # noqa: BLE001
-                        logger.debug("桌宠文本清理失败（忽略）", exc_info=True)
-                
-                # 缓存响应
-                self._cache_response(cache_key, response, now)
-                
-                # 记录到对话历史
-                self._add_to_conversation_history(context, text, action, expression)
-                
-                # 发送互动事件到总线
-                async def _publish_interaction():
-                    await self._bus.publish(Event(EventType.AI_DECISION, {
-                        "text": text,
-                        "action": action,
-                        "emotion": expression,
-                        "source": "pet_interaction",
-                        "user_activity": f"桌宠{context}互动",
-                    }, "webapp"))
-                
-                self._run_coro(_publish_interaction())
-                
-                return {
-                    "success": True,
-                    "text": text,
-                    "action": action,
-                    "expression": expression,
-                    "cached": False
-                }
-            else:
-                # AI响应失败，使用回退对话
-                fallback = self._get_fallback_pet_response(context)
-                self._cache_response(cache_key, fallback, now)
-                self._add_to_conversation_history(context, fallback['text'], fallback['action'], fallback['expression'])
-                return {
-                    "success": True,
-                    "text": fallback['text'],
-                    "action": fallback['action'],
-                    "expression": fallback['expression'],
-                    "cached": False
-                }
-                
-        except Exception as e:
-            logger.exception("桌宠互动失败")
-            # 失败时使用回退对话
-            fallback = self._get_fallback_pet_response(context)
-            self._add_to_conversation_history(context, fallback['text'], fallback['action'], fallback['expression'])
-            return {
-                "success": True,
-                "text": fallback['text'],
-                "action": fallback['action'],
-                "expression": fallback['expression'],
-                "note": f"AI响应失败，使用回退对话: {str(e)}"
-            }
     
     def _generate_cache_key(self, context: str) -> str:
         """生成缓存键（基于上下文和互动历史）。"""
@@ -1393,51 +535,7 @@ class CharacterAPI:
         for key in expired_keys:
             del self._pet_response_cache[key]
     
-    def clear_pet_cache(self):
-        """清空桌宠响应缓存。"""
-        self._pet_response_cache.clear()
-        logger.info("桌宠响应缓存已清空")
     
-    def _build_pet_interaction_prompt_with_context(self, context: str) -> str:
-        """构建包含上下文的桌宠互动提示词。"""
-        character = getattr(self._cfg, 'character', '达妮娅')
-        personality = getattr(self._cfg, 'personality', '慵懒俏皮')
-        
-        # 基础提示词模板
-        base_prompts = {
-            "click": f"""
-你是{character}，性格{personality}。用户点击了你，你应该做出可爱的反应。
-最近互动：{self._get_recent_interactions_summary()}
-当前时间：{self._get_time_of_day()}
-请返回JSON格式的响应：
-{{
-    "text": "你说的话",
-    "action": "动作名称（如nod, shake, thinking等）",
-    "emotion": "表情名称（如smile, surprise, curious等）"
-}}""",
-            "double_click": f"""
-你是{character}，性格{personality}。用户双击了你，表现出惊喜和喜悦。
-最近互动：{self._get_recent_interactions_summary()}
-当前时间：{self._get_time_of_day()}
-请返回JSON格式的响应：
-{{
-    "text": "惊喜的话",
-    "action": "惊讶动作（如surprised, cheer等）",
-    "emotion": "惊讶表情（如surprise等）"
-}}""",
-            "drag": f"""
-你是{character}，性格{personality}。用户拖动你，你感到有些紧张但又配合，应该表现出轻微摇摆和闭眼的反应。
-最近互动：{self._get_recent_interactions_summary()}
-当前时间：{self._get_time_of_day()}
-请返回JSON格式的响应：
-{{
-    "text": "被拖动时紧张的话",
-    "action": "下半身摇摆（sway）",
-    "emotion": "紧张表情（sleepy）"
-}}"""
-        }
-        
-        return base_prompts.get(context, base_prompts["click"])
     
     def _get_time_of_day(self) -> str:
         """获取时间段描述。"""
@@ -1485,83 +583,7 @@ class CharacterAPI:
         if len(self._pet_conversation_history) > 20:
             self._pet_conversation_history = self._pet_conversation_history[-20:]
     
-    def _build_pet_interaction_prompt(self, context: str) -> str:
-        """构建桌宠互动的提示词。"""
-        character = getattr(self._cfg, 'character', '达妮娅')
-        personality = getattr(self._cfg, 'personality', '慵懒俏皮')
-        
-        prompts = {
-            "click": f"{character}被用户点击了一下，{personality}的性格，应该做出什么反应？请返回JSON格式：{{'text': '对话内容', 'action': '动作名称', 'expression': '表情名称'}}",
-            "double_click": f"{character}被用户双击，表现出惊讶和喜悦，{personality}的性格，应该说什么做什么？请返回JSON格式：{{'text': '惊喜的对话', 'action': '惊讶动作', 'expression': '惊讶表情'}}",
-            "drag": f"{character}被用户拖动，{personality}的性格，应该有什么反应？请返回JSON格式：{{'text': '被拖动的对话', 'action': '轻微摆动', 'expression': '中性表情'}}",
-        }
-        
-        return prompts.get(context, prompts["click"])
     
-    def _get_fallback_pet_response(self, context: str) -> dict:
-        """获取回退的桌宠互动响应（增加多样性）。"""
-        # 根据互动历史选择不同的回应，避免重复
-        recent_texts = [h['text'] for h in self._pet_conversation_history[-3:] if h['context'] == context]
-        
-        # 点击互动的多样化回应
-        click_responses = [
-            {"text": "哎呀，被你戳到了～", "action": "nod", "expression": "smile"},
-            {"text": "嗯？叫我有什么事吗？", "action": "thinking", "expression": "curious"},
-            {"text": "嘿嘿，被你发现啦～", "action": "wink", "expression": "winkL"},
-            {"text": "啊！好痒～", "action": "giggle", "expression": "smile"},
-            {"text": "你在玩我吗？", "action": "pout", "expression": "neutral"},
-            {"text": "戳我干嘛呀～", "action": "head_tilt", "expression": "curious"},
-            {"text": "嘻嘻，被你戳到啦～", "action": "bounce", "expression": "smile"},
-            {"text": "哎呀，别戳了啦～", "action": "shake_head", "expression": "smile"}
-        ]
-        
-        # 双击互动的多样化回应
-        double_click_responses = [
-            {"text": "哇！吓我一跳～", "action": "surprised", "expression": "surprise"},
-            {"text": "呀！你双击我干嘛？", "action": "jump", "expression": "surprise"},
-            {"text": "哇哦！好惊喜～", "action": "cheer", "expression": "smile"},
-            {"text": "啊！好突然～", "action": "blink", "expression": "surprise"},
-            {"text": "嘻嘻，好激动～", "action": "excited", "expression": "smile"},
-            {"text": "哇！你好热情～", "action": "wave", "expression": "smile"}
-        ]
-        
-        # 拖拽互动的多样化回应
-        drag_responses = [
-            {"text": "嘿嘿，你在带我玩吗～", "action": "thinking", "expression": "curious"},
-            {"text": "哇！你在带我飞～", "action": "sway", "expression": "sleepy"},
-            {"text": "好紧张呀～别掉下去～", "action": "sway", "expression": "sleepy"},
-            {"text": "嘻嘻，好刺激～", "action": "excited", "expression": "smile"},
-            {"text": "你要带我去哪里呀～", "action": "sway", "expression": "curious"},
-            {"text": "哇！好高呀～", "action": "sway", "expression": "surprise"}
-        ]
-        
-        # 根据上下文选择响应池
-        response_pools = {
-            "click": click_responses,
-            "double_click": double_click_responses,
-            "drag": drag_responses
-        }
-        
-        pool = response_pools.get(context, click_responses)
-        
-        # 避免重复使用最近的回应
-        available_responses = [r for r in pool if r['text'] not in recent_texts]
-        
-        # 如果没有可用的（避免重复），随机选择
-        if available_responses:
-            import random
-            return random.choice(available_responses)
-        else:
-            return random.choice(pool)
-        
-        # 默认回应（理论上不会执行到这里）
-        default_responses = {
-            "click": {"text": "在呢～有什么事吗？", "action": "nod", "expression": "smile"},
-            "double_click": {"text": "哇哦！", "action": "surprised", "expression": "surprise"},
-            "drag": {"text": "嘿嘿～", "action": "sway", "expression": "curious"}
-        }
-        
-        return default_responses.get(context, default_responses["click"])
     
     # ======== 系统托盘管理 ========
     def enable_tray(self, enabled: bool = True) -> dict:
@@ -1632,29 +654,7 @@ class CharacterAPI:
         return {"ok": True, "minimize_to_tray": enabled}
 
     # ======== 看板娘表情特效位置（泪滴/zzz 拖拽定位，供前端保存/读取） ========
-    def save_live2d_fx(self, offsets: dict) -> dict:
-        """保存看板娘表情特效（泪滴/zzz）的拖拽偏移到 data/live2d_fx.json。"""
-        try:
-            p = os.path.join(os.path.dirname(__file__), "..", "..", "data", "live2d_fx.json")
-            os.makedirs(os.path.dirname(p), exist_ok=True)
-            with open(p, "w", encoding="utf-8") as f:
-                json.dump(offsets or {}, f, ensure_ascii=False, indent=2)
-            return {"ok": True, "path": p}
-        except Exception as e:  # noqa: BLE001
-            logger.warning("保存看板娘特效位置失败: %s", e)
-            return {"ok": False, "error": str(e)}
 
-    def get_live2d_fx(self) -> dict:
-        """读取看板娘表情特效拖拽偏移（不存在时返回空 dict）。"""
-        try:
-            p = os.path.join(os.path.dirname(__file__), "..", "..", "data", "live2d_fx.json")
-            if not os.path.exists(p):
-                return {}
-            with open(p, "r", encoding="utf-8") as f:
-                d = json.load(f)
-            return d if isinstance(d, dict) else {}
-        except Exception:  # noqa: BLE001
-            return {}
 
     # ======== 运行时注入 ========
     def set_runtime(self, dialogue=None, bus=None, loop=None, tts=None,
@@ -2589,8 +1589,8 @@ class CharacterAPI:
             return {"success": False, "error": "校准悬浮窗已打开（请先关闭开关）"}
         try:
             import tkinter  # noqa: F401
-        except Exception as e:
-            return {"success": False, "error": f"tkinter 不可用: {e}"}
+        except Exception:
+            return {"success": False, "error": "此版本未包含 tkinter（内置运行时为无 tcl/tk 的精简版），OCR 校准窗口不可用"}
         try:
             from .ocr_calibrator import run_calibrator
         except Exception as e:
@@ -2672,8 +1672,8 @@ class CharacterAPI:
             return {"success": False, "error": "对话悬浮层已打开（请先关闭开关）"}
         try:
             import tkinter  # noqa: F401
-        except Exception as e:
-            return {"success": False, "error": f"tkinter 不可用: {e}"}
+        except Exception:
+            return {"success": False, "error": "此版本未包含 tkinter（内置运行时为无 tcl/tk 的精简版），对话悬浮层不可用"}
         try:
             from .chat_overlay import run_chat_overlay
         except Exception as e:
@@ -4281,33 +3281,7 @@ class CharacterAPI:
         self._overlay_push("ai", text)
         _wv2_broadcast({"type": "chat_push"})
 
-    def _pet_bubble(self, text: str) -> None:
-        """把双工看屏互动文本推入桌宠气泡队列（由桌宠窗轮询取走显示）。
 
-        不在这里直接 evaluate_js 打桌宠窗：pywebview 的 evaluate_js 必须在 GUI 线程
-        调用，而本回调运行在事件总线/双工线程，跨线程 evaluate_js 经实测不可靠、气泡
-        会不弹（见 webapp.py:5279 注释）。改用"桌宠窗主动轮询 window.pywebview.api
-        .pop_pet_bubble"——与点击 pet_interact 是同一条已验证可用的通道，彻底规避
-        跨线程注入与 WebView2 消息事件的坑。
-        """
-        try:
-            self._pet_bubble_q.put(text)
-        except Exception:  # noqa: BLE001
-            pass
-
-    def pop_pet_bubble(self) -> str:
-        """桌宠窗轮询取走待显示的气泡文本（window.pywebview.api 调用）。
-
-        返回队列中最新一条并清空更早积压（避免一次性弹出一堆旧句）；无则空串。
-        由桌宠窗 JS 每 ~250ms 调用一次，线程安全（queue.get_nowait）。
-        """
-        last = ""
-        while True:
-            try:
-                last = self._pet_bubble_q.get_nowait()
-            except Exception:  # noqa: BLE001
-                break
-        return last or ""
 
     def pop_notify_cmd(self) -> list:
         """桌宠页轮询取走通知卡命令（与 pop_pet_bubble 同款已验证 JS→Python 通道）。
@@ -4321,12 +3295,6 @@ class CharacterAPI:
         except Exception:  # noqa: BLE001
             return []
 
-    def pet_bubble_shown(self, text: str = "") -> None:
-        """桌宠窗确认气泡已渲染（调试回执，验证后端→桌宠窗投递链路是否真的到达渲染）。
-
-        由 rig/index.html 的 petShowBubble 在真正露出气泡后调用，仅用于排障日志。
-        """
-        logger.info("[pet_bubble] 已渲染回执: %r", (text or "")[:60])
 
     async def _on_chat_unity_inbound(self, e: Event) -> None:
         """Unity 点击模型触发的对话。"""
@@ -7202,8 +6170,7 @@ class CharacterAPI:
     # ==========================================================
     def open_bailian_console(self, url_key: str = "free_quota") -> dict:
         """在应用内打开百炼控制台窗口（真实额度 / 用量 / 开「用完即停」）。"""
-        global _BAILIAN_CONSOLE_WIN
-        win = _BAILIAN_CONSOLE_WIN
+        win = STATE.bailian_console_win
         if win is None:
             # 兜底：理论上启动期已建；若缺失才尝试重建（非 GUI 线程有风险，仅兜底）。
             try:
@@ -7221,16 +6188,15 @@ class CharacterAPI:
             win.restore()
             win.show()
             # Step2：首次打开后启动 60s 周期注入（只起一次；失败静默不影响主功能）。
-            global _BAILIAN_INJECT_TIMER
-            if _BAILIAN_INJECT_TIMER is None:
+            if STATE.bailian_inject_timer is None:
                 try:
                     t = threading.Timer(3.0, _bailian_inject_loop, args=(win,))
                     t.daemon = True
-                    _BAILIAN_INJECT_TIMER = t
+                    STATE.bailian_inject_timer = t
                     t.start()
                     logger.info("[百炼控制台] 取数注入循环已启动（60s/次）")
                 except Exception:  # noqa: BLE001
-                    _BAILIAN_INJECT_TIMER = None
+                    STATE.bailian_inject_timer = None
             return {"success": True, "url": url}
         except Exception as e:  # noqa: BLE001
             logger.exception("[百炼控制台] 打开失败")
@@ -7262,7 +6228,7 @@ class CharacterAPI:
 
     def get_bailian_console_status(self) -> dict:
         """前端额度卡轮询：百炼控制台内嵌窗口是否可用、当前已加载哪个页面。"""
-        win = _BAILIAN_CONSOLE_WIN
+        win = STATE.bailian_console_win
         if win is None:
             return {"available": False}
         return {
@@ -7535,7 +6501,7 @@ class CharacterAPI:
             # 【2026-09-04 18:28 深层根因修复】不再经线程池 + 阻塞式 evaluate_js：
             # 直接用主窗 CoreWebView2 的 ExecuteScriptAsync（fire-and-forget，零阻塞、
             # 零线程创建——线程池 submit 会动态开新线程，已实锤在主循环线程上挂死）。
-            ctrl = _WV2_CONTROLS.get(getattr(win, "uid", None))
+            ctrl = STATE.wv2_controls.get(getattr(win, "uid", None))
             if ctrl is not None:
                 # 【2026-09-05 冻结修复】ctrl.CoreWebView2 / cv2.IsConnected 是跨套间 COM
                 # 调用，在后台线程直接读会触发 STA 同步封送阻塞（同 _wv2_broadcast 根因）。
@@ -7565,7 +6531,7 @@ class CharacterAPI:
                     except Exception:  # noqa: BLE001
                         pass
 
-                _WV2_BC_EXECUTOR.submit(_do)
+                STATE.wv2_bc_executor.submit(_do)
         except Exception:
             pass
 
@@ -8652,89 +7618,6 @@ class CharacterAPI:
         except Exception as e:  # noqa: BLE001
             return {"success": False, "error": f"写入能力槽失败: {e}"}
 
-    def get_settings_health(self) -> dict:
-        """【2026-09-29 · UX #1】每个开关的生效状态：{on, effective, blocked_by, reason}。
-
-        为什么需要它：本仓存在"开关开了却不生效"的静默失效。最典型是视觉链路——
-        `runtime_status.vision_enabled` = `perception.vision.enabled` **且** `vision_models.enabled`
-        **且** `desktop_watch_enabled`，**三道闸**任一为关即全链路哑火，而 UI 原本不提示
-        （且 `perception.vision.enabled` 这道闸**没有 UI**，只能改 config）。
-
-        判定规则集中在此一处，前端**不得**各自手抄（见 UI_DESIGN_SPEC.md §7.4 / §7.5）。
-        """
-        if not self._cfg:
-            return {"success": False, "error": "配置未加载"}
-        try:
-            raw = self._cfg.raw
-            vm = raw.get("vision_models") or {}
-            per_v = ((raw.get("perception") or {}).get("vision") or {})
-            agent = raw.get("agent") or {}
-
-            # ---- 视觉感知：两道总闸（其一无 UI） ----
-            vm_enabled = bool(vm.get("enabled", True))
-            per_enabled = bool(per_v.get("enabled", True))  # 键缺失按 True
-            vision_eff = vm_enabled and per_enabled
-            if not per_enabled:
-                vision_block = ("perception_vision_enabled",
-                                "config 里 perception.vision.enabled=false（第二道视觉总闸，无 UI 开关），需手动改为 true")
-            else:
-                vision_block = (None, "")
-
-            # ---- 桌面看屏互动 ----
-            dw_on = bool(self._cfg.desktop_watch_effective())
-            dw_eff = dw_on and vision_eff
-            if vision_eff:
-                dw_block = (None, "")
-            else:
-                dw_block = ("vision", "需先开启「视觉感知」"
-                            + ("（并确认 config 的 perception.vision.enabled 为 true）" if not per_enabled else ""))
-
-            # ---- 游戏时云端看屏 ----
-            gcw_on = bool(vm.get("game_cloud_watch", False))
-            cloud_ok = self._cloud_vision_available()
-            if not dw_eff:
-                gcw_block = ("desktop_watch", "需先开启「桌面看屏互动」（它又依赖「视觉感知」）")
-            elif not cloud_ok:
-                gcw_block = ("cloud_model", "还没有可用的云端视觉模型，请到「视觉模型」选云端模型并填 Key")
-            else:
-                gcw_block = (None, "")
-            gcw_eff = gcw_on and dw_eff and cloud_ok
-
-            # ---- 电脑控制（智能体）----
-            ag_on = bool(agent.get("allow_tools_in_chat", False))
-            ag_confirm = bool(agent.get("require_confirm", False))
-            # 未开确认 ⇒ 仍部分生效（只暴露安全工具），故 effective 保持 True，仅给提示
-            ag_block = ((None, "未开「执行前确认」：仅安全工具可用，点击/输入/按键等危险工具不会暴露")
-                        if (ag_on and not ag_confirm) else (None, ""))
-
-            # ---- 云端双工看屏幕（独立总闸 _duplex_vision_enabled，仅控云端双工推屏）----
-            cdv_on = bool((raw.get("cloud_duplex") or {}).get("duplex_vision_enabled", False))
-            # 【2026-10-08 审核修复】与前端门控 / _read_cloud_duplex 保持一致：综合判定
-            # cloud_omni.api_key、cloud_duplex.voice/video.api_key、official_default 任一即可。
-            # 否则在新版分端点入口填 Key 时，门控放行但 health 仍报「未绑定」，前后矛盾。
-            cloud_duplex_key = bool(self._read_cloud_duplex().get("cloud_key_set", False))
-            if not cloud_duplex_key:
-                cdv_block = ("cloud_model",
-                             "需先绑定云端双工 Key（模型与 API → 云端双工）开关才真正推屏")
-            else:
-                cdv_block = (None, "")
-
-            def _mk(on: bool, eff: bool, blk) -> dict:
-                return {"on": bool(on), "effective": bool(eff),
-                        "blocked_by": blk[0], "reason": blk[1]}
-
-            return {"success": True, "switches": {
-                "vision": _mk(vm_enabled, vision_eff, vision_block),
-                "desktop_watch": _mk(dw_on, dw_eff, dw_block),
-                "game_cloud_watch": _mk(gcw_on, gcw_eff, gcw_block),
-                "duplex_vision_enabled": _mk(cdv_on, cdv_on and cloud_duplex_key, cdv_block),
-                "agent_tools": _mk(ag_on, ag_on, ag_block),
-                "cloud_model": {"on": bool(cloud_ok), "effective": bool(cloud_ok),
-                                "blocked_by": None, "reason": ""},
-            }}
-        except Exception as e:  # noqa: BLE001
-            logger.exception("get_settings_health 失败")
-            return {"success": False, "error": str(e)}
 
     def get_quota_status(self, force: bool = False) -> dict:
         """【2026-10-19 新增】模型额度 / Key 可用性状态（**非打扰式**提示用）。
@@ -8990,6 +7873,10 @@ class CharacterAPI:
         base_url = (opts.get("base_url") or dft_base).rstrip("/")
         # 【2026-10-17 修正·禁止硬编码】优先用用户在设置里选的模型，
         # 其次读配置里的对话模型，最后才用目录默认常量。
+        # 【2026-10-19 合并修复】目录默认对话模型常量在 slot_config 里定义；
+        # 原队友版直接引用 `_ALIYUN_DEFAULT_CHAT` 却从未导入——只有 opts 和
+        # 配置里都没有模型时才会走到这行（NameError 潜伏），全局名完整性闸门抓出。
+        from ..models.slot_config import _ALIYUN_DEFAULT_CHAT  # noqa: PLC0415
         llm_model = (opts.get("llm_model")
                      or ((self._cfg.raw.get("text_chat") or {}).get("model") if self._cfg else "")
                      or _ALIYUN_DEFAULT_CHAT)
@@ -9789,7 +8676,10 @@ class CharacterAPI:
                         continue
                     if int(d.get("maxOutputChannels", 0) or 0) > 0:
                         _push(i, d.get("name"))
-            return out
+            # 【2026-10-17 修】原为 `return out`，但本函数从未定义 out →
+            # 走 pyaudiowpatch 回退分支必然 NameError，被外层 except 吞掉后返回 []，
+            # 表现为「没有输出设备可选」。这里与 sounddevice 分支保持一致收口。
+            return self._finalize_device_list(rows, "输出") if rows else []
         except Exception:  # noqa: BLE001
             logger.debug("枚举扬声器设备失败", exc_info=True)
             return []
@@ -17306,8 +16196,8 @@ class CharacterAPI:
         os.makedirs(out_dir, exist_ok=True)
         try:
             _abs = os.path.abspath(out_dir)
-            if _abs not in _LOCAL_IMG_EXTRA_DIRS:
-                _LOCAL_IMG_EXTRA_DIRS.append(_abs)
+            if _abs not in STATE.local_img_extra_dirs:
+                STATE.local_img_extra_dirs.append(_abs)
         except Exception:  # noqa: BLE001
             pass
         urls = []
@@ -18176,425 +17066,8 @@ class CharacterAPI:
             pass
 
 
-def _ensure_web_server() -> str:
-    """启动一个本地 HTTP 服务（仅本机 127.0.0.1）提供 src/ui/web 目录，
-    作为主窗口/桌宠页面的加载源（替代 file://，规避 WebView2 对 file:// 的
-    各种加载限制导致的空白/黑屏）。模块级单例，只起一次。返回基础 URL。
-    """
-    global _WEB_SERVER_BASE, _WEB_START_TOKEN
-    if _WEB_SERVER_BASE:
-        return _WEB_SERVER_BASE
-    import http.server
-    import socketserver
-    import re as _re
-    web_root = os.path.join(os.path.dirname(os.path.abspath(__file__)), "web")
-    # 每次启动生成一个唯一令牌，注入到所有 HTML 里引用的 ?v= 版本号上，
-    # 强制 WebView2 永远拿不到磁盘缓存的旧 JS/CSS（实测 no-store / 启动清缓存都不可靠：
-    # 旧 ?v=2 的 morph_icons.js 一旦被缓存，跑的就是无 _cb 时间戳逻辑的老 JS，
-    # 导致 SPA 切栏一直拉旧版 HTML、旧聊天页 gsap.from(opacity:0) 卡透明态）。
-    _WEB_START_TOKEN = str(int(time.time()))
-    _V_RE = _re.compile(r'\?v=[^"\'>\s]+')
-    # 兜底：给【未带 ?v=】的本地 CSS/JS 资源也补上启动令牌。
-    # 旧逻辑只重写已有的 ?v=，若某 HTML 以 <link href="x.css"> / <script src="x.js">
-    # （无 ?v=）引用资源，WebView2 会跨重启命中磁盘缓存 → 改了样式/逻辑却看不到。
-    # 关键：绝不给 .html（SPA 导航链接）加戳，否则 spa.js 解析路径会变成 xxx.html?v=.. 而 404。
-    _ASSET_RE = _re.compile(r'(href|src)=("|\')([^"\']+?\.(?:css|js))\2')
-    # 「外壳守门」脚本：redesign 子页若被当成顶层文档整页加载（F5 / location.reload /
-    # 浏览器前进后退 / window.location.href 直跳 / 会话恢复），它会在第一时间回到外壳
-    # index.html，并把原目标页写进 sessionStorage，由 spa.js 的 bootRestore 接着 SPA 载入。
-    # 为什么必须这样：子页独立文档里【没有 spa.js、没有右栏 Live2D 舞台、侧栏还是各自
-    # 文件里的旧副本】→ 一旦整页加载就是用户反馈的「无缘无故卡回老页面」，且此后所有点击
-    # 都退化成整页跳转、再也回不去外壳。外壳已由 spa.js 置上 window.__SPA_SHELL，
-    # 所以 SPA 正常注入子页脚本时这段会直接 return，不影响切栏。
-    _SHELL_GUARD = (
-        "<script>(function(){try{"
-        "if(window.__SPA_SHELL)return;"
-        "if(window.top!==window)return;"
-        "var p=location.pathname||'';"
-        "if(!/^\\/redesign\\/[^/]+\\.html$/.test(p))return;"
-        "try{sessionStorage.setItem('__spa_pending',p+(location.search||''));}catch(e){}"
-        "location.replace('/index.html');"
-        "}catch(e){}})();</script>"
-    )
-    # 三个「知识库」别名桩（391B，内部只有 meta refresh + location.replace）：
-    # 一旦被当子页拉取，DOM 里根本没有 .main，SPA 会直接抛错。统一换成真身 lib.html。
-    _SPA_ALIAS = {
-        'redesign/kb.html': 'redesign/lib.html',
-        'redesign/knowledge_base.html': 'redesign/lib.html',
-        'redesign/ui_redesign_knowledge.html': 'redesign/lib.html',
-    }
-    def _stamp_html(_html, _tok, _rel=''):
-        _html = _V_RE.sub('?v=' + _tok, _html)          # 兼容旧 ?v= 写法
-        def _add(m):
-            _attr, _q, _url = m.group(1), m.group(2), m.group(3)
-            if _url.startswith(('http://', 'https://', '//', 'data:', 'blob:', 'mailto:')):
-                return m.group(0)
-            if '?' in _url:                              # 已有查询（如 ?v=2）交给上一行处理
-                return m.group(0)
-            return _attr + '=' + _q + _url + '?v=' + _tok + _q
-        _html = _ASSET_RE.sub(_add, _html)
-        # 注入服务端构建令牌，供前端显示「当前运行的版本」便于核对是否最新
-        if '</head>' in _html:
-            _inj = '<script>window.__APP_BUILD=' + repr(_tok) + ';</script>'
-            if _rel.startswith('redesign/') and _rel.endswith('.html'):
-                _inj = _SHELL_GUARD + _inj
-            _html = _html.replace('</head>', _inj + '</head>', 1)
-        return _html
-
-    # ---------- 角色 → 渲染器 绑定（2026-10-19） ----------
-    # 主窗 iframe 与桌宠窗都只认 /pet_render/current，由这里按「当前激活角色」
-    # 决定用哪套渲染器：达妮娅走原 PSD rig，大肥鱼走 frames2d 序列帧。
-    # 绑定表放 data/pet_render.json（不放 config.yaml：角色编辑保存走白名单重建，
-    # 未知键会被丢掉；而且 Config.save 会整份覆盖，运行期改配置有被回写风险）。
-    def _pet_render_binding():
-        import json as _json
-        from urllib.parse import urlparse as _urlparse, parse_qs as _parse_qs
-        _proj = os.path.abspath(os.path.join(web_root, "..", "..", ".."))
-        _cfg_path = os.path.join(_proj, "data", "pet_render.json")
-        try:
-            with open(_cfg_path, "r", encoding="utf-8") as _f:
-                _raw = _json.load(_f)
-            if not isinstance(_raw, dict):
-                _raw = {}
-        except Exception:  # noqa: BLE001
-            _raw = {}
-        _cid, _cname = "", ""
-        try:
-            from .. import config as _cfgmod
-            _cfg = getattr(_cfgmod, "_CFG", None)
-            _ch = _cfg.get_active_character() if _cfg is not None else None
-            if _ch is not None:
-                _cid = str(getattr(_ch, "id", "") or "")
-                _cname = str(getattr(_ch, "name", "") or _cid)
-        except Exception:  # noqa: BLE001
-            pass
-        _binds = _raw.get("bindings") if isinstance(_raw.get("bindings"), dict) else {}
-        _b = _binds.get(_cid) or _raw.get("default") or {}
-        if not isinstance(_b, dict):
-            _b = {}
-        _kind = str(_b.get("kind") or "rig").strip().lower()
-        if _kind == "frames2d":
-            _pack = str(_b.get("pack") or "").strip()
-            _pdir = os.path.join(web_root, "pet_render", "packs", _pack)
-            if _pack and os.path.isfile(os.path.join(_pdir, "skin.json")):
-                return {"char_id": _cid, "name": _cname, "kind": "frames2d",
-                        "pack": _pack,
-                        "url": "/pet_render/frames2d.html?pack=" + _pack}
-            logger.warning("[PET_RENDER] 角色 %s 绑定了 frames2d/%s，但素材不存在，回落 rig", _cid, _pack)
-        if _kind == "live2d":
-            _pack = str(_b.get("pack") or "").strip()
-            _pdir = os.path.join(web_root, "pet_render", "packs", _pack)
-            if _pack and os.path.isfile(os.path.join(_pdir, "pack.json")):
-                return {"char_id": _cid, "name": _cname, "kind": "live2d",
-                        "pack": _pack,
-                        "url": "/pet_render/live2d.html?pack=" + _pack}
-            logger.warning("[PET_RENDER] 角色 %s 绑定了 live2d/%s，但素材不存在，回落 rig", _cid, _pack)
-        return {"char_id": _cid, "name": _cname, "kind": "rig", "pack": "",
-                "url": "/live2d/rig/index.html?v=2"}
-
-    # 允许中文/特殊路径文件名
-    class _Handler(http.server.SimpleHTTPRequestHandler):
-        def __init__(self, *args, **kwargs):
-            super().__init__(*args, directory=web_root, **kwargs)
-        def end_headers(self):
-            # 强制不缓存：WebView2 的 HTTP 缓存会跨 app 重启保留在同一 UserDataFolder，
-            # 导致前端 JS/CSS 改了但设备仍跑旧逻辑（如旧版 #modeBtn 仍是跳设置页的链接、
-            # 旧聊天页 gsap.from(opacity:0) 卡透明态）。加 no-store 后每次加载都重新拉取。
-            self.send_header("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
-            self.send_header("Pragma", "no-cache")
-            self.send_header("Expires", "0")
-            super().end_headers()
-        def do_GET(self):
-            # 🎭 角色渲染器路由（2026-10-19）：/pet_render/current(.json)
-            # 主窗 Live2D 框与桌宠窗共用，跟着「当前激活角色」换渲染器。
-            _only = self.path.split('?', 1)[0]
-            if _only in ('/pet_render/current', '/pet_render/current.json'):
-                try:
-                    from urllib.parse import urlparse as _up, parse_qs as _pq
-                    _info = _pet_render_binding()
-                    if _only.endswith('.json'):
-                        import json as _json
-                        _body = _json.dumps(_info, ensure_ascii=False).encode('utf-8')
-                        self.send_response(200)
-                        self.send_header('Content-Type', 'application/json; charset=utf-8')
-                        self.send_header('Content-Length', str(len(_body)))
-                        self.end_headers()
-                        self.wfile.write(_body)
-                    else:
-                        _q = _pq(_up(self.path).query)
-                        _pet = (_q.get('pet') or [''])[0]
-                        _url = _info.get('url') or '/live2d/rig/index.html?v=2'
-                        if _pet:
-                            _url += ('&' if '?' in _url else '?') + 'pet=' + _pet
-                        self.send_response(302)
-                        self.send_header('Location', _url)
-                        self.send_header('Content-Length', '0')
-                        self.end_headers()
-                except Exception as _e:  # noqa: BLE001
-                    logger.warning("[PET_RENDER] 路由失败: %s", _e)
-                    try:
-                        self.send_response(500)
-                        self.end_headers()
-                    except Exception:
-                        pass
-                return
-            # 🖼️ 角色卡头图（2026-09-29）：页面跑在 http://127.0.0.1，无法直接加载
-            # web 根目录之外的本地图片（file:// 被同源策略挡住），故走这个只读路由
-            # 吐图。仅限 data/char_banners/ 一个目录（白名单校验，防路径穿越）。
-            if self.path.split('?', 1)[0] == '/local_img':
-                try:
-                    from urllib.parse import urlparse, parse_qs, unquote
-                    _q = parse_qs(urlparse(self.path).query)
-                    _p = unquote(_q.get("path", [""])[0])
-                    # 白名单：data/char_banners（角色卡头图）+ data/char_avatars（角色头像）
-                    #       + 聊天发图落盘目录（_save_chat_images 运行时注册进 _LOCAL_IMG_EXTRA_DIRS，
-                    #       因 ActivityStore root 可能被配置自定义，不能写死相对路径）。
-                    _allowed = [
-                        os.path.abspath(
-                            os.path.join(web_root, "..", "..", "..", "data", "char_banners")),
-                        os.path.abspath(
-                            os.path.join(web_root, "..", "..", "..", "data", "char_avatars")),
-                    ]
-                    try:
-                        _allowed.extend([os.path.abspath(_d) for _d in list(_LOCAL_IMG_EXTRA_DIRS)])
-                    except Exception:  # noqa: BLE001
-                        pass
-                    # 【2026-10-17 修复·角色头像/头图裂图】
-                    # 前端渲染用的是 `encodeURIComponent(c.avatar)`，而配置里存的是
-                    # **相对路径**（如 data/char_avatars/danya_avatar.png）。
-                    # 旧实现直接 os.path.abspath(_p) —— 按**服务端 CWD** 解析，
-                    # CWD 不保证是项目根（WebView 启动目录可能不同）→ 解析到不存在的
-                    # 路径 → 白名单校验失败 → 头像/头图 404 → 前端显示裂图。
-                    # 现在：相对路径先按项目根解析，再回退 CWD。
-                    if _p and not os.path.isabs(_p):
-                        # web_root = <root>/src/ui/web → 上三级是项目根
-                        _proj_root = os.path.abspath(
-                            os.path.join(web_root, "..", "..", ".."))
-                        _cand = os.path.abspath(os.path.join(_proj_root, _p))
-                        if os.path.isfile(_cand):
-                            _full = _cand
-                        else:
-                            _full = os.path.abspath(_p)
-                    else:
-                        _full = os.path.abspath(_p)
-                    if any(_full.startswith(_a + os.sep) and os.path.isfile(_full) for _a in _allowed):
-                        _ext = os.path.splitext(_full)[1].lower()
-                        _ct = {'.png': 'image/png', '.jpg': 'image/jpeg',
-                               '.jpeg': 'image/jpeg', '.gif': 'image/gif',
-                               '.webp': 'image/webp', '.bmp': 'image/bmp'}.get(
-                                   _ext, 'application/octet-stream')
-                        with open(_full, 'rb') as _f:
-                            _data = _f.read()
-                        # 【2026-10-13 修·表情包不播动画】只按扩展名定 Content-Type 不可靠：
-                        # 表情包库里的文件常是 **GIF 内容却存成 .jpg 名**（实测 24/24 张都如此），
-                        # 于是浏览器按 image/jpeg 当静态图渲染 → **动图永远不播**。
-                        # 这里加一层**魔数嗅探**：以真实字节为准，扩展名只作兜底。
-                        try:
-                            if _data[:6] in (b'GIF87a', b'GIF89a'):
-                                _ct = 'image/gif'
-                            elif _data[:8] == b'\x89PNG\r\n\x1a\n':
-                                _ct = 'image/png'
-                            elif _data[:2] == b'\xff\xd8':
-                                _ct = 'image/jpeg'
-                            elif _data[:4] == b'RIFF' and _data[8:12] == b'WEBP':
-                                _ct = 'image/webp'
-                            elif _data[:2] == b'BM':
-                                _ct = 'image/bmp'
-                        except Exception:  # noqa: BLE001
-                            pass
-                        # 【2026-10-13 相机对焦加载】带 &thumb=1 时返回**超小模糊占位图**：
-                        # 表情包大图/动图可能几 MB，加载期间页面全是白块很难看。
-                        # 这里把图缩到 16px 的 JPEG（约 1KB），前端再放大 + blur 滤镜
-                        # → 得到"同色调模糊占位"，原图到了再清晰（相机对焦效果）。
-                        if _q.get("thumb", ["0"])[0] == "1":
-                            try:
-                                import io as _io
-                                from PIL import Image as _PILImage
-                                _im = _PILImage.open(_io.BytesIO(_data))
-                                try:
-                                    _im.seek(0)          # 动图取首帧
-                                except Exception:        # noqa: BLE001
-                                    pass
-                                _im = _im.convert("RGB")
-                                # ⚠️ 占位图尺寸 16→48：太小（16px）拉伸后色块糊成一团，
-                                #    还能透出下层棋盘格，观感"脏"。48px 保住轮廓与主色
-                                #    分布，配 CSS blur(10px) 才是"主色底"而不是"脏块"。
-                                _im.thumbnail((48, 48))
-                                _buf = _io.BytesIO()
-                                _im.save(_buf, "JPEG", quality=72)
-                                _data = _buf.getvalue()
-                                _ct = "image/jpeg"
-                            except Exception:  # noqa: BLE001  缩略失败就回原图，不挡显示
-                                pass
-                        self.send_response(200)
-                        self.send_header('Content-Type', _ct)
-                        self.send_header('Content-Length', str(len(_data)))
-                        self.send_header('Cache-Control', 'no-store')
-                        self.end_headers()
-                        try:
-                            self.wfile.write(_data)
-                        except Exception:  # noqa: BLE001 客户端提前断开
-                            pass
-                        return
-                except Exception:  # noqa: BLE001
-                    pass
-                try:
-                    self.send_response(404)
-                    self.end_headers()
-                except Exception:  # noqa: BLE001
-                    pass
-                return
-            # 🔔 通知窗页面状态回报（show=卡片已渲染应展开 / hidden=已隐藏应收缩）
-            if self.path.startswith('/notify_state'):
-                try:
-                    from urllib.parse import urlparse, parse_qs, unquote
-                    _q = parse_qs(urlparse(self.path).query)
-                    _st = unquote(_q.get("state", ["hidden"])[0])
-                    _NOTIFY_UI_STATE[0] = _st  # 保留原始值（show/hidden/complete）
-                    # 🔑 连上(complete)后约 1.8s 自动滑出窗口：事件驱动、只触发一次，
-                    # 不靠心跳轮询（轮询每 0.5s 重驱动滑窗会在多次切换时闪动）。同时消除
-                    # "卡片经 JS 2.2s 隐藏后、窗口仍停在屏内"的空深色框窗口。
-                    if False:  # 已废弃：原生窗不再需要 WebView2 滑窗
-                        try:
-                            from . import mode_notify as _mn
-                            if _st == "complete":
-                                _th = threading.Timer(1.8, _mn._notify_slide_if,
-                                                      args=(False,), daemon=True)
-                                _th.start()
-                            elif _st == "show":
-                                # 前端已渲染好卡片内容并回报 show → 整窗带着内容滑入，
-                                # 避免"黑底先到、UI 后显"的割裂观感（配合卡片 opacity:1）。
-                                _mn._notify_slide_if(True)
-                        except Exception:  # noqa: BLE001
-                            pass
-                except Exception:  # noqa: BLE001
-                    pass
-                try:
-                    self.send_response(204)
-                    self.end_headers()
-                except Exception:  # noqa: BLE001
-                    pass
-                return
-            # 🔔 通知浮窗命令通道（2026-09-04 17:20 实锤）：通知窗页面的 pywebview 桥
-            # 不通（window.pywebview.api 不可用：poll/report 从未到达 Python），改走
-            # HTTP——页面 fetch /notify_poll 原子取走全部积压命令（JSON 数组）。
-            if self.path.split('?', 1)[0] == '/notify_poll':
-                try:
-                    from . import mode_notify as _mn
-                    _cmds = []
-                except Exception:  # noqa: BLE001
-                    _cmds = []
-                if _cmds:
-                    # 交付日志（仅非空时打）：证明页面 fetch 活着、命令真实送达页面
-                    logger.info("[通知浮窗] HTTP 轮询交付 %d 条命令: %s",
-                                len(_cmds), [c.get("type") for c in _cmds])
-                try:
-                    import json as _json
-                    _data = _json.dumps(_cmds).encode("utf-8")
-                    self.send_response(200)
-                    self.send_header("Content-Type", "application/json; charset=utf-8")
-                    self.send_header("Content-Length", str(len(_data)))
-                    self.end_headers()
-                    self.wfile.write(_data)
-                except Exception:  # noqa: BLE001
-                    try:
-                        self.send_response(500)
-                        self.end_headers()
-                    except Exception:  # noqa: BLE001
-                        pass
-                return
-            # 🔔 通知浮窗诊断回报（页面 __notifyDiag 经 HTTP 回传卡片状态，绕开桥）
-            if self.path.startswith("/notify_report"):
-                try:
-                    from urllib.parse import urlparse, parse_qs, unquote
-                    _q = parse_qs(urlparse(self.path).query)
-                    _st = unquote(_q.get("state", [""])[0])
-                    logger.info("[通知浮窗-自检回报] %s", _st or "(空)")
-                except Exception:  # noqa: BLE001
-                    pass
-                try:
-                    self.send_response(204)
-                    self.end_headers()
-                except Exception:  # noqa: BLE001
-                    pass
-                return
-            # SPA 片段路由：/_spa/<启动时间戳>/<相对文件> 返回整页 HTML（含 ?v 重写）。
-            # 把时间戳放进「路径」使 WebView2 缓存键必变，彻底绕开其对 fetch 磁盘缓存的
-            # 顽固保留（实测 ?v= 令牌 + no-store 仍可能命中旧版），保证 SPA 切栏每次拉最新页面。
-            _spa_m = _re.match(r'^/_spa/(\d+)/(.+)$', self.path.split('?', 1)[0])
-            if _spa_m:
-                _rel = _spa_m.group(2)
-                _rel = _SPA_ALIAS.get(_rel, _rel)
-                if (_rel.startswith('redesign/') and _rel.endswith('.html')
-                        and '..' not in _rel and os.path.isfile(os.path.join(web_root, _rel))):
-                    try:
-                        with open(os.path.join(web_root, _rel), 'r', encoding='utf-8') as _f:
-                            _html = _stamp_html(_f.read(), _WEB_START_TOKEN, _rel)
-                        _data = _html.encode('utf-8')
-                        self.send_response(200)
-                        self.send_header('Content-Type', 'text/html; charset=utf-8')
-                        self.send_header('Content-Length', str(len(_data)))
-                        self.end_headers()
-                        self.wfile.write(_data)
-                        return
-                    except Exception:  # noqa: BLE001
-                        pass
-                self.send_response(404); self.end_headers(); return
-            # 对 .html 做版本号重写：把内部所有 ?v=旧版本 改成 ?v=<本次启动令牌>，
-            # 让每个版本号都独一无二 → WebView2 缓存必失效、每次拉磁盘最新文件。
-            fpath = self.translate_path(self.path)
-            if fpath.endswith(".html") and os.path.isfile(fpath):
-                try:
-                    with open(fpath, "r", encoding="utf-8") as _f:
-                        try:
-                            _rel2 = os.path.relpath(fpath, web_root).replace('\\', '/')
-                        except Exception:  # noqa: BLE001
-                            _rel2 = ''
-                        _html = _stamp_html(_f.read(), _WEB_START_TOKEN, _rel2)
-                    _data = _html.encode("utf-8")
-                    self.send_response(200)
-                    self.send_header("Content-Type", "text/html; charset=utf-8")
-                    self.send_header("Content-Length", str(len(_data)))
-                    self.end_headers()
-                    self.wfile.write(_data)
-                    return
-                except Exception:  # noqa: BLE001 读取/重写失败就退回默认处理
-                    pass
-            super().do_GET()
-        def log_message(self, *a, **k):  # 静默
-            pass
-    class _TCPServer(socketserver.ThreadingMixIn, http.server.HTTPServer):
-        daemon_threads = True
-        allow_reuse_address = True
-    # 【2026-10-18 修复·端口被占 → 全页面 404】
-    # 残留进程占着 8766 时（常见：旧版本卸载不干净/进程未退），这里 bind 会
-    # OSError。旧实现直接抛异常，上层吞掉后 WebView 仍连 8766 → 连到别的
-    # 进程 → 全部 404。现在自动向后找可用端口（8767~8776）。
-    srv = None
-    chosen = None
-    last_err = None
-    for port in range(8766, 8777):
-        try:
-            srv = _TCPServer(("127.0.0.1", port), _Handler)
-            chosen = port
-            break
-        except OSError as e:  # noqa: PERF203 端口被占就换下一个
-            last_err = e
-            continue
-    if srv is None or chosen is None:
-        raise OSError(
-            "本地静态服务无法绑定任何端口(8766~8776)：可能是残留的旧版本进程"
-            "仍在运行。请关闭旧版达妮娅/机语恋 后重试。最后错误: %s" % last_err)
-    t = threading.Thread(target=srv.serve_forever, daemon=True, name="web_static")
-    t.start()
-    _WEB_SERVER_BASE = "http://127.0.0.1:%d" % chosen
-    logger.info("本地静态 HTTP 服务已启动: %s (根目录 %s, 启动令牌 %s)",
-                _WEB_SERVER_BASE, web_root, _WEB_START_TOKEN)
-    return _WEB_SERVER_BASE
 
 
-_WEB_SERVER_BASE: str = ""
-_WEB_START_TOKEN: str = ""
 
 
 # ==========================================================
@@ -18613,17 +17086,12 @@ _WEB_START_TOKEN: str = ""
 #
 # 修复方式：整体替换 EdgeChrome.__init__（复制 pywebview 6.2.1 官方实现，
 # 仅改 UserDataFolder + 追加参数），必须在 webview.start() 之前完成。
-_WV2_FOLDER_SEQ = itertools.count(1)
-_WV2_PATCHED = False
-_WV2_CONTROLS: dict = {}  # uid -> WebView2 控件（后端原生推送聊天刷新用）
 
 # 【防卡死·2026-09-03】WebView2 推送专用线程池。
 # PostWebMessageAsJson 在渲染进程挂死时会跨线程 COM 阻塞调用方线程，
 # 若发生在事件循环线程上会冻结整软件。故所有推送都提交到本池，事件循环永不等待。
-_WV2_BC_EXECUTOR = ThreadPoolExecutor(max_workers=2, thread_name_prefix="wv2-bc")
 
 # 通知窗 UI 状态（页面经 /notify_state 回报）：show=卡片已渲染应展开 / hidden=收缩
-_NOTIFY_UI_STATE = ["hidden"]
 
 # =====================================================================
 # 通知浮窗双模（2026-09-05 定版·默认透明）
@@ -18645,376 +17113,30 @@ _NOTIFY_UI_STATE = ["hidden"]
 # 卡死根因（04:25 那次"启动卡死"即此）。透明模式依靠窗口常显右上角、卡片纯 CSS 显隐，
 # 契合用户"固定透明窗+HTML动画"诉求，本机自检 op=1 证明透明合成当前正常。
 # 仍保留 NOTIFY_OPAQUE=1 不透明兜底（实心窗、主屏几何滑入，防极端机器透明合成失败）。
-_NOTIFY_OPAQUE = os.environ.get("NOTIFY_OPAQUE", "0") != "0"
-_notify_slide_state = [False]     # 当前窗口所处的展示态 True=已滑入 / False=泊在右缘外
-_notify_slide_lock = threading.Lock()
 
 
-def _notify_geom():
-    """通知窗**物理像素**几何：(sw, sh, scale, w, h, x_in, y_in, x_out)。
-
-    进程已 SetProcessDPIAware → GetSystemMetrics 返回**物理**像素；与桌宠窗"物理钉位"
-    （6463 行）和启动钉位（6202 行）同源。所有返回值均为物理像素，直接喂 SetWindowPos，
-    **不再除以 scale 也不乘 scale**（进程感知下 GetSystemMetrics 已是物理值，除/乘都会错）。
-    窗口尺寸收紧到 400x176 逻辑（刚好包住卡片，与设计稿同宽、无黑边、比例不拉伸）。
-    窗口始终露 2px 在屏内（DWM/Chromium 不判定为不可见 → 合成表面始终存活）。
-    """
-    _u = _ct.windll.user32
-    _g = _ct.windll.gdi32
-    sw = _u.GetSystemMetrics(0)
-    sh = _u.GetSystemMetrics(1)
-    hdc = _g.CreateDCW("DISPLAY", None, None, None)
-    dpi = _g.GetDeviceCaps(hdc, 88) or 96
-    _g.DeleteDC(hdc)
-    scale = max(dpi / 96.0, 1.0)
-    w = int(400 * scale)
-    h = int(176 * scale)
-    x_in = max(0, sw - w - int(24 * scale))
-    y_in = int(24 * scale)
-    x_out = max(0, sw - 2)     # 留 2px 在屏内，保证"可见"不触发渲染挂起
-    return sw, sh, scale, w, h, x_in, y_in, x_out
 
 
-def _notify_set_pos(x: int, y: int, w: int, h: int) -> bool:
-    """把通知窗钉到指定**物理像素**位置（HWND_TOPMOST）。纯 Win32，任意线程可调。
-
-    坐标即物理像素（进程已 DPI 感知，GetSystemMetrics 为物理值，与桌宠窗同款）。
-    窗口刚创建时 FindWindowW 可能暂时找不到（WinForms 控件树未就绪）→ 重试最多 ~1s，
-    避免窗口卡在 pywebview 默认的 (0,0) 左上角（"左上角黑块"回归根因）。
-    """
-    try:
-        hw = None
-        for _ in range(40):
-            hw = _u32.FindWindowW(None, "达妮娅通知")
-            if hw:
-                break
-            time.sleep(0.025)
-        if not hw:
-            return False
-        # 0x0010 = NOACTIVATE：保持 TOPMOST（hw=-1 已置顶）且不偷焦点。
-        _u32.SetWindowPos(hw, -1, int(x), int(y), int(w), int(h), 0x0010)
-        return True
-    except Exception:  # noqa: BLE001
-        return False
 
 
-def _notify_slide(showing: bool) -> None:
-    """不透明模式的弹出/收回动画：窗口在屏内水平滑动（每帧一次 SetWindowPos）。
-
-    关键点：窗口**自始至终都在屏幕内**（最窄时仍露 2px），所以 WebView2 的合成器
-    从不进入"不可见"状态 —— 这是"滑入时必有帧"的保证，与 SW_HIDE/屏外停放那种
-    "先不可见再出现"的做法有本质区别。
-    本函数在后台线程执行（只调 Win32，不碰 WebView2 对象，符合线程铁律）。
-    """
-    with _notify_slide_lock:
-        if _notify_slide_state[0] is showing:
-            return
-        _notify_slide_state[0] = showing
-        try:
-            _, _, _, w, h, x_in, y_in, x_out = _notify_geom()
-            frames = 24                       # ~290ms @ ~35fps，配合缓动更顺滑
-            # 缓动：滑入用 easeOutCubic（到位即稳），滑出用 easeInCubic（加速离场）
-            for i in range(1, frames + 1):
-                t = i / frames
-                if showing:
-                    e = 1 - (1 - t) ** 3
-                    x = x_out + (x_in - x_out) * e
-                else:
-                    e = t ** 3
-                    x = x_in + (x_out - x_in) * e
-                _notify_set_pos(x, y_in, w, h)
-                time.sleep(0.012)
-            _notify_set_pos(x_in if showing else x_out, y_in, w, h)
-            if not showing:
-                # 滑出完成、窗口已在屏外 → 通知前端复位卡片（此时复位不可见，
-                # 避免"先黑再飞"；也保证下次 show 能重新初始化）。
-                try:
-                    from . import mode_notify as _mn
-                    _mn._push_cmd({"type": "reset"})
-                except Exception:  # noqa: BLE001
-                    pass
-            logger.info("[通知浮窗] 模式O 已%s（x=%d）",
-                        "滑入" if showing else "滑出", x_in if showing else x_out)
-        except Exception as _e:  # noqa: BLE001
-            logger.warning("[通知浮窗] 模式O 滑动失败: %s", _e)
 
 
-def _notify_rects_for_monitor(rc):
-    """给定显示器物理矩形 (left,top,right,bottom)，返回该屏上通知窗的
-    (x_in, y_in, w, h, x_out) 物理像素。x_in=右上角可见位，x_out=右缘外只露 2px。
-    """
-    try:
-        _g = _ct.windll.gdi32
-        hdc = _g.CreateDCW("DISPLAY", None, None, None)
-        dpi = _g.GetDeviceCaps(hdc, 88) or 96
-        _g.DeleteDC(hdc)
-    except Exception:  # noqa: BLE001
-        dpi = 96
-    scale = max(dpi / 96.0, 1.0)
-    w = int(400 * scale)
-    h = int(176 * scale)
-    x_in = max(rc[0], rc[2] - w - int(24 * scale))
-    y_in = rc[1] + int(24 * scale)
-    x_out = max(rc[0], rc[2] - 2)   # 右缘外留 2px（仍在屏内 → WebView2 合成器存活）
-    return x_in, y_in, w, h, x_out
 
 
-def _notify_current_monitor_rect():
-    """返回『当前前台窗口所在显示器』物理矩形；取不到则回退主屏。"""
-    try:
-        import win32api
-        fg = win32api.GetForegroundWindow()
-        if fg:
-            hmon = win32api.MonitorFromWindow(fg, 2)   # MONITOR_DEFAULTTONEAREST
-        else:
-            hmon = win32api.MonitorFromPoint((0, 0), 2)
-        if hmon:
-            return win32api.GetMonitorInfo(hmon)["Monitor"]
-    except Exception:  # noqa: BLE001
-        pass
-    return (0, 0, _u32.GetSystemMetrics(0), _u32.GetSystemMetrics(1))
 
 
-def _notify_show_in():
-    """把通知窗泊到『前台所在显示器』右上角可见位（多屏跟到游戏/抖音屏）。
-
-    两种模式都要执行：它是一次性静态停靠（把窗口钉到右上角 x_in），不是逐帧动画，
-    与页面 CSS 卡片滑动不冲突（窗口已在 x_in 时 SetWindowPos 同位是 no-op，无跳变）。
-    ⚠️ 透明模式(T·默认)下窗口创建后 pywebview 会默认停在 (0,0) 左上角（见 _notify_set_pos
-    注释），而 T 模式的滑入/泊出都是 no-op → 若本函数也 no-op，窗口永远卡在左上角、
-    卡片滑进来也在左上角小窗里 → 用户在右上角看不到弹窗（2026-09-05 04:46 实锤：
-    日志自检 rect 恒为 (0,0,600,264)，弹窗"进去没弹"真凶）。故 T 模式也必须 dock 到 x_in。
-    卡片显隐/滑入滑出仍纯靠页面 CSS，窗口位置固定不动（park_out 在 T 模式 no-op），
-    契合用户"固定透明窗 + HTML 动画"的设计。
-    """
-    try:
-        rc = _notify_current_monitor_rect()
-        x_in, y_in, w, h, _ = _notify_rects_for_monitor(rc)
-        _notify_set_pos(x_in, y_in, w, h)
-    except Exception as _e:  # noqa: BLE001
-        logger.warning("[通知浮窗] 泊入可见位失败: %s", _e)
 
 
-def _notify_park_out():
-    """空闲时把通知窗泊回『其当前所在显示器』右缘外（只露 2px），彻底不挡点击。
-
-    透明模式(T·默认)下窗口固定右上角、卡片 CSS 隐藏即完事，本函数直接 no-op
-    （不移动窗口），避免窗口在屏内/屏外来回跳导致"闪一下"的观感。
-    【2026-09-05 定版·用户设计】窗口固定右上角、永不移动（两种模式都 no-op）；
-    空闲透明 + WS_EX_TRANSPARENT 已保证"看不见且不挡点击"，无需泊屏外（泊屏外反而
-    会让 WebView2 节流页面轮询 → show 命令送不到 → 弹窗不显示）。
-    """
-    return
-    try:
-        rc = None
-        try:
-            import win32api
-            hw = _u32.FindWindowW(None, "达妮娅通知")
-            if hw:
-                hmon = win32api.MonitorFromWindow(hw, 2)
-                if hmon:
-                    rc = win32api.GetMonitorInfo(hmon)["Monitor"]
-        except Exception:  # noqa: BLE001
-            rc = None
-        if rc is None:
-            rc = (0, 0, _u32.GetSystemMetrics(0), _u32.GetSystemMetrics(1))
-        _, y_in, w, h, x_out = _notify_rects_for_monitor(rc)
-        _notify_set_pos(x_out, y_in, w, h)
-    except Exception as _e:  # noqa: BLE001
-        logger.warning("[通知浮窗] 泊出右缘失败: %s", _e)
 
 
-def _stable_wv2_folder_key(window, n: int) -> str:
-    """给窗口生成一个「跨启动稳定」的 UserDataFolder 目录名。
-
-    两个约束必须同时满足：
-      · 稳定 —— 同一窗口每次启动都落到同一个目录，WebView2 的 localStorage /
-        IndexedDB 才能持久化（主题色、深浅模式、语速、云端 TTS 配置都存在这儿）。
-      · 独立 —— 不同窗口必须不同目录，否则 WebView2 并发初始化同一个 folder 会
-        E_ABORT(0x80004004) → 白屏（2026-08-24 那个根因，不能回退）。
-
-    老实现用 f"{os.getpid()}_{n}"：独立性有了，但每次启动 PID 都变 → 每次都是
-    全新空目录 → localStorage 次次被清空，表现就是「设置永远保存不了」。
-    改为按窗口标题哈希：标题不同 → 目录不同；标题不变 → 目录跨启动不变。
-    """
-    title = str(getattr(window, "title", "") or "").strip()
-    if title:
-        try:
-            import hashlib as _hashlib
-            return "w_" + _hashlib.md5(title.encode("utf-8")).hexdigest()[:12]
-        except Exception:  # noqa: BLE001
-            pass
-    return f"win_{n}"          # 兜底：没标题就退回序号，同进程内仍然唯一
 
 
-def _sweep_legacy_wv2_folders(root: str, max_age_days: int = 7) -> None:
-    """清理旧版按 PID 命名的 UserDataFolder（形如 12345_1），避免目录无限堆积。
-
-    新代码已改用 w_<md5> 稳定目录，所有「纯数字_数字」旧格式目录都不再被使用，
-    直接全部删除（不再等 7 天），顺带清掉其中可能残留的跨实例共享缓存。
-    稳定目录（w_ 前缀）与正在使用的目录一律不动。
-    """
-    import re as _re
-    import shutil as _shutil
-    try:
-        if not os.path.isdir(root):
-            return
-        for name in os.listdir(root):
-            if not _re.fullmatch(r"\d+_\d+", name):
-                continue
-            p = os.path.join(root, name)
-            try:
-                if os.path.isdir(p):
-                    _shutil.rmtree(p, ignore_errors=True)
-            except Exception:  # noqa: BLE001
-                continue
-    except Exception:  # noqa: BLE001
-        pass
 
 
-def _sweep_wv2_caches(root: str) -> None:
-    """清空 WebView2 磁盘缓存（Cache / Code Cache / GPUCache / Service Worker）。
-
-    软件每次启动都清一次，彻底绕开 WebView2 对 fetch/HTML 的顽固磁盘缓存——
-    实测 HTTP 层 no-store 头对 WebView2 的 fetch 缓存无效，导致前端 JS/HTML
-    改了仍在设备端跑旧逻辑（如知识库页 SPA 切栏一直拉旧版 HTML）。
-    只删缓存子目录，不动 UserDataFolder 下的 localStorage / Cookie，不影响登录态。
-    """
-    import shutil as _shutil
-    try:
-        if not os.path.isdir(root):
-            return
-        cache_subdirs = ("Cache", "Code Cache", "GPUCache", "Service Worker", "JumpListCache")
-        for name in os.listdir(root):
-            d = os.path.join(root, name)
-            if not os.path.isdir(d):
-                continue
-            for sub in cache_subdirs:
-                c = os.path.join(d, sub)
-                if os.path.isdir(c):
-                    _shutil.rmtree(c, ignore_errors=True)
-    except Exception:  # noqa: BLE001
-        pass
 
 
-def _harden_webview2(ctrl, window) -> None:
-    """让窗口表现得像原生桌面控件而非浏览器：
-
-    - 麦克风/摄像头权限自动允许（不再弹 Edge 授权页）；
-    - 关闭右键菜单、开发者工具、浏览器快捷键（Ctrl+U/Ctrl+S/F12 等）；
-    - 拦截 window.open 新窗口（防 360 把弹窗误判为广告）。
-    """
-    try:
-        from Microsoft.Web.WebView2.Core import (
-            CoreWebView2PermissionState,
-            CoreWebView2PermissionKind,
-        )
-        cv2 = ctrl.CoreWebView2
-        if cv2 is None:
-            return
-        st = cv2.Settings
-        for _attr, _val in (
-            ("AreDefaultContextMenusEnabled", False),
-            ("AreDevToolsEnabled", False),
-            ("AreBrowserAcceleratorKeysEnabled", False),
-            ("IsStatusBarEnabled", False),
-            ("IsGeneralAutofillEnabled", False),
-            ("IsPasswordAutosaveEnabled", False),
-        ):
-            try:
-                setattr(st, _attr, _val)
-            except Exception:  # noqa: BLE001
-                pass
-
-        def _on_perm(sender, args):
-            try:
-                if args.PermissionKind in (CoreWebView2PermissionKind.Microphone,
-                                           CoreWebView2PermissionKind.Camera):
-                    args.State = CoreWebView2PermissionState.Allow
-                args.Handled = True
-            except Exception:  # noqa: BLE001
-                pass
-
-        def _on_ctx(sender, args):
-            try:
-                args.Handled = True
-            except Exception:  # noqa: BLE001
-                pass
-
-        def _on_new(sender, args):
-            try:
-                args.Handled = True
-            except Exception:  # noqa: BLE001
-                pass
-
-        cv2.PermissionRequested += _on_perm
-        cv2.ContextMenuRequested += _on_ctx
-        cv2.NewWindowRequested += _on_new
-        logger.info("[WebView2] 窗口 %s 已加固（禁右键/DevTools/快捷键/弹窗，麦克风自动授权）", window.uid)
-    except Exception as e:  # noqa: BLE001
-        logger.warning("[WebView2] 加固失败（不影响功能）: %s", e)
 
 
-def _wv2_broadcast(payload: dict) -> None:
-    """通过 WebView2 原生通道把消息实时推到所有窗口（聊天即时刷新用）。
-
-    【防卡死·2026-09-03 实锤】原实现直接在调用线程（多为事件循环线程）上执行
-    cv2.PostWebMessageAsJson，渲染进程挂死时该 COM 调用跨线程永久阻塞 → 事件循环
-    卡死 → 双工/聊天/日志全停、整软件冻结。现改为：
-      1) 提交到独立线程池 _WV2_BC_EXECUTOR，事件循环线程绝不等待；
-      2) 推送前检查 CoreWebView2.IsConnected，渲染进程已断则跳过（不再触发挥死）；
-    如此即便渲染器死了，后端（双工/聊天/心跳）仍正常运转，只是前端少收一条推送。
-    """
-    import json as _json
-    msg = _json.dumps(payload, ensure_ascii=False)
-    ctrls = list(_WV2_CONTROLS.values())
-    if not ctrls:
-        return
-    if payload.get("type") == "pet_tip":
-        logger.info("[pet_tip] 广播目标窗口数=%d uids=%s", len(ctrls), list(_WV2_CONTROLS.keys()))
-
-    def _post_one(ctrl, m):
-        try:
-            from System import Action as _Act
-
-            def _deliver():
-                try:
-                    cv2 = getattr(ctrl, "CoreWebView2", None)
-                    if cv2 is None:
-                        return
-                    # 渲染进程已断开（GPU 高压崩溃等）→ 跳过，避免 PostWebMessageAsJson 挂死
-                    if not getattr(cv2, "IsConnected", True):
-                        return
-                    cv2.PostWebMessageAsJson(m)
-                except Exception:  # noqa: BLE001
-                    pass
-
-            # 【2026-09-05 冻结根因修复】ctrl.CoreWebView2 / cv2.IsConnected /
-            # cv2.PostWebMessageAsJson 全是跨套间 COM 调用：上一版只在 BeginInvoke 里放了
-            # PostWebMessageAsJson，却把 ctrl.CoreWebView2 与 cv2.IsConnected 的读取留在
-            # 调用线程（asyncio 事件循环线程）上。从非 GUI 线程读 WebView2 的 COM 属性会触发
-            # STA 同步封送并永久阻塞——faulthandler 多次抓到 asyncio 线程卡死在
-            # webapp.py:5616 的 getattr(CoreWebView2)。事件循环一卡，双工/OCR/聊天/日志全停
-            # = 整软件“卡死”。现把“所有 COM 访问”整体封送进 BeginInvoke，在 GUI 线程执行；
-            # 调用线程只碰 BeginInvoke（任意线程安全、非阻塞、不创建线程），绝不碰任何
-            # WebView2/COM 属性。即便 GUI 线程异常，asyncio 主循环也不受影响（仅少推一条）。
-            ctrl.BeginInvoke(_Act(_deliver))
-        except Exception:  # noqa: BLE001
-            pass
-
-    # 【2026-09-04 18:28 冻结实锤·深层根因】绝不经 ThreadPoolExecutor.submit 广播！
-    # faulthandler 抓到：asyncio 主循环线程卡死在 submit → _adjust_thread_count →
-    # Thread.start() → Event.wait()——线程池动态新开 worker 时，新 OS 线程创建了却
-    # 永远进不了 Python（dump 顶部 <no Python frame> 的线程 = 卡在原生层，WebView2+
-    # pythonnet 混合环境的 DLL 加载锁/COM 初始化病理）。主循环一停，双工/OCR/聊天
-    # 全部停摆 = 整软件"崩溃"。
-    # 🔑 BeginInvoke 本身就是异步投递（任意线程安全、非阻塞、不创建线程），直接在
-    # 调用线程执行即可——广播路径从此零线程创建。
-    for ctrl in ctrls:
-        try:
-            _post_one(ctrl, msg)
-        except Exception:  # noqa: BLE001
-            pass
 
 
 # 【AGENT·2026-09-28】电脑操作代理"逐步确认"：把前端广播器注入确认代理。
@@ -19028,391 +17150,10 @@ except Exception:  # noqa: BLE001
     logger.warning("agent_confirm 广播器注册失败（确认弹窗可能不弹）")
 
 
-_GUI_PROBE_STARTED = False
-_GUI_STALL_S = 6.0          # GUI 线程停滞判定阈值（秒）：beat 超此时间未刷新即判定卡死并抓全线程栈
-_FREEZE_DUMPS: list = []   # 最近几次 GUI 冻结现场 dump 文件绝对路径（供开发者页健康面板读取/导出）
 
 
-def _start_gui_liveness_probe(win) -> None:
-    """GUI 消息泵黑匣子（2026-09-04「Python 未响应」排查·v4 BeginInvoke 心跳版）。
-
-    v1 教训：WinForms.Timer 建在 events.shown 派发线程（无消息泵）→ 永不 Tick。
-    v2 教训：守护线程对主窗 evaluate_js('1+1') 走阻塞式 Invoke → 本身就是死锁源。
-    v3 教训：指望 notify 页 JS poll() 当心跳——页面 setTimeout 被 WebView2 节流或
-    js_api 桥未注入时不跑，心跳假死；且又在 shown 回调线程建 Timer 重蹈 v1。
-    🔑 v4（根治）：守护线程每 2s 用 **win.native.BeginInvoke(Action(_gui_beat))** 把
-    心跳投递到真正的 GUI 线程（Control.BeginInvoke 从任意线程调用合法且非阻塞，由
-    GUI 消息泵执行）。_gui_beat 在 GUI 线程内做四件事：① 刷新 _last_poll 心跳；
-    ② 队列非空则 evaluate_js 注入 __notifyFlush（在本线程调用，绝无死锁）→ 弹窗
-    兜底推送；③ 跟随前台显示器移动通知窗；④ 周期自检（窗口矩形+卡片状态）。
-    心跳停超 15s = 消息泵真死 → 转储全线程栈（此时判定才准确）。
-    """
-    global _GUI_PROBE_STARTED
-    if _GUI_PROBE_STARTED:
-        return
-    _GUI_PROBE_STARTED = True
-    import sys as _sys
-    import threading as _th
-    import time as _time
-    import traceback as _tb
-
-    try:
-        from System import Action as _Action
-        from System.Threading.Tasks import Task as _Task
-    except Exception as _e:  # noqa: BLE001
-        logger.error("[GUI探针] v4 启动失败：pythonnet System.Action/Task 不可用: %s", _e)
-        return
-
-    def _fire_async(_cv2, _script):
-        # 🔧【2026-09-05 冻结根因修复】非阻塞触发：经线程池线程调用 ExecuteScriptAsync，
-        # 绝不占用 GUI 线程。直接在主线程调 ExecuteScriptAsync 会被 pythonnet **同步 await**
-        # 其返回的 Task<string>；当目标 WebView2 被遮挡/节流（游戏全屏、2px 泊位等，
-        # 即"弹窗即将出现、窗口尚未滑入"的瞬间）脚本迟迟不返回 → GUI 消息泵被卡死 →
-        # 主页面 UI 冻结（"弹窗一瞬间主页面卡死"的真凶）。丢到线程池后，即便脚本挂起也只
-        # 占用线程池线程，主消息泵永不阻塞。ExecuteScriptAsync 本身是跨线程安全的异步 API。
-        try:
-            _Task.Run(_Action(lambda: _cv2.ExecuteScriptAsync(_script)))
-        except Exception:  # noqa: BLE001
-            pass
-    try:
-        _native = win.native  # BrowserForm：与所有窗共享同一 GUI 消息泵
-    except Exception as _e:  # noqa: BLE001
-        logger.error("[GUI探针] v4 启动失败：win.native 不可用: %s", _e)
-        return
-
-    state = {'reported': False, 'beat': 0, 'last_mon': None}
-
-    def _notify_corewebview2():
-        """取通知窗的 CoreWebView2（GUI 线程内 fire-and-forget ExecuteScriptAsync 用）。
-
-        🔑【2026-09-04 17:03 冻结实锤】在 GUI 线程回调内**绝不能同步调 win.evaluate_js**：
-        它内部要等 WebView2 的异步回执，而回执只能由"当前正被本调用堵住的消息泵"派发
-        → 自己锁死自己（_gui_beat 卡死在 evaluate_js → 消息泵死 → 前端心跳断 → 整个
-        UI 冻结）。ExecuteScriptAsync 发射后不管、不等待回执，物理上无死锁。
-        """
-        try:
-            ctrl = _WV2_CONTROLS.get(getattr(win, "uid", None))
-            if ctrl is not None:
-                cv2 = getattr(ctrl, "CoreWebView2", None)
-                if cv2 is not None:
-                    return cv2
-        except Exception:  # noqa: BLE001
-            pass
-        try:
-            for c in win.native.Controls:
-                cv2 = getattr(c, "CoreWebView2", None)
-                if cv2 is not None:
-                    return cv2
-        except Exception:  # noqa: BLE001
-            pass
-        return None
-
-    def _gui_beat():
-        """在 GUI 线程执行（BeginInvoke 封送）：心跳 + 弹窗兜底推送 + 跟屏 + 自检。"""
-        try:
-            from . import mode_notify
-        except Exception:  # noqa: BLE001
-            return
-        mode_notify._last_poll[0] = _time.time()
-        state['beat'] += 1
-        # ② 兜底推送：fire-and-forget ExecuteScriptAsync（绝不同步 evaluate_js——
-        #    GUI 线程内同步等回执 = 消息泵自死锁，17:03 实测全 UI 冻结）。
-        # 🔑【2026-09-04 23:30 修复·真因】必须推给**通知窗自己**的 CoreWebView2，
-        #    不能只推主窗：旧写法 _notify_corewebview2() 取的是主窗 uid 的控件 →
-        #    __notifyFlush 被推到主窗（主窗页面无此函数 → 静默 no-op）→ 通知窗命令
-        #    永不送达 → 弹窗永不显示。改为遍历所有已注册控件（含通知窗），命令必抵达。
-        #    通知窗自身的 150ms setInterval 在 WebView2 判定其被遮挡时会**节流**
-        #    （用户在抖音/全屏游戏时尤其明显）→ 弹窗不显示；而 ExecuteScriptAsync 由
-        #    浏览器进程发起、不受页面计时器节流 → 可靠触发 flush→fetch→命令送达。
-        try:
-            if getattr(mode_notify, "_cmd_q", None):
-                _n = len(getattr(mode_notify, "_cmd_q", None))
-                _pushed = 0
-                for _ctrl in _WV2_CONTROLS.values():
-                    _cv2 = getattr(_ctrl, "CoreWebView2", None)
-                    if _cv2 is not None:
-                        _fire_async(_cv2,
-                                    "(window.__notifyFlush&&window.__notifyFlush())||0")
-                        _pushed += 1
-                if _pushed:
-                    logger.info("[通知浮窗] GUI 心跳兜底推送 %d 条命令（ExecuteScriptAsync → %d 个窗）",
-                                _n, _pushed)
-        except Exception as _e:  # noqa: BLE001
-            logger.warning("[通知浮窗] 兜底推送失败: %s", _e)
-        # ④ 每 5 拍（约 10s）弹窗可见性自检：rect 不对=窗口位置问题；
-        #    rect 正常但卡片无 visible/op=0=DOM 渲染层问题。
-        if state['beat'] % 5 == 0:
-            _rc = None
-            try:
-                # 🔑 必须用 FindWindowW（宽字符）匹配 CJK 标题"达妮娅通知"；
-                #    ANSI 版 win32gui.FindWindow 永远匹配不上 → rect 恒为 None。
-                _hw = _u32.FindWindowW(None, "达妮娅通知")
-                if _hw:
-                    _r = _ct.wintypes.RECT()
-                    if _u32.GetWindowRect(_hw, _ct.byref(_r)):
-                        _rc = (_r.left, _r.top, _r.right, _r.bottom)
-            except Exception:  # noqa: BLE001
-                pass
-            try:
-                # 🔑 同样遍历所有控件推 __notifyDiag（旧写法只推主窗 → 通知窗卡片状态
-                #    永不回报）。通知窗页面经 /notify_report 把卡片状态回传后端日志。
-                for _ctrl in _WV2_CONTROLS.values():
-                    _cv2 = getattr(_ctrl, "CoreWebView2", None)
-                    if _cv2 is not None:
-                        _fire_async(_cv2,
-                                    "(window.__notifyDiag&&window.__notifyDiag())||0")
-                logger.info("[通知浮窗-自检] rect=%s（卡片状态由页面 /notify_report 回报）", _rc)
-            except Exception as _e2:  # noqa: BLE001
-                logger.info("[通知浮窗-自检] 读取失败: %s rect=%s", _e2, _rc)
-        # ③ 通知窗显隐（【2026-09-05 00:05 定版·去竞态】）
-        #   滑入/滑出**不再由心跳每 0.5s 根据 _NOTIFY_UI_STATE 重驱动**——那样会在
-        #   多次切换叠加时因状态反复翻转导致窗口"弹入→收起→又弹入"抖动。
-        #   改由显式调用驱动：show 提交时 _push_show_debounced._fire 调 _notify_slide(True)
-        #   滑入；dismiss 时 _dismiss 调 _notify_slide_if(False) 滑出；connected=True 经
-        #   update_mode_notify→_arm_dismiss(3s)→_dismiss 收起。心跳只负责推命令 + 自检。
-        #   模式 T（透明）：零窗口操作（同桌宠窗）。
-        try:
-            if not _NOTIFY_OPAQUE:
-                # 模式 T：仅做"极端漂移"兜底——每 60 拍（30s）检查一次，且只有当
-                # 窗口被挪到明显不合理的位置（完全在屏外/回到 0,0）时才纠回一次。
-                state['ticks'] = state.get('ticks', 0) + 1
-                if state['ticks'] % 60 == 0:
-                    _sw0 = _ct.windll.user32.GetSystemMetrics(0)
-                    _hwg = _u32.FindWindowW(None, "达妮娅通知")
-                    if _hwg:
-                        from ctypes import wintypes as _wt3
-                        _r0 = _wt3.RECT()
-                        if _ct.windll.user32.GetWindowRect(_hwg, _ct.byref(_r0)):
-                            if _r0.left < 0 or _r0.left > _sw0 or \
-                                    (_r0.right - _r0.left) < 100:
-                                _, _, _, _w0, _h0, _x0, _y0, _ = _notify_geom()
-                                _notify_set_pos(_x0, _y0, _w0, _h0)
-                                logger.info("[通知浮窗] 模式T 检测到窗口被挪到屏外，已纠回 (%d,%d)",
-                                            _x0, _y0)
-        except Exception as _me:  # noqa: BLE001
-            if not state.get('move_fail'):
-                state['move_fail'] = True
-                logger.warning("[通知浮窗] 钉位保持失败（只报一次）: %s", _me)
-
-    def _watch():
-        while True:
-            _time.sleep(0.5)  # 0.5s 一拍：展开/收缩响应更跟手（每拍开销极低）
-            try:
-                _native.BeginInvoke(_Action(_gui_beat))
-            except Exception:  # noqa: BLE001
-                continue  # 窗口销毁中等情况：静默重试
-            try:
-                from . import mode_notify
-            except Exception:  # noqa: BLE001
-                continue
-            if mode_notify._win is None:
-                continue
-            last = mode_notify._last_poll[0]
-            gap = _time.time() - last
-            if gap < _GUI_STALL_S:
-                if state['reported']:
-                    logger.info("[GUI探针] GUI 消息泵已恢复（停滞 %.0fs 后心跳恢复）", gap)
-                state['reported'] = False
-                continue
-            # 心跳超 15s 未更新 = GUI 线程停摆（_gui_beat 已无法被泵执行）
-            if state['reported']:
-                continue
-            state['reported'] = True
-            try:
-                _lines = []
-                frames = _sys._current_frames()
-                for th in _th.enumerate():
-                    fr = frames.get(th.ident)
-                    if fr is None:
-                        continue
-                    stack = _tb.extract_stack(fr)
-                    tail = stack[-14:] if len(stack) > 14 else stack
-                    _lines.append("--- 线程 %s (ident=%s) ---" % (th.name, th.ident))
-                    _lines.extend(_l.rstrip() for _l in _tb.format_list(tail))
-                _txt = "\n".join(_lines)
-                # 🔑 先写独立文件再打日志（17:56 实测：全局冻结时 logging 先被冻死，
-                # 先 logger 后写文件的顺序会连 dump 一起丢）。
-                try:
-                    import os as _os
-                    _d = _os.path.join(_os.path.dirname(_os.path.dirname(
-                        _os.path.abspath(__file__))), "logs")
-                    _os.makedirs(_d, exist_ok=True)
-                    _p = _os.path.join(_d, "gui_freeze_%s.txt" % _time.strftime("%Y%m%d_%H%M%S"))
-                    with open(_p, "w", encoding="utf-8") as _f2:
-                        _f2.write(_txt)
-                    # 记录到全局列表，供开发者页健康面板读取/导出
-                    global _FREEZE_DUMPS
-                    _FREEZE_DUMPS.append(_p)
-                    if len(_FREEZE_DUMPS) > 12:
-                        del _FREEZE_DUMPS[:len(_FREEZE_DUMPS) - 12]
-                    # 额外抓一份 faulthandler 全线程栈（含 C 侧部分符号），命名区分便于定位 native 死锁
-                    try:
-                        import faulthandler as _fh
-                        _pf = _os.path.join(_d, "gui_freeze_fa_%s.txt" % _time.strftime("%Y%m%d_%H%M%S"))
-                        with open(_pf, "w", encoding="utf-8") as _fa:
-                            _fh.dump_traceback(file=_fa, all_threads=True)
-                        _FREEZE_DUMPS.append(_pf)
-                    except Exception:  # noqa: BLE001
-                        pass
-                    logger.error("[GUI探针] 💥 已抓取 GUI 冻结现场 → %s", _p)
-                except Exception:  # noqa: BLE001
-                    pass
-                for _ln in _lines:
-                    logger.error("[GUI探针] %s", _ln)
-            except Exception:  # noqa: BLE001
-                logger.warning("[GUI探针] 转储失败", exc_info=True)
-
-    _th.Thread(target=_watch, daemon=True, name='gui-liveness-probe').start()
-    logger.info("[GUI探针] v4 BeginInvoke 心跳版已安装（每2s投递 GUI 线程；兼做弹窗兜底推送/跟屏/自检）")
-    logger.info("[GUI探针] v3 心跳版已安装（基于 js_api.poll 心跳，零跨线程 evaluate_js）")
 
 
-def _patch_webview2_unique_user_data() -> None:
-    """给每个 pywebview 窗口分配独立的 WebView2 UserDataFolder（幂等）。
-
-    白屏根因（2026-08-24 三窗口探针实锤）：
-    pywebview 的 winforms.init_storage() 只初始化一次全局 cache_dir，
-    所有窗口共用同一个 UserDataFolder。WebView2 对同一 folder 的并发初始化
-    会互相踩（E_ABORT 0x80004004），导致窗口初始化失败 → 白屏/黑屏。
-    这里整体替换 EdgeChrome.__init__：每窗口独立 folder + 非透明窗口
-    追加 --disable-gpu 软件渲染（GPU 被本地模型占满时 WebView2 GPU 进程
-    起不来同样 E_ABORT），实测 3 窗口全部 READY OK。
-    """
-    global _WV2_PATCHED
-    if _WV2_PATCHED:
-        return
-    try:
-        import webview.platforms.edgechromium as _ec
-    except Exception:  # noqa: BLE001 非 edgechromium 后端则跳过
-        _WV2_PATCHED = True
-        return
-
-    _orig_init = _ec.EdgeChrome.__init__
-
-    def _init_with_unique_folder(self, form, window, cache_dir):
-        # 复制 pywebview 6.2.1 EdgeChrome.__init__ 官方实现，仅两处改动：
-        # 1) UserDataFolder 每窗口独立（多窗口共享 folder → E_ABORT 白屏）；
-        # 2) 非透明窗口追加 --disable-gpu（GPU 显存被本地模型占满时 WebView2
-        #    GPU 进程启动失败 → E_ABORT；软件渲染绕开）。
-        import logging as _logging
-        from webview import _state as _wv_state
-        from webview import settings as _wv_settings
-        from webview.util import DEFAULT_HTML as _DEFAULT_HTML
-        from Microsoft.Web.WebView2.WinForms import (
-            CoreWebView2CreationProperties as _Props,
-            WebView2 as _WebView2,
-        )
-
-        self.pywebview_window = window
-        self.webview = _WebView2()
-        props = _Props()
-        n = next(_WV2_FOLDER_SEQ)
-        # 2026-08-24 修正：UserDataFolder 不能用 %TEMP%（沙箱/系统会重定向 Temp，
-        # WebView2 子进程（gpu/network/renderer）无法启动 → 导航开始后永不完成
-        # → 白屏；系统自身 WebView2 用的是 Packages 目录所以正常）。
-        # 改到 %LOCALAPPDATA% 下的 pywebview/wv2/<稳定键>（按窗口标题哈希，跨启动不变），每窗口独立。
-        _base = os.environ.get("LOCALAPPDATA") or os.path.expanduser("~\\AppData\\Local")
-        _wv2_root = os.path.join(_base, "pywebview", "wv2")
-        # 2026-08-30 再修正：目录名由 f"{os.getpid()}_{n}" 改为按窗口标题哈希。
-        # 带 PID 时每次启动都是全新目录 → localStorage 次次被清空 → 设置永远存不住。
-        # 新键既要跨启动稳定（能持久化），又要每窗口独立（否则 E_ABORT 白屏）。
-        folder = os.path.join(_wv2_root, _stable_wv2_folder_key(window, n))
-        _sweep_legacy_wv2_folders(_wv2_root)
-        _sweep_wv2_caches(_wv2_root)  # 启动即清 WebView2 磁盘缓存，绕过顽固 fetch 缓存
-        try:
-            os.makedirs(folder, exist_ok=True)
-        except Exception:  # noqa: BLE001
-            folder = cache_dir
-        props.UserDataFolder = folder
-        self.user_data_folder = props.UserDataFolder
-        props.set_IsInPrivateModeEnabled(_wv_state['private_mode'])
-        # 渲染模式：始终使用 GPU 合成（透明桌宠与主窗均依赖 DirectComposition/GPU）。
-        # 2026-09-04 求证：此前「显存满 → WebView2 GPU 合成器冻结 → 卡死」的假设
-        # 未被实锤，用户远程（UU 远程·屏幕共享禁止观察）看到的黑屏/未响应实为
-        # 远程画面未传回，本地软件一直正常。故撤除「非透明窗改 --disable-gpu 软件渲染」
-        # 的兜底分支，避免无谓掉帧。多窗口 E_ABORT 白屏的真正修复是「每窗口独立
-        # UserDataFolder」（见上方 _patch_webview2_unique_user_data）。
-        # 注意：曾试过 --disk-cache-size=1 禁用磁盘缓存，实测会让 UserDataFolder 行为异常
-        # （主页卡死 + 触发首启引导页重置），已回退。前端缓存统一由 webapp.py 的
-        # 「启动令牌 ?v 重写 + SPA fetch 的 _cb 时间戳」两层机制处理（见 _ensure_web_server / morph_icons.js）。
-        _cache_off = '--disable-features=ElasticOverscroll'
-        props.AdditionalBrowserArguments = _cache_off
-        if _wv_settings['ALLOW_FILE_URLS']:
-            props.AdditionalBrowserArguments += ' --allow-file-access-from-files'
-        if _wv_settings['REMOTE_DEBUGGING_PORT'] is not None:
-            props.AdditionalBrowserArguments += (
-                f' --remote-debugging-port={_wv_settings["REMOTE_DEBUGGING_PORT"]}'
-            )
-        self.webview.CreationProperties = props
-
-        self.form = form
-        form.Controls.Add(self.webview)
-        from threading import Semaphore as _Semaphore
-        self.js_results = {}
-        self.js_result_semaphore = _Semaphore(0)
-        import System.Windows.Forms as _WinForms
-        self.webview.Dock = _WinForms.DockStyle.Fill
-        self.webview.BringToFront()
-        self.webview.CoreWebView2InitializationCompleted += self.on_webview_ready
-        self.webview.NavigationStarting += self.on_navigation_start
-        self.webview.NavigationCompleted += self.on_navigation_completed
-        self.webview.WebMessageReceived += self.on_script_notify
-        from System.Threading.Tasks import TaskScheduler as _TaskScheduler
-        self.syncContextTaskScheduler = _TaskScheduler.FromCurrentSynchronizationContext()
-        from System.Drawing import Color as _Color
-        self.webview.DefaultBackgroundColor = _Color.FromArgb(
-            255,
-            int(window.background_color.lstrip('#')[0:2], 16),
-            int(window.background_color.lstrip('#')[2:4], 16),
-            int(window.background_color.lstrip('#')[4:6], 16),
-        )
-        if window.transparent:
-            self.webview.DefaultBackgroundColor = _Color.Transparent
-
-        self.url = None
-        self.ishtml = False
-        self.html = _DEFAULT_HTML
-        logger.info("[WebView2] 窗口 %s 独立 UserDataFolder=%s 透明=%s args=%s",
-                    window.uid, folder, window.transparent,
-                    props.AdditionalBrowserArguments)
-        # 初始化完成诊断：区分"哪个窗口成功/失败"（pywebview 失败只打 ERROR，
-        # 成功无日志 → 无法判断是加载窗销毁误报还是主窗真失败）
-        _orig_ready = type(self).on_webview_ready
-        def _ready_wrap(sender, args):
-            try:
-                if args.IsSuccess:
-                    logger.info("[WebView2] 窗口 %s READY OK", window.uid)
-                    global _WV2_CONTROLS
-                    _WV2_CONTROLS[window.uid] = self.webview
-                    _harden_webview2(self.webview, window)
-                else:
-                    logger.error("[WebView2] 窗口 %s READY FAILED: %s",
-                                 window.uid, args.InitializationException)
-            except Exception:  # noqa: BLE001
-                pass
-            return _orig_ready(self, sender, args)
-        self.webview.CoreWebView2InitializationCompleted -= self.on_webview_ready
-        self.webview.CoreWebView2InitializationCompleted += _ready_wrap
-        # 导航诊断（临时）：确认页面是否真的导航并渲染成功
-        def _nav_start(sender, e):
-            try:
-                logger.info("[WebView2] 窗口 %s 导航开始: %s", window.uid, getattr(e, 'Uri', '?'))
-            except Exception:  # noqa: BLE001
-                pass
-        def _nav_complete(sender, e):
-            try:
-                ok = getattr(e, 'IsSuccess', None)
-                err = getattr(e, 'WebErrorStatus', None)
-                logger.info("[WebView2] 窗口 %s 导航完成: ok=%s err=%s", window.uid, ok, err)
-            except Exception:  # noqa: BLE001
-                pass
-        self.webview.NavigationStarting += _nav_start
-        self.webview.NavigationCompleted += _nav_complete
-        self.webview.EnsureCoreWebView2Async(None)
-
-    _ec.EdgeChrome.__init__ = _init_with_unique_folder
-    _WV2_PATCHED = True
-    logger.info("[WebView2] 已启用每窗口独立 UserDataFolder（修复多窗口并发初始化 E_ABORT → 白屏）")
 
 
 # 🛡️【2026-09-27 闪退修复】GUI 线程 CLR 异常守卫。
@@ -19422,54 +17163,9 @@ def _patch_webview2_unique_user_data() -> None:
 # （日志只会戛然而止、无任何 traceback）——这正是本次"两次闪退"的表现。
 # 装好 ThreadException + UnhandledException 处理器后：异常改为"记录完整栈并吞掉"，
 # 进程不再无声崩掉；若再触发，现场会写进 logs/ 下的 fault / crash 日志，便于精确定位。
-_CLR_CRASH_GUARD_INSTALLED = False
+# （_CLR_CRASH_GUARD_INSTALLED 状态已随 _install_clr_crash_guard 迁到 wv2_env.py）
 
 
-def _install_clr_crash_guard() -> None:
-    global _CLR_CRASH_GUARD_INSTALLED
-    if _CLR_CRASH_GUARD_INSTALLED:
-        return
-    try:
-        import System  # noqa: F401  （触发 pythonnet CLR 引导；失败则降级跳过）
-        from System.Windows.Forms import Application
-        from System import AppDomain
-    except Exception as _e:  # noqa: BLE001
-        logger.warning("[CLR守卫] pythonnet/WinForms 暂不可用，跳过: %s", _e)
-        return
-    try:
-        # 让 UI 线程异常走 CatchException（被 ThreadException 接住），而非直接抛到域级终止。
-        Application.SetUnhandledExceptionMode(
-            Application.UnhandledExceptionMode.CatchException)
-    except Exception:  # noqa: BLE001
-        pass
-
-    def _on_thread_exc(sender, e) -> None:
-        try:
-            logger.error("[CLR守卫] GUI 线程未捕获异常（已吞掉防闪退）: %s", e.Exception)
-        except Exception:  # noqa: BLE001
-            pass
-
-    def _on_domain_exc(sender, e) -> None:
-        try:
-            logger.error("[CLR守卫] 域级未捕获异常（已标记处理防闪退）: %s",
-                         e.ExceptionObject)
-        except Exception:  # noqa: BLE001
-            pass
-        try:
-            e.Handled = True  # 非致命异常：阻止 .NET 终止进程
-        except Exception:  # noqa: BLE001
-            pass
-
-    try:
-        Application.ThreadException += _on_thread_exc
-    except Exception:  # noqa: BLE001
-        pass
-    try:
-        AppDomain.CurrentDomain.UnhandledException += _on_domain_exc
-    except Exception:  # noqa: BLE001
-        pass
-    _CLR_CRASH_GUARD_INSTALLED = True
-    logger.info("[CLR守卫] 已安装（GUI 线程/域级 CLR 异常 → 记录并防闪退）")
 
 
 # 模块导入即尝试安装一次（覆盖 webview.start 之前最早的那批窗口创建）；
@@ -19491,9 +17187,7 @@ except Exception:  # noqa: BLE001
 #   4) 关闭 → 拦截并隐藏（保留窗口实例），绝不销毁（销毁后重开需运行时 create_window）。
 #   5) 真数字被阿里云控制台登录态锁死：本窗口就是让用户「在 App 里登录一次」的载体。
 # ==========================================================
-_BAILIAN_CONSOLE_WIN = None  # 启动期创建后挂这里，供后端 RPC 读取
 _BAILIAN_REAL_QUOTA = {"data": None}  # inject 从已登录控制台页抓回的最新快照
-_BAILIAN_INJECT_TIMER = None  # 60s 周期注入循环（只起一次）
 
 # 百炼控制台各功能页深链（URL 已核实，非 AI 幻觉）：免费额度页来自社区一致来源，
 # 控制台根用于兜底。免费额度仅华北2·北京地域模型享。
@@ -19531,961 +17225,20 @@ class BailianConsoleAPI:
 # 注入脚本：在控制台页同源上下文执行，抓取"免费额度"页可见的额度文本行。
 # 不猜任何私有 API 端点（models/quota 幻觉前车之鉴），只读页面渲染结果——
 # 就算阿里改版，最多少抓几行，不会报错；抓不到时保留"直接看控制台页"兜底。
-_BAILIAN_INJECT_JS = (
-    "(function(){try{"
-    "var t=document.body?document.body.innerText:'';"
-    "var ls=t.split('\\n').map(function(s){return s.trim();}).filter(function(s){return s&&s.length<90;});"
-    "var kw=/token|额度|免费|万|%|配额|用量|重置|到期/i;"
-    "var hits=ls.filter(function(s){return kw.test(s)&&/\\d/.test(s);}).slice(0,50);"
-    "var login=(/登录|扫码|login/i.test(t))&&hits.length===0;"
-    "if(window.pywebview&&window.pywebview.api&&window.pywebview.api.report_quota){"
-    "window.pywebview.api.report_quota({url:location.href,title:document.title,hits:hits,login:login});"
-    "}"
-    "}catch(e){}})();"
-)
 
 
-def _bailian_inject_loop(win) -> None:
-    """每 60s 向控制台窗口注入一次取数脚本（窗口开着才有效；异常静默，绝不影响主功能）。"""
-    global _BAILIAN_INJECT_TIMER
-    try:
-        url = getattr(win, "_bailian_loaded_url", "") or ""
-        if "bailian.console.aliyun.com" in url:
-            win.evaluate_js(_BAILIAN_INJECT_JS)
-    except Exception:  # noqa: BLE001
-        logger.debug("[百炼控制台] 注入失败（窗口未就绪或已关闭）", exc_info=True)
-    try:
-        _BAILIAN_INJECT_TIMER = threading.Timer(60.0, _bailian_inject_loop, args=(win,))
-        _BAILIAN_INJECT_TIMER.daemon = True
-        _BAILIAN_INJECT_TIMER.start()
-    except Exception:  # noqa: BLE001
-        _BAILIAN_INJECT_TIMER = None
 
 
-def _run_coroutine_sync(coro, timeout: float = 300.0):
-    """在一个**独立线程的全新事件循环**里跑完协程并返回结果。
 
-    【2026-10-02 新增】给 js_api 守卫兜底用。本项目 GUI 进程已有一个常驻事件循环，
-    所以不能在当前线程直接 asyncio.run（会报 "loop already running"），也不能把协程
-    挂在那个循环上（会死等）。故：起独立线程 → 新建 loop → run_until_complete。
-    """
-    import asyncio as _aio
-    import threading as _th
-    _box: dict = {}
 
-    def _worker():
-        loop = _aio.new_event_loop()
-        try:
-            _aio.set_event_loop(loop)
-            _box["r"] = loop.run_until_complete(coro)
-        except Exception as e:  # noqa: BLE001
-            _box["r"] = {"success": False, "error": f"异步接口执行失败：{type(e).__name__}: {e}"}
-        finally:
-            try:
-                loop.close()
-            except Exception:  # noqa: BLE001
-                pass
 
-    t = _th.Thread(target=_worker, name="jsapi-coro", daemon=True)
-    t.start()
-    t.join(timeout=timeout)
-    if t.is_alive():
-        return {"success": False, "error": f"异步接口超时（>{int(timeout)}s）"}
-    return _box.get("r")
 
 
-def _safe_js_api(api, label: str = ""):
-    """js_api 序列化守卫（2026-10-02）：治 pywebview 层静默 TypeError。
 
-    背景：pywebview 对 js_api 返回值做 json.dumps，任何不可序列化对象（如误
-    返回的 bound method）都在序列化层抛 TypeError——前端 Promise 永远挂起、
-    UI 毫无反馈，Python 侧只留一个**不带方法名**的 traceback（实测 01:59 运行
-    时 1 小时内 245 次，完全无法定位是哪个接口）。
 
-    守卫做三件事：
-      1. 返回前本地 json.dumps 试序列化（与 pywebview 同规则）；
-      2. 失败 → 日志直接打出 **方法名**（真凶可见）+ 返回值类型；
-      3. 降级返回错误 dict——前端至少能收到响应，不再静默挂起。
 
-    实现方式：动态派生子类包裹所有公开方法（同步/异步都支持），原对象状态
-    原样搬迁，不影响 pywebview 的方法枚举（类函数仍是 bound method）。
-    """
-    import functools as _ft
-    import inspect as _inspect
 
-    cls = api.__class__
 
-    def _make_guard(fn, name):
-        _where = f"{label or cls.__name__}.{name}"
-
-        def _fail(e):
-            logger.error(
-                "[js_api守卫] %s 返回不可 JSON 序列化（%r）→ 降级错误响应",
-                _where, e)
-            # 把方法名 + 错误类型带进返回值：前端可据此提示，也便于用户直接贴日志定位
-            return {"success": False,
-                    "error": f"接口 {_where} 返回了不可序列化的结果（{e}），详见运行日志"}
-
-        if _inspect.iscoroutinefunction(fn):
-            @_ft.wraps(fn)
-            async def guard(self, *a, **k):
-                result = await fn(self, *a, **k)
-                try:
-                    json.dumps(result)
-                except Exception as e:  # noqa: BLE001
-                    return _fail(e)
-                return result
-        else:
-            @_ft.wraps(fn)
-            def guard(self, *a, **k):
-                result = fn(self, *a, **k)
-                # 【2026-10-02 兜底】若某个"本应同步"的方法意外返回了协程对象（例如误写成
-                # async def），这里就地把它跑完再返回，而不是让协程一路传到前端炸出
-                # 「Object of type coroutine is not JSON serializable」这种天书错误。
-                # 本项目 GUI 已有运行中的事件循环，故用独立线程跑一个全新的 loop。
-                if _inspect.iscoroutine(result):
-                    result = _run_coroutine_sync(result)
-                try:
-                    json.dumps(result)
-                except Exception as e:  # noqa: BLE001
-                    return _fail(e)
-                return result
-        return guard
-
-    attrs = {}
-    for name, fn in _inspect.getmembers(cls, _inspect.isfunction):
-        if name.startswith("_"):
-            continue
-        attrs[name] = _make_guard(fn, name)
-    safe_cls = type(cls.__name__ + "_Safe", (cls,), attrs)
-    inst = object.__new__(safe_cls)
-    # 【2026-10-10 修"agent卡/新消息永不上屏"根因】旧实现 `inst.__dict__.update(api.__dict__)`
-    # 是**浅拷贝**：不可变标量（_chat_seq / _chat_history_loaded / _chat_status_id 等）
-    # 在拷贝瞬间被定格，此后 wrapper 与原对象**各自分叉**——
-    #   · 总线事件（USER_TEXT/AGENT_STATUS/PARTIAL_TEXT）处理在原对象上：seq 0→1→2→3，
-    #     消息 append 进原对象的缓冲；
-    #   · 前端轮询的 get_chat_messages 在 wrapper 上：永远看到拷贝瞬间的旧状态；
-    #   · 今天新加的 _load_chat_history 会**重建 deque 并赋值**（rebinding），把 wrapper
-    #     的 _chat_buffer 与原对象的彻底拆成两个 → 历史能恢复、实时消息全失踪，
-    #     且落盘 id 每次启动都从 1 重来（日志 22:01:03「已恢复 16 条」vs 22:02:00「id=2」实锤）。
-    # 修法：让 wrapper 与原对象**共享同一个 __dict__**（同一命名空间，读写全等）。
-    # guard 方法挂在 safe_cls 类属性上不受影响；pywebview 的方法枚举基于类，亦不受影响。
-    inst.__dict__ = api.__dict__
-    return inst
-
-
-def create_bailian_console_window(api=None) -> Optional["webview.Window"]:  # noqa: F821
-    """创建百炼控制台内嵌窗口：启动期调用、隐藏、懒加载 URL。
-
-    复用 edgechromium + 每窗口独立 UserDataFolder（登录态持久化到本机，跨重启保留）。
-    绝不在运行时 create_window（会触发 WebView2 STA 死锁）。返回窗口对象或 None。
-    """
-    global _BAILIAN_CONSOLE_WIN
-    import webview
-    placeholder = (
-        "<!doctype html><html><head><meta charset='utf-8'>"
-        "<style>html,body{margin:0;height:100%;background:#0d1017;color:#9aa3b2;"
-        "font-family:system-ui,'Microsoft YaHei',sans-serif;display:flex;"
-        "align-items:center;justify-content:center;text-align:center;padding:24px}"
-        ".b{max-width:540px}.t{font-size:15px;line-height:1.8}"
-        ".s{margin-top:10px;font-size:12px;color:#5d6473}</style></head>"
-        "<body><div class='b'><div class='t'>百炼控制台将在你点击「在应用内查看额度」时打开。"
-        "<br>首次使用请在窗口内登录一次阿里云，之后额度常驻可见。</div>"
-        "<div class='s'>免费额度仅华北2·北京地域模型享有；其他地域页面为空属正常。</div></div></body></html>"
-    )
-    try:
-        win = webview.create_window(
-            title="百炼控制台 · 免费额度",
-            html=placeholder,
-            js_api=_safe_js_api(BailianConsoleAPI(), "BailianConsole"),
-            width=1280, height=860,
-            min_size=(900, 600),
-            text_select=True,
-            resizable=True,
-        )
-    except Exception as e:  # noqa: BLE001
-        logger.error("[百炼控制台] 创建窗口失败: %s", e)
-        return None
-    # 创建即隐藏（避免启动期抢焦点 / 闪现）
-    try:
-        win.hide()
-    except Exception:  # noqa: BLE001
-        pass
-    # 关闭 → 取消并隐藏（保留实例，避免运行时重建触发死锁）
-    try:
-        def _on_console_closing():  # noqa: ANN001
-            try:
-                win.hide()
-            except Exception:  # noqa: BLE001
-                pass
-            return False  # 取消关闭 → 不销毁窗口实例
-        win.events.closing += _on_console_closing
-    except Exception:  # noqa: BLE001
-        logger.warning("[百炼控制台] 关闭拦截挂载失败（关闭将销毁窗口，重开需重启）", exc_info=True)
-    _BAILIAN_CONSOLE_WIN = win
-    logger.info("[百炼控制台] 内嵌窗口已创建（隐藏，懒加载）")
-    return win
-
-
-def create_main_window(api: Optional[CharacterAPI] = None,
-                       title: str = "AI 桌面伴侣 - 角色管理"):
-    """创建主窗口（加载全部完成后由启动监督线程调用）。返回 webview.Window。"""
-    import webview
-    # 🛡️ 确保 CLR 异常守卫在窗口创建/消息泵运行前就位（防启动期 ObjectDisposedException 闪退）。
-    try:
-        _install_clr_crash_guard()
-    except Exception:  # noqa: BLE001
-        pass
-    if api is None:
-        api = CharacterAPI()
-    base = _ensure_web_server()
-    # 给入口文档加时间戳版本号，强制 WebView2 每次重启都重新拉取 index.html。
-    # 脚本已有 ?v=2 版本爆破，但入口文档本身无版本号，旧版可能被 WebView2 的 HTTP
-    # 缓存跨重启保留（表现为：改了 index.html 里的首启 overlay，重启却仍走旧逻辑）。
-    # 本地静态服务虽已发 no-store，但部分 Edge/WebView2 版本对顶层文档缓存处理有差异，
-    # 加 ?v= 时间戳双保险。SimpleHTTPRequestHandler.translate_path 会忽略 ? 后查询串，
-    # 仍正确映射到 index.html。
-    html_path = base + "/index.html?v=" + str(int(time.time()))
-
-    # 用本地 HTTP 加载页面（非 file://），规避 WebView2 对 file:// 的加载限制
-    # 导致的空白/黑屏。端口 8766 与 ws_server(8765) 不冲突。
-    window = webview.create_window(
-        title=title,
-        url=html_path,
-        js_api=_safe_js_api(api, "CharacterAPI-main"),
-        width=1280,
-        height=800,
-        min_size=(1000, 700),
-        text_select=False,
-        resizable=True,
-    )
-    
-    # 窗口创建后不立即显示，让调用者控制显示/隐藏
-    logger.info("create_main_window: webview.create_window 返回 %s", window)
-
-    # 【2026-09-05 稳定性根治】拦截主窗口关闭：用户点 X 时不真正销毁窗口，
-    # 而是取消关闭 + 隐藏 + 桌宠接管。这样"关闭→桌宠→回主窗"全程只有启动时那
-    # 一次 create_window，彻底避免运行时二次 create_window 触发 WebView2 STA 死锁
-    # （之前每次重建主窗都卡死整进程，用户累计卡死 40+ 次的根因之一）。
-    try:
-        _fw = getattr(window, "_window", None)
-        if _fw is not None and hasattr(_fw, "FormClosing"):
-            def _on_main_form_closing(sender, e):
-                # 程序正在退出（托盘"退出"已触发 _exiting）→ 放行真正关闭
-                if getattr(api, "_exiting", False):
-                    return
-                try:
-                    e.Cancel = True  # 取消关闭，改为隐藏而非销毁
-                except Exception:  # noqa: BLE001
-                    return  # 取消失败则交给默认关闭逻辑
-                try:
-                    api.hide_window()
-                    api.pet_show()
-                except Exception:  # noqa: BLE001
-                    logger.warning("主窗关闭拦截: 隐藏/桌宠接管失败", exc_info=True)
-            _fw.FormClosing += _on_main_form_closing
-            logger.info("create_main_window: 已挂载主窗 FormClosing 拦截（关闭→隐藏+桌宠）")
-    except Exception:  # noqa: BLE001
-        logger.warning("create_main_window: FormClosing 拦截挂载失败（降级为真正关闭）", exc_info=True)
-    # 【渲染自检（2026-08-24 多轮实测）】：必须在 GUI 线程调用 evaluate_js。
-    # 用 window.events.loaded / shown 回调（由 pywebview 在 GUI 线程派发），
-    # 绝不能用 threading.Timer（跨线程 evaluate_js 会触发 shown.wait 超时误报
-    # "Main window failed to start"）。窗口真正 loaded 后读 innerHTML 长度确认渲染。
-    def _on_loaded_selfcheck():
-        try:
-            v = window.evaluate_js(
-                "(function(){try{var o=document.getElementById('onboardingOverlay');"
-                "var st=o?((o.hidden?'hidden':(o.isConnected?'in-dom':'removed'))"
-                "+(o&&o.style.opacity!=''?('|op='+o.style.opacity):'')):'removed';"
-                "var b=document.getElementById('onboardingBoot');"
-                "var bs=(b&&getComputedStyle(b).display!=='none')?'boot-visible':'boot-hidden';"
-                "return (document.readyState||'')+'|'+(document.body?"
-                "document.body.innerHTML.length:-1)+'|'+(document.title||'')"
-                "+'|ob='+st+'|'+bs"
-                "+'|bk='+(!!window.Backend)"
-                "+'|pw='+(!!(window.pywebview&&window.pywebview.api));}"
-                "catch(e){return 'ERR:'+e}})()")
-            logger.info("[渲染自检-主窗口] %s", v)
-        except Exception as e:  # noqa: BLE001
-            logger.warning("[渲染自检-主窗口] 读取失败(可能黑/白屏): %s", e)
-    # 进软件就绪提醒：窗口首帧 loaded 后一次性检查视觉模型，无配置/无模型在右上角弹引导。
-    _readiness_fired = {"done": False}
-    def _on_loaded_readiness():
-        if _readiness_fired["done"]:
-            return
-        _readiness_fired["done"] = True
-        try:
-            # 首启引导期间：不弹视觉就绪窗，也不自动后台下载/准备模型，
-            # 等用户完成引导页配置后再按所选配置启动。
-            _fr = api.is_first_run()
-            if _fr.get("first_run"):
-                logger.info("[就绪弹窗] 首启引导期间，跳过视觉就绪提醒与自动准备")
-                return
-            api.notify_companion_readiness()
-            # 进软件自动准备（后台下载）已保存的本地模型：满足"进软件就自动加载本地模型"。
-            # download_model_quant 内部对已存在量化包直接跳过，不会重复下载；云端能力零下载。
-            try:
-                raw = api._cfg.raw
-                feats = raw.get("companion_features")
-                if not isinstance(feats, list):
-                    feats = api._derive_features_from_config(raw)
-                api._kickoff_custom_model_prep(feats, raw.get("proactive", {}))
-            except Exception:  # noqa: BLE001
-                logger.warning("[就绪自动准备] 触发失败（忽略）")
-        except Exception:  # noqa: BLE001
-            logger.warning("[就绪弹窗] 调用失败", exc_info=True)
-    try:
-        window.events.loaded += _on_loaded_selfcheck
-        window.events.shown += _on_loaded_selfcheck
-        window.events.loaded += _on_loaded_readiness
-    except Exception:  # noqa: BLE001
-        logger.warning("[渲染自检-主窗口] 事件注册失败(窗口可能白屏)")
-
-    # GUI 线程活性探针（2026-09-04）：shown 事件在 GUI 线程派发，借此安装
-    # WinForms.Timer 心跳；消息泵停滞 >6s 自动转储主线程栈，实锤「未响应」卡点。
-    _probe_state = {'on': False}
-
-    def _install_gui_probe(*_args):
-        if _probe_state['on']:
-            return
-        _probe_state['on'] = True
-        try:
-            _start_gui_liveness_probe(window)
-        except Exception:  # noqa: BLE001
-            logger.warning("[GUI探针] 安装失败", exc_info=True)
-
-    try:
-        window.events.shown += _install_gui_probe
-    except Exception:  # noqa: BLE001
-        logger.warning("[GUI探针] 事件注册失败")
-    return window
-
-
-def create_desktop_companion(api: Optional[CharacterAPI] = None) -> "webview.Window":
-    """创建桌面透明可拖动看板娘窗口（桌宠模式，屏幕右下角）。
-
-    加载 Anime2.5DRig 的 ?bare 纯人物模式：透明背景 + frameless + 置顶。
-    不使用 easy_drag：拖动由 rig 页面自己实现（JS 跟踪鼠标位移 → pet_move），
-    才能同时做到"左键点击互动 / 拖动时下半身摆动物理 / 右键操作面板"。
-    PSD 由 rig 页面直调 js_api.get_live2d_psd() 获取（file:// 下无法 fetch 本地文件）。
-    初始 hidden，由调用方在合适时机 show()。
-    """
-    import ctypes
-    import webview
-
-    if api is None:
-        api = CharacterAPI()
-    base = _ensure_web_server()
-    rig_path = base + "/pet_render/current?pet=1"
-    w, h, margin = 420, 540, 24
-    # pywebview 的 x/y/width/height 均为逻辑像素（内部按显示器 DPI 换算成物理像素）。
-    # 不能用 webview.screens 当逻辑分辨率：应用进程 start 后已 SetProcessDPIAware，
-    # 此时 Screen.Bounds 返回的是物理像素且 scale 恒为 1.0（pywebview 6.2.1 实现如此），
-    # 直接把 width 当逻辑值会在 >100% 缩放下把窗口推到屏幕外（4K/150% → 物理 5094）。
-    # 改用 GetSystemMetrics/GetDeviceCaps：两者随进程感知状态一致（要么都返回虚拟化
-    # 逻辑值、要么都返回物理值），相除后恒为逻辑分辨率，感知与否都正确。
-    user32 = ctypes.windll.user32
-    gdi32 = ctypes.windll.gdi32
-    sw, sh = user32.GetSystemMetrics(0), user32.GetSystemMetrics(1)
-    hdc = gdi32.CreateDCW("DISPLAY", None, None, None)
-    dpi = gdi32.GetDeviceCaps(hdc, 88) or 96  # LOGPIXELSX
-    gdi32.DeleteDC(hdc)
-    scale = max(dpi / 96.0, 1.0)
-    lw, lh = int(sw / scale), int(sh / scale)
-    pet_window = webview.create_window(
-        title="达妮娅看板娘",
-        url=rig_path,
-        js_api=_safe_js_api(api, "CharacterAPI-pet"),
-        frameless=True,
-        transparent=True,
-        easy_drag=False,
-        text_select=False,
-        on_top=False,
-        x=lw - w - margin,
-        y=lh - h - margin,
-        width=w,
-        height=h,
-        hidden=False,
-    )
-    # 桌宠渲染自检：必须在 GUI 线程（events 回调内）调用 evaluate_js，
-    # 不可跨线程（threading.Timer 会误报 failed to start）。
-    def _pet_selfcheck():
-        try:
-            v = pet_window.evaluate_js(
-                "(function(){try{return (document.readyState||'')+'|'+(document.body?"
-                "document.body.innerHTML.length:-1)+'|'+(document.title||'')}"
-                "catch(e){return 'ERR:'+e}})()")
-            logger.info("[渲染自检-桌宠] %s", v)
-        except Exception as e:  # noqa: BLE001
-            logger.warning("[渲染自检-桌宠] 读取失败(可能黑/白屏): %s", e)
-    try:
-        pet_window.events.loaded += _pet_selfcheck
-        pet_window.events.shown += _pet_selfcheck
-    except Exception:  # noqa: BLE001
-        logger.warning("[渲染自检-桌宠] 事件注册失败(窗口可能白屏)")
-
-    # 【2026-10-03 修复·桌宠拖不动根因】分离 WebView2 渲染窗为独立顶层窗：
-    # webview/platforms/winforms.py 的 detach_pet_render() 已实现但**从未被调用**，
-    # 导致 colorkey 分层窗整窗点击穿透（角色只显示、不参与命中）→ 既点不动也拖不动。
-    # 分离后 on_move/on_resize/_sync_pet_render_rect 才会把角色跟手移动、让窗口可拖。
-    # 渲染窗 Chrome_WidgetWin_1 在 WebView2 初始化完成后才出现，故后台线程多次重试。
-    def _pet_detach_render():
-        """分离 WebView2 渲染窗（桌宠透明/可拖/可点击的前提）。
-
-        【v3-final 2026-10-18】一次根治三症状：
-          · 启动白底    → 摘出渲染窗并同步位置/尺寸
-          · 跳左上角    → 分离后立即 SetWindowPos 到主窗位置
-          · 无法拖动    → 20Hz 轮询主窗位置，渲染窗实时跟随
-          · 隐藏再显示正常（用户发现）→ 因为 show 触发了 pywebview 内部
-            重新布局；v3 的跟随线程让这一步不再必要
-        """
-        try:
-            import ctypes as _ct
-            from ctypes import wintypes as _wt
-            import threading as _th
-            import time as _t
-
-            user32 = _ct.windll.user32
-            GWL_STYLE = -16
-            WS_CHILD = 0x40000000
-            WS_POPUP = 0x80000000
-
-            state = {"child": None}
-
-            def _find_pet_hwnd():
-                return user32.FindWindowW(None, "达妮娅看板娘")
-
-            def _largest_render_child(owner):
-                best = [None, 0]
-
-                @_ct.WINFUNCTYPE(_ct.c_bool, _ct.c_void_p, _ct.c_void_p)
-                def _cb(child, _lp):
-                    buf = _ct.create_unicode_buffer(64)
-                    user32.GetClassNameW(child, buf, 64)
-                    if buf.value == "Chrome_WidgetWin_1":
-                        rc = _wt.RECT()
-                        user32.GetWindowRect(child, _ct.byref(rc))
-                        area = (rc.right - rc.left) * (rc.bottom - rc.top)
-                        if area > best[1]:
-                            best[0] = child
-                            best[1] = area
-                    return True
-
-                user32.EnumChildWindows(owner, _cb, None)
-                return best[0]
-
-            def _place(child, owner):
-                rc = _wt.RECT()
-                user32.GetWindowRect(owner, _ct.byref(rc))
-                user32.SetWindowPos(
-                    child, 0, rc.left, rc.top,
-                    rc.right - rc.left, rc.bottom - rc.top,
-                    0x0010 | 0x0004)   # NOACTIVATE | NOZORDER
-
-            def _detach():
-                """执行分离，返回 (owner_hwnd, child_hwnd) 或 (None, None)。"""
-                # 官方路径
-                native = getattr(pet_window, "native", None)
-                if native is not None and hasattr(native, "detach_pet_render"):
-                    try:
-                        native.detach_pet_render()
-                        hwnd = _find_pet_hwnd()
-                        if hwnd:
-                            return hwnd, None   # 官方路径自己处理 child
-                    except Exception as _e:  # noqa: BLE001
-                        logger.warning("[桌宠] pywebview 分离失败: %s", _e)
-
-                # Win32 兜底
-                for _ in range(240):    # 最多 60s
-                    hwnd = _find_pet_hwnd()
-                    if hwnd:
-                        child = _largest_render_child(hwnd)
-                        if child:
-                            style = user32.GetWindowLongW(child, GWL_STYLE)
-                            user32.SetWindowLongW(
-                                child, GWL_STYLE, (style & ~WS_CHILD) | WS_POPUP)
-                            user32.SetParent(child, None)
-                            _place(child, hwnd)
-                            return hwnd, child
-                    _t.sleep(0.25)
-                return None, None
-
-            # 跟随线程：主窗移动/缩放 → 渲染窗跟随；主窗隐藏 → 渲染窗藏
-            def _follow(owner, child_holder):
-                last = None
-                last_vis = None
-                while True:
-                    try:
-                        if not user32.IsWindow(owner):
-                            break
-                        child = child_holder["child"]
-                        # 官方路径没给我们 child 句柄 → 每次从顶层窗找
-                        # （摘出后的渲染窗是 WS_POPUP 顶层窗，类名不变）
-                        if child is None or not user32.IsWindow(child):
-                            child = _find_detached_child(owner)
-                            child_holder["child"] = child
-                        if not child:
-                            _t.sleep(0.2)
-                            continue
-
-                        rc = _wt.RECT()
-                        user32.GetWindowRect(owner, _ct.byref(rc))
-                        cur = (rc.left, rc.top, rc.right - rc.left, rc.bottom - rc.top)
-                        vis = bool(user32.IsWindowVisible(owner))
-                        if cur != last:
-                            _place(child, owner)
-                            last = cur
-                        if vis != last_vis:
-                            if vis:
-                                user32.ShowWindow(child, 5)   # SW_SHOW
-                            else:
-                                user32.ShowWindow(child, 0)   # SW_HIDE
-                            last_vis = vis
-                    except Exception:  # noqa: BLE001
-                        pass
-                    _t.sleep(0.05)
-
-            def _find_detached_child(owner):
-                """在顶层窗里找"属于本桌宠的"已分离渲染窗：按与主窗位置最近判断。"""
-                result = [None, 1 << 62]
-                rc_o = _wt.RECT()
-                user32.GetWindowRect(owner, _ct.byref(rc_o))
-
-                @_ct.WINFUNCTYPE(_ct.c_bool, _ct.c_void_p, _ct.c_void_p)
-                def _cb(top, _lp):
-                    buf = _ct.create_unicode_buffer(64)
-                    user32.GetClassNameW(top, buf, 64)
-                    if buf.value == "Chrome_WidgetWin_1":
-                        rc = _wt.RECT()
-                        user32.GetWindowRect(top, _ct.byref(rc))
-                        dx = abs(rc.left - rc_o.left) + abs(rc.top - rc_o.top)
-                        if dx < result[1]:
-                            result[0] = top
-                            result[1] = dx
-                    return True
-
-                user32.EnumWindows(_cb, None)
-                return result[0] if result[1] < 80 else None
-
-            hwnd, child = _detach()
-            if hwnd is None:
-                logger.error("[桌宠] 分离失败（白底/不可拖）")
-                return
-
-            state["child"] = child
-            th = _th.Thread(target=_follow, args=(hwnd, state), daemon=True,
-                            name="pet_render_follow")
-            th.start()
-            logger.info("[桌宠] 渲染窗分离完成，位置跟随线程已启动 (owner=0x%X child=%s)",
-                        hwnd, hex(child) if child else "官方路径管理")
-
-            # 【v4】自动 hide→show 一轮（等效用户手动操作，根治启动白底）：
-            # show() 触发 WinForms/WebView2 内部重新布局，让渲染窗正确贴到
-            # 透明合成层。手动"隐藏→显示"有效正是这个原理。
-            def _recycle():
-                # 【v5】尽早完成循环（总时长 ~1.2s），避免与主窗引导页
-                # iframe 加载（showGuide() 在主窗 ready 后触发，通常 >2s）
-                # 撞车 —— v4 的 1.5s+0.6s+0.4s 节奏正好撞上，导致引导页白屏
-                _t.sleep(0.2)
-                try:
-                    pet_window.hide()
-                    logger.info("[桌宠] 自动隐藏（修白底循环 1/2）")
-                except Exception:  # noqa: BLE001
-                    pass
-                _t.sleep(0.35)
-                try:
-                    pet_window.show()
-                    logger.info("[桌宠] 自动重新显示（修白底循环 2/2）")
-                except Exception:  # noqa: BLE001
-                    pass
-                # show 后再强制摆一次渲染窗（防布局后位置漂移）
-                _t.sleep(0.3)
-                try:
-                    ch = state.get("child")
-                    if ch and user32.IsWindow(ch):
-                        rc = _wt.RECT()
-                        user32.GetWindowRect(hwnd, _ct.byref(rc))
-                        user32.SetWindowPos(
-                            ch, 0, rc.left, rc.top,
-                            rc.right - rc.left, rc.bottom - rc.top,
-                            0x0010 | 0x0004)
-                    logger.info("[桌宠] 白底修复循环完成")
-                except Exception:  # noqa: BLE001
-                    pass
-
-            _th.Thread(target=_recycle, daemon=True, name="pet_recycle").start()
-
-        except Exception as _e:  # noqa: BLE001
-            logger.warning("[桌宠] 分离调度异常: %s", _e)
-
-    def _pet_start_detach(*_args):
-        try:
-            _th = __import__("threading")
-            _th.Thread(target=_pet_detach_render, daemon=True).start()
-        except Exception:  # noqa: BLE001
-            logger.warning("[桌宠] 渲染窗分离线程启动失败")
-
-    try:
-        pet_window.events.shown += _pet_start_detach
-    except Exception:  # noqa: BLE001
-        logger.warning("[桌宠] 渲染窗分离事件注册失败（改用立即启动）")
-        _pet_start_detach()
-    return pet_window
-
-
-def create_notify_window(api=None):
-    """创建模式切换通知浮窗（屏幕右上角，frameless + transparent + on_top）。
-
-    ⚠️ 铁律（2026-09-04 修·与 2026-08-24 黑屏根因同源）：本函数**必须**在 GUI 线程
-    调用（由 webview.start(func=...) 的 _boot_gui 回调创建，与 create_main_window /
-    create_desktop_companion 一致）。绝不可在运行时从后台线程 create_window —— 那会
-    导致窗口建出但内容永不渲染（黑屏/透明），表现为弹窗"不显示"。
-
-    【2026-09-04 防卡死·终版·常显 + CSS 显隐】通知窗**启动即常显在右上角**（与桌宠窗
-    一致，hidden=False），WebView2 渲染器恒"热"。卡片**纯 CSS 显隐**（.visible 类），
-    运行时 mode_notify **零 show()/hide()/move()**。两条旧死路都避开：
-      · 旧路① hidden=True + show()：长期 hidden 窗被 show() 唤醒会在 GUI 线程同步初始化
-        渲染器（winforms.py:616）→ 顶停消息泵数秒 → 整 UI 未响应（卡死）。
-      · 旧路② x=-10000 屏外常显 + move()：屏外窗 WebView2 不初始化渲染器 →
-        NotifyAPI 永不定义 → show() 静默失败 → 不弹。
-    常显右上角 + CSS 显隐同时避开两坑：窗口永远热、永不卡；卡片显隐是纯前端动画、必现。
-    另设 WS_EX_TRANSPARENT 点击穿透 + WS_EX_TOOLWINDOW 去任务栏（常显窗空闲时不能挡点击）。
-    """
-    try:
-        from . import native_notify
-        return native_notify.ensure_notify_window()
-    except Exception as _e:  # noqa: BLE001
-        logger.warning("[通知浮窗] 兼容壳 ensure 失败: %s", _e)
-        return None
-    import ctypes
-    import webview
-
-    if api is None:
-        # 🔑 2026-09-04 根治 UI 卡死：通知窗改用 NotifyJsBridge（js_api 轮询架构），
-        # 不再用 CharacterAPI。notify.html 不依赖 CharacterAPI 的任何方法，只通过
-        # window.pywebview.api.poll() 单向取命令（Python 推队列 / JS 来取），
-        # 后台线程绝不调 evaluate_js，物理上不可能死锁。
-        from .mode_notify import NotifyJsBridge
-        api = NotifyJsBridge()
-    base = _ensure_web_server()
-    # 模式 O（不透明兜底）时把模式写进 URL，页面据此切换样式（卡片铺满/淡入）
-    # ?v= 版本戳：强制 WebView2 放弃对 notify.html 的磁盘缓存（实测 no-store 头对
-    # 首屏 HTML 加载无效，旧版 width:100% 拉伸样式会一直缓存 → 比例修不好）。改 query
-    # 即换 URL → 必拉最新。每次启动换戳，开发期改 HTML 无需手动清缓存。
-    _v = int(time.time())
-    _q = ("?mode=opaque&v=%d" % _v) if _NOTIFY_OPAQUE else ("?v=%d" % _v)
-    url = base + "/notify.html" + _q
-    w, h = 400, 176
-    # DPI 逻辑像素（与 create_desktop_companion 完全一致）
-    user32 = ctypes.windll.user32
-    gdi32 = ctypes.windll.gdi32
-    sw, sh = user32.GetSystemMetrics(0), user32.GetSystemMetrics(1)
-    hdc = gdi32.CreateDCW("DISPLAY", None, None, None)
-    dpi = gdi32.GetDeviceCaps(hdc, 88) or 96
-    gdi32.DeleteDC(hdc)
-    scale = max(dpi / 96.0, 1.0)
-    lw, lh = int(sw / scale), int(sh / scale)
-    # ⚠️ 常显右上角（非屏外）：渲染器启动即热，避免屏外不初始化 → 不弹。
-    x = lw - w - 24
-    y = 24
-
-    # ⚠️ background_color 只接受 6 位 hex（pywebview 会校验 hex triplet；传 8 位带
-    # alpha 的 "#00000000" 会直接抛异常 → 整个窗口创建失败。23:24 运行实证）。
-    # 透明模式下**不传**该参数（pywebview 自行把控制器背景设为透明）。
-    _kw = {}
-    if _NOTIFY_OPAQUE:
-        _kw["background_color"] = "#0D1018"   # 防加载期白闪
-
-    win = webview.create_window(
-        title="达妮娅通知",   # 留可 FindWindowW 定位的标题（frameless 不显示标题栏）
-        url=url,
-        js_api=_safe_js_api(api, "CharacterAPI-notify"),
-        frameless=True,
-        # 【2026-09-04 23:50 定版·双模·默认 O】
-        #   模式 O（默认）：transparent=False + 深色底防白闪，空闲停在屏幕最右缘留 2px
-        #     （仍在屏内 → 合成器不挂起 → 滑入必有帧），弹出靠窗口位置动画从边缘滑入。
-        #   模式 T（NOTIFY_TRANSPARENT=1 可选）：transparent=True —— 与桌宠窗同款，
-        #     窗口常显右上角、显隐全交给页面 CSS；但本机透明合成曾不稳，故默认关。
-        transparent=not _NOTIFY_OPAQUE,
-        easy_drag=False,
-        text_select=False,
-        # 【2026-09-05 卡死根因修复】on_top 改 False，逐字对齐桌宠窗（桌宠本机从不卡死）。
-        # pywebview 在 BrowserForm.__init__ 的 STA 线程里同步设 TopMost；不透明窗的
-        # WebView2 初始化与之在 STA 线程上重入 → 死锁整 UI。置顶改由 _notify_set_pos
-        # 经 Win32 SetWindowPos(HWND_TOPMOST) 在后台线程完成（不经过 WebView2/STA）。
-        on_top=False,
-        x=x, y=y, width=w, height=h,
-        hidden=False,
-        **_kw,
-    )
-    logger.info("[通知浮窗] 已创建（模式 %s，右上角 %d,%d %dx%d）",
-                "O-不透明(兜底)" if _NOTIFY_OPAQUE else "T-透明(默认·同款桌宠窗)", x, y, w, h)
-
-    # 窗口样式收尾：**完全照抄 _finalize_pet_window 的桌宠配方**（本机实证渲染正常）
-    def _notify_apply_clickthrough():
-        """去任务栏 + 不抢焦点 + 挂属主（桌宠窗同款，渲染正常的关键前提）。
-
-        注意：**不挂 WS_EX_LAYERED / WS_EX_TRANSPARENT / 不做 SetWindowRgn**——
-        LAYERED 会让 WebView2 渲染成纯黑（分层重定向面承载不了 DirectX 合成内容），
-        RGN 会破坏子窗口合成，二者都是今天黑屏的元凶。真正的"点透"由模式 O 的
-        "停在屏幕右缘留 2px" 解决（空闲窗口根本不在屏幕里）。
-        """
-        try:
-            hwnd = _u32.FindWindowW(None, "达妮娅通知")
-            if not hwnd:
-                logger.warning("[通知浮窗] 未找到窗口句柄，跳过样式收尾")
-                return
-            GWL_EXSTYLE = -20
-            GWL_HWNDPARENT = -8
-            WS_EX_TOOLWINDOW = 0x00000080
-            WS_EX_APPWINDOW = 0x00000400
-            WS_EX_NOACTIVATE = 0x08000000
-            # ① 挂属主（无属主的工具窗在 Win11 任务栏预览仍会露出）
-            try:
-                _main = _pet_find_main_hwnd()
-                if _main:
-                    _u32.SetWindowLongW(hwnd, GWL_HWNDPARENT, _main)
-            except Exception:  # noqa: BLE001
-                pass
-            # ② TOOLWINDOW + NOACTIVATE，并剥掉 pywebview 默认的 APPWINDOW
-            cur = _u32.GetWindowLongW(hwnd, GWL_EXSTYLE)
-            new = (cur | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE) & ~WS_EX_APPWINDOW
-            # ③ 常开点击穿透 WS_EX_TRANSPARENT：通知浮窗是无交互的提示层，空闲（卡片
-            #   opacity:0）时窗口不可见但常驻右上角置顶，若不穿透会挡住右上角点击。
-            #   仅改命中测试、不影响渲染（黑屏是 WS_EX_LAYERED 导致的，与此无关）。
-            new |= 0x00000020  # WS_EX_TRANSPARENT
-            if new != cur:
-                _u32.SetWindowLongW(hwnd, GWL_EXSTYLE, new)
-                logger.info("[通知浮窗] 已更新扩展样式(点击穿透/去任务栏)")
-            # ⚠️【2026-09-05 关键修复·黑/白屏根因】这里**绝不**再发 FRAMECHANGED
-            # （0x0020）的 SetWindowPos。WebView2 透明窗靠 WS_EX_LAYERED 承载 DirectX
-            # 合成，创建后再触发 WM_NCCALCSIZE/FRAMECHANGED 会让分层面重排 → 透明像素
-            # 变黑（黑屏）；合成失败时又回退白底（白屏）。桌宠窗从不做此手术故永远正常。
-            # 仅用 NOMOVE|NOSIZE|NOACTIVATE 的"空"SetWindowPos 让 exstyle 改动平稳生效，
-            # 不触发任何重合成（每 5s 兜底重挂时也无害）。
-            _u32.SetWindowPos(hwnd, 0, 0, 0, 0, 0,
-                              0x0001 | 0x0004 | 0x0010)
-            # ④ WebView2 子控件也要点透：不透明(O)模式下整窗无透明像素，仅靠顶层窗
-            # 的 WS_EX_TRANSPARENT 不够——命中测试落在 WebView2 子控件上仍会吃点击。
-            # 子控件也挂 WS_EX_TRANSPARENT 才整窗点透（仅改命中测试，不影响 DirectX 渲染）。
-            # ④ WebView2 子控件点透：不透明(O)模式下整窗无透明像素，仅靠顶层窗
-            # WS_EX_TRANSPARENT 不够——命中测试落在 WebView2 子 HWND 上仍吃点击。
-            # ⚠️【2026-09-05 启动卡死根因修复】原实现在循环里同步读
-            # _child.CoreWebView2（托管 COM 属性）；本函数并非总在 GUI 线程被调用，
-            # 一旦从主加载流程(非 GUI 线程)调用，该读取触发 STA 同步封送 → 与 GUI
-            # 线程互等 → 进程 hang（日志实证：停于「样式收尾完成」后再无输出）。
-            # 改为：纯 Win32 EnumChildWindows 枚举原生子 HWND（零 COM）直接加
-            # WS_EX_TRANSPARENT，整体经 BeginInvoke 投递 GUI 线程异步执行——既不读
-            # COM、也不阻塞启动，且点透比原"只判 CoreWebView2 子控件"更彻底。
-            try:
-                _nf = getattr(win, "native", None)
-
-                def _apply_child_transparent():  # noqa: ANN001
-                    """遍历整棵 HWND 树（含 WebView2 内部 Chromium 子窗）挂 WS_EX_TRANSPARENT。
-
-                    ⚠️ 单层 EnumChildWindows 只覆盖 WebView2 控件本身，漏掉 Chromium 真正
-                    渲染/吃点击的内层 HWND → 卡片区域仍挡点击（用户"右上角一块点不透"真凶）。
-                    改为递归遍历（GetWindow GW_CHILD→GW_HWNDNEXT）整棵树，逐窗挂穿透。
-                    """
-                    try:
-                        from ctypes import wintypes as _wt
-                        _hw = _u32.FindWindowW(None, "达妮娅通知")
-                        if not _hw:
-                            return
-                        _TR = 0x00000020
-                        _GWL_EXSTYLE = -20
-                        try:
-                            _u32.GetWindowW.restype = _wt.HWND
-                            _u32.GetWindowW.argtypes = [_wt.HWND, _ct.c_int]
-                        except Exception:  # noqa: BLE001
-                            pass
-                        _GW_CHILD, _GW_HWNDNEXT = 5, 2
-
-                        def _walk(h):  # noqa: ANN001
-                            try:
-                                _cex = _u32.GetWindowLongW(h, _GWL_EXSTYLE)
-                                if not (_cex & _TR):
-                                    _u32.SetWindowLongW(h, _GWL_EXSTYLE, _cex | _TR)
-                            except Exception:  # noqa: BLE001
-                                pass
-                            _ch = _u32.GetWindowW(h, _GW_CHILD)
-                            while _ch:
-                                _walk(_ch)
-                                _ch = _u32.GetWindowW(_ch, _GW_HWNDNEXT)
-
-                        _walk(_hw)
-                        logger.info("[通知浮窗] 已对整棵窗口树挂点击穿透（含 WebView2 内层子窗）")
-                    except Exception as _e2:  # noqa: BLE001
-                        logger.warning("[通知浮窗] 子控件点透失败（退回顶层点透）: %s", _e2)
-
-                if _nf is not None:
-                    from System import Action as _Act
-                    _nf.BeginInvoke(_Act(_apply_child_transparent))
-                else:
-                    _apply_child_transparent()
-            except Exception as _e:  # noqa: BLE001
-                logger.warning("[通知浮窗] WebView2 子控件点透失败（退回顶层点透）: %s", _e)
-        except Exception as e:  # noqa: BLE001
-            logger.warning("[通知浮窗] 样式收尾失败: %s", e)
-
-    def _install_gui_heartbeat():
-        """在 GUI 线程建 WinForms.Timer 作 v3 探针心跳源（每 2s 刷新 mode_notify._last_poll）。
-
-        关键：Timer 由 WinForms 消息泵直接驱动，不依赖 notify 窗的 JS setTimeout。
-        WebView2 对后台/被遮挡的窗会节流 JS 计时器 → 曾导致 poll() 心跳假中断、误报
-        「窗口未响应」。Timer 不受节流影响：只要 GUI 线程活着就持续 Tick；一旦真卡死，
-        Tick 停 → 探针才准确报死。失败则优雅退回 notify 窗 poll 心跳（现有行为）。
-        """
-        try:
-            import clr  # pywebview 已加载 pythonnet
-            clr.AddReference("System.Windows.Forms")
-            from System.Windows.Forms import Timer as _WinTimer
-            from . import mode_notify
-            import time as _tmod
-
-            _last_mon = [None]
-            _beat_n = [0]
-            def _beat(s, e):
-                mode_notify._last_poll[0] = _tmod.time()
-                _beat_n[0] += 1
-                # 🔑 兜底推送：页面内 setTimeout 可能被 WebView2 对非活动/屏外窗节流，
-                # 导致 poll 不跑、弹窗不显示。由 GUI 线程 Timer 主动注入 __notifyFlush
-                # （ExecuteScriptAsync 不受页面节流影响），确保命令必送达。仅当队列非空时调用。
-                try:
-                    if getattr(mode_notify, "_cmd_q", None):
-                        _n = len(getattr(mode_notify, "_cmd_q", None))
-                        win.evaluate_js("window.__notifyFlush && window.__notifyFlush()")
-                        logger.info("[通知浮窗] GUI 心跳兜底推送 %d 条命令（绕开页面节流）", _n)
-                except Exception as _e:  # noqa: BLE001
-                    logger.warning("[通知浮窗] 兜底推送失败: %s", _e)
-                # 🔧【2026-09-05 修·窗口复位到(0,0)】WebView2 初始化会把 transparent 窗
-                # 复位到 (0,0) 左上角（日志实证：启动钉位 3204 后 1s 自检又变 (0,0)）。
-                # 每拍自愈：确认窗口钉在右上角 x_in，偏离即重设（不日志刷屏）。
-                try:
-                    _chk = _u32.FindWindowW(None, "达妮娅通知")
-                    if _chk:
-                        _rct = _wt.RECT()
-                        if _u32.GetWindowRect(_chk, _ct.byref(_rct)):
-                            _, _, _, _wpx, _hpx, _xin, _ypx, _ = _notify_geom()
-                            if abs(_rct.left - _xin) > 4 or abs(_rct.top - _ypx) > 4:
-                                _u32.SetWindowPos(_chk, -1, _xin, _ypx, _wpx, _hpx, 0x0010)
-                                logger.info("[通知浮窗] 心跳纠正窗口位置到右上角 (x=%d)", _xin)
-                except Exception:  # noqa: BLE001
-                    pass
-                # 🔍 每 10 拍（约 5s）弹窗可见性自检：窗口实际矩形 + 卡片类名/透明度。
-                # 用于把"命令已送达但不显示"精确定位到层：rect 不对=窗口位置问题；
-                # rect 正常但卡片无 visible/op=0=DOM 渲染层问题。
-                if _beat_n[0] % 10 == 0:
-                    _rc = None
-                    try:
-                        import win32gui as _wg
-                        _hw = _wg.FindWindow(None, "达妮娅通知")
-                        if _hw:
-                            _rc = _wg.GetWindowRect(_hw)
-                    except Exception:  # noqa: BLE001
-                        pass
-                    try:
-                        _st = win.evaluate_js(
-                            "(function(){var c=document.getElementById('card');"
-                            "if(!c)return 'no-card';return c.className+'|op='+"
-                            "getComputedStyle(c).opacity})()")
-                        logger.info("[通知浮窗-自检] rect=%s 卡片=%s", _rc, _st)
-                    except Exception as _e2:  # noqa: BLE001
-                        logger.info("[通知浮窗-自检] 读取失败: %s rect=%s", _e2, _rc)
-                    # 兜底重挂点击穿透：WebView2 子控件就绪晚/被重置时保证仍点透
-                    try:
-                        _notify_apply_clickthrough()
-                    except Exception:  # noqa: BLE001
-                        pass
-                # 【2026-09-05 修复·0.1s 闪现】移除原先的 win.move 跟随前台显示器逻辑：
-                # 它每次切屏/激活都重定位窗口（且坐标换算偶发推到屏外），叠加 events.shown
-                # 重复触发 _notify_selfcheck 把窗口重新泊回右缘外，导致正在显示的卡片被"移出
-                # 屏外"→ 用户看到的就是"弹出又立刻跑路"。多屏跟屏改由 mode_notify 在
-                # 事件触发时调 _notify_show_in() 一次性泊入前台屏，不再持续重定位。
-
-
-            # 【已废弃 2026-09-04 16:40】Timer 建在 events.shown 派发线程（无消息泵）
-            # → 永不 Tick（日志实证：运行 4.5 分钟自检 0 条）。心跳/弹窗兜底推送/
-            # 自检/跟屏已并入 GUI 探针 v4（win.native.BeginInvoke 投递真正 GUI 线程）。
-            logger.info("[GUI探针] 旧心跳 Timer 已废弃（建错线程永不 Tick）；功能并入探针 v4")
-        except Exception as e:  # noqa: BLE001
-            logger.warning("[GUI探针] 心跳 Timer 安装失败（退回 notify 窗 poll 心跳）: %s", e)
-
-    def _notify_selfcheck():
-        # 【2026-09-05 修复·0.1s 闪现】只执行一次：曾同时绑 loaded+shown，shown 在窗口被
-        # 激活/重定位时重复触发 → 把窗口重新泊回右缘外（2px），正在显示的卡片瞬间移出屏外。
-        # 加一次性守卫，且只绑 loaded，避免重复泊位。
-        if getattr(_notify_selfcheck, "_done", False):
-            return
-        _notify_selfcheck._done = True
-        try:
-            v = win.evaluate_js(
-                "(function(){try{return (document.readyState||'')+'|NotifyAPI='"
-                "+(typeof window.NotifyAPI)+'|body='+(document.body?"
-                "document.body.innerHTML.length:-1)}catch(e){return 'ERR:'+e}})()")
-            logger.info("[渲染自检-通知浮窗] %s", v)
-        except Exception as e:  # noqa: BLE001
-            logger.warning("[渲染自检-通知浮窗] 读取失败: %s", e)
-        # 🔑 注册通知窗的 CoreWebView2 控件（此前从未注册 → GUI 探针的
-        # ExecuteScriptAsync 注入/自检通道一直取不到控件、从未生效）。
-        try:
-            if win.uid not in _WV2_CONTROLS:
-                _c = None
-                for _child in win.native.Controls:
-                    if getattr(_child, "CoreWebView2", None) is not None:
-                        _c = _child
-                        break
-                if _c is not None:
-                    _WV2_CONTROLS[win.uid] = _c
-                    logger.info("[通知浮窗] 已注册 CoreWebView2 控件（uid=%s）", win.uid)
-                else:
-                    logger.warning("[通知浮窗] 未在 native.Controls 中找到 WebView2 控件")
-        except Exception:  # noqa: BLE001
-            logger.warning("[通知浮窗] CoreWebView2 注册失败", exc_info=True)
-        # 🔑【用户设计·固定透明可穿透窗】窗口启动即钉到右上角可见位并**永久固定**：
-        #   卡片用 CSS 显隐/滑入滑出，窗口本身永不移动（不泊屏外、不随事件重定位）。
-        #   这样 WebView2 渲染器始终活跃(窗口可见) → 页面 setInterval poll 不被节流 →
-        #   弹窗 show 命令必达；空闲时卡片 opacity/translateX 隐藏 → 肉眼看不见；
-        #   WS_EX_TRANSPARENT → 点击穿透（空闲/弹窗时都不挡点击）。
-        #   用重试 FindWindowW（窗口刚创建时 WinForms 控件树未就绪，直接找会失败 →
-        #   卡在 pywebview 默认的 (0,0) 左上角，即"左上角黑块"回归根因）。
-        try:
-            _hw2 = None
-            for _ in range(40):
-                _hw2 = _u32.FindWindowW(None, "达妮娅通知")
-                if _hw2:
-                    break
-                time.sleep(0.025)
-            if _hw2:
-                _, _, _, _wpx, _hpx, _xin, _ypx, _ = _notify_geom()
-                # 0x0010(NOACTIVATE)：保持 TOPMOST（hw=-1）且不偷焦点。
-                _u32.SetWindowPos(_hw2, -1, _xin, _ypx, _wpx, _hpx, 0x0010)
-                logger.info("[通知浮窗] 已钉到右上角固定位 (x=%d) %dx%d (scale=%.2f)",
-                            _xin, _wpx, _hpx, _wpx / 400.0)
-            else:
-                logger.warning("[通知浮窗] 启动钉位失败：重试后仍找不到窗口句柄")
-        except Exception:  # noqa: BLE001
-            logger.warning("[通知浮窗] 物理钉位失败", exc_info=True)
-        _notify_apply_clickthrough()
-        # 【23:20 定版·关键】**窗口必须从出生起就保持可见，且永不 hide/屏外停放**：
-        # WebView2 在不可见状态下会停止产帧/丢弃合成表面，之后每次显示都是黑/白交替
-        #（"有时黑有时白"的元凶）。桌宠窗从出生可见、从不做窗口手术，故始终正常。
-        #   模式 T：常显右上角，空闲时页面卡片透明 → 肉眼完全看不见；
-        #   模式 O：钉位后立刻停到屏幕最右缘（只露 2px，仍在屏内 → 合成器存活）。
-        # 【2026-09-05 修复·点击占位】空闲（无卡片）时两种模式都泊到右缘外只露 2px，
-        # 彻底不挡右上角点击；事件触发时由 mode_notify 调 _notify_show_in 泊入可见位。
-        try:
-            _notify_park_out()
-            logger.info("[通知浮窗] 初始泊到右缘外（空闲不挡点击）")
-        except Exception:  # noqa: BLE001
-            logger.warning("[通知浮窗] 初始泊出失败", exc_info=True)
-        # 装 GUI 线程心跳（本回调运行于 GUI 线程，Timer 创建即正确线程）
-        _install_gui_heartbeat()
-    try:
-        win.events.loaded += _notify_selfcheck
-    except Exception:  # noqa: BLE001
-        logger.warning("[渲染自检-通知浮窗] 事件注册失败")
-    return win
 
 
 # ============ 桌宠置顶（Win32 级，真正盖过一切窗口）============
@@ -20497,18 +17250,15 @@ def create_notify_window(api=None):
 import ctypes as _ct
 from ctypes import wintypes as _wt
 
-_PET_TOPMOST = False           # 桌宠默认不置顶；用户右键"📌 置顶屏幕"才钉最前
-_PET_RECOVER_LAST = 0.0        # 看门狗重载冷却时间戳（占位保留）
-_PET_KEEPALIVE_ON = False       # 置顶保活线程是否已启动
-_PET_CAPTURE_HIDDEN = False     # 桌宠是否对屏幕捕获隐身（WDA_EXCLUDEFROMCAPTURE）
-_PET_WIN = None                # 桌宠 pywebview 窗口引用（set_windows 时填充，优先用 on_top 控置顶）
-_MAIN_WIN = None               # 主窗口 pywebview 窗口引用（用于给主窗也加透过亲和性）
+# 【2026-10-17】_u32 原本定义在文件末尾，桌宠函数迁到 pet_window 后这里仍需要它
+# 来完成下方的 argtypes/restype 声明（同一进程内 windll.user32 是同一个句柄）。
+_u32 = _ct.windll.user32
+
 
 # —— 关键：声明 user32 调用的 argtypes/restype ——
 # 不声明时 ctypes 默认把参数当 32 位 int 处理；64 位 Windows 的 HWND 是 64 位指针，
 # 会被截断 → SetWindowPos(hwnd, HWND_TOPMOST, …) 静默失败 → 置顶完全无效（普通窗口都能盖住）。
 # 显式声明后 HWND 按 64 位传递，置顶才真正生效。
-_u32 = _ct.windll.user32
 _u32.FindWindowW.restype = _wt.HWND
 _u32.FindWindowW.argtypes = [_wt.LPCWSTR, _wt.LPCWSTR]
 _u32.SetWindowPos.restype = _wt.BOOL
@@ -20520,287 +17270,29 @@ _u32.SetWindowLongW.restype = _wt.LONG
 _u32.SetWindowLongW.argtypes = [_wt.HWND, _ct.c_int, _wt.LONG]
 _u32.GetWindowRect.restype = _wt.BOOL
 _u32.GetWindowRect.argtypes = [_wt.HWND, _ct.POINTER(_wt.RECT)]
-class _POINT(_ct.Structure):
-    _fields_ = [("x", _ct.c_long), ("y", _ct.c_long)]
 _u32.GetCursorPos.restype = _wt.BOOL
 _u32.GetCursorPos.argtypes = [_ct.POINTER(_POINT)]
 _u32.SetWindowDisplayAffinity.restype = _wt.BOOL
 _u32.SetWindowDisplayAffinity.argtypes = [_wt.HWND, _wt.UINT]
 
 
-def _pet_topmost_keepalive():
-    """后台保活：每 1s 重新钉最前（仅当 _PET_TOPMOST=True）。
-
-    直接走 _pet_apply_topmost()：GUI 线程下用 window.on_top（锁定正确窗口），
-    非 GUI 线程下自动回退 SetWindowPos（HWND 声明已修，线程安全）。不放子类、不碰
-    WndProc，仅靠低频保活恒盖过音乐软件等其它 TopMost 窗口（≤1s 间隙人眼不可察）；
-    取消置顶时设 _PET_KEEPALIVE_ON=False 让线程退出即解钉。
-    """
-    global _PET_KEEPALIVE_ON
-    while _PET_KEEPALIVE_ON:
-        try:
-            if _PET_TOPMOST:
-                _pet_apply_topmost()
-        except Exception:  # noqa: BLE001
-            pass
-        import time as _t
-        _t.sleep(1.0)
 
 
-def _pet_find_hwnd():
-    """按标题定位桌宠窗句柄（_finalize_pet_window 已验证此标题可靠可得句柄）。"""
-    try:
-        return _ct.windll.user32.FindWindowW(None, "达妮娅看板娘")
-    except Exception:
-        return 0
-
-def _pet_apply_topmost():
-    """按 _PET_TOPMOST 把桌宠窗设为最前/普通。
-
-    优先用 pywebview 原生 window.on_top（直接控正确的窗口对象，取消必生效）；
-    窗口对象不可用时回退裸 SetWindowPos（物理像素，HWND 声明已修）。
-    """
-    if _PET_WIN is not None:
-        try:
-            _PET_WIN.on_top = _PET_TOPMOST
-            return True
-        except Exception as e:  # noqa: BLE001
-            logger.debug("pywebview on_top 失败，回退 SetWindowPos: %s", e)
-    hwnd = _pet_find_hwnd()
-    if not hwnd:
-        return False
-    ins = -1 if _PET_TOPMOST else -2   # HWND_TOPMOST / HWND_NOTOPMOST
-    ok = _u32.SetWindowPos(
-        hwnd, ins, 0, 0, 0, 0, 0x0001 | 0x0002 | 0x0010)  # NOSIZE|NOMOVE|NOACTIVATE
-    if not ok:
-        logger.warning("桌宠置顶 SetWindowPos 失败 hwnd=%s topmost=%s", hwnd, _PET_TOPMOST)
-    return bool(ok)
 
 
-def _pet_install_topmost_guard():
-    """置顶保活：启动后台线程每 1s 重新 SetWindowPos TOPMOST（仅启动一次；子类方案已弃用）。
-
-    不放子类、不碰 WndProc：避免 WebView2 宿主窗每消息进 Python 回调导致系统卡顿；
-    仅靠低频保活即可恒盖过其它 TopMost 窗口（≤1s 间隙人眼不可察）。取消置顶时由
-    pet_toggle_always_on_top 设 _PET_KEEPALIVE_ON=False 让线程退出，再一次性 NOTOPMOST 解钉。
-    """
-    global _PET_KEEPALIVE_ON
-    if _PET_KEEPALIVE_ON:
-        return
-    _PET_KEEPALIVE_ON = True
-    try:
-        _ka = __import__("threading").Thread(target=_pet_topmost_keepalive, daemon=True)
-        _ka.start()
-        logger.info("桌宠置顶保活线程已启动")
-    except Exception:  # noqa: BLE001
-        _PET_KEEPALIVE_ON = False
 
 
-def _pet_set_wda(hwnd, hidden: bool) -> bool:
-    """对单个窗口设置 WDA_EXCLUDEFROMCAPTURE（透过亲和性）。"""
-    aff = 0x00000011 if hidden else 0x00000000  # WDA_EXCLUDEFROMCAPTURE / WDA_NONE
-    ok = _u32.SetWindowDisplayAffinity(hwnd, aff)
-    if not ok:
-        logger.warning("SetWindowDisplayAffinity 失败 hwnd=%s hidden=%s", hwnd, hidden)
-    return bool(ok)
 
 
-def _pet_find_main_hwnd():
-    """定位主窗口句柄（本进程拥有的、非桌宠的可见顶层窗口，取面积最大者）。"""
-    try:
-        import win32gui
-        import win32process
-        import os
-        pid = os.getpid()
-        cand = []
-        # 两步式枚举（2026-09-05 修复）：回调内只做本地、无消息泵的 Win32 调用，
-        # GetWindowText（本质 SendMessage，会泵送调用方消息队列）移到枚举结束后取，
-        # 消除“SendMessage-in-EnumWindows”在快速切换时造成原生栈溢出/卡死的风险。
-        raw: list[tuple] = []
-        def _enum(hwnd, _):
-            if not win32gui.IsWindowVisible(hwnd):
-                return
-            try:
-                _, wp = win32process.GetWindowThreadProcessId(hwnd)
-            except Exception:  # noqa: BLE001
-                return
-            if wp != pid:
-                return
-            try:
-                r = win32gui.GetWindowRect(hwnd)
-                w, h = r[2] - r[0], r[3] - r[1]
-            except Exception:  # noqa: BLE001
-                return
-            if w <= 1 or h <= 1:
-                return
-            raw.append((hwnd, w * h))
-        win32gui.EnumWindows(_enum, None)
-        for hwnd, area in raw:
-            try:
-                t = win32gui.GetWindowText(hwnd)  # 枚举外取标题：避免 SendMessage-in-EnumWindows 重入
-            except Exception:  # noqa: BLE001
-                t = ""
-            if t == "达妮娅看板娘":
-                continue  # 跳过桌宠本身
-            cand.append((area, hwnd))
-        if cand:
-            cand.sort(reverse=True)
-            return cand[0][1]
-    except Exception:  # noqa: BLE001
-        pass
-    return 0
 
 
-def _pet_set_capture_hidden(hidden: bool) -> bool:
-    """对桌宠窗 + 主窗口同时设 WDA_EXCLUDEFROMCAPTURE（双工推流帧/截图都"透过"）。
-
-    效果：你屏幕上照常看到桌宠和软件，但任何屏幕捕获（双工实时推流帧、截图、录屏、
-    屏幕共享/Zoom/Discord/OBS/Teams/Win+Shift+S/游戏栏）都抓不到它们——像直接透过了
-    窗口看到后面的真实画面。这正是"双工推流帧里看不见桌宠和软件、直接透过"的需求。
-    需 Windows 10 2004+。返回是否桌宠窗设置成功。
-    """
-    global _PET_CAPTURE_HIDDEN
-    pet_hwnd = _pet_find_hwnd()
-    main_hwnd = _pet_find_main_hwnd()
-    pet_ok = _pet_set_wda(pet_hwnd, hidden) if pet_hwnd else False
-    main_ok = _pet_set_wda(main_hwnd, hidden) if main_hwnd else False
-    # 【2026-09-04 修】灰涂是否执行改由抓屏调用方按 WDA 实际生效数(applied)决定
-    # （applied>0 帧已真透过→不灰涂；applied==0→灰涂兜底），不再在此覆盖
-    # OWN_WINDOW_WDA（之前把它强制 False 导致灰涂永远跑、透明度被涂成灰块）。
-    _PET_CAPTURE_HIDDEN = hidden
-    logger.info("双工/截屏透过: pet=%s(%s) main=%s(%s) hidden=%s",
-                bool(pet_hwnd), pet_ok, bool(main_hwnd), main_ok, hidden)
-    return bool(pet_hwnd)
 
 
-def _finalize_pet_window() -> None:
-    """桌宠窗口收尾（窗口加载完成后调用）：
-    1. 加 WS_EX_TOOLWINDOW：不出现在任务栏/Alt+Tab，像真正的桌面宠物；
-    2. 用物理像素 SetWindowPos 固定到屏幕右下角——绕开 pywebview 把 create_window
-       的 x/y 当逻辑像素再 ×scale 的换算（该换算在 DPI 感知进程下会把窗口推出屏幕，
-       例：4K/150% 逻辑 3396 → 物理 5094 超出 3840）。兜底保证窗口一定在屏幕内。
-    """
-    try:
-        import ctypes
-        from ctypes import wintypes
-        user32 = ctypes.windll.user32
-        hwnd = user32.FindWindowW(None, "达妮娅看板娘")
-        if not hwnd:
-            logger.info("桌宠收尾：未找到窗口句柄")
-            return
-        # 1) 去任务栏
-        GWL_EXSTYLE = -20
-        WS_EX_TOOLWINDOW = 0x00000080
-        style = user32.GetWindowLongW(hwnd, GWL_EXSTYLE)
-        if not style & WS_EX_TOOLWINDOW:
-            user32.SetWindowLongW(hwnd, GWL_EXSTYLE, style | WS_EX_TOOLWINDOW)
-        # 1.5) 【2026-09-04 用户实测仍出现在任务栏预览】三连补强：
-        #   ① 剥掉 WS_EX_APPWINDOW（pywebview 默认带它，与 TOOLWINDOW 同挂时预览仍露出）；
-        #   ② 挂属主窗口（GWL_HWNDPARENT=主窗）——无属主的工具窗口在 Win11 预览分组
-        #      仍可能被列出；挂了属主才算真正的"浮动小窗"；
-        #   ③ WS_EX_NOACTIVATE——点击不抢焦点，纯悬浮。
-        try:
-            GWL_HWNDPARENT = -8
-            WS_EX_APPWINDOW = 0x00000400
-            WS_EX_NOACTIVATE = 0x08000000
-            main_hwnd2 = _pet_find_main_hwnd()
-            if main_hwnd2:
-                user32.SetWindowLongW(hwnd, GWL_HWNDPARENT, main_hwnd2)
-            style2 = user32.GetWindowLongW(hwnd, GWL_EXSTYLE)
-            new2 = (style2 | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE) & ~WS_EX_APPWINDOW
-            if new2 != style2:
-                user32.SetWindowLongW(hwnd, GWL_EXSTYLE, new2)
-            logger.info("桌宠窗属主/NOACTIVATE 已设置（owner=%s）", bool(main_hwnd2))
-        except Exception:  # noqa: BLE001
-            logger.warning("桌宠窗属主/样式补强失败", exc_info=True)
-        # 2) 右下角定位（物理像素；进程已 DPI 感知 → GetSystemMetrics 为物理值）
-        rect = wintypes.RECT()
-        user32.GetWindowRect(hwnd, ctypes.byref(rect))
-        w_phys = rect.right - rect.left
-        h_phys = rect.bottom - rect.top
-        sw = user32.GetSystemMetrics(0)
-        sh = user32.GetSystemMetrics(1)
-        x = max(0, sw - w_phys - 24)
-        y = max(0, sh - h_phys - 24)
-        # NOSIZE|NOZORDER|NOACTIVATE|FRAMECHANGED（FRAMECHANGED 让 TOOLWINDOW 样式生效）
-        user32.SetWindowPos(hwnd, 0, x, y, 0, 0, 0x0001 | 0x0004 | 0x0010 | 0x0020)
-        style = user32.GetWindowLongW(hwnd, GWL_EXSTYLE)
-        logger.info("桌宠窗口已收尾：右下角(物理 %d,%d)，TOOLWINDOW=%s",
-                    x, y, bool(style & WS_EX_TOOLWINDOW))
-        # 3) 置顶（仅当 _PET_TOPMOST 为真才钉最前；默认不置顶 → 不装子类/不保活，
-        #    避免 WebView2 宿主窗每消息都进 Python 子类回调造成卡顿，也避免"默认就置顶"）
-        try:
-            if _PET_TOPMOST:
-                _pet_apply_topmost()
-                _pet_install_topmost_guard()
-        except Exception:  # noqa: BLE001
-            pass
-        # 4) 双工/截屏“透过”：默认【关闭】WDA_EXCLUDEFROMCAPTURE，
-        #    即桌宠窗+主窗口对屏幕捕获【可见】——这样 UU 远程 / ToDesk / 腾讯会议 /
-        #    屏幕共享 / OBS 等抓到的软件区域不再是黑屏，用户远程也能看页面。
-        #    （双工 AI 不“看见自己”的需求改由 own_window.paint_own_windows 灰涂兜底，
-        #     见 _pet_set_capture_hidden 内部 OWN_WINDOW_WDA=False 分支；功能等价。）
-        #    若想隐藏自家窗口做干净推流，桌宠右键菜单「对屏幕捕获隐身」可临时开启。
-        try:
-            _pet_set_capture_hidden(False)
-        except Exception:  # noqa: BLE001
-            logger.debug("桌宠透过亲和性设置失败", exc_info=True)
-    except Exception:  # noqa: BLE001
-        logger.warning("桌宠窗口收尾失败", exc_info=True)
 
 
-def _attach_pet_no_taskbar(win) -> None:
-    """挂载桌宠窗口"去任务栏+右下角定位"：等窗口加载完成（或已加载则立即）应用。"""
-    def _apply(_win=None):
-        _finalize_pet_window()
-    try:
-        if win.events.loaded.is_set():
-            _apply()
-        else:
-            win.events.loaded += _apply
-    except Exception:  # noqa: BLE001
-        _apply()
 
 
-def run_webview(debug: bool = False,
-                api: Optional[CharacterAPI] = None,
-                title: str = "AI 桌面伴侣 - 角色管理") -> None:
-    """启动 pywebview 角色管理窗口。
 
-    当 main.py 集成调用时，api 会是已注入 runtime 的 CharacterAPI。
-    主窗口关闭后，桌面透明看板娘窗口接管（继续在桌面展示达妮娅）。
-    """
-    import webview
-
-    # 白屏修复：必须在创建任何窗口之前为每个窗口分配独立 UserDataFolder
-    _patch_webview2_unique_user_data()
-
-    if api is None:
-        api = CharacterAPI()
-    main = create_main_window(api=api, title=title)
-    desk = create_desktop_companion(api)
-    api.set_windows(main_win=main, pet_win=desk)
-    _attach_pet_no_taskbar(desk)
-
-    def _on_main_closed(_win=None) -> None:
-        try:
-            api.pet_show()   # 主窗口关闭后，桌面桌宠接管
-        except Exception:  # noqa: BLE001
-            pass
-
-    main.events.closed += _on_main_closed
-    # 强制使用 Edge Chromium 后端：避免 pywebview 在多后端间试探时
-    # 重复注册窗口类导致 "Failed to unregister class Chrome_WidgetWin_0 (Error 1411)"，
-    # 该错误会让主窗口/桌宠窗口创建后白屏或崩溃（尤其主窗口+桌宠同时创建时）。
-    # 本机已确认安装 WebView2 Runtime，指定该后端是安全的。
-    # 渲染后端策略（2026-08-24 关键修正）：
-    # 1) 经查 pywebview 源码(edgechromium.py:82)确认：pywebview **不读取**
-    #    WEBVIEW2_ADDITIONAL_ARGS 环境变量，所有手动设置的渲染参数从未生效；
-    #    之前"能出窗口"的轮次实际都是 pywebview 默认行为，WebView2 默认初始化成功。
-    # 2) 手动设 --no-sandbox / --enable-unsafe-swiftshader 反而导致
-    #    WebView2 初始化 E_ABORT（0x80004004）失败 → 窗口空白。
-    # 因此**不设任何额外参数**，完全交给 pywebview/WebView2 默认行为最稳。
-    webview.start(debug=debug, func=None, gui="edgechromium")
 
 
 if __name__ == "__main__":

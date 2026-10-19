@@ -1,8 +1,8 @@
-"""
+r"""
 达娅 CosyVoice2 零样本克隆样片生成 + 延迟实测
-参考音: H:\daniya_ref.wav  (16k 单声道达娅人声)
-模型:   models/CosyVoice2-0.5B  (需先 modelscope 下载)
-输出:   deliverables/daniya_cosy_0..2.wav + 延迟日志
+参考音: <仓库>/assets/voices/daniya_ref.wav  (16k 单声道达娅人声)
+模型:   <仓库>/models/CosyVoice2-0.5B  (需先 modelscope 下载)
+输出:   <仓库>/deliverables/daniya_cosy_0..2.wav + 延迟日志
 运行:   .venv_cosy/Scripts/python.exe gen_daniya_cosy_sample.py
 """
 import os
@@ -27,9 +27,12 @@ def _find_library(name):
 
 _cu.find_library = _find_library
 
-MODEL_DIR = r"cosyvoice_models/models/iic--CosyVoice2-0.5B/snapshots/master"
-REF_WAV = r"H:\daniya_ref.wav"
-OUT_DIR = r"deliverables"
+# 路径一律相对仓库根，并允许环境变量覆盖：项目曾位于 G:\ai对话\11，
+# 搬家后写死旧盘符会让脚本直接失败。
+_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+MODEL_DIR = os.getenv("COSYVOICE_MODEL_DIR") or os.path.join(_ROOT, "models", "CosyVoice2-0.5B")
+REF_WAV = os.getenv("DANIYA_REF_WAV") or os.path.join(_ROOT, "assets", "voices", "daniya_ref.wav")
+OUT_DIR = os.getenv("DANIYA_SAMPLE_OUT") or os.path.join(_ROOT, "deliverables")
 TEXTS = [
     "在呢，怎么啦，我一直在呀",
     "刚打完一局，手感还不错哦",

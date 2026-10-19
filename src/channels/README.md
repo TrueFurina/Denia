@@ -92,7 +92,7 @@ channels:
 微信个人号**没有官方 API**。这里用 [Gewechat](https://github.com/gewechat/gewechat)（开源 OneBot 风格的微信网关，Docker 部署，底层走 iPad 协议）——它是目前相对干净的方案（扫码登录、无需付费 puppet token，但仍是灰色逆向，有封号风险，**务必用微信小号、同省部署更稳**）。
 
 1. 准备一个微信小号，登录并保持在线。
-2. 部署 Gewechat（`docker pull gewechat/gewechat`，默认暴露 `http://127.0.0.1:2531`）。在 Gewechat 后台把"消息回调地址"填为 `http://<本机IP>:9912`（本通道起回调服务接收消息）。
+2. 部署 Gewechat（`docker pull gewechat/gewechat`，默认暴露 `http://127.0.0.1:2531`）。在 Gewechat 后台把"消息回调地址"填为本通道的回调地址（本通道起 HTTP 服务接收消息）：Gewechat 与本程序**同机**填 `http://127.0.0.1:9912`；Gewechat 在 **Docker 里**（Windows Docker Desktop 的容器访问不到宿主的回环地址）填 `http://<本机IP>:9912/?token=<callback_token>`，并在配置里把 `callback_host` 改成 `0.0.0.0`。
 3. 编辑 `config.yaml`：
 
 ```yaml
@@ -102,8 +102,9 @@ channels:
     gewechat:
       base_url: "http://127.0.0.1:2531"
       token: ""              # 若 Gewechat 开启了 token 校验则填
-      callback_host: "0.0.0.0"
+      callback_host: "127.0.0.1"  # 默认只听回环；改 0.0.0.0 必须同时配 callback_token
       callback_port: 9912    # 与 Gewechat 后台填的回调端口一致
+      callback_token: ""     # 回调共享密钥；非空时回调地址要带 ?token=<它>
       allow_users: []        # 私聊白名单，空=所有人
       block_users: []
       media:
@@ -112,6 +113,11 @@ channels:
         watch_videos: true  # 视频链接→取原视频→AI 看画面
         store_to_memory: true
 ```
+
+> **回调为什么必须鉴权**：Gewechat 的回调是**无签名**的裸 JSON POST。绑 `0.0.0.0` 又没令牌，
+> 等于把 AI 的"耳朵"接到局域网上——同一网段的任何主机都能伪造一条"微信消息"，AI 会当成
+> 真人说的去回复、甚至调工具。所以 `callback_host` 非回环且 `callback_token` 为空时，
+> **回调服务会直接拒绝启动**并打 ERROR 日志（与 OneBot(reverse) 的边界同一套标准）。
 
 4. 重启主程序。日志出现 `Gewechat 登录二维码已生成` 后，在 Gewechat 管理页扫码登录（首次需人工扫码；后续登录态可持久化）。
 5. 用微信小号给机器人发消息，机器人走同一大脑回复；发图/发视频已支持。

@@ -15,44 +15,48 @@
 """
 from __future__ import annotations
 
+# ── 交付包 DLL 目录引导（兜底层；主力在打包时复制 DLL）──────────────────────
+# 交付包以 isolated 模式运行（`python/python312._pth`）：`site` 模块不执行，于是
+# site-packages 里的 `*.pth` 全部失效 —— 包括 `pywin32.pth`。它本来负责让
+# `pywin32_system32` 里的 `pythoncom312.dll` / `pywintypes312.dll` 能被找到，
+# 而 Python 3.8+ 起**依赖 DLL 既不从 sys.path 找、也不从 PATH 找**，只搜
+# 「应用程序目录」（python.exe 同目录）与 System32。漏掉这层，`win32api` /
+# `win32gui` 会报 `DLL load failed while importing ...`，而它们挂在托盘、音量、
+# 窗口控制上，表现为一串「说不清哪坏了」的功能失灵。
+#
+# 主力方案是 `tools/make_dist.py` 装配时把这两个 DLL 直接复制到 `python/` 根
+# （实测：任何入口都成立，连 `python -c "import win32api"` 都不用额外代码）。
+# 这里保留为**兜底**：手工装配、或用户自己往包内 site-packages 装了 pywin32 时，
+# 目录就在原地，不必重新打包。
+# ⚠ 返回的句柄必须保活：一旦被回收，`RemoveDllDirectory` 立刻生效，目录等于白加。
+_DLL_DIR_HANDLES: list = []
+
+
+def _bootstrap_bundle_dlls() -> None:
+    import os
+    import sys
+
+    add = getattr(os, "add_dll_directory", None)
+    d = os.path.join(sys.prefix, "Lib", "site-packages", "pywin32_system32")
+    if add is None or not os.path.isdir(d):
+        return
+    try:
+        _DLL_DIR_HANDLES.append(add(d))
+    except OSError:
+        pass
+
+
+_bootstrap_bundle_dlls()
+
 # Force UTF-8 on std streams so libraries like rich can print Unicode
 # (e.g. the "✓" checkmark) even when launched from a GBK codepage console
 # (e.g. double-clicking a .bat on Chinese Windows). Without this, console
 # output raises UnicodeEncodeError and crashes the startup thread.
-
-# ============ 【2026-10-17 关键修复·GBK 崩溃】============
-# main.py 用 rich.console 打印带 ✓ 的进度，而 Windows 控制台默认 GBK。
-# 当 stdout 是 GBK（或 pythonw.exe 下为 None）时：
-#   UnicodeEncodeError: 'gbk' codec can't encode character '\u2713'
-# → asyncio 初始化线程直接崩 → runtime.ready 永不 set
-# → 主线程 180s 超时 → "系统初始化失败，无法启动 GUI"
-# → 用户双击图标后**闪一下就没了**（crash 日志实锤）。
-# 这里在任何 import 之前强制把 stdio 切成 UTF-8，并容忍失败。
-import sys as _sys_boot, os as _os_boot
-try:
-    _os_boot.environ.setdefault("PYTHONIOENCODING", "utf-8")
-    _os_boot.environ.setdefault("PYTHONUTF8", "1")
-except Exception:  # noqa: BLE001
-    pass
-for _name_boot in ("stdout", "stderr"):
-    _st = getattr(_sys_boot, _name_boot, None)
-    try:
-        if _st is not None and hasattr(_st, "reconfigure"):
-            _st.reconfigure(encoding="utf-8", errors="replace")
-    except Exception:  # noqa: BLE001
-        pass
-del _sys_boot, _os_boot
-# ========================================================
-
-
-import sys as _sys
-try:
-    if hasattr(_sys.stdout, "reconfigure"):
-        _sys.stdout.reconfigure(encoding="utf-8", errors="replace")
-    if hasattr(_sys.stderr, "reconfigure"):
-        _sys.stderr.reconfigure(encoding="utf-8", errors="replace")
-except Exception:
-    pass
+# 2026-10-18 补 None 分支：桌面快捷方式（pythonw 无控制台）下 stdout/stderr
+# 是 None，原 reconfigure 被跳过 → pywebview 用 GBK devnull 顶替 → rich 写
+# ✓ 当场炸死启动线程（crash_20261018_150448）。详见 src/io_safe.py。
+from src.io_safe import ensure_safe_stdio
+ensure_safe_stdio()
 
 # 🔑 通知浮窗"重新出现时不产帧"的病根解方（2026-09-04 23:20）——必须在 WebView2
 # 环境初始化前设置，故放在文件最顶部。Chromium 默认对"不可见/被遮挡"的窗口停止
@@ -78,10 +82,30 @@ if _os.path.isdir(_ort_dml_dir):
     if _ort_dml_dir not in _sys.path:
         _sys.path.insert(0, _ort_dml_dir)
 
+
+def _set_app_user_model_id() -> None:
+    """让 Windows 把本程序识别为独立应用，而不是"Python"。
+
+    不设时任务栏会按 python.exe 归组：图标是 Python、悬停名也是 Python，
+    看起来不像成品软件。设置 AppUserModelID 后系统按该 ID 分组，
+    配合 setup(icon=...) 的窗口图标，任务栏就是本应用自己的图标与名称。
+    必须在创建任何窗口之前调用。
+    """
+    try:
+        import ctypes
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(
+            "Daniya.DesktopCompanion.1")
+    except Exception:  # noqa: BLE001  非 Windows / 老系统忽略
+        pass
+
+
+_set_app_user_model_id()
+
 import argparse
 import asyncio
 import json
 import logging
+import logging.handlers
 import os
 import subprocess
 import sys
@@ -90,6 +114,24 @@ import time
 import atexit
 from dataclasses import dataclass
 from typing import Any, Optional
+
+# ── --doctor 必须在任何第三方依赖之前截住 ────────────────────────────────
+# 它的职责是"告诉用户缺了什么"，所以它自己绝不能因为缺依赖而崩。
+# 2026-10-18 实测：交付包缺 rich 时，下面那行 `from rich.console` 会先抛
+# ModuleNotFoundError，用户看到的是 traceback 而不是"缺 rich，请执行 xxx"——
+# 诊断工具在最需要它的时候失效，是"自检"最典型的死法。
+# tools/doctor.py 只 import 标准库，所以这一支在零三方依赖的机器上也能跑。
+if "--doctor" in sys.argv[1:]:
+    import runpy as _runpy
+    _doctor_py = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                              "tools", "doctor.py")
+    if not os.path.isfile(_doctor_py):
+        print("找不到 tools/doctor.py —— 交付包不完整，请重新解压或重新打包")
+        raise SystemExit(2)
+    # doctor 自己不认识 --doctor，喂给它之前先摘掉
+    sys.argv = [sys.argv[0]] + [a for a in sys.argv[1:] if a != "--doctor"]
+    _runpy.run_path(_doctor_py, run_name="__main__")
+    raise SystemExit(0)
 
 from rich.console import Console
 
@@ -135,7 +177,8 @@ logger = logging.getLogger(__name__)
 console = Console()
 
 
-def setup_logging(level: str) -> str:
+def setup_logging(level: str, keep: int | None = None,
+                  max_mb: float | None = None) -> str:
     """初始化日志，返回日志文件路径。
 
     同时输出到终端和日志文件：GUI 模式下 cef 会接管 shell 重定向句柄，
@@ -145,15 +188,37 @@ def setup_logging(level: str) -> str:
     日志文件统一放在 logs/ 目录，每次启动按时间戳新建一个文件
     （logs/run_YYYYMMDD_HHMMSS.log），方便每次测试独立留存，
     发给朋友实测后直接取该文件即可排查问题。
+
+    keep/max_mb 控制保留策略（阶段 B2）：每类日志最多保留 keep 份，
+    单份超过 max_mb 就滚动。清理在建 handler **之前**做，
+    这样正在写的当前文件不会被算进"待删除的旧文件"。
     """
     lvl = getattr(logging, level.upper(), logging.INFO)
     log_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "logs")
     os.makedirs(log_dir, exist_ok=True)
+
+    try:
+        from src.log_rotate import cleanup as _log_cleanup
+
+        kwargs = {}
+        if keep is not None:
+            kwargs["keep"] = int(keep)
+        if max_mb is not None:
+            kwargs["max_bytes"] = int(float(max_mb) * 1024 * 1024)
+        _log_cleanup(log_dir, **kwargs)
+    except Exception as _e:  # noqa: BLE001  清理失败绝不能挡住启动
+        logger.debug("[日志] 旧日志清理跳过：%s", _e)
+
     log_file = os.path.join(
         log_dir, f"run_{time.strftime('%Y%m%d_%H%M%S')}.log")
     handlers: list[logging.Handler] = [logging.StreamHandler()]
     try:
-        handlers.append(logging.FileHandler(log_file, mode="a", encoding="utf-8"))
+        max_bytes = int(float(max_mb) * 1024 * 1024) if max_mb else 8 * 1024 * 1024
+        # RotatingFileHandler 而不是 FileHandler：单次运行打太多日志时自动滚动，
+        # 而不是把磁盘撑满。backupCount=1 只留一份备份，够回溯又不占地方。
+        fh = logging.handlers.RotatingFileHandler(
+            log_file, mode="a", maxBytes=max_bytes, backupCount=1, encoding="utf-8")
+        handlers.append(fh)
     except Exception:
         logger.exception("日志文件初始化失败，仅终端输出")
     logging.basicConfig(
@@ -162,6 +227,16 @@ def setup_logging(level: str) -> str:
         datefmt="%H:%M:%S",
         handlers=handlers,
     )
+    # 【阶段 B1】日志首行打版本：用户发来日志时，第一眼就能知道跑的是哪个构建。
+    try:
+        from src.version import name_version
+
+        logger.info("=" * 60)
+        logger.info("%s 启动 · Python %s", name_version(),
+                    sys.version.split()[0])
+        logger.info("=" * 60)
+    except Exception:  # noqa: BLE001  打版本失败绝不能挡住启动
+        pass
     return log_file
 
 
@@ -2078,9 +2153,19 @@ def _startup_supervisor(runtime: RuntimeHolder, cfg: Config,
         # 平时由主界面"桌宠模式"开关控制显示（pet_show/pet_hide），
         # 桌宠内左键点击互动 / 拖动移动（下半身摆动）/ 右键操作面板。
         try:
-            desk_win = create_desktop_companion(api=char_api)
+            # 以前这里写死 create_desktop_companion，命令行 --pet-shell 对真实入口无效。
+            # 改走统一入口：backend=shell 时起 Electron 壳（真透明），
+            # 壳不可用/配置为 webview 时回退 pywebview（宁可白底也要出人）。
+            from src.ui.pet_backend import create_pet_window as _create_pet_window
+
+            desk_win, _used, _why = _create_pet_window(
+                getattr(runtime, "pet_backend", "auto"), api=char_api)
             char_api.set_windows(main_win=main_win, pet_win=desk_win)
-            _attach_pet_no_taskbar(desk_win)   # 桌宠不占任务栏/Alt+Tab
+            if _used == "shell":
+                logger.info("桌宠窗由 Electron 壳承载（真透明）")
+                # 壳自带 skipTaskbar，无需走 pywebview/WinForms 那套收尾
+            else:
+                _attach_pet_no_taskbar(desk_win)   # 桌宠不占任务栏/Alt+Tab
 
             # 首启引导期间：桌宠浮窗不提前出现，配置完成（ONBOARDING_DONE）后再显示
             if _is_first_run(cfg):
@@ -2206,6 +2291,37 @@ def _unload_ollama_models(_rt=None) -> None:
 
 
 def main() -> None:
+    # 注：--doctor 已经在模块顶层被截走（它必须能在零三方依赖的机器上运行，
+    # 而本函数所在的模块导入了一大批三方库）。这里的入口参数仅为 --help 完整性保留。
+
+    # 🔧 壳层前置（顺序敏感，勿后移）：DPI 感知与单实例互斥体都必须在**任何窗口
+    # 创建之前**完成。放到下一步的 faulthandler 之后也能跑，但那样一旦有人在两者
+    # 之间插入建窗代码，DPI 感知就会被系统静默忽略（创建窗口后再设无效），且不会有
+    # 任何报错——所以固定放在函数最前面。
+    #   · DPI：进程默认不感知 → 高缩放（150%）下整窗被系统位图拉伸，文字必糊。
+    #   · 单实例：无互斥体 → 双击两次得到两个进程、两只宠物、两套后端。
+    # --no-gui 是控制台工具模式，允许与 GUI 实例并存，故跳过单实例检查。
+    try:
+        from src.win_shell import (
+            acquire_single_instance as _acquire_single,
+            activate_existing_window as _activate_existing,
+            dpi_awareness as _dpi_awareness,
+            enable_dpi_awareness as _enable_dpi,
+        )
+
+        _dpi_mode = _enable_dpi()
+        if _dpi_awareness() <= 0:
+            logger.warning("[壳层] DPI 感知未生效（方式=%s），高缩放下界面会发虚", _dpi_mode)
+        else:
+            logger.info("[壳层] DPI 感知已启用：%s", _dpi_mode)
+
+        if "--no-gui" not in sys.argv and not _acquire_single():
+            _activate_existing()
+            print("达妮娅已在运行，已为你切到已有窗口（本次启动退出）")
+            return
+    except Exception as _e:  # noqa: BLE001  壳层能力失败不得拦住主流程
+        logger.warning("[壳层] DPI/单实例初始化异常（继续启动）：%s", _e)
+
     # faulthandler 仅在【真实崩溃/致命信号】时转储，用于事后定位根因。
     # ⚠️ 原"每 45s 无条件 dump_traceback_later"会持续把全线程栈刷进
     # logs/fault_watchdog.log（曾累积 10w+ 行），且与是否卡死无关——纯属噪音，
@@ -2255,6 +2371,22 @@ def main() -> None:
 
     parser = argparse.ArgumentParser(description="AI 桌面伴侣")
     parser.add_argument("--no-gui", action="store_true", help="只启动控制台模式，不打开 GUI")
+    # 换壳用：把 CharacterAPI 暴露成本地 RPC（仅 127.0.0.1 + 每次启动随机令牌），
+    # 供 Electron 外壳调用。与 pywebview 的 js_api 指向同一个对象实例。
+    parser.add_argument("--rpc", action="store_true",
+                        help="启动本地 RPC（仅回环地址，需 token），供外部壳调用")
+    parser.add_argument("--rpc-handshake", default=None, metavar="PATH",
+                        help="把 RPC 的 url/token 写入该文件，供外壳读取")
+    parser.add_argument("--pet-backend", default=None, choices=("auto", "webview", "shell"),
+                        help="桌宠窗用哪套渲染宿主：auto=有壳就用、不可用回退；"
+                             "webview=强制 pywebview（背景有白底）；shell=强制 Electron 壳（真透明）。"
+                             "不传时取配置项 ui.pet_backend，缺省 auto（壳起不来自动静默回退）")
+    parser.add_argument("--pet-shell", action="store_true",
+                        help="【历史开关，等价 --pet-backend shell】桌宠窗改用 Electron 壳承载"
+                             "（真透明；需要 shell/ 下已装 electron）")
+    parser.add_argument("--doctor", action="store_true",
+                        help="环境自检：运行时/依赖/Electron 壳/端口/配置/磁盘 "
+                             "逐项 PASS-WARN-FAIL 并给修复提示，然后退出（不启动 GUI）")
     parser.add_argument("--debug-gui", action="store_true", help="GUI 调试模式（允许右键检查元素）")
     parser.add_argument("--config", default="config.yaml", help="指定配置文件（默认 config.yaml）")
     parser.add_argument("--video", default=None,
@@ -2269,10 +2401,52 @@ def main() -> None:
 
     # 退出兜底：即使崩溃/强杀没走 on_exit，也尽量卸载本地模型释放显存
     atexit.register(_unload_ollama_models)
+    # 【阶段 A3】再兜一层：把 Electron 壳进程连带子进程收干净、删掉含令牌的
+    # 握手文件。atexit 在崩溃/强杀下同样可能不跑，但它是"正常退出"这条最常走
+    # 的必经路径，先铺上；壳自己也在 shutdown_all 里幂等处理重复调用。
+    try:
+        from src.ui.pet_shell import shutdown_all as _pet_shutdown_all
+
+        atexit.register(_pet_shutdown_all)
+    except Exception as _e:  # noqa: BLE001  壳模块有平台依赖，缺了不能拖垮启动
+        logger.debug("[壳] 退出清理注册失败（忽略）：%s", _e)
 
     cfg = load_config(args.config)
-    log_file = setup_logging(cfg.ns.app.log_level)
+    # 【阶段 B2】日志保留策略来自配置：app.log_keep（份数）/ app.log_max_mb（单份上限）。
+    # 用 getattr 取，老配置里没有这两项时走模块默认值，不会因为缺字段起不来。
+    _app_ns = getattr(cfg.ns, "app", None)
+    log_file = setup_logging(
+        cfg.ns.app.log_level,
+        keep=getattr(_app_ns, "log_keep", None),
+        max_mb=getattr(_app_ns, "log_max_mb", None),
+    )
     console.print(f"[dim]日志文件: {log_file}[/]")
+
+    # 【阶段 E】开机自启：config.app.autostart 是单一真值，启动时把注册表对齐。
+    # 只在包内环境做（root 同时有 main.py 与 python/pythonw.exe；开发机 .venv 跳过）。
+    # 失败绝不拖垮启动——自启只是体验项。
+    try:
+        _as_root = os.path.dirname(os.path.dirname(sys.executable))
+        if (os.path.isfile(os.path.join(_as_root, "main.py"))
+                and os.path.isfile(os.path.join(_as_root, "python", "pythonw.exe"))):
+            from src import autostart as _autostart
+
+            _autostart.sync(bool(getattr(_app_ns, "autostart", False)), _as_root)
+    except Exception as _e:  # noqa: BLE001
+        logger.debug("[自启] 对齐注册表失败（忽略）：%s", _e)
+
+    # 桌宠窗渲染宿主：命令行 > 配置 ui.pet_backend > auto。
+    # 必须在起 RPC 之前定下来，因为 webview 模式下根本不需要那通道。
+    # 历史坑：此前 --pet-shell 只负责开 RPC，而 _startup_supervisor 里桌宠窗仍硬编码
+    # create_desktop_companion —— 开关看着能用，实际没接到线上。现在两处共用一个决策。
+    try:
+        from src.ui.pet_backend import resolve_from_args as _resolve_pet_backend
+
+        pet_backend = _resolve_pet_backend(args, cfg)
+    except Exception as _e:  # noqa: BLE001  决策失败不能挡住启动，按最保守的 webview 走
+        logger.warning("[桌宠] 解析 pet_backend 失败（%s）→ 按 webview 处理", _e)
+        pet_backend = "webview"
+    logger.info("[桌宠] 渲染宿主决策：%s", pet_backend)
 
     # GPU 显存优化：把浏览器/QQ/微信等普通软件预设到核显（节能），下次启动生效
     try:
@@ -2308,6 +2482,9 @@ def main() -> None:
     runtime = RuntimeHolder(cfg=cfg)
     progress = StartupProgress()
     runtime.progress = progress
+    # 桌宠渲染宿主的决策结果挂到 runtime，供 _startup_supervisor 建窗时取用
+    # （命令行覆盖已经在这里定完，下游不要再重新解析一次，否则 --pet-backend 会失效）
+    runtime.pet_backend = pet_backend
     # 登记到模块级单例：崩溃 / atexit / 强杀路径也能卸载 Ollama 显存
     global _runtime_singleton
     _runtime_singleton = runtime
@@ -2315,6 +2492,37 @@ def main() -> None:
     # 构建 CharacterAPI（运行时注入推迟到加载完成后，见 _startup_supervisor）
     char_api = CharacterAPI("config.yaml")
     char_api._use_shared_cfg(cfg)
+
+    # 🔌 换壳桥：把同一个 char_api 暴露成本地 RPC（Electron 壳用）。
+    # 必须在这里启动——此时 char_api 已建好、GUI 尚未起，外壳读握手文件即可开始调用。
+    # 失败只告警不拦启动：没有壳时这条通道本就该是关闭的。
+    # --pet-shell / ui.pet_backend=shell 隐含开启 RPC：桌宠窗要靠它调后端，
+    # 缺了就只能退回 pywebview 窗。webview 模式下不起（除非用户显式 --rpc）。
+    try:
+        from src.ui.pet_backend import wants_rpc as _wants_rpc
+
+        _want_rpc = _wants_rpc(pet_backend,
+                               explicit_rpc=bool(getattr(args, "rpc", False)),
+                               handshake_path=getattr(args, "rpc_handshake", None))
+    except Exception:  # noqa: BLE001
+        _want_rpc = True
+    if _want_rpc:
+        try:
+            import atexit as _atexit
+
+            from src.ui.pet_shell import configure as _configure_pet_shell
+            from src.ui.rpc_server import RpcServer, write_handshake
+
+            _rpc = RpcServer(char_api)
+            _rpc_info = _rpc.start()
+            _atexit.register(_rpc.stop)
+            # 壳桌宠从这里拿连接信息（main_window 创建桌宠窗时读取）
+            _configure_pet_shell(_rpc_info)
+            if getattr(args, "rpc_handshake", None):
+                write_handshake(args.rpc_handshake, _rpc_info)
+            logger.info("[RPC] 已为外壳开放本地通道 %s", _rpc_info["url"])
+        except Exception as _e:  # noqa: BLE001
+            logger.error("[RPC] 启动失败（不影响 pywebview 界面）：%s", _e)
 
     # 1. 创建启动加载窗口（小窗口，与 QQ 登录窗口同尺寸；全部加载好才切换主窗口）
     import webview

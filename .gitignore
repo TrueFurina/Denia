@@ -18,14 +18,14 @@ __pycache__/
 *.msi
 build/
 dist/
+# 打包时的暂存目录（dist_stage / dist_core / dist_v2 …），与 dist/ 同等对待
+dist_*/
 *.spec
 ort_dml/
 
 # ---- 敏感配置：含真实 API Key，严禁入库 ----
 # config.release.yaml 是发布模板，可入库；config.yaml 是实配，不入库
 config.yaml
-# config.release.yaml 当前第 1771 行仍含一枚未脱敏的百炼 Key，清掉后再纳入版本控制
-config.release.yaml
 config.local.yaml
 .env
 .env.*
@@ -43,6 +43,7 @@ user_knowledge.yaml
 *.swapbak_*
 
 # ---- 临时/诊断产物 ----
+.workbuddy/
 tools/_*_out*.txt
 tools/_*.jsonl
 tools/_*.txt
@@ -51,3 +52,13 @@ tools/_*.txt
 .mypy_cache/
 *.tmp
 *.bak
+
+# Electron 壳 PoC：只提交源码，不提交 300MB 的二进制依赖
+shell/node_modules/
+shell/dist/
+shell/out/
+# 诊断脚本产出的截图（每次运行都会变，不入库）
+tools/_*.png
+
+# NSIS 构建工具链（本地下载，不进版本库；构建入口 tools/installer.nsi）
+.build_tools/

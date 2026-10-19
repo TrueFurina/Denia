@@ -146,7 +146,11 @@ class QzonePublisher(Channel):
         if not text:
             return
         try:
-            res = self._client.publish(text)
+            # 【2026-10-18 修】publish 走 urllib（超时 15s），直接在事件循环线程里调
+            # 会把 TTS / 对话 / 桌宠一起卡住——与 gewechat 的回发同一个坑。
+            # 通道里其它出站调用（onebot / media_ingest / video_watch）早已是 to_thread，
+            # 只有这里漏了。
+            res = await asyncio.to_thread(self._client.publish, text)
             code = res.get("code") if isinstance(res, dict) else None
             logger.info("QQ空间发说说结果 code=%s", code)
         except Exception:  # noqa: BLE001

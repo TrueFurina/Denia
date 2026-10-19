@@ -1,0 +1,9 @@
+{
+  "name": "daniya-shell-poc",
+  "version": "0.0.1",
+  "private": true,
+  "main": "main.js",
+  "dependencies": {
+    "electron": "^44.9.0"
+  }
+}
