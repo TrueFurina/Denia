@@ -31,6 +31,11 @@ os.chdir(os.path.dirname(os.path.abspath(__file__)))
 
 DEV_NAME = sys.argv[1] if len(sys.argv) > 1 else ''
 LOG_PATH = sys.argv[2] if len(sys.argv) > 2 else ''
+# 云端要求 16k/mono/int16，但**开流必须按设备原生率**，采到后再在软件里重采样。
+# 实测（MCHOSE K20 Pro，2026-10-18）：同一设备用 16k 开流恒静音、用 44.1k 开流正常
+# ——某些 USB 声卡驱动在非原生率下 open() 不报错但不出数据。所以下面选设备时读
+# defaultSampleRate 当开流率，主循环里再重采样到本常量。（这条结论原先记在被删掉的
+# 旧主进程采集实现里，搬过来以免丢失。）
 TARGET_RATE = 16000
 
 # 采集参数 / 诊断节流
