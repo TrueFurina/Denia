@@ -81,8 +81,9 @@ def main() -> int:
           "app.ico 在 make_dist.INCLUDE_FILES 里——不加就等于交付包没有图标")
 
     print("\n=== [4] 品牌默认值：代码里的兜底名不该是旧产品名 ===")
-    # 只查字面量 "小薇"（角色预设名「温柔女友·小薇」是另一回事，见 CHANGELOG 待定项）；
-    # 「微软小薇」是 Edge-TTS 的音色名，不是产品名，必须放过。
+    # 只查字面量 "小薇"；「微软小薇」是 Edge-TTS 的音色名，不是产品名，必须放过。
+    # 角色预设「温柔女友·小薇」已按产品决定改名成「温柔女友」（2026-10-20），
+    # 所以这里可以一刀切：除了音色名，任何地方都不该再出现它。
     for rel in ("src/ui/chat_overlay.py", "src/ui/console.py", "src/ui/webapp.py"):
         path = os.path.join(ROOT, rel)
         if not os.path.isfile(path):
@@ -98,6 +99,44 @@ def main() -> int:
                 continue
             hits.append(f"{rel}:{line_no}")
         check(not hits, f"{rel} 没有把旧名当默认值（命中 {hits}）")
+
+    print("\n=== [5] 首启不问 Key：流程只剩「建角色 → 体检」+ 桌面有承接 ===")
+    # 产品决定（2026-10-20）：首启不再让用户面对「模型与API」设置页。少问一步的前提
+    # 是**桌面必须承接**——否则用户进去以后不知道自己缺什么。这两半要一起守。
+    fpath = os.path.join(ROOT, "src", "ui", "web", "first_launch_setup.html")
+    ipath = os.path.join(ROOT, "src", "ui", "web", "index.html")
+    if os.path.isfile(fpath):
+        with open(fpath, "r", encoding="utf-8", errors="replace") as fh:
+            flow_js = fh.read()
+        # 断言的是**那一行代码**，不是"文件里没有 screenSlots"——回滚说明的注释里
+        # 就有这个词，模糊断言会被自己的注释满足（这个坑踩过）。
+        check("let FLOW = [screenSlots];" not in flow_js,
+              "首启流程不再以能力槽屏开头")
+        check("['screenRole','screenSummary'].forEach" in flow_js,
+              "首启流程 = 建角色 + 体检（两步）")
+        # 【第一版断言是空的】原先写 `"if(idx>=0) goTo(idx);\n  }" not in flow_js`——
+        # 这个串在**改前改后都不存在**（函数体里后面还有别的语句），所以变异
+        # （把 fallback 删回静默 return）照样绿。判据换成"函数体里有没有反馈动作"。
+        import re as _re
+
+        _m = _re.search(r"function goToFix\(screenId\)\{(.*?)\n  \}", flow_js, _re.S)
+        _body = _m.group(1) if _m else ""
+        check(bool(_body), "能定位 goToFix 函数体（定位不到就是断言失效，不是通过）")
+        check("toast(" in _body or "location.href" in _body,
+              "目标屏不在流程里时给明确反馈（不是静默 return）")
+    else:
+        check(False, "first_launch_setup.html 不存在")
+
+    if os.path.isfile(ipath):
+        with open(ipath, "r", encoding="utf-8", errors="replace") as fh:
+            home = fh.read()
+        check('id="brainBar"' in home, "对话页有「还没配大脑」提示条")
+        check("getCapabilitySlots" in home,
+              "提示条按真实槽位状态决定显隐（不是写死常亮）")
+        check("danya_brain_bar_muted" in home,
+              "提示条可「稍后」——不然每次进来都糊在脸上")
+    else:
+        check(False, "index.html 不存在")
 
     print()
     if _fails:

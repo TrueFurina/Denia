@@ -5557,7 +5557,7 @@ class CharacterAPI(PetAPI, WindowAPI):
             },
             {
                 "id": "xiaowei_gentle",
-                "name": "温柔女友·小薇",
+                "name": "温柔女友",
                 "sample": "亲爱的，今天辛苦啦～要不要先喝口水，歇一歇再继续？",
                 "character": "温柔体贴的二次元女友，偶尔傲娇，关心健康和工作节奏，能看见屏幕活动",
                 "speaking_style": "用中文，语气亲切，称呼对方'亲爱的'，偶尔撒娇，回复简短自然",
