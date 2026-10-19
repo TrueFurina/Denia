@@ -105,8 +105,10 @@ class TTS:
             self._tts_warmup_enabled = bool(_pro.get('duplex_tts_warmup', True))
             self._tts_cache_max_entries = int(_pro.get('duplex_tts_cache_max_entries', 64) or 64)
             self._tts_cache_max_bytes = int(_pro.get('duplex_tts_cache_max_mb', 8) or 8) * 1024 * 1024
-        except Exception:
-            pass
+        except Exception:  # noqa: BLE001
+            # 【2026-10-17】配置项解析失败会让双工 TTS 的缓存/预取/stale 阈值全部退回默认值，
+            # 用户只感到"变卡、变慢"，日志里一条线索都没有。至少留一条 debug 供排查。
+            logger.debug("双工 TTS 配置解析失败，全部使用默认值", exc_info=True)
         self._ffplay_proc = None
         os.makedirs(WEB_ASSETS_DIR, exist_ok=True)
 
@@ -517,8 +519,10 @@ class TTS:
                                 str(payload.get("text") or "")[:30])
                     try:
                         await self._state.to_idle("tts:stale")
-                    except Exception:
-                        pass
+                    except Exception:  # noqa: BLE001
+                        # 复位失败不能连累"继续丢过期句"，但必须留痕：
+                        # 状态卡在 speaking 时，用户看到的是"她不说话了"且日志无异常。
+                        logger.debug("TTS 状态复位失败（过期句已丢弃，继续）", exc_info=True)
                     continue
             # 【2026-09-18 修复】只丢弃「打断瞬间」的残留任务，判据必须是**时间窗口**
             # 而非布尔闩锁。队列已被 interrupt() 取空，能在这里 get() 到的基本都是打断
@@ -671,6 +675,8 @@ class TTS:
             try:
                 os.unlink(tmp.name)
             except OSError:
+                # 临时 wav 可能已被系统/杀软抢先回收（Windows 偶发）；音频已播完，
+                # 删不掉只是留个垃圾文件，不值得打扰用户
                 pass
 
     def _save_pcm_wav(self, arr16, sample_rate: int) -> None:
@@ -866,7 +872,8 @@ class TTS:
     def _tts_cache_get(self, key: str):
         try:
             return self._tts_pcm_cache.get(key)
-        except Exception:
+        except Exception:  # noqa: BLE001
+            # 缓存读失败等同未命中：调用方会重新合成，正确性不受影响
             return None
 
     def _tts_cache_put(self, key: str, data: bytes) -> None:
@@ -880,8 +887,10 @@ class TTS:
             _tot = sum(len(v) for v in self._tts_pcm_cache.values())
             while _tot > self._tts_cache_max_bytes and len(self._tts_pcm_cache) > 1:
                 _tot -= len(self._tts_pcm_cache.pop(next(iter(self._tts_pcm_cache))))
-        except Exception:
-            pass
+        except Exception:  # noqa: BLE001
+            # 缓存只是加速手段：写失败退化为"每句重新合成"，但要在 DEBUG 里留痕，
+            # 否则"最近怎么变慢了"永远查不出原因
+            logger.debug("TTS 缓存写入失败（忽略，只影响下次命中率）", exc_info=True)
 
     async def _pcm_chunks(self, data: bytes, size: int = 9600):
         """把整段 PCM 切片喂播放器（复用流式播放里的打断检查，0.2s/块）。"""
@@ -910,8 +919,10 @@ class TTS:
             self._tts_prefetch_q[key] = asyncio.Queue()
             self._tts_prefetch[key] = loop.create_task(
                 self._prefetch_pcm(backend, text, key, emotion=d.get("emotion")))
-        except Exception:
-            pass
+        except Exception:  # noqa: BLE001
+            # 预合成起不来只影响"首包快慢"（退化为串行合成），但持续失败会表现为
+            # "每句都慢半拍"，必须留痕才能定位
+            logger.debug("TTS 预合成未能启动（降级为串行合成）", exc_info=True)
 
     async def _prefetch_pcm(self, backend, text: str, key: str, emotion: str | None = None):
         """入队即起预合成，**边收边推入增量队列**（不再攒完整段）。
@@ -1017,6 +1028,7 @@ class TTS:
                     try:
                         os.unlink(p)
                     except OSError:
+                        # 与 _play_pcm 同理：音频已播完，删不掉只留个临时文件
                         pass
 
     def _trim_silence_edges(pcm: "np.ndarray", sr: int, thresh: int, min_run_s: float = 0.06) -> "np.ndarray":
@@ -1280,7 +1292,9 @@ class TTS:
             await asyncio.to_thread(_speak)
         finally:
             if use_gate:
-                time.sleep(0.6)  # 尾音静音：吃掉采集缓冲延迟
+                # 【2026-10-18 修】原 time.sleep(0.6) 写在 async 函数里 —— 每说一句就把
+                # 事件循环占住 600ms（TTS/对话/桌宠一起卡）。要等就 await asyncio.sleep。
+                await asyncio.sleep(0.6)  # 尾音静音：吃掉采集缓冲延迟
                 INPROC_SPEAK_GATE.clear()
 
     def stop(self) -> None:
@@ -1288,11 +1302,13 @@ class TTS:
             try:
                 import pygame
                 pygame.mixer.music.stop()
-            except Exception:
-                pass
+            except Exception:  # noqa: BLE001
+                # 停不下来不该阻止后面的清理；但用户按"停止"却没停时，
+                # 这条 DEBUG 是唯一线索
+                logger.debug("pygame 停止播放失败（继续清理）", exc_info=True)
         if self._sd_out is not None:
             try:
                 self._sd_out.stop()
-            except Exception:
-                pass
+            except Exception:  # noqa: BLE001
+                logger.debug("sounddevice 输出流停止失败（继续清理）", exc_info=True)
             self._sd_out = None

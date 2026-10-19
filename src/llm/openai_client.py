@@ -194,12 +194,18 @@ def _backoff_seconds(attempt: int, headers=None) -> float:
 class OpenAIClient(LLMClient):
     name = "openai-compatible"
 
-    def __init__(self, cfg: Config, base_url: str = "", api_key: str = "",
-                 model: str = "", timeout_s: Optional[float] = None,
+    def __init__(self, cfg: Config, base_url: str = "", api_key: Optional[str] = None,
+                 model: Optional[str] = None, timeout_s: Optional[float] = None,
                  vision: Optional[bool] = None,
                  max_tokens: Optional[int] = None) -> None:
         """base_url / api_key / model / timeout_s / vision / max_tokens 可覆盖 llm.openai 配置。
 
+        【2026-10-18 修·默认值写反】api_key / model 的默认值原来是 `""`，而判据是
+        `x if x is not None else 读配置` —— 空串**不是** None，于是 `OpenAIClient(cfg)`
+        这种"不传就走 llm.openai"的用法，拿到的永远是空 model → `available` 恒 False
+        → 调用方只看到"OpenAI 兼容服务未配置"，而配置里明明填好了。改默认值为 None。
+        语义不变：显式传 `api_key=""` 仍表示"这个端点不要鉴权"（本地 vLLM/Ollama）。
+        
         视觉模型路由层（VisionRouter）用它按条目参数构造云端客户端
         （如智谱 GLM-4V-Flash：base_url=open.bigmodel.cn/api/paas/v4）。
         不传时行为与原来一致（读 llm.openai 配置段）。

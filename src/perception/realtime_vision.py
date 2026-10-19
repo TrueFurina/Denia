@@ -127,7 +127,7 @@ class RealtimeVision:
         if self._disabled or self._llm is None:
             return
         import mss
-        import imagehash
+        from . import phash
         from PIL import Image
 
         try:
@@ -161,7 +161,7 @@ class RealtimeVision:
 
             # pHash 变化检测：画面几乎没变就跳过，省 GPU
             small = img.resize((self._downscale, self._downscale))
-            h = imagehash.phash(small)
+            h = phash.phash(small)
             if self._last_hash is not None and (h - self._last_hash) < 3:
                 self._skip_count += 1
                 return

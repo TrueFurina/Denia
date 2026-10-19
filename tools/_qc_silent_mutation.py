@@ -1,0 +1,92 @@
+# -*- coding: utf-8 -*-
+"""变异验证：主链路静默异常闸门（check_silent_except --main --strict）。
+
+三刀：
+  A 注入一个新的"真空吞"（except: pass 且块内无注释）→ 必须 FAIL 并点名
+  B 把主链路文件改成语法错误 → 必须 FAIL（历史缺陷：解析失败会被静默跳过，
+    闸门反而更绿）
+  C 主链路文件不存在 → 必须 FAIL（历史缺陷：os.path.exists 为假时直接 continue）
+
+用法：python tools/_qc_silent_mutation.py
+退出码：0 = 三刀全被抓住且还原成功。
+"""
+from __future__ import annotations
+
+import hashlib
+import os
+import subprocess
+import sys
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+TARGET = os.path.join(ROOT, "src", "voice", "tts.py")
+TOOL = os.path.join(ROOT, "tools", "check_silent_except.py")
+PY = os.path.join(ROOT, ".venv", "Scripts", "python.exe")
+if not os.path.exists(PY):
+    PY = sys.executable
+NL = chr(10)
+
+
+def run_tool() -> tuple[int, str]:
+    r = subprocess.run([PY, "-u", TOOL, "--main", "--strict", "--list"],
+                       capture_output=True, text=True, encoding="utf-8",
+                       errors="replace", cwd=ROOT)
+    return r.returncode, (r.stdout or "") + (r.stderr or "")
+
+
+def main() -> int:
+    orig = open(TARGET, "rb").read()
+    h0 = hashlib.sha256(orig).hexdigest()
+    bad = 0
+
+    # A：注入真空吞
+    anchor = "            self._save_wav_copy(playable)  # 存档供聊天页语音回放".encode("utf-8")
+    injected = ("            try:" + NL +
+                "                _ = 1 / 0" + NL +
+                "            except Exception:" + NL +
+                "                pass" + NL).encode("utf-8")
+    assert orig.count(anchor) == 1
+    open(TARGET, "wb").write(orig.replace(anchor, injected + anchor))
+    rc, out = run_tool()
+    hit = "tts.py" in out and "真静默" in out
+    print(f"A 注入真空吞 -> rc={rc} {'✓ 抓住' if rc == 1 and hit else '❌ 未抓住'}")
+    if rc != 1 or not hit:
+        bad += 1
+        print(out[-400:])
+    open(TARGET, "wb").write(orig)
+
+    # B：语法错误（模拟文件被改坏）
+    open(TARGET, "wb").write(orig + ("def broken(:" + NL).encode("utf-8"))
+    rc, out = run_tool()
+    hit = rc == 1 and "SyntaxError" in out
+    print(f"B 文件语法错误 -> rc={rc} {'✓ 抓住' if hit else '❌ 未抓住（闸门沉默了）'}")
+    if not hit:
+        bad += 1
+        print(out[-400:])
+    open(TARGET, "wb").write(orig)
+
+    # C：主链路文件不存在（用 in-process 打桩，不动真实文件）
+    code = (
+        "import sys" + NL +
+        "sys.path.insert(0, 'tools')" + NL +
+        "import check_silent_except as C" + NL +
+        "C.MAIN_CHAIN = ['src/voice/__not_exist__.py']" + NL +
+        "sys.argv = ['x', '--main', '--strict']" + NL +
+        "raise SystemExit(C.main())" + NL
+    )
+    r = subprocess.run([PY, "-c", code], capture_output=True, text=True,
+                       encoding="utf-8", errors="replace", cwd=ROOT)
+    out = (r.stdout or "") + (r.stderr or "")
+    hit = r.returncode == 1 and "不存在" in out
+    print(f"C 主链路文件缺失 -> rc={r.returncode} {'✓ 抓住' if hit else '❌ 未抓住'}")
+    if not hit:
+        bad += 1
+        print(out[-400:])
+
+    assert hashlib.sha256(open(TARGET, "rb").read()).hexdigest() == h0, "还原后字节不一致！"
+    print("还原校验：字节一致 ✓")
+    print("PASS：三刀全被抓住" if not bad else f"FAIL：{bad} 刀未抓住")
+    return 1 if bad else 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -28,6 +28,8 @@ import threading
 import queue
 from typing import Optional, Callable
 
+from ..perception._pa_shared import get_shared_pyaudio, pa_int16  # 共享 PortAudio 单例 + 模块级常量
+from ..queue_util import put_drop_oldest
 from ..audio.endpoint_audio import (list_endpoints, resolve_id,
                                     wasapi_index_for, get_default_id)
 from ..perception._pa_shared import get_shared_pyaudio, pa_int16, pa_module  # 共享 PortAudio 单例 + 模块级常量
@@ -111,6 +113,10 @@ except Exception:  # noqa: BLE001
     pass
 
 logger = logging.getLogger(__name__)
+
+# 播放队列上限（块数）。块大小随采样率/帧长变化，256 块在实际通话里约数十秒，
+# 足够覆盖正常抖动；超过说明播放线程已经卡住，继续堆只会涨内存。
+_PLAY_QUEUE_MAX = 256
 
 _DEFAULT_RULES = """【说话风格】
 - 用口语、自然的电话语气，一次只说一句，十到四十字。
@@ -969,7 +975,11 @@ class _AudioPlayer:
         # 实际打开流的声道数（1 或 2）：写入时若为 2 而数据是单声道，则复制成两声道。
         self._stream_channels = 1
         self._device = (device or "").strip()
-        self._q: "queue.Queue" = queue.Queue()
+        # 播放缓冲上限：写入端来自网络/模型的流式音频，播放线程一旦卡住
+        # （设备异常、PortAudio 重连）原实现会无界增长。丢最旧的块会有轻微
+        # 断音，但比内存持续上涨安全；barge-in 有 flush() 单独清空。
+        self._q: "queue.Queue" = queue.Queue(maxsize=_PLAY_QUEUE_MAX)
+        self._q_dropped = 0
         self._pa = None
         self._sd = None
         self._np = None
@@ -1287,6 +1297,7 @@ class _AudioPlayer:
             try:
                 chunk = self._q.get(timeout=0.05)
             except queue.Empty:
+                # 正常路径：这是 50ms 的轮询超时，不是错误（别当异常吞）
                 continue
             try:
                 with self._lock:
@@ -1389,7 +1400,11 @@ class _AudioPlayer:
     def play(self, pcm16_bytes: bytes) -> None:
         if not pcm16_bytes:
             return
-        self._q.put(pcm16_bytes)
+        if put_drop_oldest(self._q, pcm16_bytes):
+            self._q_dropped += 1
+            if self._q_dropped % 50 == 1:
+                logger.warning("播放缓冲已满，累计丢弃 %d 块（播放线程跟不上写入）",
+                               self._q_dropped)
 
     def is_playing(self) -> bool:
         """是否正在出声（供 VAD 做回声抑制：AI 说话时抬高起音阈值）。"""

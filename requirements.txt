@@ -21,15 +21,29 @@ psutil>=5.9
 # ===== 重要（录音/托盘/音量/游戏等部分功能）=====
 PyAudio>=0.2.14
 pystray>=0.19
-ImageHash>=4.3
+# 【C9-3 · 2026-10-18】ImageHash 已移除：唯一用途 phash 由 src/perception/phash.py
+# 以 numpy 实现替代（208 张图与 imagehash 4.3.2 bit 级对照一致），连带甩掉
+# 传递依赖 scipy（109MB，占包内 site-packages 大头）。src/ 无其他 scipy 使用点。
+# 下方整行包名注释 = 显式排除标记；仅 src/tests/test_phash.py 对照测试用，
+# 该文件自带 try/except 兜底（dev 环境无 imagehash 时测试明确报缺、不算绿）。
+# ImageHash
 comtypes>=1.4
 pycaw>=20240210
 pywin32>=306
 pygame>=2.5
 vosk>=0.3.45
+# 【2026-10-19】唤醒词拼音容错匹配依赖：small-cn 模型把她名字"达妮娅"解码成
+# "达尼亚"（娅/亚 同音），整字比对永远配不上。没有它唤醒词退化为整字精确
+# 匹配——仍能用但不稳，故归"重要"档：缺了不崩，doctor 会 WARN 提示装。
+pypinyin>=0.50
 ollama>=0.4.0
 edge-tts>=6.1
 pyttsx3>=2.90
+# pywebview 在 Windows 上会带入 pythonnet，这里显式声明以锁定版本；
+# 缺了不影响启动（clr 导入处有 try/except），但 WinForms 心跳探针会退回 JS 轮询
+pythonnet>=3.0
+# 云端实时通话的握手自检用；缺了会跳过 websocket 预检、直接走 SDK
+websocket-client>=1.7
 
 # ===== 可选（装了更好，失败不影响启动）=====
 rapidocr-onnxruntime>=1.3

@@ -558,13 +558,17 @@ def _win32_focus_hwnd(hwnd: int) -> bool:
             return True
         # ④ TOPMOST 翻转兜底：不抢焦点但保证窗口在最上层可见
         try:
-            HWND_TOPMOST, HWND_NOTOPMOST = -1, -2
+            # 【2026-10-17】-1/-2 必须包成 c_void_p：ctypes 未声明 argtypes 时按
+            # C int 传参，64 位下 HWND_TOPMOST 会变成 0x00000000FFFFFFFF（不是全 1
+            # 的伪句柄），SetWindowPos 直接失败 ERROR_INVALID_WINDOW_HANDLE(1400)。
+            hwnd_top = ctypes.c_void_p(-1 & 0xFFFFFFFFFFFFFFFF)
+            hwnd_notop = ctypes.c_void_p(-2 & 0xFFFFFFFFFFFFFFFF)
             SWP_NOSIZE = 0x0001
             SWP_NOMOVE_F = 0x0002
             SWP_SHOWWINDOW = 0x0040
-            user32.SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, 0, 0,
+            user32.SetWindowPos(hwnd, hwnd_top, 0, 0, 0, 0,
                                 SWP_NOMOVE_F | SWP_NOSIZE | SWP_SHOWWINDOW)
-            user32.SetWindowPos(hwnd, HWND_NOTOPMOST, 0, 0, 0, 0,
+            user32.SetWindowPos(hwnd, hwnd_notop, 0, 0, 0, 0,
                                 SWP_NOMOVE_F | SWP_NOSIZE | SWP_SHOWWINDOW)
         except Exception:  # noqa: BLE001
             pass
@@ -1663,19 +1667,75 @@ def _fetch_web(url: str) -> str:
 # --------------------------------------------------------------------------
 # 命令行：白名单闸
 # --------------------------------------------------------------------------
+# 【2026-10-17 安全修复】旧实现有两个缺口，叠加后可用一行分号绕过白名单：
+#   1) `if allow and head not in ...` —— 白名单漏配时 allow 为空，条件短路 ⇒ 全放行；
+#   2) 只校验第一个词，整串交给 shell=True ⇒ `git status; del /s /q ...` 首词是 git，照样执行。
+# 现在改为 fail-closed：白名单为空即拒绝；含有 shell 元字符即拒绝；argv 解析后校验
+# 可执行文件名，并以 shell=False 执行（Windows 内建命令单独走 cmd /d /c，且已禁元字符）。
+_SHELL_META_RE = re.compile(r"[;&|`$\n\r<>%^!()]")
+
+# cmd.exe 内建命令（没有对应 exe，shell=False 直接执行会 FileNotFoundError）
+# 注意：start 也在此列——它本身能启动任意程序，是否可用完全取决于用户是否把它写进
+# allow_commands（现有实配就包含 start/calc/notepad/explorer，属用户显式授权）。
+_CMD_BUILTINS = {
+    "assoc", "cd", "chdir", "cls", "copy", "date", "del", "dir", "echo", "erase",
+    "ftype", "md", "mkdir", "more", "move", "path", "pause", "rd", "ren", "rename",
+    "rmdir", "set", "sort", "start", "time", "title", "type", "ver", "vol",
+}
+
+
+def _norm_exe(name: str) -> str:
+    """白名单归一：忽略大小写与 .exe 后缀（'Git' / 'git.exe' / 'git' 视为同一个）。"""
+    n = str(name).strip().lower()
+    return n[:-4] if n.endswith(".exe") else n
+
+
+def _split_argv(command: str) -> list[str]:
+    """按 Windows 习惯切分（保留反斜杠），并去掉 token 两端成对引号。"""
+    import shlex
+
+    argv = shlex.split(command, posix=False)
+    out: list[str] = []
+    for tok in argv:
+        if len(tok) >= 2 and tok[0] == tok[-1] and tok[0] in "\"'":
+            tok = tok[1:-1]
+        out.append(tok)
+    return out
+
+
 def _run_command(command: str, ctx: dict) -> str:
     if not command:
         return "未提供命令"
     if not ctx.get("allow_cmd"):
         return "run_command 未启用（config.yaml agent.allow_command=false）。"
-    allow = ctx.get("allow_cmds") or []
-    head = command.strip().split()[0].lower() if command.strip() else ""
-    if allow and head not in [a.lower() for a in allow]:
-        return f"命令 {head!r} 不在白名单（agent.allow_commands），已拒绝执行。"
+    allow = [_norm_exe(a) for a in (ctx.get("allow_cmds") or []) if str(a).strip()]
+    # fail-closed：白名单为空不许"默认全开"
+    if not allow:
+        return "命令白名单为空（agent.allow_commands 未配置），已拒绝执行。"
+    # 只接受单条命令：串联 / 管道 / 重定向 / 变量展开 / 转义 一律拒绝
+    if _SHELL_META_RE.search(command):
+        return "命令包含串联、管道、重定向或变量展开字符，已拒绝执行。"
     try:
-        proc = subprocess.run(command, shell=True, capture_output=True, text=True, timeout=30)
+        argv = _split_argv(command)
+    except Exception as e:  # noqa: BLE001  shlex 对不配对的引号会抛 ValueError
+        return f"命令解析失败：{e}"
+    if not argv:
+        return "未提供命令"
+    exe = _norm_exe(os.path.basename(argv[0]))
+    if exe not in allow:
+        return f"命令 {exe!r} 不在白名单（agent.allow_commands），已拒绝执行。"
+    run_argv = ["cmd.exe", "/d", "/c", command] if exe in _CMD_BUILTINS else argv
+    try:
+        proc = subprocess.run(
+            run_argv, shell=False, capture_output=True, text=True,
+            timeout=float(ctx.get("cmd_timeout") or 30),
+            encoding="utf-8", errors="replace",
+        )
         out = (proc.stdout or "") + (proc.stderr or "")
+        logger.debug("run_command 已执行：%s（exit=%s）", exe, proc.returncode)
         return f"[exit {proc.returncode}]\n{out[:1500]}"
+    except subprocess.TimeoutExpired:
+        return f"命令执行超时（>{ctx.get('cmd_timeout') or 30}s），已终止。"
     except Exception as e:  # noqa: BLE001
         return f"命令执行失败：{e}"
 

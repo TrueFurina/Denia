@@ -94,9 +94,9 @@ def get_spk(path):
             fh.seek(ds + off)
             b = fh.read(n * 4)
             fh.close()
-            return kv, infos, he, ds, b, dims
+            return kv, infos, he, ds, al, b, dims
     fh.close()
-    return kv, infos, he, ds, None, None
+    return kv, infos, he, ds, al, None, None
 
 
 def main():
@@ -116,7 +116,7 @@ def main():
     rows = []
     for name, p in sel:
         try:
-            kv, infos, he, ds, spk, dims = get_spk(p)
+            kv, infos, he, ds, al, spk, dims = get_spk(p)
         except Exception as e:
             print("  [失败] %-52s %r" % (name[-52:], e))
             continue

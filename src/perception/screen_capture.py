@@ -249,7 +249,7 @@ class ScreenCapture:
             logger.info("屏幕感知已禁用（视觉模型不可用）")
             return
         try:
-            import imagehash
+            from . import phash
         except Exception as e:  # noqa: BLE001
             logger.error("视觉依赖缺失: %s", e)
             return
@@ -294,7 +294,7 @@ class ScreenCapture:
                             from PIL import Image
                             img = Image.frombytes("RGB", (raw.width, raw.height), raw.bgra, "raw", "BGRX")
                             small = img.resize((self._downscale, self._downscale))
-                            self._last_hash = imagehash.phash(small)
+                            self._last_hash = phash.phash(small)
                     except Exception:  # noqa: BLE001
                         logger.debug("游戏时低频抓屏异常", exc_info=True)
                     self._last_interval = self._next_interval(low_rate=True)
@@ -326,7 +326,7 @@ class ScreenCapture:
                     except Exception:  # noqa: BLE001
                         logger.debug("屏蔽输入法窗口失败", exc_info=True)
                     small = img.resize((self._downscale, self._downscale))
-                    h = imagehash.phash(small)
+                    h = phash.phash(small)
                     changed = self._last_hash is None or (h - self._last_hash) >= self._threshold
                     self._last_hash = h
                     buf = io.BytesIO()
