@@ -2037,8 +2037,15 @@ def _startup_supervisor(runtime: RuntimeHolder, cfg: Config,
             logger.error("系统初始化失败，无法启动 GUI: %s", err)
             progress.fail(f"系统初始化失败: {err}")
             time.sleep(2.5)
-            _destroy_all_webview_windows()
-            return
+            # 【2026-10-20·崩溃修复·实锤】不再跨线程调 _destroy_all_webview_windows()：
+            # 03:11 崩溃转储显示 fatal exception 0x8001010d
+            # （RPC_E_CANTCALLOUT_ININPUTSYNCMESSAGE）正是「监督线程 destroy 窗口的
+            # COM 出站调用」×「主线程还在 webview.start 的 create_window 里」的 race——
+            # 主线程处于 input-synchronous 调用未返回状态时，其他线程发起 COM
+            # 出站调用即致命，try/except 拦不住（C 级信号）。
+            # 初始化已失败、无状态需要保存（各子线程均为 daemon），错误已在加载窗
+            # 展示 2.5s，直接硬退出：宁可瞬间消失，也不要 crash dump。
+            os._exit(1)
 
         # 4. 先注入运行时 + 启动聊天采集，再预载音色模型。
         #    真双工会话在 asyncio 线程就绪后即建立、可能立刻开口，而 TTS 预载

@@ -34,6 +34,29 @@ from .llm.agent_brain import run_agent_task, agent_route_chat
 
 logger = logging.getLogger(__name__)
 
+# 端口绑定重试次数（每次间隔 1s）：覆盖「上一个实例正在退出」的短暂窗口——
+# Windows 上旧实例释放监听后，10048 通常还会持续 1~2s，不重试就会误判崩溃。
+_BIND_ATTEMPTS = 6
+
+
+def _describe_port_holder(port: int) -> str:
+    """谁在监听这个端口（psutil 可选依赖）：装不了/查不到就返回空串，不阻断主流程。"""
+    try:
+        import psutil
+    except Exception:  # noqa: BLE001
+        return ""
+    try:
+        for conn in psutil.net_connections(kind="inet"):
+            if conn.status == psutil.CONN_LISTEN and conn.laddr and conn.laddr.port == port:
+                try:
+                    name = psutil.Process(conn.pid).name()
+                except Exception:  # noqa: BLE001
+                    name = "?"
+                return "端口 %s 正被进程 PID=%s（%s）占用。" % (port, conn.pid, name)
+    except Exception:  # noqa: BLE001
+        return ""
+    return ""
+
 
 class WebSocketServer:
     def __init__(self, bus: EventBus, host: str, port: int) -> None:
@@ -45,8 +68,31 @@ class WebSocketServer:
 
     async def start(self) -> None:
         self._subscribe_events()
-        self._server = await serve(self._handler, self._host, self._port)
-        logger.info("WebSocket 服务启动 ws://%s:%s", self._host, self._port)
+        # 【2026-10-20·启动崩溃修复】先重试再报错。旧代码 bind 失败直接抛
+        # OSError：03:11 实锤——上一个实例退出与本次启动只差几秒时必现 10048，
+        # 进而触发后面「初始化失败→跨线程拆窗→pywebview fatal 0x8001010d」
+        # 的崩溃链（见 main.py 初始化失败路径的注释）。
+        last_err = None
+        for attempt in range(1, _BIND_ATTEMPTS + 1):
+            try:
+                self._server = await serve(self._handler, self._host, self._port)
+                logger.info("WebSocket 服务启动 ws://%s:%s", self._host, self._port)
+                return
+            except OSError as e:
+                last_err = e
+                if attempt < _BIND_ATTEMPTS:
+                    logger.warning(
+                        "WebSocket 端口 %s 绑定失败（%d/%d 次：%s），1s 后重试",
+                        self._port, attempt, _BIND_ATTEMPTS, e)
+                    await asyncio.sleep(1.0)
+        # 重试耗尽：定位占用进程，把「第二个实例正在跑」说清楚，而不是裸 traceback
+        holder = _describe_port_holder(self._port)
+        raise OSError(
+            "WebSocket 端口 %s 绑定失败（已重试 %d 次）：%s%s"
+            "若这是第二个达妮娅实例，请先退出正在运行的那个（系统托盘右键 → 退出）再启动；"
+            "两个实例共用 data/ 目录，不能同时运行。"
+            % (self._port, _BIND_ATTEMPTS, str(last_err).rstrip("。"), holder)
+        ) from last_err
 
     async def stop(self) -> None:
         if self._server is not None:
