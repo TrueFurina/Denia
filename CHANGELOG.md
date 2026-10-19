@@ -13,6 +13,7 @@
 
 | commit | 时间 | 类型 | 一句话 | 验证 |
 |---|---|---|---|---|
+| `e0a22f5` | 00:4x | fix | **真机验证抓出两个 bug**：迁移写错字段名（model 换了 voice_id 没换 → 照样 418）+ 出厂模板自带失效模型 | 真机副本实测 + 模板闸门 [13] + 门禁 50/50 |
 | `dccd6ea` | 00:1x | fix | **屏幕摘要去重接线**：`_similar_summary` 从死代码变成真生效（轨迹不再堆"在游戏；在游戏"）；闸门 49→50 | 3 刀变异（6/4/1 红）+ 门禁 50/50 |
 | `5dc1afd` | 23:5x | chore | 删旧主进程采集架构的 6 个遗留函数（270 行，注释写着"决定性修复"却零调用） | AST 前后对比 + 导入冒烟 + 门禁 49/49 |
 | `4cc0c72` | 23:4x | fix | **音色档迁移是死代码**（定义完整、零调用）→ 接线 + 原子写盘；闸门 48→49 | 33 项断言 + 3 刀变异全红；门禁 49/49 |
@@ -2055,3 +2056,74 @@ webapp 启动期改调唯一入口 + 原子写，删掉两个函数定义（全�
 通过，"先跑壳自愈再跑 doctor"也通过——**未复现的一次性失败**。潜在脆弱点在于
 `test_doctor.py` 的 [15] 会 `subprocess` 真跑 `tools/doctor.py`（含网络/端口探测）。
 重跑全量 50/50 PASS，暂记为观察项。
+
+---
+
+## 真机验证：迁移写错字段名 + 出厂模板自带失效模型（2026-10-20 00:4x，`e0a22f5`）
+
+**为什么这轮必须做真机验证**：前几轮所有结论都建立在"代码读起来对"上——33 项断言、
+三刀变异、闸门全绿。但**测试里写的字段名也是我以为的**，所以它证明不了配置真能被修好。
+于是拿真实 `config.yaml` 的副本跑了一遍 `CharacterAPI` 启动路径。
+
+### ① 迁移写了字段名，等于白做
+
+`migrate_stale_voice_profiles` 写 `prof["voice"] = "Cherry"`。但音色档的音色字段是
+**`voice_id`**：
+
+```python
+# src/voice/tts_backends.py:212
+self._voice_id = getattr(config, "voice_id", "female-shaonv") or "female-shaonv"
+```
+
+（`voice` 在 minimax 后端是 `fallback_voice`，完全另一回事。）
+
+真机副本实测迁移结果：
+
+| 字段 | 迁移前 | 迁移后（修复前） |
+|---|---|---|
+| `model` | `cosyvoice-v3.5-plus` | `qwen3-tts-flash` ✓ |
+| `voice_id` | `cosyvoice-v3.5-plus-bailian-e683…` | **原封不动** ✗ |
+| `voice` | 不存在 | 凭空多出 `Cherry`（没人读） |
+
+**模型换了、音色没换 → 请求照样 418。** 而 `tts_backends.py:928` 早就写着实测结论：
+
+> 百炼 engine 418 = 该 voice_id 不可用（复刻音色过期 / 未生效 / 地域不符），
+> **与 model 匹配无关**——排查时先换一个已知可用的 voice_id 交叉验证，别在 model 上打转。
+
+迁移恰好只改了 model。修：写 `prof["voice_id"]`，判据同时读 `voice_id`/`voice`。
+
+### ② 根因：出厂模板本身带病
+
+`doctor` 报了个 WARN：**「config.yaml 是出厂默认值，但 data/ 里有使用痕迹」**。
+顺着查 `config.release.yaml`，发现模板里同时写着三个已下线的值：
+
+- `voice_profiles[0].model: cosyvoice-v3.5-plus`
+- `voice_profiles[0].voice_id: cosyvoice-v3.5-plus-bailian-e683…`
+- `cloud_tts.dashscope_cosy.model_name: cosyvoice-v3.5-flash`
+
+cosyvoice 全系列在百炼已下线（实测 400），`qwen-audio-3.0-tts-*` 同样，只有
+`qwen3-tts-flash` 返回 200。**也就是说：每个新用户装完就是一套失效配置**，
+试听必 400，还会以为是自己音色 ID 填错——这正是"能说"这条链在源头就断了。
+
+修：模板改成 `qwen3-tts-flash` + 预置音色 `Cherry`（`cloud_tts.py:50` 有实测可用的
+预置音色清单：Cherry / Serena / Chelsie / Ethan），并在注释里写明"想要自己的音色请用
+qwen3-tts-flash 重新克隆"——克隆音色 id 绑旧模型族，换模型后不通用。
+
+### ③ 新增根因闸门 [13]
+
+出厂模板里出现 `STALE_TTS_MODELS` 就红。变异（把 model 改回 cosyvoice）→ 精确报出
+`$.voice_profiles[0].model=cosyvoice-v3.5-plus`。另有反向断言"模板里确实还写着
+qwen3-tts-flash"，防止靠整段删配置过关。
+
+### 真机验证结果
+
+- 副本跑 `CharacterAPI`：`model=qwen3-tts-flash`、`voice_id=Cherry`、无 `voice` 字段、
+  内联 `model_name` 已换、`load_config` **0 降级提示**；
+- `doctor` 真实环境：**16 PASS / 3 WARN / 0 FAIL**（模型渠道 ✓ 1223ms/666ms、
+  语音合成真合成 43406 字节、密钥 1 处 DPAPI + 13 处 `${ENV}` 不落盘）；
+- 真 `config.yaml` **未改动**（已备份），下次启动自动迁移。
+
+**教训（已进 MEMORY）**：改配置字段前必须查"后端实际读哪个 key"，判据优先级是
+**后端 `getattr` 读取点 > 出厂模板实际字段 > 注释/命名直觉**。测试全绿也救不了
+字段名写错——因为测试里写的也是同一个错误假设。任何"迁移/修复配置"的代码，
+都要拿真实配置文件的副本跑一次。
