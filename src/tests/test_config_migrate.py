@@ -193,6 +193,10 @@ check('io.open(self._config_path, "w"' not in web_txt,
       "webapp 不再有裸 io.open(config, 'w') 直写")
 check("dump_config_atomic(self._config_path" in web_txt,
       "webapp 的迁移写盘走 dump_config_atomic")
+# 断言必须匹配**完整调用串**：早先只查 "backup=True" 是否出现，结果被我自己的
+# 注释（"backup=True：迁移自动改…"）满足了——变异摘掉实参后测试照样绿。
+check("dump_config_atomic(self._config_path, _raw_mig, backup=True)" in web_txt,
+      "迁移写盘带 backup=True（自动改用户配置必须留后路，yaml.dump 会丢注释）")
 check("migrate_stale_tts_model(_raw_mig)" not in web_txt,
       "webapp 不再只跑模型那一半（那正是死代码的来源）")
 
@@ -203,6 +207,36 @@ cm_txt = open(os.path.join(ROOT, "src", "config_migrate.py"),
 entry = cm_txt.split("def migrate_stale_tts_config", 1)[-1].split("\ndef ", 1)[0]
 check("migrate_stale_tts_model(" in entry, "入口里调了模型迁移")
 check("migrate_stale_voice_profiles(" in entry, "入口里调了音色档迁移")
+
+print()
+print("[14] 迁移前自动备份：自动改用户配置时留后路（yaml.dump 会丢注释）")
+fd, p14 = tempfile.mkstemp(suffix=".yaml", text=True)
+os.close(fd)
+try:
+    with open(p14, "w", encoding="utf-8") as f:
+        f.write("# 用户手写的注释\nold: 1\n")
+    bak = p14 + ".bak"
+    check(not os.path.exists(bak), "起点没有 .bak")
+    check(cm.dump_config_atomic(p14, {"new": 2}, backup=True) is True, "带备份写盘成功")
+    check(os.path.exists(bak), "产生了 .bak")
+    with open(bak, encoding="utf-8") as f:
+        check("# 用户手写的注释" in f.read(), ".bak 保留了原文（含注释）")
+    # 已有 .bak 时不许覆盖：反复启动不能把「最初那份」冲掉
+    with open(bak, "w", encoding="utf-8") as f:
+        f.write("first_backup\n")
+    cm.dump_config_atomic(p14, {"new": 3}, backup=True)
+    with open(bak, encoding="utf-8") as f:
+        check(f.read() == "first_backup\n", "已有 .bak 不被覆盖（保留最初那份）")
+    # 不带 backup 时不产生新备份
+    os.unlink(bak)
+    cm.dump_config_atomic(p14, {"new": 4})
+    check(not os.path.exists(bak), "backup=False 时不产生 .bak")
+finally:
+    for _p in (p14, p14 + ".bak"):
+        try:
+            os.unlink(_p)
+        except OSError:
+            pass
 
 print()
 print("[13] 根因闸门：出厂模板 config.release.yaml 不许自带失效 TTS 模型")

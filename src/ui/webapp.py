@@ -278,7 +278,9 @@ class CharacterAPI(PetAPI, WindowAPI):
                 _raw_mig = _y_mig.safe_load(_f_mig) or {}
             _mig = migrate_stale_tts_config(_raw_mig)
             if _mig:
-                if dump_config_atomic(self._config_path, _raw_mig):
+                # 迁移是自动改用户的 config.yaml，而 yaml.dump 会丢注释，
+                # 所以留一份 .bak 当后路（只留第一次，反复启动不会刷备份）。
+                if dump_config_atomic(self._config_path, _raw_mig, backup=True):
                     logger.info("TTS 失效配置已自动迁移: %s", ", ".join(_mig))
                 else:
                     logger.warning(
