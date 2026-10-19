@@ -975,7 +975,9 @@ class DashScopeCosyBackend(TTSBackend):
         self._voice_id: str = getattr(config, "voice_id", "") or ""
         # 合成所用的模型：必须与控制台克隆音色时用的 model 一致，否则报 Model not exist。
         # 默认 qwen-audio-3.0-tts-plus（当前旗舰）；用户克隆在 cosyvoice-v3-plus 等下则相应改。
-        self._model_declared: str = getattr(config, "model", "") or "qwen-audio-3.0-tts-plus"
+        # 【2026-10-17 修复·默认模型已下线】qwen-audio-3.0-tts-plus 实测 400，
+        # 换成实测可用的 qwen3-tts-flash。
+        self._model_declared: str = getattr(config, "model", "") or "qwen3-tts-flash"
         # 以 voice_id 前缀为准（权威）：配置写错时自动纠正并告警，避免整条链路静默降级到
         # edge-tts（用户听到的是微软音色，却完全不知道百炼失败了）。
         self._model: str = self._model_declared
@@ -1468,7 +1470,11 @@ def create_backend(engine: str, config: SimpleNamespace) -> TTSBackend:
             # 于是出现 `object NoneType can't be used in 'await' expression`（实测日志）。
             # 现在：synthesize 写成 async；**不再覆盖 speak**（覆盖成同步会再次破坏 await）。
             async def synthesize(self, text: str, output_path: str) -> None:  # noqa: D102
-                logger.info("TTS 未绑定音色：跳过出声（请在「语音 · 音色」绑定你的服务商与其音色 ID）")
+                logger.info(
+                    "TTS 未绑定音色：本次跳过出声。"
+                    "去 设置 → 语音 · 音色，选一个服务商并填入音色 ID；"
+                    "若用阿里云百炼，点「阿里云一键」会自动配好 TTS；"
+                    "只想先听个声，可在语音页点「试听」用默认音色。")
                 return None
 
             def update_config(self, config: SimpleNamespace = None) -> None:  # noqa: D102

@@ -60,7 +60,14 @@ def clone(audio_path, name, api_key, model, base_url):
     preferred_name = (_safe + _fp6)[:20]
     if preferred_name != name:
         print(f"preferred_name 已自动规范化: {name!r} → {preferred_name!r}（百炼要求 ASCII 标识符）")
-    url = (base_url.rstrip('/') + '/api/v1/services/audio/tts/customization')
+    # 【2026-10-18 修复·函数级兜底】被 proactive 以 m.clone(...) 直接调用时，
+    # 不经过 __main__ 的参数解析段 → base_url 为空串原样进来 →
+    # url 变相对路径 '/api/v1/...' → requests Invalid URL → 克隆失败
+    # → 双工回退默认音色（不是达妮娅的声）。
+    if not (base_url or '').strip():
+        base_url = 'https://dashscope.aliyuncs.com'
+    base_url = str(base_url).strip().replace('/compatible-mode/v1', '').rstrip('/')
+    url = (base_url + '/api/v1/services/audio/tts/customization')
     payload = {
         "model": "qwen-voice-enrollment",
         "parameters": {"voice_clone_mode": "normal"},
@@ -130,7 +137,15 @@ def main():
     data = yaml.safe_load(open(FP, 'r', encoding='utf-8'))
     co = data.get('cloud_omni', {}) or {}
     api_key = args.api_key or co.get('api_key', '') or os.getenv('DASHSCOPE_API_KEY', '')
-    base_url = args.base_url or co.get('base_url', 'https://dashscope.aliyuncs.com')
+    # 【2026-10-18 修复·克隆 URL 缺域名】
+    # co.get('base_url', 默认) 在键存在但值为 '' 时返回 ''（不是默认）
+    # → url 变成相对路径 '/api/v1/...' → requests 报 Invalid URL → 克隆失败
+    # → 双工回退默认音色（不是达妮娅的声）。strip 后为空一律用官方域名；
+    # 另外兼容 base_url 带聊天端点尾巴（/compatible-mode/v1）的情况——克隆要用裸域名。
+    base_url = (args.base_url or co.get('base_url') or 'https://dashscope.aliyuncs.com').strip()
+    if not base_url:
+        base_url = 'https://dashscope.aliyuncs.com'
+    base_url = base_url.replace('/compatible-mode/v1', '').rstrip('/')
     if not api_key:
         print("缺少 API Key：用 --api-key 或在 config.yaml cloud_omni.api_key 配置")
         sys.exit(2)

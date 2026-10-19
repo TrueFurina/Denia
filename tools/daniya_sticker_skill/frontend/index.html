@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>达妮娅 · 表情包技能包（测试版）</title>
+  <link rel="stylesheet" href="/static/styles.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">🐾 达妮娅表情包 <span class="sub">技能包 · 测试版</span></div>
+    <div class="top-actions">
+      <button id="btnNew" class="btn">＋ 新建文件夹</button>
+      <button id="btnMarket" class="btn ghost">🛒 资源广场</button>
+      <button id="btnPick" class="btn ghost">🎯 模拟选贴</button>
+      <button id="btnCollect" class="btn ghost">📥 自动收集</button>
+      <span id="llmBadge" class="badge">LLM：检测中…</span>
+    </div>
+  </header>
+
+  <main class="layout">
+    <aside class="sidebar">
+      <div class="side-title">表情包文件夹</div>
+      <ul id="packList" class="pack-list"></ul>
+      <div class="side-hint">右键文件夹可 重命名 / 删除 / 绑定角色</div>
+    </aside>
+
+    <section class="content">
+      <div class="toolbar">
+        <div id="curPack" class="cur-pack">未选择文件夹</div>
+        <div id="bindChip" class="bind-chip hidden"></div>
+        <input id="searchBox" class="search" placeholder="语义搜索，如「开心猫」「安慰」…" />
+        <select id="searchChar" class="char-sel">
+          <option value="">全部角色</option>
+        </select>
+        <button id="btnSearch" class="btn small">搜索</button>
+        <button id="btnAutotag" class="btn small ghost" title="给本文件夹里还没标注、且没手动改过的图自动打标">✨ 自动标注</button>
+      </div>
+
+      <div id="dropzone" class="dropzone">
+        <div id="grid" class="grid"></div>
+        <div id="emptyHint" class="empty-hint">从左侧选择一个文件夹，或把图片拖到这里上传</div>
+      </div>
+    </section>
+  </main>
+
+  <!-- 右键菜单 -->
+  <div id="ctxMenu" class="ctx-menu hidden">
+    <div class="ctx-item" data-act="open">打开</div>
+    <div class="ctx-item" data-act="rename">重命名</div>
+    <div class="ctx-item" data-act="bind">绑定角色</div>
+    <div class="ctx-item danger" data-act="delete">删除</div>
+  </div>
+
+  <!-- 通用模态框 -->
+  <div id="modal" class="modal-mask hidden">
+    <div class="modal">
+      <div class="modal-head"><span id="modalTitle"></span><span id="modalClose" class="modal-x">✕</span></div>
+      <div id="modalBody" class="modal-body"></div>
+    </div>
+  </div>
+
+  <div id="toast" class="toast hidden"></div>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>

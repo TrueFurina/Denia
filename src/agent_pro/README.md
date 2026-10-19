@@ -156,7 +156,7 @@ Toggle / ExpandCollapse / SelectionItem.Select，**不移动鼠标、不需要�
 ## 包测复跑
 
 ```
-cd G:\ai对话\11
+cd <项目根目录>
 python -m src.agent_pro.selftest          # 离线全桩
 python tools\agent_pro_e2e_index.py       # 索引/启动/find_file 真实环境
 python tools\agent_pro_e2e_llm.py         # 真实 LLM 三指令（需 config 里的模型可用）

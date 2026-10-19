@@ -35,12 +35,59 @@ from typing import Optional, Sequence, Tuple
 __all__ = ["pick_path"]
 
 # 子进程脚本：自己起 Tk、弹框、把结果写进 out 文件（用文件而非 stdout，避免 GBK 控制台编码坑）
+# 【2026-10-18 E2E 修复·系统对话框全断】
+# 根因：便携 Python 未打包 Tcl/Tk（python 目录无 tkinter / tcl86t.dll），
+#       _CHILD 只用 tkinter → import 失败 → exit(3) → 所有
+#       「选图片 / 选文件夹 / 选参考音 / 选模型目录」点了没反应。
+# 修法：主实现改 **PowerShell + .NET WinForms**（Windows 自带，必可用）；
+#       仍用子进程隔离（主线程不碰 GUI，绝不卡死主进程）。
+#       tkinter 保留为回退（万一 PowerShell 被策略禁）。
 _CHILD = r'''
-import json, sys
+import json, sys, os, subprocess, tempfile
 cfg = json.loads(sys.argv[1])
 out = sys.argv[2]
 p = ""
-try:
+
+def _via_powershell():
+    # PowerShell + .NET: FolderBrowserDialog / OpenFileDialog
+    kind = "dir" if cfg.get("kind") == "dir" else "file"
+    title = (cfg.get("title") or "").replace('"', "'")
+    if kind == "dir":
+        ps = (
+            "Add-Type -AssemblyName System.Windows.Forms | Out-Null; "
+            "$d=New-Object System.Windows.Forms.FolderBrowserDialog; "
+            "$d.Description='%s'; "
+            "$r=$d.ShowDialog(); "
+            "if($r -eq [System.Windows.Forms.DialogResult]::OK){Write-Output $d.SelectedPath}"
+            % title
+        )
+    else:
+        fts = cfg.get("filetypes") or [["All files", "*.*"]]
+        # 转成 .NET 的 filter 串："Text|*.txt|Images|*.png;*.jpg"
+        parts = []
+        for f in fts:
+            label = str(f[0]) if f and f[0] else "Files"
+            pat = str(f[1]) if f and len(f) > 1 else "*.*"
+            if pat.lower() in ("*.*", "*"):
+                label, pat = "All files", "*.*"
+            parts.append("%s|%s" % (label.replace("|", " "), pat))
+        filt = "|".join(parts) if parts else "All files|*.*"
+        ps = (
+            "Add-Type -AssemblyName System.Windows.Forms | Out-Null; "
+            "$d=New-Object System.Windows.Forms.OpenFileDialog; "
+            "$d.Title='%s'; $d.Filter='%s'; $d.CheckFileExists=$%s; "
+            "$r=$d.ShowDialog(); "
+            "if($r -eq [System.Windows.Forms.DialogResult]::OK){Write-Output $d.FileName}"
+            % (title, filt, "true" if cfg.get("mustexist") else "false")
+        )
+    r = subprocess.run(
+        ["powershell", "-NoProfile", "-STA", "-Command", ps],
+        capture_output=True, text=True, timeout=300,
+        creationflags=0x08000000,
+    )
+    return (r.stdout or "").strip().splitlines()[-1].strip() if (r.stdout or "").strip() else ""
+
+def _via_tkinter():
     import tkinter as tk
     from tkinter import filedialog
     root = tk.Tk()
@@ -51,21 +98,29 @@ try:
         pass
     try:
         if cfg.get("kind") == "dir":
-            p = filedialog.askdirectory(title=cfg.get("title") or "选择文件夹",
-                                        mustexist=bool(cfg.get("mustexist", False)))
-        else:
-            fts = cfg.get("filetypes") or [["所有文件", "*.*"]]
-            p = filedialog.askopenfilename(title=cfg.get("title") or "选择文件",
-                                           filetypes=[tuple(x) for x in fts])
+            return filedialog.askdirectory(
+                title=cfg.get("title") or "Select folder",
+                mustexist=bool(cfg.get("mustexist", False))) or ""
+        fts = cfg.get("filetypes") or [["All files", "*.*"]]
+        return filedialog.askopenfilename(
+            title=cfg.get("title") or "Select file",
+            filetypes=[tuple(x) for x in fts]) or ""
     finally:
         try:
             root.destroy()
         except Exception:
             pass
-except Exception as e:
-    with open(out + ".err", "w", encoding="utf-8") as f:
-        f.write(str(e))
-    sys.exit(3)
+
+# PowerShell 优先，tkinter 回退
+try:
+    p = _via_powershell()
+except Exception:
+    p = ""
+if not p:
+    try:
+        p = _via_tkinter()
+    except Exception:
+        pass
 with open(out, "w", encoding="utf-8") as f:
     f.write(p or "")
 '''

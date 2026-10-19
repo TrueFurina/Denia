@@ -1,8 +1,8 @@
 """
 达娅 CosyVoice2 零样本克隆样片生成 + 延迟实测
 参考音: H:\daniya_ref.wav  (16k 单声道达娅人声)
-模型:   G:/ai对话/11/models/CosyVoice2-0.5B  (需先 modelscope 下载)
-输出:   G:/ai对话/11/deliverables/daniya_cosy_0..2.wav + 延迟日志
+模型:   models/CosyVoice2-0.5B  (需先 modelscope 下载)
+输出:   deliverables/daniya_cosy_0..2.wav + 延迟日志
 运行:   .venv_cosy/Scripts/python.exe gen_daniya_cosy_sample.py
 """
 import os
@@ -27,9 +27,9 @@ def _find_library(name):
 
 _cu.find_library = _find_library
 
-MODEL_DIR = r"G:/ai对话/11/cosyvoice_models/models/iic--CosyVoice2-0.5B/snapshots/master"
+MODEL_DIR = r"cosyvoice_models/models/iic--CosyVoice2-0.5B/snapshots/master"
 REF_WAV = r"H:\daniya_ref.wav"
-OUT_DIR = r"G:/ai对话/11/deliverables"
+OUT_DIR = r"deliverables"
 TEXTS = [
     "在呢，怎么啦，我一直在呀",
     "刚打完一局，手感还不错哦",

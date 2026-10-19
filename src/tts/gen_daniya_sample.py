@@ -8,7 +8,7 @@
   set MODELSCOPE_SDK_TOKEN=你的魔搭token           # 可选，兜底用
   python gen_daniya_sample.py
 
-生成的样片在 G:/ai对话/11/deliverables/daniya_cloud_sample.wav
+生成的样片在 deliverables/daniya_cloud_sample.wav
 """
 import sys
 from pathlib import Path
@@ -23,7 +23,7 @@ LINES = [
 ]
 
 if __name__ == "__main__":
-    out_dir = Path(r"G:/ai对话/11/deliverables")
+    out_dir = Path(r"deliverables")
     out_dir.mkdir(parents=True, exist_ok=True)
     for i, line in enumerate(LINES):
         wav = synthesize(line)

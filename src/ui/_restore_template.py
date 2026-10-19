@@ -7,7 +7,7 @@
 import re
 from pathlib import Path
 
-MOCK = Path(r"G:\ai对话\11\src\ui\_mock")
+MOCK = Path(r"src\ui\_mock")
 built = MOCK / "表情包管理_设计稿_v2.html"
 tpl = MOCK / "stickers_mockup.html"
 

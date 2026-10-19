@@ -31,6 +31,8 @@
 
 from __future__ import annotations
 
+import re
+
 from typing import Any, Optional
 
 # 兼容两种导入上下文：app 里 src 是顶层包（用 ..llm）；单测里 src 在 sys.path（用 llm）。
@@ -313,7 +315,7 @@ ALIYUN_ONECLICK = [{
 # v10：默认对话模型从 qwen3.8-omni-flash 改为 qwen3.8-max——
 # omni 系归双工槽，chat 槽（含阿里云一键的对话下拉）不该默认到会被前端过滤掉的模型。
 _ALIYUN_DEFAULT_CHAT = "qwen3.8-max"
-_ALIYUN_DEFAULT_TTS = "qwen-audio-3.0-tts-plus"
+_ALIYUN_DEFAULT_TTS = "qwen3-tts-flash"
 _ALIYUN_DEFAULT_DUPLEX = "qwen3.8-omni-flash-realtime"   # 【2026-10-17】换成实测可克隆+出声的型号
 
 
@@ -432,7 +434,12 @@ def _active_identity(raw: dict, cap: str) -> dict:
                     and str(s.get("api_key") or "").strip() and str(s.get("model") or "").strip():
                 chat_ok = True
         if chat_ok:
-            return {"provider": "bailian", "model": str(co.get("model") or "qwen3.8-max"), "loc": LOC_CLOUD}
+            # 【2026-10-17 修正·禁止硬编码模型名】原实现写死 "qwen3.8-max"，
+            # 会把"用户没配对话模型"误显示成"配了 qwen3.8-max"。
+            # 改为回退到目录默认常量（单一真相源），仍为空则如实返回空。
+            return {"provider": "bailian",
+                    "model": str(co.get("model") or _ALIYUN_DEFAULT_CHAT),
+                    "loc": LOC_CLOUD}
         return {}
     if cap == "tts":
         sub = str(_dig(raw, "voice.clone.sub", "") or "")
@@ -536,7 +543,26 @@ def _slot_state(raw: dict, cap: str) -> tuple[str, str]:
         if muted:
             return "bad", "已静音"
         provs = _cloud_tts_providers(raw)
-        cloud_keyed = any(str(c.get("api_key") or "").strip() for c in provs.values())
+        # 【2026-10-18 修复·"已连通"但试听报未配 Key】
+        # 旧逻辑：任意 provider 有 key 就算 TTS 已连通。但 _cloud_tts_providers 会从
+        # cloud_omni（双工用的同一把百炼 Key）回退取 key ⇒ 双工配好了、TTS 那条其实
+        # 没配，槽却显示"已连通"，用户点试听立刻报"未配置 API Key"。
+        # 现在：TTS 槽只认**TTS 自己那条** provider 的 key（不回退 cloud_omni）。
+        # 回退来的 key 仅用于"能出声"的兜底，不代表本槽已配置。
+        _own = _dig(raw, "voice.clone.cloud", {}) or {}
+        if not isinstance(_own, dict):
+            _own = {}
+        _own_key = ""
+        _sel = str(_dig(raw, "voice.clone.cloud.provider", "") or "").strip()
+        if _sel and isinstance(_own.get(_sel), dict):
+            _own_key = str((_own.get(_sel) or {}).get("api_key") or "").strip()
+        if not _own_key:
+            for _pk, _pv in _own.items():
+                if isinstance(_pv, dict) and str(_pv.get("api_key") or "").strip():
+                    _own_key = str(_pv.get("api_key")).strip()
+                    _sel = _pk
+                    break
+        cloud_keyed = bool(_own_key)
         if sub == "cloud":
             return ("ok", "已连通") if cloud_keyed else ("warn", "已选云端·未配 Key")
         if sub in ("gpt-sovits", "local", "pyttsx3", "mimo_tts", "voxcpm", "cosyvoice", "qwen3tts"):
@@ -727,13 +753,33 @@ def _set_chat(raw: dict, cap: str, payload: dict) -> dict:
             cat_base = str(p.get("base_url") or "")
     if not host and base_url:
         host = base_url.split("://")[-1].split("/")[0]
+    # 【2026-10-17 修复·脏 provider 导致 401】
+    # 旧逻辑只按 host 匹配第一个命中项。若该条目是"端点/模型错配"的脏数据
+    # （实测：base_url=dashscope 但 model='glm-4.6'，用阿里云 Key 请求智谱模型名 → 401），
+    # 写入后只改 model 不改 base_url，脏状态被保留下来，启动探测必然 401。
+    # 现在分两轮：先找 **host + model 都同源** 的条目；找不到再按 host 匹配，
+    # 但匹配到错配项时**同时覆盖 model 与 base_url**，绝不留下半改状态。
     target = None
-    for pr in providers:
-        if not isinstance(pr, dict):
-            continue
-        if host and host in str(pr.get("base_url") or "").lower():
-            target = pr
-            break
+    _mdl_low = (model or "").lower()
+    # 第一轮：host 匹配 且 现有 model 与新 model 属于同一家族（都以 qwen/glm/... 开头）
+    if _mdl_low:
+        _fam = re.split(r"[\-_\.]", _mdl_low)[0]
+        for pr in providers:
+            if not isinstance(pr, dict):
+                continue
+            if host and host in str(pr.get("base_url") or "").lower():
+                _cur = str(pr.get("model") or "").lower()
+                if _cur and re.split(r"[\-_\.]", _cur)[0] == _fam:
+                    target = pr
+                    break
+    # 第二轮：仅按 host 匹配
+    if target is None:
+        for pr in providers:
+            if not isinstance(pr, dict):
+                continue
+            if host and host in str(pr.get("base_url") or "").lower():
+                target = pr
+                break
     if target is None:
         pid = "cap_" + (provider or "custom") + "_chat"
         # 【2026-10-16 修复·空 base_url 写出坏端口】
@@ -789,12 +835,36 @@ def _looks_vision(provider: str, model: str) -> bool:
     mid = (model or "").strip()
     if not mid:
         return False
+    # 【2026-10-18 修复·看屏分析器"已禁用(连续失败)"】
+    # 调用方可能传 provider='aliyun'，而目录里 id 是 'bailian'（同一家的两个别名）。
+    # 旧逻辑严格按 id 相等过滤 → 别名匹配不上 → 跳过目录查询 → 落到名字启发式
+    # → qwen3.8-max 不含 vl/omni 等关键字 → 误判"不支持看图"
+    # → _mirror_vision 不执行 → 视觉槽没 Key → 分析器连续失败被禁用。
+    # 现在：provider 别名归一 + 别名匹配失败时也扫全目录（宁可多认一个带视觉的）。
+    _PROVIDER_ALIAS = {
+        "aliyun": "bailian",
+        "dashscope": "bailian",
+        "bailian": "bailian",
+        "openai-compatible": "openai",
+    }
+    _pv = (provider or "").strip().lower()
+    _pv = _PROVIDER_ALIAS.get(_pv, _pv)
+
+    _matched_provider = False
     for p in CHAT_PROVIDERS:
-        if provider and p["id"] != provider:
+        if _pv and p["id"].lower() != _pv:
             continue
         for m in p["models"]:
             if m["id"] == mid:
+                _matched_provider = True
                 return _model_caps_has_vision(m.get("caps"))
+
+    # provider 没匹配上（别名/自定义）→ 扫全目录再判一次
+    if not _matched_provider:
+        for p in CHAT_PROVIDERS:
+            for m in p["models"]:
+                if m["id"] == mid:
+                    return _model_caps_has_vision(m.get("caps"))
     low = mid.lower()
     hints = ("vl", "omni", "vision", "gemini", "claude", "grok", "gpt-5", "gpt-6", "4o",
              "glm-4v", "glm-5", "qwen3-vl", "seed", "minimax-m3", "step-5", "kimi-k2", "kimi-k3")

@@ -135,6 +135,13 @@ const Backend = (() => {
   /* 开关健康状态（2026-09-29 UX #1）：返回每个开关 {on, effective, blocked_by, reason}，
      用于把"开了却不生效"显式呈现出来（判定集中在后端，前端不得手抄）。 */
   const getSettingsHealth = () => call('get_settings_health');
+  /* 【2026-10-19 新增】模型额度 / Key 可用性状态（非打扰式提示）。
+     返回 {items:[{kind,model,status,impact,fix}], has_problem, summary}；
+     status ∈ ok/quota/auth/rate/error/unconfigured。后端结果缓存 30 分钟。 */
+  const getQuotaStatus = (force) => call('get_quota_status', { force: !!force });
+  /* 【2026-10-19】取某个 TTS 服务商已绑定的 API Key（引导页克隆弹窗自动拉音色用）。
+     Key 不出本机：只在本机 WebView 与后端之间传递。 */
+  const getTtsProviderKey = (provider) => call('get_tts_provider_key', { provider: provider || 'dashscope_cosy' });
   /* 能力槽中央配置模型（2026-10-09 重做「模型与 API」）：四槽状态 + 推荐服务商 */
   const getCapabilitySlots = () => call('get_capability_slots');
   const setCapabilitySlot = (data) => call('set_capability_slot', data || {});
@@ -461,6 +468,8 @@ const getOnboardingDefaults = (p) => call('get_onboarding_defaults', p || {});
   const listMicDevices = () => call('list_mic_devices');
   const testMicDevice = (d) => call('test_mic_device', d || {});
   const setMicDevice = (d) => call('set_mic_device', d || {});
+  /* 【2026-10-17】麦克风验证结果轮询（切设备后后端会开 3 秒检测窗口） */
+  const getMicVerifyResult = (d) => call('get_mic_verify_result', d || {});
   /* 【2026-10-17 开发者页·音频自测台】麦克风实时电平 + 指定设备播放测试音
      （listAudioDevices / setCallAudioDevice 本文件 288/290 行已有，勿重复声明） */
   const devMicLevel = (d) => call('dev_mic_level', d || {});
@@ -675,6 +684,10 @@ const getOnboardingDefaults = (p) => call('get_onboarding_defaults', p || {});
   return {
     call, ready, toast, capacityBadge,
     getStatus, getDuplex, getCapacity, saveDuplex, checkDuplexTarget, getSwitchProgress, getVision, getVisionSettings, setVisionEnabled, setDesktopWatch, setGameCloudWatch, getSettingsHealth,
+    /* 【2026-10-19】额度/Key 可用性状态（非打扰提示用）。同样必须进导出对象，
+       否则页面里 Backend.getQuotaStatus 为 undefined → 角标永远不显示。 */
+    getQuotaStatus,
+    getTtsProviderKey,
     /* 能力槽中央配置（2026-10-09 重做「模型与 API」）——此前只在上面写了 const 定义、
        漏进这个导出对象，导致能力槽页/引导页的 hasB() 恒为 false → 页面永远显示
        「后端未连接，仅显示布局预览」、点「启用」静默无效。补进导出即修复。 */
@@ -760,6 +773,8 @@ const getOnboardingDefaults = (p) => call('get_onboarding_defaults', p || {});
     stickerAutotagProgress, stickerCharacters,
     stickerMarketplace, stickerInstall, stickerInstallStart, stickerInstallProgress,
     stickerPick, stickerUpload,
+    /* 【2026-10-17】麦克风验证结果轮询（切设备后后端开 3 秒检测窗口） */
+    getMicVerifyResult,
   };
 })();
 

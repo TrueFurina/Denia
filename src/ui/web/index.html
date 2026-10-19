@@ -1433,7 +1433,17 @@
     .cv-avatar{width:104px;height:104px;border-radius:50%;display:flex;align-items:center;justify-content:center;
       font-size:40px;font-weight:600;color:#fff;
       background:linear-gradient(135deg,#8b6cff,#5b7cfa);box-shadow:0 0 0 8px rgba(139,108,255,.16),0 18px 50px rgba(91,124,250,.32)}
+    /* 【2026-10-17 修复·透明立绘变白底】
+       头像/立绘位原本 object-fit:cover + 容器带渐变底：
+       透明 PNG 被裁切后，透明区域直接透出容器的浅色渐变 → 看着像"白底"。
+       头像（1:1 方图）用 cover 是对的；但若图带 alpha，容器底色不该透出来。
+       这里保留 cover（头像不该变形），但把容器背景在**有图时**清掉。 */
     .cv-avatar img, .cd-avatar img, .cv-watch-av img, .cs-uav img{ width:100%; height:100%; object-fit:cover; border-radius:inherit; display:block; }
+    /* 有 <img> 时去掉容器的渐变底，避免透明 PNG 透出底色 */
+    .cv-avatar:has(img), .cd-avatar:has(img), .cv-watch-av:has(img),
+    .cs-uav:has(img), .cu-face:has(img){ background:transparent !important; }
+    /* 立绘位（非圆形）：contain 保比例，不裁切透明边缘 */
+    .cu-face img{ object-fit:contain !important; background:transparent !important; }
     .cv-timer{font-size:13px;opacity:.72;font-variant-numeric:tabular-nums;letter-spacing:1.5px}
     .cv-sub{font-size:12.5px;opacity:.6;max-width:76%;text-align:center;min-height:18px;line-height:1.5}
     .cv-ctrls{display:flex;gap:28px;margin-top:10px}
@@ -1994,9 +2004,17 @@
           if(r && r.success && r.characters){
             const active = (r.characters.find(function(c){ return c.id===r.active_id; })) || r.characters[0];
             if(active){
-              const t = active.model_3d && active.model_3d.thumbnail;
-              if(t) img = t;
-              else if(active.banner) img = '/local_img?path=' + encodeURIComponent(active.banner);
+              /* 【2026-10-17 修复·通话头像裂图/白底】
+                 旧逻辑优先级：model_3d.thumbnail → banner（头图）。
+                 但 banner 是**横向头图**（1200×800），塞进 104px 的圆形头像位后
+                 被 object-fit:cover 硬裁，透明区又透出容器的渐变底 → 看着像"白底裂图"。
+                 正确优先级：avatar（1:1 方图，本就是给头像位做的）→ thumbnail → banner。 */
+              if(active.avatar) img = '/local_img?path=' + encodeURIComponent(active.avatar);
+              else {
+                const t = active.model_3d && active.model_3d.thumbnail;
+                if(t) img = t;
+                else if(active.banner) img = '/local_img?path=' + encodeURIComponent(active.banner);
+              }
             }
           }
         }
@@ -2476,6 +2494,33 @@
           if(r&&r.success){
             if(window.Backend)Backend.toast((isMic?'已切换麦克风：':'已切换扬声器：')+dev);
             closeDevMenu();
+            /* 【2026-10-17 修复·麦克风"选了但收不到声音"】
+               切麦克风后后端会开一个 3 秒验证窗口（可能自动切换到可用通道）。
+               这里轮询结果，把"请说句话"和"已自动切换/检测不到声音"告诉用户，
+               否则用户只看到"已切换"却永远没反应，完全无从判断。 */
+            if(isMic && r.verify_id && window.Backend && Backend.getMicVerifyResult){
+              (async function(){
+                for(var i=0;i<12;i++){
+                  await new Promise(function(res){ setTimeout(res, 700); });
+                  var vr=null;
+                  try{ vr=await Backend.getMicVerifyResult({id:r.verify_id}); }catch(e){ vr=null; }
+                  if(!vr||!vr.success) continue;
+                  if(vr.state==='running'){
+                    if(i===0&&window.Backend)Backend.toast('正在检测麦克风，请说一句话…');
+                    continue;
+                  }
+                  if(vr.state==='ok'){
+                    if(window.Backend)Backend.toast('麦克风正常：'+(vr.note||''));
+                  }else if(vr.state==='switched'){
+                    if(window.Backend)Backend.toast((vr.note||'已自动切换到可用麦克风'),'warn');
+                    try{ if(window.Backend&&Backend.listAudioDevices) {} }catch(e){}
+                  }else if(vr.state==='silent'||vr.state==='error'){
+                    if(window.Backend)Backend.toast(vr.note||'检测不到麦克风声音','err');
+                  }
+                  return;
+                }
+              })();
+            }
           }else{
             el.style.opacity='1';
             if(window.Backend)Backend.toast('切换失败：'+((r&&r.error)||'未知错误'),'err');
@@ -3413,7 +3458,161 @@
       apply(!b.classList.contains('on'));
     }, true);
   })();
-  </script>
+  
+/* ============================================================================
+   【2026-10-18 E2E 修复·聊天页工具栏按钮全部无效】
+   实测：micToggle / contToggle / clearChat / focusToggle / relFoldBtn /
+   relPace / relFreq / relResetBtn / sxEnd / agentConfirmAllow|Deny /
+   mpCustom* 的绑定代码从未写过（UI 重构时遗漏）→ 用户点了解决没反应。
+   这里统一补齐。modeBtn/attachBtn 已有委托绑定，不重复。
+   ============================================================================ */
+(function(){
+  var $ = function(id){ return document.getElementById(id); };
+  var B = (window.Backend && window.Backend) || (window.pywebview && window.pywebview.api);
+  if (!B) return;
+
+  /* ---- ① 麦克风监听开关（收音/释放设备）---- */
+  var micT = $('micToggle');
+  if (micT && !micT.dataset.bound) {
+    micT.dataset.bound = '1';
+    var micOn = false;
+    micT.addEventListener('click', function(){
+      if (window.Backend && Backend.toast)
+        Backend.toast('该开关属于本地语音（未启用）。语音通话请用通话内的麦克风按钮。');
+    });
+  }
+
+  /* ---- ② 持续语音开关（免唤醒）---- */
+  var contT = $('contToggle');
+  if (contT && !contT.dataset.bound) {
+    contT.dataset.bound = '1';
+    contT.addEventListener('click', function(){
+      if (window.Backend && Backend.toast)
+        Backend.toast('该开关属于本地语音（未启用）。语音通话请直接发起通话。');
+    });
+  }
+
+  /* ---- ③ 清空对话 ---- */
+  var cc = $('clearChat');
+  if (cc && !cc.dataset.bound) {
+    cc.dataset.bound = '1';
+    cc.addEventListener('click', async function(){
+      if (!confirm('确定清空当前角色的聊天记录吗？')) return;
+      try {
+        var r = await B.clearChat();
+        if (r && r.success && window.Backend && Backend.toast)
+          Backend.toast('聊天记录已清空');
+      } catch(e){}
+    });
+  }
+
+  /* ---- ④ 专注模式（隐藏左右栏）---- */
+  var ft = $('focusToggle');
+  if (ft && !ft.dataset.bound) {
+    ft.dataset.bound = '1';
+    ft.addEventListener('click', function(){
+      document.body.classList.toggle('focus-mode');
+      var on = document.body.classList.contains('focus-mode');
+      ft.style.opacity = on ? '1' : '.45';
+      if (window.Backend && Backend.toast) Backend.toast(on ? '专注模式：开' : '专注模式：关');
+    });
+  }
+
+  /* ---- ⑤ 关系面板：折叠 ---- */
+  var rf = $('relFoldBtn');
+  if (rf && !rf.dataset.bound) {
+    rf.dataset.bound = '1';
+    rf.addEventListener('click', function(){
+      document.body.classList.toggle('rel-collapsed');
+      rf.setAttribute('aria-expanded',
+        document.body.classList.contains('rel-collapsed') ? 'false' : 'true');
+    });
+  }
+
+  /* ---- ⑥ 关系面板：节奏/频次 下拉 → 保存主动设置 ---- */
+  function saveRelSetting(){
+    var pace = $('relPace'), freq = $('relFreq');
+    if (!pace || !freq) return;
+    try {
+      B.setProactivePackFlags({
+        pace: pace.value || '标准',
+        frequency: freq.value || 'standard'
+      });
+    } catch(e){}
+  }
+  var rp1 = $('relPace');
+  if (rp1 && !rp1.dataset.bound) { rp1.dataset.bound = '1'; rp1.addEventListener('change', saveRelSetting); }
+  var rp2 = $('relFreq');
+  if (rp2 && !rp2.dataset.bound) { rp2.dataset.bound = '1'; rp2.addEventListener('change', saveRelSetting); }
+
+  /* ---- ⑦ 关系重置 ---- */
+  var rr = $('relResetBtn');
+  if (rr && !rr.dataset.bound) {
+    rr.dataset.bound = '1';
+    rr.addEventListener('click', async function(){
+      if (!confirm('归档当前关系并恢复默认？')) return;
+      try {
+        if (B.setArchetypeManual) await B.setArchetypeManual({ reset: true });
+        if (window.Backend && Backend.toast) Backend.toast('关系已重置');
+      } catch(e){}
+    });
+  }
+
+  /* ---- ⑧ 流畅语音会话「结束」按钮 ---- */
+  var sx = $('sxEnd');
+  if (sx && !sx.dataset.bound) {
+    sx.dataset.bound = '1';
+    sx.addEventListener('click', async function(){
+      try {
+        if (B.endDuplexCall) {
+          await B.endDuplexCall();
+          if (window.Backend && Backend.toast) Backend.toast('语音会话已结束');
+        }
+      } catch(e){}
+    });
+  }
+
+  /* ---- ⑨ agent 权限确认框：允许 / 拒绝 ---- */
+  var deny = $('agentConfirmDeny');
+  if (deny && !deny.dataset.bound) {
+    deny.dataset.bound = '1';
+    deny.addEventListener('click', function(){
+      try {
+        if (B.resolveAgentConfirm) B.resolveAgentConfirm({ allow: false });
+        var box = deny.closest('.agent-confirm') || deny.parentElement && deny.parentElement.parentElement;
+        if (box) box.style.display = 'none';
+        if (window.Backend && Backend.toast) Backend.toast('已拒绝本次操作');
+      } catch(e){}
+    });
+  }
+  var allow = $('agentConfirmAllow');
+  if (allow && !allow.dataset.bound) {
+    allow.dataset.bound = '1';
+    allow.addEventListener('click', function(){
+      try {
+        if (B.resolveAgentConfirm) B.resolveAgentConfirm({ allow: true });
+        var box = allow.closest('.agent-confirm') || allow.parentElement && allow.parentElement.parentElement;
+        if (box) box.style.display = 'none';
+      } catch(e){}
+    });
+  }
+
+  /* ---- ⑩ 模型面板：自定义模型名应用 ---- */
+  var mci = $('mpCustomInput');
+  var mcb = $('mpCustomBtn');
+  if (mcb && mci && !mcb.dataset.bound) {
+    mcb.dataset.bound = '1';
+    mcb.addEventListener('click', async function(){
+      var name = (mci.value || '').trim();
+      if (!name) { if (window.Backend && Backend.toast) Backend.toast('请输入自定义模型名', 'err'); return; }
+      try {
+        if (B.setChatProviderModel) await B.setChatProviderModel({ provider: 'custom', model: name });
+        if (window.Backend && Backend.toast) Backend.toast('自定义模型已应用：' + name);
+      } catch(e){}
+    });
+  }
+})();
+</script>
 
 </body>
 </html>

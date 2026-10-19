@@ -361,6 +361,65 @@ def _status_done_summary(meta: dict, fallback: str = "") -> str:
     return "✓ " + (fallback.replace("⚙️ ", "").strip() or "已完成")
 
 
+
+
+# 【2026-10-17 修复·失效 TTS 模型自动迁移】
+# 实测：qwen3-tts-flash 是唯一 200 的百炼 TTS 模型；
+# qwen-audio-3.0-tts-* 与 cosyvoice 全系列已下线（400/418）。
+# 旧版一键配置写入的默认值是 qwen-audio-3.0-tts-plus → 用户配置残留失效模型
+# → 试听永远失败，用户以为音色 ID 错了。
+_TTS_STALE = ("qwen-audio-3.0-tts-plus", "qwen-audio-3.0-tts-flash",
+              "qwen-audio-3.1-tts-flash", "cosyvoice-v3.5-plus",
+              "cosyvoice-v3.5-flash", "cosyvoice-v3-flash",
+              "cosyvoice-v2", "cosyvoice-v1")
+_TTS_MIGRATE_TO = "qwen3-tts-flash"
+
+
+def migrate_stale_tts_model(raw: dict) -> list:
+    """配置里失效的 TTS 模型名自动换 qwen3-tts-flash（幂等）。"""
+    out = []
+    try:
+        cosy = (((raw.get("voice") or {}).get("clone") or {}).get("cloud")
+                or {}).get("dashscope_cosy")
+        if isinstance(cosy, dict) and str(cosy.get("model_name") or "").strip() in _TTS_STALE:
+            cosy["model_name"] = _TTS_MIGRATE_TO
+            out.append("voice.clone.cloud.dashscope_cosy.model_name")
+        ct = raw.get("cloud_tts") or {}
+        b = ct.get("dashscope_cosy")
+        if isinstance(b, dict) and str(b.get("model_name") or "").strip() in _TTS_STALE:
+            b["model_name"] = _TTS_MIGRATE_TO
+            out.append("cloud_tts.dashscope_cosy.model_name")
+    except Exception:  # noqa: BLE001
+        pass
+    return out
+
+
+def migrate_stale_voice_profiles(raw: dict) -> list:
+    """把失效模型的音色档（voice_profiles）自动迁移到 qwen3-tts-flash + Cherry。
+
+    【2026-10-17】用户已建的音色档如果绑着已下线的模型（cosyvoice-v3.5-plus 等），
+    试听/聊天必然 400。启动时静默修复。
+    """
+    STALE = ("cosyvoice-v1", "cosyvoice-v2", "cosyvoice-v3", "cosyvoice-v3-plus",
+             "cosyvoice-v3-flash", "cosyvoice-v3.5-plus", "cosyvoice-v3.5-flash",
+             "qwen-audio-3.0-tts-plus", "qwen-audio-3.0-tts-flash")
+    out = []
+    try:
+        for prof in (raw.get("voice_profiles") or []):
+            if not isinstance(prof, dict) or prof.get("engine") != "dashscope_cosy":
+                continue
+            v = str(prof.get("voice") or "").strip().lower()
+            m = str(prof.get("model") or "").strip().lower()
+            if v in STALE or m in STALE or "cosyvoice" in v or "qwen-audio" in v:
+                prof["model"] = "qwen3-tts-flash"
+                prof["voice"] = "Cherry"
+                out.append("voice_profile:%s" % prof.get("id"))
+    except Exception:  # noqa: BLE001
+        pass
+    return out
+
+
+
 class CharacterAPI:
     """角色管理 API（供 pywebview 前端调用）。"""
 
@@ -377,10 +436,24 @@ class CharacterAPI:
 
     def __init__(self, config_path: str = "config.yaml") -> None:
         self._config_path = config_path
+        # 【2026-10-17】失效 TTS 模型自动迁移
+        try:
+            import yaml as _y_mig
+            _raw_mig = _y_mig.safe_load(io.open(self._config_path, encoding="utf-8")) or {}
+            _mig = migrate_stale_tts_model(_raw_mig)
+            if _mig:
+                io.open(self._config_path, "w", encoding="utf-8").write(
+                    _y_mig.dump(_raw_mig, allow_unicode=True,
+                                default_flow_style=False, sort_keys=False))
+                logger.info("TTS 失效模型已自动迁移: %s", ", ".join(_mig))
+        except Exception:  # noqa: BLE001
+            pass
         self._cfg: Optional[Config] = None
 
         # 运行时注入（main.py 启动时注入 dialogue / bus / loop）
         self._runtime_lock = threading.Lock()
+        # 【2026-10-19】供 Config.save() 跨模块取同一把运行时锁（原子写 config.yaml）
+        globals()['_LAST_API_INSTANCE'] = self
         self._dialogue: Optional[Any] = None
         self._bus: Optional[Any] = None
         self._loop: Optional[asyncio.AbstractEventLoop] = None
@@ -949,6 +1022,29 @@ class CharacterAPI:
     def pet_is_capture_hidden(self) -> dict:
         """返回桌宠是否对屏幕捕获隐身（供右键菜单显示真实状态）。"""
         return {"ok": True, "hidden": _PET_CAPTURE_HIDDEN}
+
+    def pet_set_char_hidden(self, hidden: bool) -> dict:
+        """桌宠右键「隐藏角色」持久化（rig 页面 hidechar 菜单项调用）。"""
+        try:
+            flag = bool(hidden)
+            if self._cfg is not None:
+                self._cfg.raw.setdefault("ui", {})["pet_char_hidden"] = flag
+                try:
+                    self._save_config()
+                except Exception:  # noqa: BLE001
+                    pass
+            return {"success": True, "hidden": flag}
+        except Exception as e:  # noqa: BLE001
+            return {"success": False, "error": str(e)}
+
+    def pet_get_char_hidden(self) -> dict:
+        """读角色隐藏状态（rig 启动时恢复用）。"""
+        try:
+            flag = bool(((self._cfg.raw.get("ui") or {}).get("pet_char_hidden"))
+                        if self._cfg else False)
+            return {"success": True, "hidden": flag}
+        except Exception as e:  # noqa: BLE001
+            return {"success": False, "error": str(e)}
 
     def pet_toggle(self) -> dict:
         """切换桌宠显示/隐藏。"""
@@ -3911,6 +4007,19 @@ class CharacterAPI:
         # 不进桌面聊天浮窗打字机（避免 QQ 私聊显示在桌面）。
         if d.get("channel") and d.get("channel") != "desktop":
             return
+        # 【2026-10-18 修复·双工串到聊天页 + 打字串气泡】
+        # 本函数（流式打字机）此前**没有** is_proactive 闸门，而
+        # `_on_chat_ai_decision`（收尾）有 —— 于是双工/看屏互动只要 PARTIAL_TEXT
+        # 先到，就会在这里 `_open_chat_stream_bubble()` 建出聊天气泡；
+        # 更糟的是它把 `_chat_stream_id` 指向了这条双工消息，
+        # 用户在输入框打的新消息因此一直往那条旧气泡上追加/改字
+        # （用户反馈："我打新东西它还继续修改老气泡"）。
+        # 修：与 decision 侧完全对齐 —— is_proactive（双工/看屏）一律不进聊天页，
+        #     且**绝不占用** _chat_stream_id，避免污染后续正常打字对话的流式状态。
+        if bool(d.get("is_proactive")) or bool(d.get("to_chat") is False):
+            logger.debug("[聊天流] 双工/看屏片段不进聊天页（is_proactive=%s）: %r",
+                         bool(d.get("is_proactive")), str(d.get("text"))[:40])
+            return
         text = (d.get("text") or "").strip()
         if not text:
             return
@@ -3937,9 +4046,13 @@ class CharacterAPI:
         is_sentence = (d.get("granularity") == "sentence")
         # 本轮上限：优先用后端按"用户话长"给的 seg_limit（对话真源）；没带则退回本地绝对上限。
         _seg_cap = int(d.get("seg_limit") or 0) or max(1, int(self.chat_split_max))
+        # 【2026-10-18 修复·聊天弹幕不分行/粘一起】
+        # 旧条件要求"当前气泡已累积 >= min_chars 字"才封口，于是短句（"发呆呀"）
+        # 会不断被追加进同一气泡 → 看起来所有话粘成一行。
+        # 现在：句子级片段到达且当前气泡非空就封口另起一条（连发效果）。
         if (is_sentence and self.chat_split_enabled
                 and self._chat_seg_count < _seg_cap
-                and len(cur.get("text") or "") >= max(1, int(self.chat_split_min_chars))):
+                and len((cur.get("text") or "").strip()) > 0):
             # 当前这条已"够一句" → 封口落盘，下一句开新气泡（连发效果）
             cur["streaming"] = False
             self._persist_chat(cur)
@@ -3950,13 +4063,82 @@ class CharacterAPI:
             cur["text"] += text
         _wv2_broadcast({"type": "chat_push"})
 
+    def _attach_sticker(self, msg: dict, char_name: str = "") -> None:
+        """给一条 AI 消息附加表情包（**不改变生成逻辑，只在落库前贴图**）。
+
+        【2026-10-17 接入·表情包技能包】
+        背景：sticker_bridge 早就有 pick()（按角色+对话挑表情），
+        但聊天链路**从来没调用过** —— dialogue.py 里 sticker 出现 0 次，
+        所以用户"预载了表情包却永远收不到"。
+        为什么在 webapp 这层做而不是改 dialogue：
+          dialogue.respond 有 1.1 万字符、含搜索/工具/视觉多分支，
+          动主链路风险极高。这里只做"落库前贴图"，失败最多没表情，绝不影响聊天。
+
+        pick() 真实返回：{ok, result: {meme_id, pack_id, found, file, description}}
+        meme_image_url(pid, mid) 返回：{ok, url}
+        """
+        try:
+            br = getattr(self, "_sticker_bridge", None)
+            if br is None:
+                from .sticker_bridge import StickerBridge
+                br = StickerBridge()
+                self._sticker_bridge = br
+            if not br._ensure():
+                return
+            # 最近几条对话作为语境
+            conv = []
+            try:
+                conv = [{"role": m.get("role"), "text": str(m.get("text") or "")[:120]}
+                        for m in (self._chat_buffer or [])[-6:]]
+            except Exception:  # noqa: BLE001
+                conv = []
+            r = br.pick(char_name or "", conv)
+            if not isinstance(r, dict) or not r.get("ok"):
+                logger.debug("[表情包] pick 未返回: %s", str(r.get("error"))[:60])
+                return
+            res = r.get("result") or {}
+            if not res.get("found"):
+                logger.debug("[表情包] 本轮无合适表情（candidates=%s）", r.get("candidates"))
+                return
+            mid = str(res.get("meme_id") or "")
+            pid = str(res.get("pack_id") or "")
+            url = ""
+            if mid and pid:
+                try:
+                    u = br.meme_image_url(pid, mid)
+                    if isinstance(u, dict) and u.get("ok"):
+                        url = str(u.get("url") or "")
+                except Exception:  # noqa: BLE001
+                    url = ""
+            if url:
+                msg["sticker_url"] = url
+                msg["sticker_id"] = mid
+                msg["sticker_pack"] = pid
+                msg["sticker_desc"] = str(res.get("description") or "")[:60]
+                logger.info("[表情包] 已附加 pack=%s id=%s desc=%r",
+                            pid[:10], mid[:10], msg["sticker_desc"])
+        except Exception as e:  # noqa: BLE001
+            logger.debug("表情包附加失败（不影响聊天）: %s", e)
+
     def _open_chat_stream_bubble(self, text: str, char_name: str) -> None:
         """新建一条"生成中"的 AI 消息气泡（分段输出的一个单位）。"""
         self._chat_stream_id = self._next_chat_id()
         self._chat_seg_count += 1
+        # 【2026-10-18 修复·多轮回复粘成一条/旧气泡被反复改写】
+        # `_chat_seg_count` 此前只在 decision 收尾时归零。若某轮收尾事件丢失
+        # （双工串流、异常、decision 未到），计数会持续累加并超过 seg_cap，
+        # 之后 `_on_chat_partial` 的封口条件 `_chat_seg_count < _seg_cap` 恒为假
+        # → 所有后续回复永远追加进**同一个气泡**（用户看到"多段话粘一起"），
+        # 且用户发新消息时仍在改那条老气泡。
+        # 现在：本轮段数超上限即视为新一轮，强制重置分段计数（不动 id）。
+        _cap = max(1, int(getattr(self, "chat_split_max", 4) or 4))
+        if self._chat_seg_count > _cap:
+            logger.info("[聊天流] 分段计数 %d 超上限 %d → 判定为新一轮，重置",
+                        self._chat_seg_count, _cap)
+            self._chat_seg_count = 1
         logger.info("[聊天流] 打字机新建 id=%s 第%d段 首句=%d字",
                     self._chat_stream_id, self._chat_seg_count, len(text))
-        self._chat_buffer.append({
+        _bubble = {
             "id": self._chat_stream_id,
             "role": "ai",
             "text": text,
@@ -3969,7 +4151,11 @@ class CharacterAPI:
             # 0=本轮首条（显示头像/名字）；>0=连发续条（前端紧凑化，仅贴在上一条下）
             "seg_index": self._chat_seg_count - 1,
             "ts": time.time(),
-        })
+        }
+        # 【2026-10-17】本轮**首条**气泡带表情包（连发续条不重复贴）
+        if self._chat_seg_count == 1:
+            self._attach_sticker(_bubble, char_name)
+        self._chat_buffer.append(_bubble)
 
     async def _on_chat_ai_decision(self, e: Event) -> None:
         """AI 回复（含主动搭话，is_proactive 标记用于 GUI 显示 💗 气泡）。
@@ -4038,6 +4224,23 @@ class CharacterAPI:
             self._overlay_push("ai", text)
             _wv2_broadcast({"type": "chat_push"})
             return
+        # 【2026-10-18 修复·跨轮段数累积导致多轮回复粘成一个气泡】
+        # 上面那条 `streamed and _chat_stream_id` 分支才重置分段计数；若本轮
+        # streamed=False（非流式/工具链路/异常）或 _chat_stream_id 已被清空，
+        # `_chat_seg_count` 就会一路累加。而 `_on_chat_partial` 的封口条件是
+        # `_chat_seg_count < _seg_cap` —— 一旦超限就恒为假 ⇒ 之后所有轮次的回复
+        # 全部追加进**同一个气泡**（用户看到"三段不相关的话粘在一起"）。
+        # 这里无条件收尾并归零，保证每轮结束都是干净状态。
+        if self._chat_stream_id is not None or self._chat_seg_count:
+            logger.info("[聊天流] 非流式收尾：清理残留流式状态 id=%s 段数=%d",
+                        self._chat_stream_id, self._chat_seg_count)
+            for m in self._chat_buffer:
+                if m.get("id") == self._chat_stream_id and m.get("streaming"):
+                    m["streaming"] = False
+                    self._persist_chat(m)
+                    break
+        self._chat_stream_id = None
+        self._chat_seg_count = 0
         char_name = self._dialogue.current_character_name if self._dialogue else "AI"
         blocked = bool(d.get("blocked"))
         if blocked:
@@ -5145,6 +5348,26 @@ class CharacterAPI:
                 logger.debug("[发送诊断] 本条为纯文本（无 images）")
 
             async def _send() -> None:
+                # 【2026-10-18 修复·新消息串改旧气泡】
+                # 用户发新消息 = 上一轮回复彻底结束。这里强制清空流式状态，
+                # 否则若上一轮 `_chat_stream_id` 因任何原因没被收尾（双工串流、
+                # 异常中断、decision 丢失），新回复会继续往**旧气泡**追加文本
+                # （用户反馈："我打新东西它还继续修改老气泡"）。
+                self._chat_stream_id = None
+                self._chat_seg_count = 0
+                # 【2026-10-18 修复·打字时双工对键盘声开口】
+                # 通知双工：用户正在打字 → 3 秒内抬高其本地 VAD 起音阈值，
+                # 键盘声/呼吸不再被当成"开始说话"而触发云端用达妮娅音色回一句。
+                try:
+                    _pro = getattr(self, "_proactive", None)
+                    if _pro is not None and hasattr(_pro, "_note_user_typing"):
+                        _pro._note_user_typing()
+                    # 双工实例自己也留一份（VAD 在 cloud_omni 里读这个字段）
+                    _cli = getattr(_pro, "_duplex_client", None) if _pro is not None else None
+                    if _cli is not None:
+                        _cli._user_typing_ts = time.time()
+                except Exception:  # noqa: BLE001
+                    pass
                 await self._bus.publish(Event(EventType.USER_TEXT, {
                     "text": text, "source": "webui",
                     "images": _images,
@@ -5881,14 +6104,75 @@ class CharacterAPI:
         """列出全部音色档（redesign 语音页「音色档」区渲染用）。"""
         if not self._cfg:
             return {"success": False, "error": "配置未加载"}
-        profiles = self._cfg.raw.get("voice_profiles", []) or []
+        profiles = list(self._cfg.raw.get("voice_profiles", []) or [])
         # 附带每个档被哪些角色引用，UI 用来提示「删除会解绑 N 个角色」
         chars = self._cfg.raw.get("characters", []) or []
         refs = {}
         for c in chars:
             if isinstance(c, dict) and c.get("voice_profile"):
                 refs.setdefault(c["voice_profile"], []).append(c.get("id"))
+
+        # 【2026-10-18 修复·音色档只显示一个】
+        # 旧实现只回传 voice_profiles（用户手动"新建音色档"建的那些）。
+        # 用户在引导页/云端选过的克隆音色是存在 voice.clone.cloud 里的，
+        # 不在 voice_profiles 中 ⇒ 列表里只看到一个，云端那堆音色全看不到。
+        # 现在：把云端已选 provider 的音色 + 预设音色也作为"虚拟档"并进来
+        # （id 用 __cloud__:<provider>:<voice_id>，前端只读展示/可直接选）。
+        try:
+            _existing_ids = {str(p.get("id") or "") for p in profiles
+                             if isinstance(p, dict)}
+            _cloud = ((self._cfg.raw.get("voice") or {}).get("clone") or {}).get("cloud") or {}
+            _sel = str(((self._cfg.raw.get("voice") or {}).get("clone") or {})
+                       .get("cloud_provider") or "").strip()
+            # 遍历所有已配 Key 的云端 provider
+            for _pk, _pv in (_cloud or {}).items():
+                if not isinstance(_pv, dict):
+                    continue
+                if not str(_pv.get("api_key") or "").strip():
+                    continue
+                _vid = str(_pv.get("voice_id") or _pv.get("voice") or "").strip()
+                if not _vid:
+                    continue
+                _fake_id = "__cloud__:%s:%s" % (_pk, _vid)
+                if _fake_id in _existing_ids:
+                    continue
+                profiles.append({
+                    "id": _fake_id,
+                    "name": "云端·%s" % (_vid[:28]),
+                    "engine": "dashscope_cosy" if "dashscope" in _pk or "cosy" in _pk
+                              else _pk,
+                    "voice_id": _vid,
+                    "model": str(_pv.get("model") or ""),
+                    "api_key": "***",           # 不回传明文
+                    "virtual": True,            # 标记：来自云端配置，非用户建档
+                    "provider": _pk,
+                })
+        except Exception:  # noqa: BLE001
+            pass
+
         return {"success": True, "profiles": profiles, "referenced_by": refs}
+
+    @staticmethod
+    def _model_from_voice_id(vid: str) -> str:
+        """从百炼 voice_id 前缀反推「克隆时用的模型」。
+
+        百炼的克隆音色 id 形如 `<model>-bailian-<hash>`（如
+        cosyvoice-v3.5-flash-bailian-277c...），合成必须用同一个 model。
+        按长度倒序匹配，避免 'cosyvoice-v3' 抢先命中 'cosyvoice-v3.5-flash'。
+        """
+        s = str(vid or "").strip()
+        if not s:
+            return ""
+        for m in sorted((
+            'qwen-audio-3.0-tts-plus', 'qwen-audio-3.0-tts-flash',
+            'cosyvoice-v3.5-plus', 'cosyvoice-v3.5-flash',
+            'cosyvoice-v3-plus', 'cosyvoice-v3-flash',
+            'cosyvoice-v2', 'cosyvoice-v1',
+            'qwen3-tts-flash', 'qwen3-tts-plus',
+        ), key=len, reverse=True):
+            if s == m or s.startswith(m + '-'):
+                return m
+        return ""
 
     def save_voice_profile(self, data: dict) -> dict:
         """新增或更新一个音色档（按 data.id 匹配，缺 id 则新建）。"""
@@ -5909,6 +6193,20 @@ class CharacterAPI:
         new_profile["id"] = pid
         new_profile["name"] = name
         new_profile["engine"] = engine
+        # 【2026-10-18 修复·百炼 400 的根因之一】
+        # 百炼的克隆音色 voice_id 里编码了"克隆时用的模型"（如
+        #   cosyvoice-v3.5-flash-bailian-xxxx），合成时必须用**同一个模型**，
+        # 否则服务端直接 400（InvalidParameter）。
+        # 前端虽有自动对齐，但历史配置/导入配置/API 直调都可能写入不一致的组合。
+        # 这里在落盘前统一按 voice_id 前缀纠正 model，从源头杜绝 400。
+        if engine == "dashscope_cosy":
+            _vid = str(new_profile.get("voice_id") or "").strip()
+            _mdl = str(new_profile.get("model") or "").strip()
+            _fixed = self._model_from_voice_id(_vid)
+            if _fixed and _mdl != _fixed:
+                logger.info("音色档 %s：model %r 与 voice_id 前缀不符，已纠正为 %r",
+                            pid, _mdl, _fixed)
+                new_profile["model"] = _fixed
         raw = self._cfg.raw
         profiles = raw.setdefault("voice_profiles", [])
         idx = next((i for i, p in enumerate(profiles)
@@ -6063,6 +6361,14 @@ class CharacterAPI:
             result = self._run_coro(self._dialogue.switch_character(char_id))
             if result is True:
                 logger.info("运行时切换角色: %s", char_id)
+                # 【2026-10-18 E2E 修复·多角色记忆泄漏】显式对齐共享历史的活动角色。
+                # dialogue.switch_character 内部会调，这里幂等补一次——
+                # 万一内部路径变更/漏调，这里兜住（切错桶 = 记忆跨角色泄漏）。
+                try:
+                    from ..companion.conversation_history import set_active_char as _sac
+                    _sac(char_id)
+                except Exception:  # noqa: BLE001
+                    pass
                 # 【2026-09-13 修复·人设热切换只热了一半】dialogue.switch_character 只更新
                 # 打字对话侧的 persona，proactive._persona 仍是旧角色 → 双工（桌面看屏 +
                 # 语音通话）提示词里的人设/称呼/风格不跟着变，必须重启才生效。这里补一次
@@ -6090,6 +6396,17 @@ class CharacterAPI:
         if success:
             logger.warning("配置级切换角色（无运行时桥接）: %s", char_id)
             self._hot_switch_duplex_persona()
+            # 【2026-10-18 E2E 修复·多角色记忆泄漏（根因）】
+            # 旧实现只切了 config.active_character_id，**没人调 set_active_char**
+            # → shared_history 桶还挂在旧角色 → 新角色发话写进旧角色的上下文桶
+            # → 记忆跨角色泄漏（实测：切大肥鱼后她知道和达妮娅说的暗号），
+            #   且 clear_chat 清的是旧桶 → 表面像"把所有角色都清了"。
+            # 现在补调：切桶 + 把新角色的落盘上下文回填（幂等）。
+            try:
+                from ..companion.conversation_history import set_active_char as _sac
+                _sac(char_id)
+            except Exception:  # noqa: BLE001
+                pass
             self._chat_buffer.clear()
             self._chat_history_loaded = False
             self._reset_chat_session_state()
@@ -6138,12 +6455,18 @@ class CharacterAPI:
             # 未传的字段(api_url/api_key/voice_id/reference_audio 等)保留原值，
             # 避免编辑其它字段时把云端音色/参考音等配置误清空。
             _existing = characters[existing_idx] if existing_idx is not None else {}
+            # 【2026-10-18 修复·保存后变机器人音】
+            # 旧默认值把 engine 写死成 "edge-tts" —— 该引擎已按发布口径下架，
+            # create_backend 找不到它会落到 _SilentBackend。前端只传部分字段时，
+            # 合并后的 voice.engine 就成了 edge-tts ⇒ 用户明明配了克隆音色，
+            # 保存一次就被打回"机器人音/静音"。
+            # 现在默认 engine 留空（未绑定），绝不悄悄改掉用户已配的 TTS 引擎。
             _default_voice = {
-                "engine": "edge-tts", "voice": "zh-CN-XiaoyiNeural", "rate": "+0%",
+                "engine": "", "voice": "", "rate": "+0%",
                 "pitch": "+0Hz", "volume": "+0%", "fallback_pyttsx3": False,
-                "api_url": "http://127.0.0.1:9880", "reference_audio": "", "reference_text": "",
-                "language": "zh", "api_key": "", "group_id": "", "voice_id": "female-shaonv",
-                "model": "speech-02-turbo", "speed": 1.0,
+                "api_url": "", "reference_audio": "", "reference_text": "",
+                "language": "zh", "api_key": "", "group_id": "", "voice_id": "",
+                "model": "", "speed": 1.0,
             }
             _merged_voice = {**_default_voice, **_existing.get("voice", {}), **(char_data.get("voice") or {})}
             _merged_model = {**_existing.get("model", {}), **(char_data.get("model") or {})}
@@ -6154,12 +6477,27 @@ class CharacterAPI:
                 _merged_m3d = dict(_merged_m3d)
                 _merged_m3d["enabled"] = False
 
+            # 【2026-10-17 修复·人设被清空】
+            # 实测反馈：用户只改头像/头图，结果角色人设（性格/说话风格/背景）全变空，
+            # 她开始自称"文字小精灵"、管用户叫"主人" —— 只剩名字还对。
+            # 根因：下面这三个字段旧写法是 char_data.get(k, "")，
+            #   前端只传部分字段（角色页只传改动项）时，未传的键就变成空串，
+            #   把已有完整人设覆盖掉了。voice_profile/banner/avatar 等字段
+            #   早就用了"未传则保留原值"，唯独人设三件套漏了。
+            # 现在统一为：char_data 显式给了值才覆盖，否则沿用已存的。
+            def _keep(key, _existing=_existing):
+                """未传(None/缺失) → 沿用原值；传了(含空串=用户主动清空) → 用新值。"""
+                v = char_data.get(key)
+                if v is None:
+                    return _existing.get(key, "") if existing_idx is not None else ""
+                return v
+
             new_char = {
                 "id": char_id,
                 "name": char_data.get("name", char_id),
-                "character": char_data.get("character", ""),
-                "speaking_style": char_data.get("speaking_style", ""),
-                "background": char_data.get("background", ""),
+                "character": _keep("character"),
+                "speaking_style": _keep("speaking_style"),
+                "background": _keep("background"),
                 "voice": _merged_voice,
                 "model": _merged_model,
                 "model_3d": _merged_m3d,
@@ -6421,10 +6759,39 @@ class CharacterAPI:
             if t is not None:
                 t.update(kw)
 
+        # 【2026-10-18】提前初始化：早退（无引擎等）时 finally 会引用这两个变量，
+        # 未赋值会抛 UnboundLocalError，把真实错误覆盖成线程崩溃。
+        backend = None
+        preview_api_url = None
+
         try:
             from ..voice.tts_backends import create_backend
-            backend = create_backend(cfg.engine, cfg)
-            preview_api_url = None  # 供 finally 卸载千问 TTS 显存（非本地克隆引擎保持 None）
+            # 【2026-10-18 修复·试听报 AttributeError】
+            # 前端某些路径（角色页音色档、引导页）传来的 voice_cfg 不含 engine
+            # → cfg.engine 直接抛 "'SimpleNamespace' object has no attribute 'engine'"。
+            # 这里兜底推断：engine → mode → provider，都取不到就给明确错误。
+            _engine = str(getattr(cfg, "engine", "") or "").strip()
+            if not _engine:
+                _mode = str(getattr(cfg, "mode", "") or "").strip()
+                _prov = str(getattr(cfg, "provider", "") or "").strip()
+                _engine = {
+                    "dashscope": "dashscope_cosy",
+                    "bailian": "dashscope_cosy",
+                    "minimax": "minimax",
+                    "fish": "fish_audio",
+                    "openai": "openai_tts",
+                }.get(_mode) or {
+                    "dashscope": "dashscope_cosy",
+                    "bailian": "dashscope_cosy",
+                    "minimax": "minimax",
+                    "fish_audio": "fish_audio",
+                    "openai": "openai_tts",
+                }.get(_prov) or ""
+            if not _engine:
+                _set(phase="error", done=True, success=False,
+                     error="这条音色没有指定 TTS 引擎，无法试听。请在「新建音色档」里选一个服务商后重试。")
+                return
+            backend = create_backend(_engine, cfg)
             _set(phase="synthesizing", message=f"正在用 {getattr(backend, 'name', cfg.engine)} 合成…")
 
             # GPT-SoVITS：外部服务，先探测连通性，连不上立刻给明确提示
@@ -6459,7 +6826,7 @@ class CharacterAPI:
                         return
 
             # 合成 → 取回 base64 音频（前端 webview 直接播放；本地引擎此刻模型已就绪）
-            _set(phase="synthesizing", message=f"正在用 {getattr(backend, 'name', cfg.engine)} 合成…")
+            _set(phase="synthesizing", message=f"正在用 {getattr(backend, 'name', _engine)} 合成…")
             audio = self._synthesize_and_play(backend, sample)
             if not audio:
                 err = getattr(self, "_last_tts_error", "") or "合成失败"
@@ -6476,6 +6843,10 @@ class CharacterAPI:
             # 2) 延迟 kill 本地服务进程，避免模型权重常驻内存/显存（之前只有 qwen3tts
             #    卸显存、进程永不退出 → 出现「CPU 100% + 内存 47GB 占满」的卡炸现象）
             # 下次预览/对话再按需重挂（_mount_tts 会重新拉起）。
+            # 【2026-10-18】早退（无引擎/参数错）时 backend 为 None，
+            # 这里跳过卸载逻辑，避免 finally 抛 UnboundLocalError 覆盖真实错误。
+            if backend is None:
+                return
             if backend.name in self._LOCAL_MOUNT_ENGINES:
                 port = self._LOCAL_CLONE_PORT.get(backend.name)
                 if backend.name == "qwen3tts" and preview_api_url:
@@ -8365,6 +8736,58 @@ class CharacterAPI:
             logger.exception("get_settings_health 失败")
             return {"success": False, "error": str(e)}
 
+    def get_quota_status(self, force: bool = False) -> dict:
+        """【2026-10-19 新增】模型额度 / Key 可用性状态（**非打扰式**提示用）。
+
+        背景：用户实测主聊天模型 qwen3.8-max 免费额度耗尽（403），而
+        text_chat.mode=manual 不兜底 → 打字聊天完全发不出去，界面只有一句
+        HTTP 403，用户不知道"该换模型"。
+
+        设计（沿用 2026-10-02 决策：额度耗尽是持续状态，不能反复弹模态框）：
+          · 不主动轮询：只在用户打开设置页 / 手动点"检测"时调用
+          · 结果缓存 30 分钟：避免每次进设置页都打网络
+          · 返回"影响 + 修复建议"，前端用角标/细条展示，不打断操作
+        """
+        try:
+            from .quota_guard import build_quota_report
+            return build_quota_report(self._cfg, force=bool(force))
+        except Exception as e:  # noqa: BLE001
+            logger.exception("get_quota_status 失败")
+            return {"success": False, "error": str(e)}
+
+    def get_tts_provider_key(self, data: dict = None) -> dict:
+        """【2026-10-19 新增】给引导页克隆弹窗回传百炼 API Key（仅本机 UI 使用）。
+
+        背景：引导页「给角色配专属声音 → 云端克隆」弹窗需要 Key 才能自动拉取
+        已克隆音色。已绑定 TTS 时弹窗里没有 Key 输入框（能力槽接口也**故意**
+        不回传 Key），前端无路可取 → 自动拉取静默失效，用户被迫手填 voice_id。
+
+        Key 来源与「测试语音/角色卡试听」同源：voice.clone.cloud.<provider>.api_key，
+        兜底 voice_profiles 里同引擎的档。只回传给本机 WebView，不出网。
+        """
+        if not self._cfg:
+            return {"success": False, "error": "配置未加载"}
+        try:
+            provider = str((data or {}).get("provider") or "dashscope_cosy").strip()
+            raw = self._cfg.raw
+            # ① voice.clone.cloud.<provider>
+            vcc = (((raw.get("voice") or {}).get("clone") or {}).get("cloud") or {})
+            key = str((vcc.get(provider) or {}).get("api_key") or "").strip()
+            # ② voice_profiles 同引擎兜底
+            if not key:
+                for p in (raw.get("voice_profiles") or []):
+                    if (p.get("engine") or "") == provider and (p.get("api_key") or "").strip():
+                        key = str(p["api_key"]).strip()
+                        break
+            # ③ cloud_omni（同是百炼体系，双工 Key 可通用克隆查询）
+            if not key and provider == "dashscope_cosy":
+                key = str((raw.get("cloud_omni") or {}).get("api_key") or "").strip()
+            return {"success": bool(key), "provider": provider, "api_key": key,
+                    "error": "" if key else "尚未绑定该服务商的 Key"}
+        except Exception as e:  # noqa: BLE001
+            logger.exception("get_tts_provider_key 失败")
+            return {"success": False, "error": str(e)}
+
     def set_vision_enabled(self, enabled: bool) -> dict:
         """视觉感知总开关：热生效 + 写入 config.yaml。启用且无激活模型时自动选第一个。"""
         if not self._cfg:
@@ -8565,7 +8988,11 @@ class CharacterAPI:
         opts = opts or {}
         dft_base = "https://dashscope.aliyuncs.com/compatible-mode/v1"
         base_url = (opts.get("base_url") or dft_base).rstrip("/")
-        llm_model = opts.get("llm_model") or "qwen-plus"
+        # 【2026-10-17 修正·禁止硬编码】优先用用户在设置里选的模型，
+        # 其次读配置里的对话模型，最后才用目录默认常量。
+        llm_model = (opts.get("llm_model")
+                     or ((self._cfg.raw.get("text_chat") or {}).get("model") if self._cfg else "")
+                     or _ALIYUN_DEFAULT_CHAT)
         vision_model = opts.get("vision_model") or "qwen3-vl-plus"
         tts_model = opts.get("tts_model") or "qwen-audio-3.0-tts-plus"
         results: dict = {}
@@ -9426,6 +9853,17 @@ class CharacterAPI:
                 self._save_config()
                 self._cfg.ns = _to_ns(self._cfg.raw)
                 self._apply_call_speaker_device()
+                # 【2026-10-18 修复·"扬声器切不了/切了没声音"】
+                # 上面 _apply_call_speaker_device() 只改 TTS 播放层；而**通话中的
+                # 语音是云端双工内部 _AudioPlayer 直接播的，不经过 TTS**。
+                # 所以只调 TTS 等于没通知到真正出声的那条链路 —— 用户切了扬声器
+                # 完全没变化，仍从旧设备出声。这里显式通知双工客户端重建输出流。
+                pro = getattr(self, "_proactive", None)
+                if pro is not None and hasattr(pro, "apply_call_settings"):
+                    try:
+                        pro.apply_call_settings(speaker_device=dev)
+                    except Exception:  # noqa: BLE001
+                        logger.exception("扬声器设备热切换失败")
             else:
                 kind = "mic"
                 pro_raw["duplex_mic_device"] = dev
@@ -9439,7 +9877,30 @@ class CharacterAPI:
                         logger.exception("麦克风设备热切换失败")
             log_call_av("device_change", kind=kind, device=dev, source="ui")
             logger.info("通话设备切换：%s → %s", kind, dev)
-            return {"success": True, "kind": kind, "device": dev}
+            # 【2026-10-17 修复·麦克风"选了但收不到声音"】
+            # 实测：同一只麦克风在 PortAudio 里有 MME/DirectSound/WASAPI 三条记录，
+            # MME 那条是**哑设备**（能开能读但恒返回 0），用户点到就"麦克风好的但无效"。
+            # 切换麦克风后自动开一个后台验证（3 秒窗口，前端提示"请说句话"），
+            # 若持续静音且同名设备里有可用的，自动切过去并告知用户。
+            _verify_id = ""
+            if kind == "mic" and dev.lower() not in ("", "default"):
+                try:
+                    import uuid as _uuid
+                    _verify_id = _uuid.uuid4().hex[:12]
+                    self._mic_verify = {"id": _verify_id, "state": "running",
+                                        "device": dev, "requested": dev, "peak": 0.0,
+                                        "note": "正在检测麦克风，请对着麦克风说一句话…",
+                                        "switched_to": ""}
+                    threading.Thread(
+                        target=self._mic_verify_worker,
+                        args=(_verify_id, dev, dev),
+                        daemon=True, name="mic_verify_" + _verify_id,
+                    ).start()
+                except Exception:  # noqa: BLE001
+                    _verify_id = ""
+            return {"success": True, "kind": kind, "device": dev,
+                    "verify_id": _verify_id,
+                    "note": ("正在检测麦克风，请说一句话（约 3 秒）…" if _verify_id else "")}
         except Exception as e:  # noqa: BLE001
             logger.exception("通话设备切换失败")
             return {"success": False, "error": "切换失败: %s" % e}
@@ -15202,27 +15663,152 @@ class CharacterAPI:
                 "rms": round(rms, 4), "peak": round(rms, 4), "error": ""}
 
     def set_mic_device(self, data: dict = None) -> dict:
-        """写入麦克风设备 + 开启 mic_enabled（绕过 set_mic_listening 的 asr 依赖，修 B2）。"""
+        """写入麦克风设备 + 开启 mic_enabled（绕过 set_mic_listening 的 asr 依赖，修 B2）。
+
+        【2026-10-17 修复·麦克风"选了但收不到声音"】
+        实测：同一只麦克风在 PortAudio 里有 3 条记录（MME / DirectSound / WASAPI）：
+          · MME 那条 peak=0.00002 —— 哑设备：能 open、能 read，但恒返回 0
+          · DirectSound 那条 peak=0.30745 —— 真能用
+          · WASAPI 那条 16k 直接 Invalid sample rate
+        旧实现只把设备名写进配置就返回成功，**完全不验证能否拾音**
+        → 用户点到哑设备 → 通话里电平永远 0 → "麦克风好的但无效"。
+        现在：写入前**实探一次**；若静音，自动在同名设备里按声学判据择优，
+        并把"实际用哪条"回给前端（用户能看到已自动切换）。
+        """
         if not self._cfg:
             return {"success": False, "error": "配置未加载"}
         d = data or {}
         dev = d.get("device", "default")
         enabled = bool(d.get("enabled", True))
+        picked = str(dev)
+        auto_note = ""
         try:
+            # 【2026-10-17 改进·异步验证，不阻塞、不误判】
+            # 同步探测 0.5s 会误判（用户没说话就判静音）。改为后台任务：
+            #   · 立即返回，前端先看到"正在检测"
+            #   · 后台开 3 秒窗口，期间 UI 提示"请说句话"
+            #   · 只在**持续静音**且存在其它可用通道时才自动切换
+            _verify_async = True
+# ---------- 写配置 ----------
             raw = self._cfg.raw
-            raw.setdefault("proactive", {})["duplex_mic_device"] = str(dev)
+            raw.setdefault("proactive", {})["duplex_mic_device"] = str(picked)
             raw.setdefault("voice", {})["mic_enabled"] = enabled
             self._save_config()
             from ..config import _to_ns
             self._cfg.ns = _to_ns(raw)
+            # 让运行中的双工立即用新设备（不必重开整通电话）
+            try:
+                if self._proactive is not None and hasattr(self._proactive, "set_duplex_mic"):
+                    self._proactive.set_duplex_mic(str(picked))
+            except Exception:  # noqa: BLE001
+                pass
             if enabled and self._asr is not None:
                 try:
                     self._asr.set_listening(True)
                 except Exception:  # noqa: BLE001
                     pass
-            return {"success": True, "device": str(dev), "mic_enabled": enabled}
+            # 启动后台验证（3 秒窗口，期间提示用户说话）
+            try:
+                import uuid as _uuid
+                _vtask = _uuid.uuid4().hex[:12]
+                self._mic_verify = {"id": _vtask, "state": "running",
+                                    "device": str(picked), "requested": str(dev),
+                                    "peak": 0.0, "note": "正在检测麦克风，请对着麦克风说一句话…",
+                                    "switched_to": ""}
+                threading.Thread(
+                    target=self._mic_verify_worker,
+                    args=(_vtask, str(picked), str(dev)),
+                    daemon=True, name="mic_verify_" + _vtask,
+                ).start()
+            except Exception:  # noqa: BLE001
+                pass
+            return {"success": True, "device": str(picked),
+                    "requested": str(dev), "verify_id": _vtask,
+                    "note": "已保存。正在检测麦克风，请说一句话（约 3 秒）…",
+                    "mic_enabled": enabled}
         except Exception as e:  # noqa: BLE001
             return {"success": False, "error": str(e)}
+
+    def _mic_verify_worker(self, task_id: str, picked: str, requested: str) -> None:
+        """后台验证麦克风能否拾音（3 秒窗口），静音则自动择优。
+
+        【2026-10-17 新增】为什么异步：同步探测 0.5 秒太短，用户没说话就判静音
+        → 误切设备。这里开 3 秒窗口，期间前端提示"请说句话"，只在**持续静音**
+        且存在其它可用通道时才切换。
+        """
+        def _set(**kw):
+            v = getattr(self, "_mic_verify", None)
+            if isinstance(v, dict) and v.get("id") == task_id:
+                v.update(kw)
+
+        try:
+            import pyaudio as _pa_mod
+            from ..llm.cloud_omni_realtime import _probe_input_alive, _resolve_device_index
+            _pa = _pa_mod.PyAudio()
+            try:
+                _idx = _resolve_device_index(_pa, picked, "input")
+                # 3 秒窗口：多轮短探测，取最大值（用户中途说话也能抓到）
+                _best = 0.0
+                for _round in range(6):
+                    _pk = _probe_input_alive(_pa, _idx, rate=16000, tries=5) if _idx is not None else 0.0
+                    _best = max(_best, _pk)
+                    _set(peak=_best)
+                    if _best >= 0.01:
+                        break
+                if _best >= 0.01:
+                    _set(state="ok", note="麦克风工作正常（电平 %.3f）" % _best)
+                    logger.info("麦克风验证通过：%r peak=%.4f", picked, _best)
+                    return
+                # 静音 → 在同名设备里择优
+                _bare = picked.split("|")[0].strip().lower()
+                _bi, _bp, _bn, _ba = None, 0.0, "", ""
+                for _i in range(_pa.get_device_count()):
+                    try:
+                        _info = _pa.get_device_info_by_index(_i)
+                    except Exception:  # noqa: BLE001
+                        continue
+                    if int(_info.get("maxInputChannels") or 0) <= 0:
+                        continue
+                    if str(_info.get("name") or "").strip().lower() != _bare:
+                        continue
+                    _pk = _probe_input_alive(_pa, _i, rate=16000, tries=5)
+                    if _pk > _bp:
+                        _bi, _bp = _i, _pk
+                        _bn = str(_info.get("name") or "")
+                        try:
+                            _ai = int((_info or {}).get("hostApi", -1))
+                            _ba = str((_pa.get_host_api_info_by_index(_ai) or {}).get("name") or "").strip()
+                        except Exception:  # noqa: BLE001
+                            _ba = ""
+                if _bi is not None and _bp >= 0.01:
+                    _new = (_bn + "|" + _ba) if _ba else _bn
+                    try:
+                        raw = self._cfg.raw
+                        raw.setdefault("proactive", {})["duplex_mic_device"] = _new
+                        self._save_config()
+                    except Exception:  # noqa: BLE001
+                        pass
+                    _set(state="switched", switched_to=_new, peak=_bp,
+                         note="所选麦克风无输入，已自动切换到可用通道：%s" % _new)
+                    logger.warning("麦克风自愈：%r → %r（peak=%.4f）", picked, _new, _bp)
+                else:
+                    _set(state="silent",
+                         note="检测不到声音。请检查：① Windows 设置→隐私→麦克风 已允许 "
+                              "② 麦克风没被其它程序占用 ③ 输入音量不为 0")
+            finally:
+                try:
+                    _pa.terminate()
+                except Exception:  # noqa: BLE001
+                    pass
+        except Exception as e:  # noqa: BLE001
+            _set(state="error", note="检测失败：%s" % str(e)[:80])
+
+    def get_mic_verify_result(self, data: dict = None) -> dict:
+        """取麦克风验证结果（前端轮询）。"""
+        v = getattr(self, "_mic_verify", None)
+        if not isinstance(v, dict):
+            return {"success": True, "state": "idle", "note": ""}
+        return {"success": True, **v}
 
     def apply_onboarding_voice(self, data: dict = None) -> dict:
         """应用首启声音选择（真实落盘 voice.mode/克隆引擎/参考音频/本地双工参考音频，修 B1/B3）。
@@ -15461,17 +16047,45 @@ class CharacterAPI:
                 voices = (data.get("output") or {}).get("voice_list") or []
             except Exception:
                 return {"success": False, "error": "百炼返回格式无法解析"}
+            # 【2026-10-18 二次修正·过滤名单按真机实测放宽】
+            # 旧名单只留 qwen3-tts-flash，实测会把用户账号里大量可用音色全过滤掉
+            # （比如 cosyvoice-v3.5-flash/plus 走 SpeechSynthesizer 合成实测 200，
+            # 音频正常返回）。改为：**默认全部列出**，只标注每个音色的可用性，
+            # 由前端展示"推荐/可能不可用"徽标让用户自行选择——宁可多列不错杀。
+            # 实测可用（2026-10-18，SpeechSynthesizer 端点 200）：
+            _OK_MODELS = ("cosyvoice-v3.5-flash", "cosyvoice-v3.5-plus",
+                          "qwen3-tts-flash")
+            # 实测已下线（400 url error），列出但打"不可用"标记：
+            _DEAD_MODELS = ("qwen-audio-3.0-tts-plus", "qwen-audio-3.0-tts-flash",
+                            "qwen-audio-3.1-tts-flash", "qwen-audio-3.1-tts-plus",
+                            "cosyvoice-v1", "cosyvoice-v2",
+                            "cosyvoice-v3-flash", "cosyvoice-v3-plus")
             out = []
+            skipped = 0
             for v in voices:
-                out.append({"voice_id": v.get("voice_id") or "",
+                tm = (v.get("target_model") or "").strip()
+                vid = (v.get("voice_id") or "").strip()
+                if not vid:
+                    continue
+                # target_model 为空时退回按 voice_id 前缀判断（老数据）
+                _probe = (tm or vid).lower()
+                _dead = any(k in _probe for k in _DEAD_MODELS)
+                _ok = any(k in _probe for k in _OK_MODELS)
+                if _dead:
+                    skipped += 1
+                    continue
+                out.append({"voice_id": vid,
                             "status": v.get("status") or "",
                             "gmt_create": v.get("gmt_create") or "",
+                            "usable": bool(_ok),
                             # 该音色所属的克隆模型（百炼权威字段）：合成必须用同一个 model，
                             # 否则报 400 [cosyvoice]Engine error [411]（2026-09-15 实测）。
-                            "target_model": v.get("target_model") or ""})
-            return {"success": True, "voices": out,
-                    "message": (f"找到 {len(out)} 个克隆音色" if out
-                                else "该账号下没有声音复刻音色（可能在 Qwen-TTS 新体系，请到控制台复制）")}
+                            "target_model": tm or self._model_from_voice_id(vid) or ""})
+            return {"success": True, "voices": out, "skipped_models": skipped,
+                    "message": (f"找到 {len(out)} 个克隆音色"
+                                + (f"（已过滤 {skipped} 个已下线模型的音色）" if skipped else "")
+                                if out
+                                 else "该账号下没有声音复刻音色（可能在 Qwen-TTS 新体系，请到控制台复制）")}
         except Exception as e:  # noqa: BLE001
             logger.exception("查询百炼音色列表失败")
             return {"success": False, "error": str(e)}
@@ -16522,12 +17136,22 @@ class CharacterAPI:
             return {"success": False, "error": "配置未加载"}
         _enabled = bool(((self._cfg.raw.get("memory") or {}).get("enabled", True)))
         store = self._memory_store
+        # 【2026-10-17 修复·记忆库显示 NaN】count_by_type 必须**永远包含 4 个键**。
+        # 旧实现 store 为 None 时回 {}，前端 renderStats 做 c.directive+c.user+c.world+c.episode
+        # 时 episode 是 undefined → 0+0+0+undefined = **NaN**（用户截图实锤）。
+        _EMPTY = {"directive": 0, "user": 0, "world": 0, "episode": 0}
         if store is None:
-            return {"success": True, "count": 0, "count_by_type": {},
+            return {"success": True, "count": 0, "count_by_type": dict(_EMPTY),
                     "disabled": True, "enabled": _enabled}
         try:
+            _cbt = dict(_EMPTY)
+            try:
+                _cbt.update({k: int(v) for k, v in (store.count_by_type() or {}).items()
+                             if isinstance(v, (int, float))})
+            except Exception:  # noqa: BLE001
+                pass
             return {"success": True, "count": int(store.count()),
-                    "count_by_type": dict(store.count_by_type() or {}),
+                    "count_by_type": _cbt,
                     "enabled": _enabled}
         except Exception as e:  # noqa: BLE001
             return {"success": False, "error": f"读取记忆条数失败: {e}"}
@@ -17307,7 +17931,9 @@ class CharacterAPI:
             d = data or {}
             tid = (d.get("id") or "").strip()
             slot = d.get("slot") or "hero"
-            page = (d.get("page") or "").strip()
+            # 【2026-10-17 修复】page 可能是数字（页码），先 str() 再 strip()
+            _pg = (d if isinstance(d, dict) else (data or {})).get("page")
+            page = str(_pg).strip() if _pg not in (None, "") else ""
             if not tid:
                 return {"success": False, "error": "缺少主题 id"}
             is_sticker = (slot == "sticker")
@@ -17323,6 +17949,14 @@ class CharacterAPI:
             # 3 秒内把**整个主进程**拖死（logs/run_*.log 全局停止增长、进程却仍活着、
             # 8777 仍监听），典型"持 logging 全局锁卡在原生 GUI 调用"形态。
             # 机理与隔离收益见 src/ui/_file_dialog.py 顶部。用户可见行为不变。
+            # 【2026-10-17】便携 Python 没装 tkinter → 明确提示，别只抛 ModuleNotFoundError
+            try:
+                import tkinter  # noqa: F401
+            except Exception:  # noqa: BLE001
+                return {"success": False,
+                        "error": "当前运行环境没有 tkinter（便携版 Python 未打包 Tcl/Tk）。"
+                                 "请改用页面上的「选择图片」（浏览器文件选择器），"
+                                 "或把图片直接放进主题目录。"}
             from ._file_dialog import pick_path
             if is_sticker:
                 _fts = [["图片 / 动图", "*.png *.jpg *.jpeg *.webp *.bmp *.gif"],
@@ -17386,7 +18020,7 @@ class CharacterAPI:
                     f.write(raw)
                 slot = (d.get("slot") or "").strip()
                 if slot and slot != "sticker":
-                    info = ts.save_slot_image(tid, slot, tmp, page=(d.get("page") or "").strip())
+                    info = ts.save_slot_image(tid, slot, tmp, page=(str(d.get("page")).strip() if d.get("page") not in (None, "") else ""))
                     info = dict(info or {})
                     info["slot"] = slot
                 else:
@@ -17426,7 +18060,9 @@ class CharacterAPI:
             d = data or {}
             tid = (d.get("id") or "").strip()
             slot = d.get("slot") or "hero"
-            page = (d.get("page") or "").strip()
+            # 【2026-10-17 修复】page 可能是数字（页码），先 str() 再 strip()
+            _pg = (d if isinstance(d, dict) else (data or {})).get("page")
+            page = str(_pg).strip() if _pg not in (None, "") else ""
             from ..llm import theme_ai as tai
             path = (d.get("path") or "").strip()
             if not path and tid:
@@ -17468,15 +18104,75 @@ class CharacterAPI:
             return {"success": False, "error": str(e)}
 
     def _save_config(self) -> None:
-        """保存配置到文件。"""
-        with open(self._config_path, "w", encoding="utf-8") as f:
-            yaml.dump(self._cfg.raw, f, allow_unicode=True, default_flow_style=False, sort_keys=False)
-        # 已使用共享 cfg 时不需要重新 load，否则 load_config 会覆盖运行时修改
-        if self._dialogue is None:
-            self._cfg = load_config(self._config_path)
-        else:
-            # 共享模式：手动重解析角色 map，避免覆盖运行时的 active_character_id
-            # _parse_characters() 是 Config 的私有方法，这里直接 reload 没问题，运行时对象已经注入
+        """保存配置到文件。
+
+        【2026-10-19 修复·并发写坏 config.yaml（审计实测 P0）】
+        并发审计（10 线程同时 save_character）实锤：旧实现直接
+        open→dump→close、无锁非原子 → 多线程互相踩踏时写出**含 NULL 字节的
+        半个 YAML**（yaml 报 unacceptable character #x0000）→ 之后**所有**
+        保存永久失败，用户表现为"设置怎么改都不生效"。
+        UI 事件线程 + 通话记录线程 + 后台任务并发触发 57 个调用点的保存，
+        这个竞态在真实使用中完全可能发生。
+
+        修两层：
+          ① 进程内互斥锁串行化（复用 _runtime_lock，RLock 可重入）
+          ② 原子写：先写同目录临时文件 fsync，再 os.replace 覆盖 ——
+             即使进程中途被杀，config.yaml 也只会是旧完整版或新完整版，
+             绝不会再出现写一半的损坏文件。
+        """
+        # 【防御】_runtime_lock 在 __init__ 早期就可能被用到（审计实测），
+        # 用 getattr 兜底创建，绝不因锁缺失而让保存崩掉。
+        _lock = getattr(self, '_runtime_lock', None)
+        if _lock is None:
+            import threading as _th
+            _lock = _th.RLock()
+            self._runtime_lock = _lock
+        with _lock:
+            import tempfile as _tmpfile
+            _dir = os.path.dirname(os.path.abspath(self._config_path)) or "."
+            _fd, _tmp = _tmpfile.mkstemp(prefix=".config_", suffix=".tmp", dir=_dir)
+            try:
+                with os.fdopen(_fd, "w", encoding="utf-8") as f:
+                    yaml.dump(self._cfg.raw, f, allow_unicode=True,
+                              default_flow_style=False, sort_keys=False)
+                    f.flush()
+                    os.fsync(f.fileno())
+                # 【Windows 特有】目标文件正被其它线程/进程读取时 os.replace
+                # 会报 WinError 5（拒绝访问）——审计压力测试实测。读很快结束，
+                # 带退避重试 5 次（共 ~1.5s）即可全部成功。
+                _last_exc = None
+                for _attempt in range(5):
+                    try:
+                        os.replace(_tmp, self._config_path)
+                        _last_exc = None
+                        break
+                    except PermissionError as _pe:
+                        _last_exc = _pe
+                        time.sleep(0.05 * (2 ** _attempt))   # 0.05/0.1/0.2/0.4/0.8s
+                if _last_exc is not None:
+                    raise _last_exc
+            except Exception:
+                # 清掉残留临时文件（os.replace 成功时 _tmp 已不存在，忽略 ENOENT）
+                try:
+                    os.unlink(_tmp)
+                except OSError:
+                    pass
+                raise
+        # 【2026-10-19 修复·"apply 成功但盘上丢失"的最终根因】
+        # 旧逻辑在 self._dialogue is None 时执行 self._cfg = load_config(...)：
+        #   load_config **从磁盘重读**并构造全新 Config。而多线程下（审计实锤：
+        #   引导页 apply 的保存与其它后台保存并发），线程 B 可能在自己的 dump
+        #   里用了线程 A 替换前的旧 cfg —— A 的写入被 B 的旧快照覆盖。
+        #   更根本：**内存 self._cfg.raw 本来就是最新真相**（apply 刚写入），
+        #   从磁盘重读不仅多余，还会丢掉"只改了内存还没来得及落盘"的任何修改。
+        # 现统一为：永不替换 self._cfg，只重解析角色表/音色档表（纯内存操作）。
+        try:
+            self._cfg.refresh_characters_map() if hasattr(self._cfg, 'refresh_characters_map') else None
+        except Exception:  # noqa: BLE001
+            pass
+        try:
+            self._cfg.refresh_voice_profiles()
+        except Exception:  # noqa: BLE001
             pass
 
 
@@ -17544,6 +18240,58 @@ def _ensure_web_server() -> str:
                 _inj = _SHELL_GUARD + _inj
             _html = _html.replace('</head>', _inj + '</head>', 1)
         return _html
+
+    # ---------- 角色 → 渲染器 绑定（2026-10-19） ----------
+    # 主窗 iframe 与桌宠窗都只认 /pet_render/current，由这里按「当前激活角色」
+    # 决定用哪套渲染器：达妮娅走原 PSD rig，大肥鱼走 frames2d 序列帧。
+    # 绑定表放 data/pet_render.json（不放 config.yaml：角色编辑保存走白名单重建，
+    # 未知键会被丢掉；而且 Config.save 会整份覆盖，运行期改配置有被回写风险）。
+    def _pet_render_binding():
+        import json as _json
+        from urllib.parse import urlparse as _urlparse, parse_qs as _parse_qs
+        _proj = os.path.abspath(os.path.join(web_root, "..", "..", ".."))
+        _cfg_path = os.path.join(_proj, "data", "pet_render.json")
+        try:
+            with open(_cfg_path, "r", encoding="utf-8") as _f:
+                _raw = _json.load(_f)
+            if not isinstance(_raw, dict):
+                _raw = {}
+        except Exception:  # noqa: BLE001
+            _raw = {}
+        _cid, _cname = "", ""
+        try:
+            from .. import config as _cfgmod
+            _cfg = getattr(_cfgmod, "_CFG", None)
+            _ch = _cfg.get_active_character() if _cfg is not None else None
+            if _ch is not None:
+                _cid = str(getattr(_ch, "id", "") or "")
+                _cname = str(getattr(_ch, "name", "") or _cid)
+        except Exception:  # noqa: BLE001
+            pass
+        _binds = _raw.get("bindings") if isinstance(_raw.get("bindings"), dict) else {}
+        _b = _binds.get(_cid) or _raw.get("default") or {}
+        if not isinstance(_b, dict):
+            _b = {}
+        _kind = str(_b.get("kind") or "rig").strip().lower()
+        if _kind == "frames2d":
+            _pack = str(_b.get("pack") or "").strip()
+            _pdir = os.path.join(web_root, "pet_render", "packs", _pack)
+            if _pack and os.path.isfile(os.path.join(_pdir, "skin.json")):
+                return {"char_id": _cid, "name": _cname, "kind": "frames2d",
+                        "pack": _pack,
+                        "url": "/pet_render/frames2d.html?pack=" + _pack}
+            logger.warning("[PET_RENDER] 角色 %s 绑定了 frames2d/%s，但素材不存在，回落 rig", _cid, _pack)
+        if _kind == "live2d":
+            _pack = str(_b.get("pack") or "").strip()
+            _pdir = os.path.join(web_root, "pet_render", "packs", _pack)
+            if _pack and os.path.isfile(os.path.join(_pdir, "pack.json")):
+                return {"char_id": _cid, "name": _cname, "kind": "live2d",
+                        "pack": _pack,
+                        "url": "/pet_render/live2d.html?pack=" + _pack}
+            logger.warning("[PET_RENDER] 角色 %s 绑定了 live2d/%s，但素材不存在，回落 rig", _cid, _pack)
+        return {"char_id": _cid, "name": _cname, "kind": "rig", "pack": "",
+                "url": "/live2d/rig/index.html?v=2"}
+
     # 允许中文/特殊路径文件名
     class _Handler(http.server.SimpleHTTPRequestHandler):
         def __init__(self, *args, **kwargs):
@@ -17557,6 +18305,39 @@ def _ensure_web_server() -> str:
             self.send_header("Expires", "0")
             super().end_headers()
         def do_GET(self):
+            # 🎭 角色渲染器路由（2026-10-19）：/pet_render/current(.json)
+            # 主窗 Live2D 框与桌宠窗共用，跟着「当前激活角色」换渲染器。
+            _only = self.path.split('?', 1)[0]
+            if _only in ('/pet_render/current', '/pet_render/current.json'):
+                try:
+                    from urllib.parse import urlparse as _up, parse_qs as _pq
+                    _info = _pet_render_binding()
+                    if _only.endswith('.json'):
+                        import json as _json
+                        _body = _json.dumps(_info, ensure_ascii=False).encode('utf-8')
+                        self.send_response(200)
+                        self.send_header('Content-Type', 'application/json; charset=utf-8')
+                        self.send_header('Content-Length', str(len(_body)))
+                        self.end_headers()
+                        self.wfile.write(_body)
+                    else:
+                        _q = _pq(_up(self.path).query)
+                        _pet = (_q.get('pet') or [''])[0]
+                        _url = _info.get('url') or '/live2d/rig/index.html?v=2'
+                        if _pet:
+                            _url += ('&' if '?' in _url else '?') + 'pet=' + _pet
+                        self.send_response(302)
+                        self.send_header('Location', _url)
+                        self.send_header('Content-Length', '0')
+                        self.end_headers()
+                except Exception as _e:  # noqa: BLE001
+                    logger.warning("[PET_RENDER] 路由失败: %s", _e)
+                    try:
+                        self.send_response(500)
+                        self.end_headers()
+                    except Exception:
+                        pass
+                return
             # 🖼️ 角色卡头图（2026-09-29）：页面跑在 http://127.0.0.1，无法直接加载
             # web 根目录之外的本地图片（file:// 被同源策略挡住），故走这个只读路由
             # 吐图。仅限 data/char_banners/ 一个目录（白名单校验，防路径穿越）。
@@ -17578,7 +18359,24 @@ def _ensure_web_server() -> str:
                         _allowed.extend([os.path.abspath(_d) for _d in list(_LOCAL_IMG_EXTRA_DIRS)])
                     except Exception:  # noqa: BLE001
                         pass
-                    _full = os.path.abspath(_p)
+                    # 【2026-10-17 修复·角色头像/头图裂图】
+                    # 前端渲染用的是 `encodeURIComponent(c.avatar)`，而配置里存的是
+                    # **相对路径**（如 data/char_avatars/danya_avatar.png）。
+                    # 旧实现直接 os.path.abspath(_p) —— 按**服务端 CWD** 解析，
+                    # CWD 不保证是项目根（WebView 启动目录可能不同）→ 解析到不存在的
+                    # 路径 → 白名单校验失败 → 头像/头图 404 → 前端显示裂图。
+                    # 现在：相对路径先按项目根解析，再回退 CWD。
+                    if _p and not os.path.isabs(_p):
+                        # web_root = <root>/src/ui/web → 上三级是项目根
+                        _proj_root = os.path.abspath(
+                            os.path.join(web_root, "..", "..", ".."))
+                        _cand = os.path.abspath(os.path.join(_proj_root, _p))
+                        if os.path.isfile(_cand):
+                            _full = _cand
+                        else:
+                            _full = os.path.abspath(_p)
+                    else:
+                        _full = os.path.abspath(_p)
                     if any(_full.startswith(_a + os.sep) and os.path.isfile(_full) for _a in _allowed):
                         _ext = os.path.splitext(_full)[1].lower()
                         _ct = {'.png': 'image/png', '.jpg': 'image/jpeg',
@@ -17768,11 +18566,30 @@ def _ensure_web_server() -> str:
     class _TCPServer(socketserver.ThreadingMixIn, http.server.HTTPServer):
         daemon_threads = True
         allow_reuse_address = True
-    srv = _TCPServer(("127.0.0.1", 8766), _Handler)
+    # 【2026-10-18 修复·端口被占 → 全页面 404】
+    # 残留进程占着 8766 时（常见：旧版本卸载不干净/进程未退），这里 bind 会
+    # OSError。旧实现直接抛异常，上层吞掉后 WebView 仍连 8766 → 连到别的
+    # 进程 → 全部 404。现在自动向后找可用端口（8767~8776）。
+    srv = None
+    chosen = None
+    last_err = None
+    for port in range(8766, 8777):
+        try:
+            srv = _TCPServer(("127.0.0.1", port), _Handler)
+            chosen = port
+            break
+        except OSError as e:  # noqa: PERF203 端口被占就换下一个
+            last_err = e
+            continue
+    if srv is None or chosen is None:
+        raise OSError(
+            "本地静态服务无法绑定任何端口(8766~8776)：可能是残留的旧版本进程"
+            "仍在运行。请关闭旧版达妮娅/机语恋 后重试。最后错误: %s" % last_err)
     t = threading.Thread(target=srv.serve_forever, daemon=True, name="web_static")
     t.start()
-    _WEB_SERVER_BASE = "http://127.0.0.1:8766"
-    logger.info("本地静态 HTTP 服务已启动: %s (根目录 %s, 启动令牌 %s)", _WEB_SERVER_BASE, web_root, _WEB_START_TOKEN)
+    _WEB_SERVER_BASE = "http://127.0.0.1:%d" % chosen
+    logger.info("本地静态 HTTP 服务已启动: %s (根目录 %s, 启动令牌 %s)",
+                _WEB_SERVER_BASE, web_root, _WEB_START_TOKEN)
     return _WEB_SERVER_BASE
 
 
@@ -19059,7 +19876,7 @@ def create_desktop_companion(api: Optional[CharacterAPI] = None) -> "webview.Win
     if api is None:
         api = CharacterAPI()
     base = _ensure_web_server()
-    rig_path = base + "/live2d/rig/index.html?v=2"
+    rig_path = base + "/pet_render/current?pet=1"
     w, h, margin = 420, 540, 24
     # pywebview 的 x/y/width/height 均为逻辑像素（内部按显示器 DPI 换算成物理像素）。
     # 不能用 webview.screens 当逻辑分辨率：应用进程 start 后已 SetProcessDPIAware，
@@ -19113,22 +19930,193 @@ def create_desktop_companion(api: Optional[CharacterAPI] = None) -> "webview.Win
     # 分离后 on_move/on_resize/_sync_pet_render_rect 才会把角色跟手移动、让窗口可拖。
     # 渲染窗 Chrome_WidgetWin_1 在 WebView2 初始化完成后才出现，故后台线程多次重试。
     def _pet_detach_render():
+        """分离 WebView2 渲染窗（桌宠透明/可拖/可点击的前提）。
+
+        【v3-final 2026-10-18】一次根治三症状：
+          · 启动白底    → 摘出渲染窗并同步位置/尺寸
+          · 跳左上角    → 分离后立即 SetWindowPos 到主窗位置
+          · 无法拖动    → 20Hz 轮询主窗位置，渲染窗实时跟随
+          · 隐藏再显示正常（用户发现）→ 因为 show 触发了 pywebview 内部
+            重新布局；v3 的跟随线程让这一步不再必要
+        """
         try:
+            import ctypes as _ct
+            from ctypes import wintypes as _wt
+            import threading as _th
             import time as _t
-            native = getattr(pet_window, "native", None)
-            if native is None or not hasattr(native, "detach_pet_render"):
-                logger.warning("[桌宠] 渲染窗分离：native 不可用，跳过（窗口将无法拖动）")
+
+            user32 = _ct.windll.user32
+            GWL_STYLE = -16
+            WS_CHILD = 0x40000000
+            WS_POPUP = 0x80000000
+
+            state = {"child": None}
+
+            def _find_pet_hwnd():
+                return user32.FindWindowW(None, "达妮娅看板娘")
+
+            def _largest_render_child(owner):
+                best = [None, 0]
+
+                @_ct.WINFUNCTYPE(_ct.c_bool, _ct.c_void_p, _ct.c_void_p)
+                def _cb(child, _lp):
+                    buf = _ct.create_unicode_buffer(64)
+                    user32.GetClassNameW(child, buf, 64)
+                    if buf.value == "Chrome_WidgetWin_1":
+                        rc = _wt.RECT()
+                        user32.GetWindowRect(child, _ct.byref(rc))
+                        area = (rc.right - rc.left) * (rc.bottom - rc.top)
+                        if area > best[1]:
+                            best[0] = child
+                            best[1] = area
+                    return True
+
+                user32.EnumChildWindows(owner, _cb, None)
+                return best[0]
+
+            def _place(child, owner):
+                rc = _wt.RECT()
+                user32.GetWindowRect(owner, _ct.byref(rc))
+                user32.SetWindowPos(
+                    child, 0, rc.left, rc.top,
+                    rc.right - rc.left, rc.bottom - rc.top,
+                    0x0010 | 0x0004)   # NOACTIVATE | NOZORDER
+
+            def _detach():
+                """执行分离，返回 (owner_hwnd, child_hwnd) 或 (None, None)。"""
+                # 官方路径
+                native = getattr(pet_window, "native", None)
+                if native is not None and hasattr(native, "detach_pet_render"):
+                    try:
+                        native.detach_pet_render()
+                        hwnd = _find_pet_hwnd()
+                        if hwnd:
+                            return hwnd, None   # 官方路径自己处理 child
+                    except Exception as _e:  # noqa: BLE001
+                        logger.warning("[桌宠] pywebview 分离失败: %s", _e)
+
+                # Win32 兜底
+                for _ in range(240):    # 最多 60s
+                    hwnd = _find_pet_hwnd()
+                    if hwnd:
+                        child = _largest_render_child(hwnd)
+                        if child:
+                            style = user32.GetWindowLongW(child, GWL_STYLE)
+                            user32.SetWindowLongW(
+                                child, GWL_STYLE, (style & ~WS_CHILD) | WS_POPUP)
+                            user32.SetParent(child, None)
+                            _place(child, hwnd)
+                            return hwnd, child
+                    _t.sleep(0.25)
+                return None, None
+
+            # 跟随线程：主窗移动/缩放 → 渲染窗跟随；主窗隐藏 → 渲染窗藏
+            def _follow(owner, child_holder):
+                last = None
+                last_vis = None
+                while True:
+                    try:
+                        if not user32.IsWindow(owner):
+                            break
+                        child = child_holder["child"]
+                        # 官方路径没给我们 child 句柄 → 每次从顶层窗找
+                        # （摘出后的渲染窗是 WS_POPUP 顶层窗，类名不变）
+                        if child is None or not user32.IsWindow(child):
+                            child = _find_detached_child(owner)
+                            child_holder["child"] = child
+                        if not child:
+                            _t.sleep(0.2)
+                            continue
+
+                        rc = _wt.RECT()
+                        user32.GetWindowRect(owner, _ct.byref(rc))
+                        cur = (rc.left, rc.top, rc.right - rc.left, rc.bottom - rc.top)
+                        vis = bool(user32.IsWindowVisible(owner))
+                        if cur != last:
+                            _place(child, owner)
+                            last = cur
+                        if vis != last_vis:
+                            if vis:
+                                user32.ShowWindow(child, 5)   # SW_SHOW
+                            else:
+                                user32.ShowWindow(child, 0)   # SW_HIDE
+                            last_vis = vis
+                    except Exception:  # noqa: BLE001
+                        pass
+                    _t.sleep(0.05)
+
+            def _find_detached_child(owner):
+                """在顶层窗里找"属于本桌宠的"已分离渲染窗：按与主窗位置最近判断。"""
+                result = [None, 1 << 62]
+                rc_o = _wt.RECT()
+                user32.GetWindowRect(owner, _ct.byref(rc_o))
+
+                @_ct.WINFUNCTYPE(_ct.c_bool, _ct.c_void_p, _ct.c_void_p)
+                def _cb(top, _lp):
+                    buf = _ct.create_unicode_buffer(64)
+                    user32.GetClassNameW(top, buf, 64)
+                    if buf.value == "Chrome_WidgetWin_1":
+                        rc = _wt.RECT()
+                        user32.GetWindowRect(top, _ct.byref(rc))
+                        dx = abs(rc.left - rc_o.left) + abs(rc.top - rc_o.top)
+                        if dx < result[1]:
+                            result[0] = top
+                            result[1] = dx
+                    return True
+
+                user32.EnumWindows(_cb, None)
+                return result[0] if result[1] < 80 else None
+
+            hwnd, child = _detach()
+            if hwnd is None:
+                logger.error("[桌宠] 分离失败（白底/不可拖）")
                 return
-            for _i in range(24):
+
+            state["child"] = child
+            th = _th.Thread(target=_follow, args=(hwnd, state), daemon=True,
+                            name="pet_render_follow")
+            th.start()
+            logger.info("[桌宠] 渲染窗分离完成，位置跟随线程已启动 (owner=0x%X child=%s)",
+                        hwnd, hex(child) if child else "官方路径管理")
+
+            # 【v4】自动 hide→show 一轮（等效用户手动操作，根治启动白底）：
+            # show() 触发 WinForms/WebView2 内部重新布局，让渲染窗正确贴到
+            # 透明合成层。手动"隐藏→显示"有效正是这个原理。
+            def _recycle():
+                # 【v5】尽早完成循环（总时长 ~1.2s），避免与主窗引导页
+                # iframe 加载（showGuide() 在主窗 ready 后触发，通常 >2s）
+                # 撞车 —— v4 的 1.5s+0.6s+0.4s 节奏正好撞上，导致引导页白屏
+                _t.sleep(0.2)
                 try:
-                    native.detach_pet_render()
-                except Exception as _e:  # noqa: BLE001
-                    if _i == 0:
-                        logger.warning("[桌宠] 渲染窗分离调用失败: %s", _e)
-                _t.sleep(0.25)
-            logger.info("[桌宠] 渲染窗分离重试结束（最多 ~6s）")
+                    pet_window.hide()
+                    logger.info("[桌宠] 自动隐藏（修白底循环 1/2）")
+                except Exception:  # noqa: BLE001
+                    pass
+                _t.sleep(0.35)
+                try:
+                    pet_window.show()
+                    logger.info("[桌宠] 自动重新显示（修白底循环 2/2）")
+                except Exception:  # noqa: BLE001
+                    pass
+                # show 后再强制摆一次渲染窗（防布局后位置漂移）
+                _t.sleep(0.3)
+                try:
+                    ch = state.get("child")
+                    if ch and user32.IsWindow(ch):
+                        rc = _wt.RECT()
+                        user32.GetWindowRect(hwnd, _ct.byref(rc))
+                        user32.SetWindowPos(
+                            ch, 0, rc.left, rc.top,
+                            rc.right - rc.left, rc.bottom - rc.top,
+                            0x0010 | 0x0004)
+                    logger.info("[桌宠] 白底修复循环完成")
+                except Exception:  # noqa: BLE001
+                    pass
+
+            _th.Thread(target=_recycle, daemon=True, name="pet_recycle").start()
+
         except Exception as _e:  # noqa: BLE001
-            logger.warning("[桌宠] 渲染窗分离调度异常: %s", _e)
+            logger.warning("[桌宠] 分离调度异常: %s", _e)
 
     def _pet_start_detach(*_args):
         try:

@@ -744,8 +744,65 @@ const ThemeManager = (() => {
     return r;
   }
   /* 选文件 → 后端复制落盘 → 写进工作副本 → 应用（不落盘 themes.json，等"保存"） */
+  /* 【2026-10-17 修复·导入图片无反应】
+     旧实现直接 call('tPick') → 后端用 tkinter 弹系统文件框；
+     而随包分发的便携 Python **没有 tkinter**（安装时 Include_tcltk=0）
+     → 后端返回 "No module named 'tkinter'" → 用户点「选择图片」毫无反应。
+
+     现在改成：前端用隐藏的 <input type="file"> 选图（WebView2 原生支持），
+     读成 dataURL 后走 tStickerDrop（后端本来就支持 base64 + slot 填图位）。
+     tkinter 路径保留为兜底（有 tkinter 的环境仍可用）。 */
+  function _pickViaFileInput(slot, page) {
+    return new Promise((resolve) => {
+      const inp = document.createElement('input');
+      inp.type = 'file';
+      inp.accept = 'image/*,.gif,.webp';
+      inp.style.display = 'none';
+      document.body.appendChild(inp);
+      let settled = false;
+      const done = (v) => {
+        if (settled) return;
+        settled = true;
+        try { inp.remove(); } catch (e) {}
+        resolve(v);
+      };
+      inp.onchange = () => {
+        const f = inp.files && inp.files[0];
+        if (!f) { done(null); return; }
+        const fr = new FileReader();
+        fr.onload = () => done({ dataUrl: String(fr.result || ''), name: f.name });
+        fr.onerror = () => done(null);
+        fr.readAsDataURL(f);
+      };
+      // 用户取消（不会触发 change）→ 兜底超时
+      setTimeout(() => done(null), 120000);
+      inp.click();
+    });
+  }
+
   async function pickImage(themeId, slot, page) {
-    const r = await call('tPick', { id: themeId, slot, page: page || '' });
+    let r = null;
+    // ① 优先：浏览器文件选择器 + base64（不依赖 tkinter）
+    try {
+      const picked = await _pickViaFileInput(slot, page);
+      if (picked && picked.dataUrl) {
+        r = await call('tStickerDrop', {
+          id: themeId,
+          slot: slot || '',
+          page: page || '',
+          b64: picked.dataUrl,
+          name: picked.name || 'image.png',
+        });
+      }
+    } catch (e) {
+      r = null;
+    }
+    // ② 兜底：后端 tkinter 弹框（有 tkinter 的环境才可用）
+    if (!r || !r.success) {
+      const r2 = await call('tPick', { id: themeId, slot, page: page || '' });
+      if (r2 && r2.success) r = r2;
+      else if (!r) r = r2;
+    }
     if (!r || !r.success) {
       if (r && r.error) toast(r.error, 'err');
       return r;

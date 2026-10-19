@@ -1424,7 +1424,7 @@ def _wait(seconds: float) -> str:
 # 浏览器 / 搜索代理：browser-use + duckduckgo_search（开源）
 # --------------------------------------------------------------------------
 # 这些重依赖（browser-use 把 openai 锁在 2.26.0，与主程序冲突）装进独立 venv：
-#   G:/ai对话/11/agent_venv   （见 agent_runner.py）
+#   agent_venv   （见 agent_runner.py）
 # 主程序（系统 Python）不 import 它们，而是把任务交给 venv 的 python 跑 agent_runner.py，
 # 经环境变量传入 LLM 配置，结果用 `BUW_RESULT_JSON ` 前缀的一行回传，避免日志噪声污染解析。
 _AGENT_RUNNER_MARK = "BUW_RESULT_JSON "

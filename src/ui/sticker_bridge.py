@@ -30,10 +30,18 @@ logger = logging.getLogger(__name__)
 
 # 技能包位置：优先环境变量，其次与主程序同级目录，最后几个常见位置
 _ENV_KEY = "DANIYA_STICKER_DIR"
+# 【2026-10-17 修复·硬编码开发机路径】旧候选写死了作者本机的绝对路径
+# （作者本机旧路径），分发给别人后**一个都命中不了** →
+# 表情包功能完全不可用（用户看到"预载的表情包没了"）。
+# 现在改为：环境变量 → **主程序目录相对路径**（随包分发的 tools/daniya_sticker_skill）
+#          → 旧路径（仅作者本机有效，保留兼容）→ 向上扫描。
 _CANDIDATES = (
-    r"H:\workbody\2026-10-13-18-15-13\daniya_sticker_skill",
-    r"G:\ai对话\daniya_sticker_skill",
-    r"G:\ai对话\11\daniya_sticker_skill",
+    # 随软件分发的技能包（安装目录/tools/daniya_sticker_skill）
+    str(Path(__file__).resolve().parents[2] / "tools" / "daniya_sticker_skill"),
+    # 作者本机（开发期兼容，发给别人时不存在，靠上面的相对路径命中）
+    r"tools/daniya_sticker_skill",
+    r"daniya_sticker_skill",
+    r"daniya_sticker_skill",
 )
 
 
@@ -520,12 +528,45 @@ class StickerBridge:
                             "anti_trigger": com.get("anti_trigger", ""),
                             "mood_compound": com.get("mood_compound", ""),
                         })
-                backend = self._llm.ZhipuBackend()
-                if not backend.available():
-                    return {"ok": False, "error": "选贴需要文本模型（未配置）"}
-                backend.category_hints = cats
-                import asyncio as _aio
-                res = _aio.run(backend.pick_sticker(character or "", conversation or [], cands))
+                # 【2026-10-17 修复·表情包硬绑智谱】
+                # 旧实现只用 ZhipuBackend，用户没配智谱 → "选贴需要文本模型（未配置）"
+                # → 明明配了阿里云 Key、表情包也有 64 条，却永远发不出表情。
+                # 现在三级降级：① 当前可用的对话模型 → ② 智谱 → ③ 规则选贴。
+                res = None
+                _pick_err = ""
+                backend = None
+                try:
+                    backend = self._llm.ZhipuBackend()
+                except Exception:  # noqa: BLE001
+                    backend = None
+
+                # ① 智谱可用就用智谱（它本来就有 pick_sticker 能力）
+                if backend is not None and backend.available():
+                    try:
+                        backend.category_hints = cats
+                        import asyncio as _aio
+                        res = _aio.run(backend.pick_sticker(
+                            character or "", conversation or [], cands))
+                    except Exception as e:  # noqa: BLE001
+                        _pick_err = str(e)[:80]
+
+                # ② 智谱不可用 → 用当前对话模型（用户配的阿里云等）
+                if not res:
+                    try:
+                        res = self._pick_with_llm(character or "", conversation or [],
+                                                  cands, cats)
+                    except Exception as e:  # noqa: BLE001
+                        _pick_err = str(e)[:80]
+
+                # ③ 模型都不可用 → 规则选贴（关键词/标签匹配，保证有图）
+                if not res:
+                    res = self._pick_by_rules(character or "", conversation or [], cands)
+                    if res:
+                        logger.info("[表情包] 模型不可用，改用规则选贴: %r",
+                                    res.get("reason", "")[:40])
+                if not res:
+                    return {"ok": False,
+                            "error": "选贴失败：无可用模型且规则未命中（%s）" % _pick_err[:60]}
                 found = next((c for c in cands if c["id"] == res.get("meme_id")), None)
                 if found:
                     res["found"] = True
@@ -537,6 +578,129 @@ class StickerBridge:
                 return {"ok": True, "result": res, "candidates": len(cands)}
             except Exception as e:  # noqa: BLE001
                 return {"ok": False, "error": str(e)}
+
+    def _pick_with_llm(self, character: str, conversation: list,
+                       cands: list, cats: dict) -> Optional[dict]:
+        """用**当前可用的对话模型**选表情（不硬绑智谱）。
+
+        让模型在候选表情里挑一个最贴语境的；模型输出 {"meme_id": "..."}。
+        失败返回 None，由调用方降级到规则选贴。
+        """
+        try:
+            llm = getattr(self, "_chat_llm", None)
+            if llm is None:
+                return None
+            if not getattr(llm, "available", False):
+                return None
+            # 构造极简提示：只让它回一个 id
+            lines = ["从下列表情里挑一个最贴当前对话的，只回 JSON: {\"meme_id\":\"<id>\"}",
+                     "候选（id | 分类 | 描述 | 标签）："]
+            for c in cands[:60]:
+                lines.append("%s | %s | %s | %s" % (
+                    c.get("id"), c.get("category") or "-",
+                    str(c.get("description") or "")[:50],
+                    ",".join(c.get("tags") or [])[:30]))
+            ctx = "\n".join(
+                "%s: %s" % (m.get("role"), str(m.get("text") or "")[:80])
+                for m in (conversation or [])[-4:])
+            prompt = "【对话】\n%s\n\n%s" % (ctx, "\n".join(lines))
+            # 【2026-10-17 修·参数不匹配】TextChatRouter 的真实签名是
+            #   async chat(messages: list[dict], options: dict|None) -> str
+            # 旧实现写 llm.chat(prompt, max_tokens=80) → TypeError 被吞 →
+            # 每次都降级到规则选贴（模型从未真正参与选贴）。
+            import asyncio as _aio
+            msgs = [{"role": "user", "content": prompt}]
+            text = ""
+            try:
+                # 优先 chat（协程）
+                _coro = None
+                if hasattr(llm, "chat"):
+                    _coro = llm.chat(msgs, {"max_tokens": 80, "temperature": 0.3})
+                elif hasattr(llm, "generate"):
+                    _coro = llm.generate(msgs, {"max_tokens": 80})
+                else:
+                    return None
+                if _aio.iscoroutine(_coro):
+                    try:
+                        text = _aio.run(_coro)
+                    except RuntimeError:
+                        # 已在事件循环里 → 线程池跑；失败必须 close 协程避免泄漏
+                        try:
+                            import concurrent.futures as _cf
+                            with _cf.ThreadPoolExecutor(max_workers=1) as ex:
+                                text = ex.submit(_aio.run, _coro).result(timeout=60)
+                        except Exception:  # noqa: BLE001
+                            try:
+                                _coro.close()   # ← 关键：避免 never awaited
+                            except Exception:  # noqa: BLE001
+                                pass
+                            return None
+                else:
+                    text = _coro
+            except Exception:  # noqa: BLE001
+                return None
+            if not text:
+                return None
+            import json as _json
+            import re as _re
+            m = _re.search(r'\{[^}]*"meme_id"[^}]*\}', str(text))
+            if not m:
+                return None
+            obj = _json.loads(m.group(0))
+            mid = str(obj.get("meme_id") or "")
+            found = next((c for c in cands if c.get("id") == mid), None)
+            if found:
+                return {"meme_id": mid, "pack_id": found.get("pack_id"),
+                        "found": True, "description": found.get("description", ""),
+                        "reason": "llm"}
+            return None
+        except Exception:  # noqa: BLE001
+            return None
+
+    def _pick_by_rules(self, character: str, conversation: list,
+                       cands: list) -> Optional[dict]:
+        """规则选贴（模型都不可用时的兜底）：按对话关键词匹配表情标签/分类。
+
+        保证"有表情可发"，哪怕模型不可用 —— 用户预载的表情包不该白费。
+        """
+        try:
+            if not cands:
+                return None
+            text = " ".join(str(m.get("text") or "") for m in (conversation or [])[-3:]).lower()
+            # 关键词 → 分类/标签
+            KEYMAP = {
+                "开心": ["happy", "joy", "开心", "高兴", "笑"],
+                "高兴": ["happy", "joy", "开心", "高兴"],
+                "难过": ["sad", "难过", "伤心", "哭"],
+                "生气": ["angry", "生气", "愤怒"],
+                "害羞": ["shy", "害羞", "脸红"],
+                "可爱": ["cute", "可爱", "萌"],
+                "喜欢": ["love", "喜欢", "爱心", "affection"],
+                "累": ["tired", "累", "疲惫"],
+                "晚安": ["night", "晚安", "睡"],
+                "你好": ["hello", "greet", "你好"],
+            }
+            wanted = set()
+            for kw, tags in KEYMAP.items():
+                if kw in text:
+                    wanted.update(tags)
+            # 先按标签/分类命中
+            for c in cands:
+                blob = (str(c.get("category") or "") + " "
+                        + ",".join(c.get("tags") or []) + " "
+                        + str(c.get("description") or "")).lower()
+                if any(w.lower() in blob for w in wanted):
+                    return {"meme_id": c.get("id"), "pack_id": c.get("pack_id"),
+                            "found": True, "description": c.get("description", ""),
+                            "reason": "rule:%s" % ",".join(list(wanted)[:2])}
+            # 没有关键词 → 随机挑一个（保证有表情）
+            import random
+            c = random.choice(cands)
+            return {"meme_id": c.get("id"), "pack_id": c.get("pack_id"),
+                    "found": True, "description": c.get("description", ""),
+                    "reason": "random"}
+        except Exception:  # noqa: BLE001
+            return None
 
     # ---------------- 异步安装（真实进度 + 持久化 + 暂停/继续） ----------------
     def install_start(self, entry: dict, limit: int = 120) -> dict:

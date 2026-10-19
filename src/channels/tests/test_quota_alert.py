@@ -64,11 +64,11 @@ class _Cfg:
                 types.SimpleNamespace(
                     id="vl-plus", name="Qwen-VL-Plus", provider="openai",
                     model="qwen-vl-plus", base_url="https://x/v1",
-                    api_key="sk-test", timeout_s=30),
+                    api_key="", timeout_s=30),
                 types.SimpleNamespace(
                     id="vl-max", name="Qwen-VL-Max", provider="openai",
                     model="qwen-vl-max", base_url="https://x/v1",
-                    api_key="sk-test", timeout_s=30),
+                    api_key="", timeout_s=30),
             ]
 
 

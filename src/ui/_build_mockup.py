@@ -6,7 +6,7 @@
 import json
 from pathlib import Path
 
-MOCK = Path(r"G:\ai对话\11\src\ui\_mock")
+MOCK = Path(r"src\ui\_mock")
 tpl = (MOCK / "stickers_mockup.html").read_text(encoding="utf-8")
 data = (MOCK / "mock_data.json").read_text(encoding="utf-8")
 

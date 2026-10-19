@@ -200,23 +200,21 @@ function statCard(num, label, type){
 }
 
 function renderStats(st){
-
-  const c = (st && st.count_by_type) || { directive: 0, user: 0, world: 0, episode: 0 };
-
-  const total = (st && st.count) || (c.directive + c.user + c.world + c.episode);
-
+  /* 【2026-10-17 修复·记忆库显示 NaN】后端 count_by_type 可能缺 episode 键
+     （只回 directive/user/world），于是 c.episode===undefined →
+     0+0+0+undefined = **NaN**，用户看到「总条数 NaN」（实锤截图）。
+     现在每个字段 Number(x)||0 兜底，total 优先用后端 count。 */
+  const raw = (st && st.count_by_type) || {};
+  const n0 = function(x){ var v = Number(x); return isFinite(v) ? v : 0; };
+  const c = { directive: n0(raw.directive), user: n0(raw.user),
+              world: n0(raw.world), episode: n0(raw.episode) };
+  const total = n0(st && st.count) || (c.directive + c.user + c.world + c.episode);
   statsEl.innerHTML =
-
     statCard(total, '总条数', '') +
-
     statCard(c.directive, '指令', 'directive') +
-
     statCard(c.user, '偏好', 'user') +
-
     statCard(c.world, '事实', 'world') +
-
-    statCard(c.episode || 0, '片段', 'episode');
-
+    statCard(c.episode, '片段', 'episode');
 }
 
 function fmtDate(ts){

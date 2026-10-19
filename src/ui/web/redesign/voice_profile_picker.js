@@ -183,7 +183,7 @@
     function tipFor(d) {
       if (!tip) return;
       if (!d) { tip.textContent = '未选择：本地用默认 edge-tts，云端双工用官方预设声。'; return; }
-      if (d.kind === 'profile') tip.textContent = '本地音色档：' + (d.name || d.engine) + '（本地双工通话 / 本地 TTS 都走这里）。';
+      if (d.kind === 'profile') tip.textContent = '本地音色档：' + (d.name || d.engine || '已绑定') + '（本地双工通话 / 本地 TTS 都走这里）。';
       else if (d.kind === 'cloud_tts') tip.textContent = (d.name || '云端 TTS') + '（云端 TTS，需声音的档已绑 Key；本地双工出声也走它）。';
       else if (d.kind === 'cloud_duplex') tip.textContent = (d.name || '云端双工') + '（云端全双工 S2S，只需一个 Key）。';
       else tip.textContent = '';
@@ -222,8 +222,15 @@
         var localLabel = (ctx && ctx.recommended_kind === 'local_profile') ? '本地 · 音色档（推荐）' : '本地 · 音色档';
         var dupLabel = (ctx && ctx.recommended_kind === 'cloud_duplex') ? '云端 · 双工（推荐·只需 Key）' : '云端 · 双工（只需 Key）';
 
+        /* 【2026-10-19 修复·角色卡显示"本地音色档: undefined"】
+           tipFor() 读的是 option 的 dataset.name / dataset.engine，
+           但旧实现只写了 data-kind —— 于是 d.name / d.engine 都是空，
+           拼出来就成了"本地音色档：undefined"。这里补齐这两个属性。 */
         var localOpts = (profs || []).map(function (p) {
-          return '<option value="' + escFn(p.id) + '" data-kind="profile">' + escFn(p.name || p.id) + ' · ' + escFn(lblFn(p.engine)) + '</option>';
+          return '<option value="' + escFn(p.id) + '" data-kind="profile"'
+               + ' data-name="' + escFn(p.name || p.id) + '"'
+               + ' data-engine="' + escFn(p.engine || '') + '">'
+               + escFn(p.name || p.id) + ' · ' + escFn(lblFn(p.engine)) + '</option>';
         }).join('');
         var gLocal = '<optgroup label="' + localLabel + '">' + (localOpts || '<option disabled>— 暂无音色档 —</option>') + '</optgroup>';
 
