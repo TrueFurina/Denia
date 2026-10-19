@@ -4,7 +4,7 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <meta name="stage" content="off" />
-<title>模型与 API · 能力槽</title>
+<title>接入你的模型 · 达妮娅</title>
 <link rel="stylesheet" href="/redesign/design_tokens.css?v=20261013e" />
 <link rel="stylesheet" href="/redesign/ui_shared.css?v=20261013e" />
 <link rel="stylesheet" href="/redesign/pages.css?v=20261007l" />
@@ -31,6 +31,10 @@
   -webkit-background-clip:text;background-clip:text;color:transparent;width:max-content}
 .cap-lead{color:var(--ink-3);font-size:12.5px;max-width:780px;margin:0}
 .cap-lead b{color:var(--ink-2)}
+/* 隐私说明：跟 lead 同字号但更淡，带一道左侧细线，读起来像"备注"而不是"条款"。
+   刻意不放进 .cap-lead —— 那条在 embed-onboard 里会被 display:none。 */
+.cap-priv{color:var(--ink-4,var(--ink-3));font-size:12px;max-width:780px;margin:7px 0 0;
+  padding-left:9px;border-left:2px solid color-mix(in srgb,var(--accent-1) 45%,transparent);line-height:1.55}
 .cap-actions{display:flex;gap:8px;align-items:center;padding-top:4px}
 
 .cap-wrap .btn{display:inline-flex;align-items:center;gap:7px;border:1px solid var(--line);
@@ -377,8 +381,14 @@
   <header class="cap-head">
     <div>
       <div class="cap-kicker">模型与 API</div>
-      <h1 class="cap-h1">能力槽</h1>
-      <p class="cap-lead">按「能力」把模型分成 4 个槽：<b>对话模型</b>（文字聊天 + 看屏合并成一个）、<b>TTS 语音合成</b>、<b>双工实时通话</b>，以及最上面的<b>阿里云一键</b>。大多数在售模型本身就能看图，所以聊天和看屏合并——选一个带「视觉」的模型，两件事一起搞定。想最省事，就在最上面填一个阿里云百炼 Key，下面三个槽一次配齐。</p>
+      <h1 class="cap-h1">接入你的模型</h1>
+      <p class="cap-lead">这里决定她用什么模型<b>说话</b>、<b>听你说</b>、<b>和你通话</b>。想最省事：填最上面的<b>阿里云百炼 Key</b>，下面三个槽一次配齐。想分开挑也行——对话模型选一个带「视觉」的，聊天和看屏就一起搞定了（多数在售模型都能看图，所以这两件事合并成一个槽）。</p>
+      <!-- 【2026-10-20】隐私说明放在 lead 之外：`.embed-onboard` 会把 .cap-lead 隐藏，
+           而"首启引导里嵌这个页面"恰恰是最需要这句话的场合。
+           这句话必须是真的才写：Key 存本地 config.yaml（被 .gitignore 挡住，不进仓库）；
+           全仓外发域名里没有任何第一方服务器（只有各模型厂商 API）。哪天加了中转服务，
+           这句要同步改，否则它就从"信任"变成"欺骗"。 -->
+      <p class="cap-priv">Key 只保存在这台电脑上，不会上传给我们；聊天内容直接发给你选的服务商。</p>
     </div>
     <div class="cap-actions">
       <button class="btn" id="capLocalMdl" type="button"><i data-icon="download" data-icon-size="15" style="display:inline-flex"></i>本地模型</button>
