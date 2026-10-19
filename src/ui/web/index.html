@@ -221,6 +221,68 @@
       </div>
       </header>
 
+      <!-- 【2026-10-20】「还没配大脑」常驻提示条。
+           首启引导改成「只建角色 + 体检」之后，模型 Key 不再在引导里问了。缺 Key 时
+           她**听得到、说得出，但聊不了天**——旧行为是用户发一句话只拿到一句报错，
+           看着像软件坏了。这条常驻在对话区顶部，点了才去配：不打扰，但也不装没事。
+           配好之后自动消失（看 getCapabilitySlots 的 chat 槽 state）。 -->
+      <style>
+        .brain-bar{display:flex;align-items:center;gap:10px;margin:10px 18px 0;padding:9px 12px;
+          border:1px solid color-mix(in srgb,var(--accent-1) 38%,transparent);
+          background:color-mix(in srgb,var(--accent-1) 10%,var(--bg-2));
+          border-radius:12px;font-size:13px;color:var(--ink-2);line-height:1.45}
+        .brain-bar[hidden]{display:none}
+        .bb-dot{width:8px;height:8px;border-radius:50%;background:var(--accent-1);flex:0 0 auto;
+          box-shadow:0 0 0 3px color-mix(in srgb,var(--accent-1) 22%,transparent)}
+        .bb-txt{flex:1 1 auto;min-width:0}
+        .bb-txt b{color:var(--ink);font-weight:600}
+        .bb-go{flex:0 0 auto;border:0;border-radius:9px;padding:6px 12px;cursor:pointer;
+          background:var(--accent-grad);color:#04121a;font-weight:600;font-size:12.5px}
+        .bb-x{flex:0 0 auto;border:1px solid var(--line-2);background:transparent;color:var(--ink-3);
+          border-radius:9px;padding:6px 10px;cursor:pointer;font-size:12.5px}
+        .bb-x:hover{color:var(--ink-2)}
+      </style>
+      <div class="brain-bar" id="brainBar" hidden role="status" aria-live="polite">
+        <span class="bb-dot" aria-hidden="true"></span>
+        <span class="bb-txt"><b>还没给她配「大脑」</b>——能听会说，但还聊不了天。填一个 Key 就能开始，约 30 秒。</span>
+        <button class="bb-go" id="brainBarGo" type="button">去配一个</button>
+        <button class="bb-x" id="brainBarX" type="button" title="这次先不管（下次启动会再提醒）">稍后</button>
+      </div>
+      <script>
+      /* 只做一件事：缺「大脑」时把提示条亮出来。后端没就绪就重试（首启刚结束时后端
+         还在加载模型，这里抢跑会拿到 success:false，不能据此判定"没配"）。 */
+      (function(){
+        var bar = document.getElementById('brainBar');
+        if (!bar) return;
+        try { if (sessionStorage.getItem('danya_brain_bar_muted') === '1') return; } catch (e) {}
+        var tries = 0;
+        function retry(){ if (tries++ < 12) setTimeout(ask, 1200); }
+        function ask(){
+          var B = window.Backend;
+          if (!B || typeof B.getCapabilitySlots !== 'function') return retry();
+          var p = null;
+          try { p = B.getCapabilitySlots(); } catch (e) { return retry(); }
+          if (!p || typeof p.then !== 'function') return retry();
+          p.then(function(r){
+            if (!r || r.success === false) return retry();
+            var st = ((r.health || {}).chat) || 'none';
+            var txt = (((r.slots || {}).chat) || {}).state_text || '';
+            // ok=已连通；「聊天已通·看屏未配」也能聊 → 都不打扰
+            var usable = (st === 'ok') || (st === 'warn' && txt.indexOf('看屏') >= 0);
+            bar.hidden = !!usable;
+          }).catch(retry);
+        }
+        document.getElementById('brainBarGo').addEventListener('click', function(){
+          location.href = '/redesign/ui_redesign_modelapi.html';
+        });
+        document.getElementById('brainBarX').addEventListener('click', function(){
+          try { sessionStorage.setItem('danya_brain_bar_muted', '1'); } catch (e) {}
+          bar.hidden = true;
+        });
+        ask();
+      })();
+      </script>
+
       <div class="stage-scroll" id="scroll">
         <div class="empty" id="chatEmpty">
           <div class="empty-card">

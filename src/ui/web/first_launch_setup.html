@@ -1484,9 +1484,17 @@
      （DOM 与 JS 保留在隐藏池，一行不删，可随时回滚）。
      新流程：连引擎(能力槽 iframe) → 下本地模型(新下载器) → 麦克风 → 建角色 → 体检。
      档位不再由用户选，收尾 doFinish 按实际配置推导（计划 §7）。 */
-  const screenSlots = document.getElementById('screenSlots');
-  let FLOW = [screenSlots];
-  ['screenVisionDl','screenMic','screenRole','screenSummary'].forEach(id=>{
+  /* 【2026-10-20 产品简化·首启不问 Key】
+     原来第一步是「连引擎」——一个 iframe 嵌着整个「模型与API」设置页（14 家服务商 ×
+     4 个能力槽）。新用户一进来先面对一张配置表，这和"化繁为简"正好相反：他要的是
+     "她先出现在屏幕上"，不是先填 Key。
+     现在首启只做两件事：**建角色（含声音）→ 体检**。模型 Key / 本地模型下载 / 麦克风
+     全部留到桌面——进去后顶部常驻一条「还没配大脑」，点了才配。
+     回滚只改这一行：把 'screenRole' 前面加回 'screenSlots'、'screenVisionDl'、'screenMic'。
+     （DOM 与 JS 一行没删，syncTrackToFlow 会把不在 FLOW 里的屏收进隐藏池。） */
+  const screenSlots = document.getElementById('screenSlots');   // 保留引用：隐藏池里可回滚
+  let FLOW = [];
+  ['screenRole','screenSummary'].forEach(id=>{
     const el = document.getElementById(id);
     if(el) FLOW.push(el);
   });
@@ -3413,11 +3421,11 @@
     rows.push({label:'运行方向', status:'ok', detail: _dirDetail+'（按实际配置推导）', fix:null});
     const _chatOk = stOf('chat')==='ok', _chatAny = stOf('chat')!=='none';
     rows.push({label:'对话模型', status: _chatOk?'ok':(_chatAny?'warn':'warn'),
-               detail: _chatOk?('已连通（'+txOf('chat')+'）'):(stOf('chat')!=='none'?('部分配置：'+txOf('chat')):'未配置——进去后可打字聊天走兜底，建议在能力槽配一个'),
+               detail: _chatOk?('已连通（'+txOf('chat')+'）'):(stOf('chat')!=='none'?('部分配置：'+txOf('chat')):'未配置——进去后对话页顶部会有一条提示，点一下填个 Key 就能聊'),
                fix:'screenSlots'});
     const _ttsSt = stOf('tts');
     rows.push({label:'声音绑定', status: (_ttsSt==='ok')?'ok':'warn',
-               detail: (_ttsSt==='ok')?('已连通（'+txOf('tts')+'）'):((_ttsSt==='bad')?'当前静音（能力槽可解）':'未绑定——达妮娅暂不出声，打字聊天照常；能力槽配 TTS 即可开口'),
+               detail: (_ttsSt==='ok')?('已连通（'+txOf('tts')+'）'):((_ttsSt==='bad')?'当前静音（能力槽可解）':'未绑定——达妮娅暂不出声，打字聊天照常；进桌面后在「设置 → 模型与API」配 TTS 即可开口'),
                fix:'screenSlots'});
     /* 【2026-10-17 修复·体检屏与门槛口径不一致】
        旧实现只认 gateReady.vision（视觉模型），于是：
@@ -3561,7 +3569,17 @@
   }
   function goToFix(screenId){
     const idx = FLOW.findIndex(s=> s.id===screenId);
-    if(idx>=0) goTo(idx);
+    if(idx>=0){ goTo(idx); return; }
+    /* 【2026-10-20】首启流程瘦身后（只留 建角色 → 体检），体检屏上「对话模型 /
+       声音绑定 / 本地模型 / 麦克风」四行的「去配置」还指着**已经不在流程里**的屏。
+       旧实现 findIndex 拿不到就静默 return——按钮点了什么都不发生，是最难查的那种
+       失效（用户只会说"点了没反应"）。现在明确告诉他去哪儿配。 */
+    try{
+      const B = bk();
+      if(B && typeof B.toast === 'function'){
+        B.toast('这一项在「设置 → 模型与API」里配；先进桌面，顶部会有一条提示带你过去', 'info');
+      }
+    }catch(e){}
   }
 
   // ===== 云端付费：聚合服务商屏 =====

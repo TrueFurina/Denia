@@ -575,7 +575,7 @@ var PRESETS = [
    desc:'星炬学院虚质科学部学生，粉发蓝眸，总挂着温柔的微笑。表面温柔无害，其实藏着自己的小心思。',
    voice:{kind:'none'},
    demo:{kind:'cloud', vid:'qwen-audio-3.0-tts-plus-bailian-c64fdf07'}},
-  {id:'xiaowei', name:'小薇', c1:'#2DD4FF', c2:'#5DCAA5', avatar:'',
+  {id:'xiaowei', name:'温柔女友', c1:'#2DD4FF', c2:'#5DCAA5', avatar:'',
    tag:'会喊你「亲爱的」，偶尔撒娇',
    desc:'温柔体贴的二次元女友，偶尔傲娇，关心你的健康和作息，能看见屏幕活动陪你工作。',
    voice:{kind:'none'},
