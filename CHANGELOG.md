@@ -13,6 +13,11 @@
 
 | commit | 时间 | 类型 | 一句话 | 验证 |
 |---|---|---|---|---|
+| `3defc4c` | 23:3x | fix | 新克隆仓库首次出包必失败（`build_installer` 不自建 `dist/`）+ 修掉 `[C2-A]` 的假绿（一直靠 `dist/` 里的残留 exe 蒙混） | 变异 2 刀同红；门禁 48/48 PASS |
+| `5e105e7` | 23:0x | chore | 清场 ~1.5GB 后把贴纸素材（124 文件/67MB）抢救入库并加忽略 | 出包依赖复核；无引用断裂 |
+| `f087ff4` | 22:5x | merge | 并入队友内测版工作树：96 文件级差异 → 9 冲突 16 块全部解决，取双方精华 | worktree 47 项 + 主仓真环境 48/48 |
+| `0911538` | 22:3x | snapshot | 队友内测包工作树快照（换行归一后 41 改 + 157 新），合并前置 | — |
+| `b0a14ed` | 21:4x | docs | 队友内测版 v1.0 安装包验收报告（.NET 自写 SFX，非 NSIS） | 6320 条目 / 0 真密钥 / 红线 3 项阻断 / 可跑 |
 | `b775a69` | 07:5x | fix | 第五处静默失效：唤醒词整词语法让她名字被静默跳过 | _qc_wake_word 闭环 + 10 组单测 + 6 刀变异；gate 44→46 |
 | `efad34e` | 08:3x | test | 唤醒后事件流闭环验证：WAKE_WORD→USER_TEXT 双引擎覆盖 + 3 刀变异（原测试只模 vosk 回退漏了 sherpa 主路径，且摘 vosk 桩让 _run 局部绑定落到真 vosk 假阴性） | 双场景单测 + 3 刀变异全红；gate 46→48 |
 | `5bffc68` | 19:39 | chore | 建立版本控制基线（此项目此前无 git） | 646 对象 / 11.97 MiB |
@@ -1866,3 +1871,93 @@ run_webui.py`；编码闸加 `--strict`；doctor `_shell_mode` except 分支
 
 **验证**：C11 段 9 断言 + 2 刀变异全红复绿；浏览器实测 embed wrapTop -65→0、页头完整；
 正常路径无回归；缺模块路径出兜底文案。门禁 27/27。重出包重装后真机验证桌宠。
+
+---
+
+## 队友内测版 v1.0 安装包验收（2026-10-19 21:4x，`b0a14ed`）
+
+**背景**：队友并行交付 `D:/Denia/机语恋_内测版_v1.0.exe`（221MB）。不能运行安装器
+验包——它是 **.NET 自写 SFX**（`JiyulianSetup` / `ZipArchive` / `DefaultInstallDir` /
+`RegisterUninstall`），不是 NSIS。用 `PK\x05\x06` 尾部签名定位 ZIP 起点，`zipfile`
+直读即可。
+
+**结论**：包本体完整（6320 条目，解压 364MB），**是 0.1.0 旧快照**——没有 `shell/`、
+没有 `pet_shell/pet_backend`、没有 `src/version.py`，即不含 C11 的 Electron 桌宠壳。
+未签名、`FileVersion 0.0.0.0`。红线扫描 3 项阻断（`data/`、`call_records.json`、
+`user_knowledge.yaml`），但 **0 个真密钥**。可跑：内置 Python 3.12.10，`main.py --help`
+正常。
+
+**边界**：只验「包对不对、能不能起」，未验真机交互。报告见
+`交付验包_机语恋内测版_v1.0_2026-10-19.md`。
+
+---
+
+## 两条工作流合并（2026-10-19 22:5x，`f087ff4`）
+
+**背景**：这几天主线（质检 + Electron 壳 + C9 系列）与队友线（TTS 失效模型迁移 +
+内测包）各自独立推进，基线 `5bffc68` 只有 64% 文件相同，不能直接快进。
+
+**量化**：先做**换行归一**（CRLF vs LF）再比——不归一会把 41 个真改夸大成 111 个。
+归一后：他们改 41 文件 / 我们改 37 / 冲突 9 文件 16 块。
+
+**做法**：`git worktree` + 独立分支 + `git merge --no-commit`，冲突逐块人工裁决。
+`HEAD` 是队友侧（被合入方是 `master`）。
+
+**冲突决策**：
+- `webapp.py`：**保留他们的 TTS 失效模型迁移**（`_TTS_STALE` + `migrate_stale_tts_model`
+  + `migrate_stale_voice_profiles`，我们没这能力）；桌宠三块取 master（Electron 壳）。
+  两套桌宠实现撞车时按用户拍板「保留 Electron 壳」。
+- `config.py` `save()`：**合成**——他们的进程级锁 + 原子写，叠加我们的 C9-1 密钥加密
+  与环境变量引用还原。
+- 其余：路径健壮版取 master；导入取并集。
+
+**合并中修掉的 4 个真问题**（都不是机械冲突，是两边各自潜伏的）：
+1. `config.py` 用 `threading.RLock()` 但模块级没有 `import threading`（他们只 `import as _th`）
+2. `webapp.py` 引用 `_ALIYUN_DEFAULT_CHAT` 却从未导入 —— **队友原版同样潜伏 NameError**
+3. `webapp.py` 类头 `class CharacterAPI(...)` 被拼到迁移函数之前 → IndentationError
+4. `webapp.py` 的 `or {` 右括号在拼接中丢失
+
+**验证**：worktree 内 47 项 → 42 过 / 1 跳过（无 Electron）/ 2 红（doctor 隔离、
+build_installer，均为 worktree 的 junction/ROOT 环境产物，主仓同测试通过）；全局名
+完整性 577 文件全绿；全部 `.py` 编译通过。合入主仓用 `--ff-only`，**全程没碰**并发
+会话正在改的 `dialogue.py`；主仓真环境 48/48 全绿。
+
+---
+
+## 清场：删旧包旧产物，贴纸素材抢救入库（2026-10-19 23:0x，`5e105e7`）
+
+**删掉约 1.5GB**：`D:/_jyl_beta_extract`（378M，队友包解压残留）、4 个旧 exe
+（211M + 35M + 48K + 40K）、`daniya_ref.wav`、7 个 config 备份、`dist`（172M）+
+`dist_stage`（714M）、24 个 `__pycache__`。
+
+**抢救**：`tools/daniya_sticker_skill/data/` 124 文件 / 67MB 贴纸素材原本是未跟踪的
+本地产物，但技能运行依赖它——先入库再在 `.gitignore` 里放行（后续生成物不入库）。
+
+**副作用（正是它暴露了下一个 bug）**：删掉 `dist/` 后，门禁 `打包依赖分级` 立刻转红。
+
+---
+
+## 首次出包必失败 + 一道一直假绿的用例（2026-10-19 23:3x，`3defc4c`）
+
+**产品 bug**：`build_installer()` 直接往 `root/dist/` 写 OutFile，**自己不建目录**。
+旧代码一直靠「上一次出包留下的 `dist/`」蒙混过关，所以从没暴露。清场删掉 `dist/`
+后，任何新克隆的仓库第一次出包都会被 makensis 报 `error opening file for writing`。
+
+**测试 bug（更值得记）**：`src/tests/test_make_dist_deps.py` 的 `[C2-A]` 段一直是
+**假绿**。它的假 `subprocess` 从不产出 exe，`build_installer` 收尾 stat 不到文件本该
+返回 False——但 `D:/Denia/dist` 里躺着上一次**真实**出包的同名 exe，于是「通过」了。
+**这道用例验证的不是代码，是上一轮构建的残留。** 同文件的 `[C9-5]` 段（`_fake_run5`）
+反而写对了，会模拟 NSIS 产物——同一份测试里两种写法并存，说明这是疏忽不是设计。
+
+**改动**：
+- `make_dist.build_installer`：调 makensis 前 `os.makedirs(root/dist, exist_ok=True)`。
+- 测试 `[C2-A]` 改用**独立假根**：若继续拿真仓库当 root，假 subprocess 就得往
+  `D:/Denia/dist` 写一个 0 字节、与真安装包同名的假 exe——那是能被人当成品发出去的雷。
+- 假 makensis 改成真 makensis 的语义：**输出目录不存在就 rc≠0**，绝不替调用方建目录
+  （否则「自己建 dist/」这条永远测不出来）。新增断言「root 没有 dist/ 时自己建」。
+
+**验证**：变异（删掉那行 `os.makedirs`）→ 2 项断言同时红；还原后全绿；全量门禁
+48/48 PASS。
+
+**同族教训**：「假实现顺手把前置条件补齐」= 测试自我安慰。凡是用假外部程序验证
+「产物存在」的用例，假程序必须**只做真程序会做的事**，缺前置就按真程序的失败方式失败。
