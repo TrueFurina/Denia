@@ -240,6 +240,28 @@
           background:var(--accent-grad);color:#04121a;font-weight:600;font-size:12.5px}
         .bb-x{flex:0 0 auto;border:1px solid var(--line-2);background:transparent;color:var(--ink-3);
           border-radius:9px;padding:6px 10px;cursor:pointer;font-size:12.5px}
+        /* ---- 「没配大脑」承接浮层（2026-10-20）----
+           为什么不在顶部常驻条里解决：那条出现在**错误的时刻**——用户刚进桌面时没有
+           聊天意图，看到了也不会动；等到真想说话时，眼睛早已把它过滤掉。
+           竞品里没有一个靠顶部条成功的，成功的是「意图点承接」（Chatbox 把引导做成
+           一个常驻会话、Cline 把选择放在输入框上方）。
+           所以这个浮层只在**他打完字、点了发送**的那一刻出现。
+           用 display 而不是 opacity 淡入：headless 下 virtual time 不推进 transition，
+           而且承接浮层迟 180ms 出现没有任何好处。 */
+        .setup-hint{display:none;position:fixed;left:50%;bottom:104px;
+          transform:translateX(-50%);width:min(392px,calc(100vw - 36px));
+          padding:14px 16px 12px;border-radius:14px;z-index:9000;
+          border:1px solid color-mix(in srgb,var(--accent-1) 42%,transparent);
+          background:color-mix(in srgb,var(--accent-1) 8%,var(--bg-2));
+          box-shadow:0 14px 38px rgba(0,0,0,.18);font-size:13px;color:var(--ink-2);line-height:1.5}
+        .setup-hint.show{display:block}
+        .sh-title{color:var(--ink);font-weight:600;font-size:14px;margin-bottom:3px}
+        .sh-sub{margin-bottom:11px}
+        .sh-row{display:flex;gap:8px;align-items:center}
+        .sh-go{flex:0 0 auto;border:0;border-radius:9px;padding:7px 14px;cursor:pointer;
+          background:var(--accent-grad);color:#04121a;font-weight:600;font-size:12.5px}
+        .sh-x{flex:0 0 auto;border:1px solid var(--line-2);background:transparent;color:var(--ink-3);
+          border-radius:9px;padding:7px 12px;cursor:pointer;font-size:12.5px}
         .bb-x:hover{color:var(--ink-2)}
       </style>
       <div class="brain-bar" id="brainBar" hidden role="status" aria-live="polite">
@@ -252,6 +274,24 @@
       /* 只做一件事：缺「大脑」时把提示条亮出来。后端没就绪就重试（首启刚结束时后端
          还在加载模型，这里抢跑会拿到 success:false，不能据此判定"没配"）。 */
       (function(){
+        /* 「能不能聊」全页只此一处定义：顶部条与「没配大脑」承接浮层都调它。
+           两处各写一遍会漂移——迟早出现「顶部条说能聊、点了发送浮层说聊不了」。
+           定义放在 bar 判空之前：顶部条被删掉时，浮层仍要能判定。
+           返回 'yes' / 'no' / 'unknown' 三态，**不能只有 true/false**：
+           后端没就绪（success:false）时是"问不出来"，不是"没配"。压成 false 会让
+           承接浮层在首启刚结束时弹「她还没接上大脑」——而那正是她正在加载模型的时刻
+           （顶部条为此专门写了 12 次重试，就是为了躲这个假结论）。 */
+        window.__chatUsable = function(r){
+          // 只认 success === true：写成 `=== false` 会把「压根没这个字段」当成功，
+          // 于是 `{}` 被读成"未配置"——又一个"问不出来"被误判成"没配"的口子。
+          if (!r || r.success !== true) return 'unknown';
+          var st = ((r.health || {}).chat) || 'none';
+          var txt = (((r.slots || {}).chat) || {}).state_text || '';
+          if (st === 'ok') return 'yes';
+          // 「聊天已通·看屏未配」能聊，只是看不了屏幕
+          if (st === 'warn' && txt.indexOf('看屏') >= 0) return 'yes';
+          return 'no';
+        };
         var bar = document.getElementById('brainBar');
         if (!bar) return;
         try { if (sessionStorage.getItem('danya_brain_bar_muted') === '1') return; } catch (e) {}
@@ -265,11 +305,8 @@
           if (!p || typeof p.then !== 'function') return retry();
           p.then(function(r){
             if (!r || r.success === false) return retry();
-            var st = ((r.health || {}).chat) || 'none';
-            var txt = (((r.slots || {}).chat) || {}).state_text || '';
             // ok=已连通；「聊天已通·看屏未配」也能聊 → 都不打扰
-            var usable = (st === 'ok') || (st === 'warn' && txt.indexOf('看屏') >= 0);
-            bar.hidden = !!usable;
+            bar.hidden = (window.__chatUsable(r) === 'yes');
           }).catch(retry);
         }
         document.getElementById('brainBarGo').addEventListener('click', function(){
@@ -823,6 +860,28 @@
           } catch (e) { console.warn('[send] 失败标记渲染异常:', e); }
           if (input && !input.value.trim()) { input.value = v; input.style.height = 'auto'; }
           Backend.toast('未发送：' + reason, 'err');
+          /* 【2026-10-20】如果挡住他的是「还没配大脑」，就在**这一刻**承接：
+             他刚打完字、点了发送，这是唯一会认真看提示的时刻（顶部常驻条不行，
+             刚进桌面时没有聊天意图，看到了也不会动）。
+             判据复用 window.__chatUsable（与顶部条同一个定义），不用 error 文案——
+             文案会改，而且"端口冷却"和"没配"在 error 里长得很像。 */
+          if (window.Backend && typeof Backend.getCapabilitySlots === 'function'
+              && typeof window.__chatUsable === 'function') {
+            try {
+              Promise.resolve(Backend.getCapabilitySlots()).then(function(r){
+                /* 只有 'no' 才弹：'unknown'（后端没就绪）时弹「没接上大脑」是假结论。 */
+                if (window.__chatUsable(r) !== 'no') return;
+                var sh = document.getElementById('setupHint');
+                if (!sh) return;
+                /* 文案跟着状态走：「未配置」才叫"没接上大脑"；配了 Key 却没激活
+                   （warn/未激活）还说"没接上大脑"就是在撒谎。 */
+                var st = ((r && r.health) || {}).chat || 'none';
+                var t = sh.querySelector('.sh-title');
+                if (t) t.textContent = (st === 'none') ? '她还没接上「大脑」' : '她还聊不了天';
+                sh.classList.add('show');
+              }).catch(function(){});
+            } catch (e) {}
+          }
         } else {
           /* 显示"正在连接聊天模型"进度条（startChatLive 提供的话） */
           if (window.__chat && window.__chat.showChatSwitch) window.__chat.showChatSwitch();
@@ -3679,6 +3738,29 @@
       } catch(e){}
     });
   }
+})();
+</script>
+
+<!-- 「没配大脑」承接浮层：只在他打完字、点发送的那一刻出现（2026-10-20）。 -->
+<div class="setup-hint" id="setupHint" role="dialog" aria-live="polite">
+  <div class="sh-title">她还没接上「大脑」</div>
+  <div class="sh-sub">刚才那句话还在输入框里——配好之后直接点发送就行。</div>
+  <div class="sh-row">
+    <button class="sh-go" id="setupHintGo" type="button">去配一个</button>
+    <button class="sh-x" id="setupHintX" type="button">稍后</button>
+  </div>
+</div>
+<script>
+/* 承接浮层的开关与跳转。刻意不做「只弹一次」的记忆：用户每次点发送都代表一次
+   真实的聊天意图，而每次都会被同一个原因挡住——不说明原因的话，他看到的就只是
+   「消息发出去没人回」（2026-10-16 修过的同型问题）。 */
+(function(){
+  var el = document.getElementById('setupHint');
+  if(!el) return;
+  var go = document.getElementById('setupHintGo');
+  var x  = document.getElementById('setupHintX');
+  if(go) go.addEventListener('click', function(){ location.href = '/redesign/ui_redesign_modelapi.html'; });
+  if(x)  x.addEventListener('click', function(){ el.classList.remove('show'); });
 })();
 </script>
 

@@ -93,6 +93,12 @@ GATES: list[tuple[str, str, list[str], bool]] = [
     # ①亮灭由后端真实状态决定（写死 class=on 就是骗人）②走页面轮询而不是
     # 跨线程 evaluate_js（main_window.py:454 有自锁实锤）。
     ("感知指示器", PY_VENV, ["src/tests/test_perception_indicator.py"], False),
+    # 「没配大脑」承接浮层：首启不拿填表拦人，代价是第一次点发送只会得到「未发送」。
+    # 这条守四件事：①只在失败那一刻亮（进页面就亮=顶部条换个位置）②判据是能力槽
+    # 状态不是 error 文案 ③判据三态——后端没就绪是「问不出来」，不是「没配」
+    # ④文案承诺的「原话还在输入框里」有代码保证。判据真值表直接交给 node 跑，
+    # 不在 Python 里复刻逻辑（复刻只能证明"我两次写得一样"）。变异 9 刀全红。
+    ("首启承接浮层", PY_VENV, ["src/tests/test_setup_hint.py"], False),
     # 「发给队友的包里到底有什么」：包内容取 git ls-files（.gitignore 是单一事实源），
     # 再叠一层硬排除。这层防御在真实仓库上**一项都不会触发**（gitignore 早洗过了），
     # 所以必须直接对规则表喂路径来证明它是活的——变异 4 刀（规则恒 None / 删红线
