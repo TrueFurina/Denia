@@ -81,6 +81,11 @@ GATES: list[tuple[str, str, list[str], bool]] = [
     # 写好很久但零调用（注释里承诺的"防重复搭话"实际只靠输出侧兜着），轨迹里
     # 堆满"在游戏；在游戏；在游戏"既烧 token 也更容易让模型顺着重复。
     ("屏幕摘要去重", PY_VENV, ["src/tests/test_screen_dedup.py"], False),
+    # 「发给队友的包里到底有什么」：包内容取 git ls-files（.gitignore 是单一事实源），
+    # 再叠一层硬排除。这层防御在真实仓库上**一项都不会触发**（gitignore 早洗过了），
+    # 所以必须直接对规则表喂路径来证明它是活的——变异 4 刀（规则恒 None / 删红线
+    # 文件名表 / 删 data 目录 / 少一项必需文件）全红。
+    ("源码包排除规则", PY_VENV, ["src/tests/test_pack_for_teammate.py"], False),
     ("doctor 自检结构", PY_VENV, ["src/tests/test_doctor.py"], False),
     # 「她现在能说话吗」：engine 为空会落到静音后端（不出声、不联网、零日志）。
     ("语音合成判级", PY_VENV, ["src/tests/test_doctor_voice_backend.py"], False),
