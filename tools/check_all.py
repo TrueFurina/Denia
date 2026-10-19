@@ -77,6 +77,10 @@ GATES: list[tuple[str, str, list[str], bool]] = [
     # 这道测的重点是「接线」而不是「算得对」：唯一入口是否真跑两半、webapp 是否
     # 真调了入口、写盘是否真是原子替换（不是原地截断）。
     ("TTS 配置迁移", PY_VENV, ["src/tests/test_config_migrate.py"], False),
+    # 「别一直说同一句话」：屏幕活动入缓冲时去掉几乎相同的摘要。_similar_summary
+    # 写好很久但零调用（注释里承诺的"防重复搭话"实际只靠输出侧兜着），轨迹里
+    # 堆满"在游戏；在游戏；在游戏"既烧 token 也更容易让模型顺着重复。
+    ("屏幕摘要去重", PY_VENV, ["src/tests/test_screen_dedup.py"], False),
     ("doctor 自检结构", PY_VENV, ["src/tests/test_doctor.py"], False),
     # 「她现在能说话吗」：engine 为空会落到静音后端（不出声、不联网、零日志）。
     ("语音合成判级", PY_VENV, ["src/tests/test_doctor_voice_backend.py"], False),

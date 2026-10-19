@@ -198,6 +198,32 @@ def _similar_summary(a: str, b: str) -> bool:
         return True
     return difflib.SequenceMatcher(None, na, nb).ratio() >= 0.7
 
+def _screen_activity_repeat(buf: list, summary: str, app_hint: str) -> "dict | None":
+    """缓冲里是否已有与本次几乎相同的屏幕摘要；有则返回那一条（调用方更新时间戳）。
+
+    【2026-10-19 接线】`_similar_summary` 写好之后一直**没有任何调用点**——它本该
+    在这里生效。同一窗口停留时视觉模型每隔几秒就上报一次几乎相同的摘要
+    （"在打游戏""在打游戏"），直接 append 会让批量整合的轨迹变成
+    "在游戏；在游戏；在游戏"：既白烧 token，也更容易让模型顺着重复说同一句话。
+
+    只和**最近一条带摘要的条目**比较，并且要求 `app_hint` 也相同：同一窗口里换了
+    活动（摘要像但 app_hint 变了）就该算新条目，不能把真实变化吞掉。
+
+    注意与 `_flush_screen_batch` 里的 `_similar_to_recent` 分工：那条防的是
+    **输出**与最近说过的话重复，这条防的是**输入轨迹**里堆冗余。
+    """
+    if not summary:
+        return None
+    for b in reversed(buf or []):
+        s = (b.get("summary") or "")
+        if not s:
+            continue
+        if (b.get("app_hint") or "") != (app_hint or ""):
+            return None
+        return b if _similar_summary(s, summary) else None
+    return None
+
+
 def setup_proactive_strategy(bus: EventBus, state: StateMachine, cfg: Config, llm: Any=None, persona: Any=None, monitor: Any=None) -> ProactiveStrategy:
     """创建并配置主动搭话策略。"""
     strategy = ProactiveStrategy(bus, state, cfg, llm=llm, persona=persona, monitor=monitor)
@@ -9309,6 +9335,14 @@ class ProactiveStrategy:
             if not summary and not app_hint:
                 return
             conf = float(data.get('confidence') or 0)
+            # 【2026-10-19 接线】同一场景反复上报几乎相同的摘要 → 只把时间戳往后挪，
+            # 不再堆条目。否则批量整合的轨迹会变成"在游戏；在游戏；在游戏"。
+            # 返回而不是 continue：缓冲没变化，也就没有"攒满该 flush"这回事，
+            # 周期 flush（_screen_batch_loop）仍会照常跑，不会因此变哑巴。
+            _dup = _screen_activity_repeat(self._screen_batch_buf, summary, app_hint)
+            if _dup is not None:
+                _dup['ts'] = time.time()
+                return
             self._screen_batch_buf.append({'summary': summary, 'app_hint': app_hint, 'conf': conf, 'ts': time.time()})
             _max = self._batch_max_entries or 0
             if _max and len(self._screen_batch_buf) >= _max:
