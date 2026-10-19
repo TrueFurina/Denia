@@ -118,21 +118,31 @@ def main() -> int:
     check(m is not None, "页面里有承接浮层 #setupHint")
     check(m is not None and "show" not in (m.group(0) if m else ""),
           "静态标签不带 show 类（带了就是「一进页面就亮」，等于把顶部条换个位置）")
-    # add('show') 只能有一处，且必须在「未发送」toast 之后 —— 也就是失败分支里
+    # add('show') 只能有一处，且必须在「承接浮层唯一入口」函数体内 ——
+    # 允许散落多处的写法，迟早会在成功路径上也点一次
     n_add = html.count("sh.classList.add('show')")
     check(n_add == 1, "全页只有一处点亮（找到 %d 处）" % n_add)
-    i_toast = html.find("Backend.toast('未发送：'")
     i_add = html.find("sh.classList.add('show')")
-    check(i_toast >= 0 and i_add > i_toast,
-          "点亮动作在「未发送」提示之后（即在失败分支内，成功路径不会亮）")
+    i_def = html.find("window.__showSetupHint = function")
+    check(i_def > 0 and i_add > i_def,
+          "点亮只发生在 __showSetupHint 内部（唯一入口，别的分支想亮必须调它）")
+    i_toast = html.find("Backend.toast('未发送：'")
+    i_call_text = html.find("window.__maybeSetupHint(false)")
+    check(i_toast >= 0 and i_call_text > i_toast,
+          "打字路径：接线在「未发送」提示之后（即在失败分支内，成功路径不会亮）")
+    i_vtoast = html.find("Backend.toast('语音识别失败：'")
+    i_call_voice = html.find("window.__maybeSetupHint(true)")
+    check(i_vtoast >= 0 and i_call_voice > i_vtoast,
+          "语音路径也接了（只守打字那条，用语音的人永远等不到这句话）")
 
     print("\n=== [2] 判据是能力槽状态，不是 error 文案 ===")
-    # 抠出「判据 → 点亮」这一段，断言里面没有拿 error 文案做判断
-    i_gate = html.find("if (window.__chatUsable(r) !== 'no') return;")
-    check(i_gate > 0, "用 __chatUsable(r) 做闸门")
-    seg = html[i_gate:i_add + len("sh.classList.add('show');")] if i_gate > 0 and i_add > 0 else ""
-    check(seg != "" and "res.error" not in seg and "reason" not in seg,
-          "闸门到点亮之间不碰 res.error / reason（文案会改，且「端口冷却」与「没配」长得一样）")
+    gate_fn = _js_func(html, "__maybeSetupHint")
+    show_fn = _js_func(html, "__showSetupHint")
+    check("if (window.__chatUsable(r) !== 'no') return;" in gate_fn,
+          "用 __chatUsable(r) 做闸门")
+    check(gate_fn != "" and show_fn != ""
+          and "res.error" not in (gate_fn + show_fn) and "reason" not in (gate_fn + show_fn),
+          "判定与点亮两个函数都不碰 res.error / reason（文案会改，且「端口冷却」与「没配」长得一样）")
 
     print("\n=== [3] 判据三态：'unknown' 不等于「没配」===")
     fn = _js_func(html, "__chatUsable")
@@ -171,10 +181,16 @@ def main() -> int:
 
     print("\n=== [4] 文案承诺的事真的有代码保证 ===")
     i_restore = html.find("input.value = v; input.style.height = 'auto';")
-    check(i_restore >= 0 and i_add > i_restore,
-          "「刚才那句话还在输入框里」有据：先把原话还回输入框，再弹浮层")
+    check(i_restore >= 0 and i_call_text > i_restore,
+          "「刚才那句话还在输入框里」有据：先把原话还回输入框，再决定弹不弹")
     check("(st === 'none') ? '她还没接上「大脑」' : '她还聊不了天'" in html,
           "标题跟着状态走：只有「未配置」才说「没接上大脑」（配了 Key 没激活还说就是撒谎）")
+    # 语音没有输入框：同一句副文套到语音上就是假话
+    voice_sub = re.search(r"voice\s*\n?\s*\?\s*'([^']*)'", html)
+    check(voice_sub is not None and "输入框" not in (voice_sub.group(1) if voice_sub else ""),
+          "语音分支的副文不提「输入框」（语音没有输入框，说那句话就是假话）")
+    check(voice_sub is not None and "开口" in (voice_sub.group(1) if voice_sub else ""),
+          "语音分支的副文给了语音能照做的下一步")
     check("去配一个" in html and "稍后" in html, "两个出口都在（能去配，也能这次不配）")
 
     print("\n=== [5] 出口有效，且不把用户困在浮层里 ===")

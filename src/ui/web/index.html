@@ -292,6 +292,36 @@
           if (st === 'warn' && txt.indexOf('看屏') >= 0) return 'yes';
           return 'no';
         };
+        /* 承接浮层的**唯一**点亮入口。两条发送路径（打字 / 说话）都调它：
+           只守打字那条，用语音的用户永远等不到这句话——和"两个启动路径只给一个
+           传参数"是同一种漏法。voice 只影响副文：语音没有输入框，
+           说「那句话还在输入框里」就是假话。 */
+        window.__showSetupHint = function(st, voice){
+          var sh = document.getElementById('setupHint');
+          if (!sh) return;
+          /* 文案跟着状态走：「未配置」才叫"没接上大脑"；配了 Key 却没激活
+             （warn/未激活）还说"没接上大脑"就是在撒谎。 */
+          var t = sh.querySelector('.sh-title');
+          if (t) t.textContent = (st === 'none') ? '她还没接上「大脑」' : '她还聊不了天';
+          var s = sh.querySelector('.sh-sub');
+          if (s) s.textContent = voice
+            ? '刚才那句话没送到她那里——配好之后直接开口说就行。'
+            : '刚才那句话还在输入框里——配好之后直接点发送就行。';
+          sh.classList.add('show');
+        };
+        /* 查一次能力槽再决定弹不弹。只有 'no'（确定聊不了）才弹：
+           'unknown'（后端没就绪）弹「没接上大脑」是假结论。 */
+        window.__maybeSetupHint = function(voice){
+          if (!window.Backend || typeof Backend.getCapabilitySlots !== 'function'
+              || typeof window.__chatUsable !== 'function') return;
+          try {
+            Promise.resolve(Backend.getCapabilitySlots()).then(function(r){
+              if (window.__chatUsable(r) !== 'no') return;
+              var st = ((r && r.health) || {}).chat || 'none';
+              window.__showSetupHint(st, !!voice);
+            }).catch(function(){});
+          } catch (e) {}
+        };
         var bar = document.getElementById('brainBar');
         if (!bar) return;
         try { if (sessionStorage.getItem('danya_brain_bar_muted') === '1') return; } catch (e) {}
@@ -863,25 +893,9 @@
           /* 【2026-10-20】如果挡住他的是「还没配大脑」，就在**这一刻**承接：
              他刚打完字、点了发送，这是唯一会认真看提示的时刻（顶部常驻条不行，
              刚进桌面时没有聊天意图，看到了也不会动）。
-             判据复用 window.__chatUsable（与顶部条同一个定义），不用 error 文案——
-             文案会改，而且"端口冷却"和"没配"在 error 里长得很像。 */
-          if (window.Backend && typeof Backend.getCapabilitySlots === 'function'
-              && typeof window.__chatUsable === 'function') {
-            try {
-              Promise.resolve(Backend.getCapabilitySlots()).then(function(r){
-                /* 只有 'no' 才弹：'unknown'（后端没就绪）时弹「没接上大脑」是假结论。 */
-                if (window.__chatUsable(r) !== 'no') return;
-                var sh = document.getElementById('setupHint');
-                if (!sh) return;
-                /* 文案跟着状态走：「未配置」才叫"没接上大脑"；配了 Key 却没激活
-                   （warn/未激活）还说"没接上大脑"就是在撒谎。 */
-                var st = ((r && r.health) || {}).chat || 'none';
-                var t = sh.querySelector('.sh-title');
-                if (t) t.textContent = (st === 'none') ? '她还没接上「大脑」' : '她还聊不了天';
-                sh.classList.add('show');
-              }).catch(function(){});
-            } catch (e) {}
-          }
+             判据用能力槽状态，不用 error 文案——文案会改，而且「端口冷却」和
+             「没配」在 error 里长得很像。 */
+          window.__maybeSetupHint(false);
         } else {
           /* 显示"正在连接聊天模型"进度条（startChatLive 提供的话） */
           if (window.__chat && window.__chat.showChatSwitch) window.__chat.showChatSwitch();
@@ -1337,7 +1351,12 @@
         Backend.transcribeAndChat(b64, 'pcm').then(function(r){
           if (r && r.success && r.text){ /* 文字消息随后经 pollChat 出现 */ }
           else if (r && r.success && r.empty){ voiceHint('没听清，再说一次'); }
-          else if (r && !r.success){ Backend.toast('语音识别失败：'+(r.error||''), 'err'); }
+          else if (r && !r.success){
+            Backend.toast('语音识别失败：'+(r.error||''), 'err');
+            /* 语音是第二条发送入口：只给打字那条做承接，用语音的人就永远等不到
+               这句话（同「两个启动路径漏传一个参数」的漏法）。 */
+            window.__maybeSetupHint(true);
+          }
           if (V.on && !V.aiSpeaking) startListen();
         }).catch(function(){ if (V.on && !V.aiSpeaking) startListen(); });
       }
