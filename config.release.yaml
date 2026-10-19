@@ -1,4 +1,9 @@
-force_first_run: true
+# 【2026-10-20 修复·出厂模板强制重走引导】
+# 这里原本是 true，注释写着"反复重启看首启效果用"——那是**开发调试开关**，
+# 抄进出厂模板的后果是：每个新用户每次启动都被拽回引导页，刚填完 Key 下次又要填。
+# 首启判定是 `force_first_run or not first_run_done`（webapp.py:10103），
+# 所以关掉这个开关后，引导仍然只走第一次，完成后写 first_run_done 就不会再来了。
+force_first_run: false
 active_character_id: danya
 voice_profiles:
 - name: 阿里云百炼
@@ -1795,8 +1800,9 @@ voice:
   wake_words:
   - 达妮娅
   - 你好达妮娅
-  - 小薇
-  - 你好小薇
+  # 【2026-10-20】原出厂模板还带着「小薇」「你好小薇」——那是旧产品身份，
+  # 新用户装完却要喊一个陌生名字才唤醒。默认只留她自己的名字。
+  # （想加别名自己加；tools/doctor.py 会把遗留音色名当配置残留提示出来。）
   clone_local_engine: voxcpm
 websocket:
   heartbeat_interval_s: 30

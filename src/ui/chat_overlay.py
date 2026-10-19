@@ -58,7 +58,7 @@ class ChatOverlay:
                  get_state: Callable[[], dict],
                  on_save: Callable[[list], None],
                  stop_event: Optional[threading.Event] = None,
-                 char_name: str = "小薇",
+                 char_name: str = "达妮娅",
                  on_privacy: Optional[Callable[[], None]] = None,
                  get_capacity: Optional[Callable[[], dict]] = None) -> None:
         self._root = root
@@ -337,7 +337,7 @@ class ChatOverlay:
 def run_chat_overlay(get_state: Callable[[], dict],
                      on_save: Callable[[list], None],
                      stop_event: Optional[threading.Event] = None,
-                     char_name: str = "小薇",
+                     char_name: str = "达妮娅",
                      on_ready: Optional[Callable[["ChatOverlay"], None]] = None,
                      on_privacy: Optional[Callable[[], None]] = None,
                      get_capacity: Optional[Callable[[], dict]] = None) -> None:
@@ -388,7 +388,7 @@ if __name__ == "__main__":
             return
         ov.push("ai", "这波撤出来了，干得漂亮！")
         _t.sleep(2.0)
-        ov.push("user", "小薇，帮我看着点右边")
+        ov.push("user", "达妮娅，帮我看着点右边")
         _t.sleep(2.0)
         ov.push("ai", "右边拐角有人，小心！")
     threading.Thread(target=_feed, daemon=True).start()

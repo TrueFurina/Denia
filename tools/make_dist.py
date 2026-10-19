@@ -63,6 +63,10 @@ INCLUDE_FILES = [
     "README.md",
     "requirements.txt",
     "requirements-optional.txt",
+    # 【2026-10-20】应用图标：`src/ui/main_window.py:1395` 按 `<根>/app.ico`
+    # 找它，找不到就 `icon=None` → Windows 给的是 python.exe 的图标。
+    # 之前不在清单里，于是每个交付包的任务栏/Alt-Tab 都是 Python 的图标。
+    "app.ico",
 ]
 
 # 发布模板 → 包内实际配置名（模板里的 Key 必须为空）
