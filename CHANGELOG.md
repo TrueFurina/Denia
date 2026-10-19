@@ -14,6 +14,7 @@
 | commit | 时间 | 类型 | 一句话 | 验证 |
 |---|---|---|---|---|
 | `b775a69` | 07:5x | fix | 第五处静默失效：唤醒词整词语法让她名字被静默跳过 | _qc_wake_word 闭环 + 10 组单测 + 6 刀变异；gate 44→46 |
+| `efad34e` | 08:3x | test | 唤醒后事件流闭环验证：WAKE_WORD→USER_TEXT 双引擎覆盖 + 3 刀变异（原测试只模 vosk 回退漏了 sherpa 主路径，且摘 vosk 桩让 _run 局部绑定落到真 vosk 假阴性） | 双场景单测 + 3 刀变异全红；gate 46→48 |
 | `5bffc68` | 19:39 | chore | 建立版本控制基线（此项目此前无 git） | 646 对象 / 11.97 MiB |
 | `e8e1d03` | 19:40 | docs | 全项目诊断报告 | — |
 | `57d6101` | 19:46 | security | 清空发布模板漏网的 API Key + 打包凭据硬闸 | 变异：塞假 Key → exit 1 |
@@ -56,6 +57,40 @@
 > 代码与测试主体由 `5dbc64c` 收口，**归属以本脚注为准**。
 > 教训：并发会话各自只 `git add` 自己知道的文件，提交前先 `git log` 确认HEAD 没有
 > 在几分钟内被别人推进过。
+
+### 2026-10-19 · 第六处核查：唤醒后事件流闭环（听到→想→说 收口）
+
+**问题**：第五处修完唤醒词命中后，继续验证端到端「听到→想→说」唤醒后的事件流——
+`asr._run()` 是否真发 `WAKE_WORD` → 切指令识别 → 发 `USER_TEXT`（喂 LLM 那棒）。
+最初的 `src/tests/test_asr_event_flow.py` 报 `USER_TEXT` 不发（`cmd_acc=0`）。
+排查后**不是第 6 处静默失效，是测试桩自己漏了主路径 + 自己摘了桩**：
+
+- `asr._run()` 内部 `from vosk import KaldiRecognizer` 是**函数内局部绑定**，而
+  `wake_word.py` 是模块顶层绑定。测试在 import asr 后把 vosk 从 `sys.modules` 摘掉 →
+  `_run` 的 `cmd_rec` 落到**真 vosk**、假音频喂不进 → 回退路径 `USER_TEXT` 发不出（假阴性）。
+- 同时原测试只模了 vosk 回退路径，没模 **sherpa 主路径**（`engine="sherpa"` 是默认优先）。
+  所以双场景一成一败才暴露桩有问题——产品代码 `asr.py` 的状态机本来就是对的。
+
+**改动（测试侧）**：
+1. 测试打完 vosk 桩后**绝不摘**（保住 `_run` 的局部绑定也指向 `FakeRec`）；
+2. 改写 `test_asr_event_flow.py` 确定性覆盖双引擎：场景 A 注入假 sherpa（主路径）、
+   场景 B 让 sherpa 导入失败（回退 vosk），两种都必须发 `WAKE_WORD` + `USER_TEXT`；
+3. 新增 `tools/_qc_asr_event_flow_mutation.py` 变异 3 刀：
+   - A 断 `wake→cmd` 模式切换（注释 `mode="cmd"`）→ 指令分支永不进、USER_TEXT 不出；
+   - B1 吞 sherpa 文本（改 cmd 分支 `text = sherpa.feed(data)` 为 `text=""`）→ USER_TEXT 不出；
+   - B2 吞 vosk 文本（改 `text = json.loads(cmd_rec.Result())…` 为 `text=""`）→ USER_TEXT 不出。
+   B1 初版误改到"免唤醒持续识别"那处同名 `sherpa.feed`（`asr.py` 两处），靠 `"识别指令"`
+   上下文唯一定位 cmd 分支才生效——**变异刀若命中多处同名代码必须用上下文唯一定位**。
+
+**验证**：双场景单测全过 + 3 刀变异每刀都让 `USER_TEXT` 消失（有区分力）；
+`tools/check_all.py` **46 → 48 项全过、0 跳过**。
+
+**本轮洞察（可迁移）**：给被测模块打桩时，**函数内 `from X import Y` 与模块顶层 `import X`
+是不同绑定时机**——摘掉 `sys.modules` 里的桩，函数内 import 会悄悄落到真模块，造成
+"桩部分生效"的假阴性。打桩后别摘，或用 `importlib` 显式 reload；断言 / 变异刀若命中多处
+同名代码，必须用上下文唯一定位，否则改了个没跑到的分支。
+
+---
 
 ### 2026-10-19 · 第五处：唤醒词整词语法——她名字被静默跳过
 
