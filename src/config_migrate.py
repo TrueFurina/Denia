@@ -125,7 +125,8 @@ def migrate_stale_tts_config(raw: dict) -> list[str]:
     return migrate_stale_tts_model(raw) + migrate_stale_voice_profiles(raw)
 
 
-def dump_config_atomic(path: str, data: dict, *, seal: bool = True) -> bool:
+def dump_config_atomic(path: str, data: dict, *, seal: bool = True,
+                       backup: bool = False) -> bool:
     """原子写 YAML 配置：临时文件 + fsync + `os.replace`，Windows 带退避重试。
 
     与 `src/config.py::Config.save()` 同一套纪律（那边有完整的审计记录：
@@ -136,11 +137,25 @@ def dump_config_atomic(path: str, data: dict, *, seal: bool = True) -> bool:
     `seal=True` 时对**写盘副本**做密钥加密，不动调用方的 dict。加密幂等：
     已是 `dpapi:` 的字段会被跳过，不会套两层。
 
+    `backup=True` 时在覆盖前留一份 `<path>.bak`（**只在没有旧备份时**留，
+    反复启动不会刷一堆备份）。为什么需要：`yaml.dump` 会丢掉用户手写的注释，
+    而迁移是**自动触发、用户没点任何按钮**的——不留后路，注释就永久没了。
+
     返回 True 表示已落盘；False 表示失败（调用方自行决定是否告警，不抛异常——
     迁移失败不该让软件打不开）。
     """
     tmp = ""
     try:
+        if backup and os.path.isfile(path):
+            bak = path + ".bak"
+            if not os.path.exists(bak):
+                try:
+                    import shutil as _sh
+
+                    _sh.copy2(path, bak)
+                except OSError:
+                    logger.warning("[config_migrate] 备份原配置失败（继续迁移）: %s",
+                                   bak, exc_info=True)
         payload: Any = copy.deepcopy(data)
         if seal:
             try:
