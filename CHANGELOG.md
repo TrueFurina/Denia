@@ -13,6 +13,7 @@
 
 | commit | 时间 | 类型 | 一句话 | 验证 |
 |---|---|---|---|---|
+| `待填` | 02:1x | test | **第二批测试普查**：又试跑 8 个，6 个能过收进闸门（71→77）；`test_character_card_images` 的 3 FAIL 是**假红**（`/local_img` 早随 UI 拆分搬进 `main_window.py`，测试还在看 `webapp.py`）；`test_call_engine_resolve` 7 项红着但**用例自相矛盾**（1.2 与 2.2 冲突），标为待裁决；`check_models_layer` 抓到**真漂移**——models 层还在推荐 10-16 已下架的 `edge-tts` | 逐个复核退出码 0；角色卡修后 21 PASS / 0 FAIL；门禁 77/77 |
 | `63e21bc` | 02:0x | test | **108 个测试里 54 个不在闸门**；其中 5 个硬编码 `G:\ai对话\11`（旧项目路径）→ **从搬进本仓库那天起就跑不了**，自然没人发现它们不在名单上；`test_write_layer` 还缺退出码（FAIL 也返回 0，装饰闸门） | 逐个试跑确认后加 12 道（59→71，合计只多 16.6s）；退出码变异（强制 `sys.exit(1)`）验证为 1；门禁 71/71 |
 | `658d431` | 01:5x | fix | **会话上下文落盘有初始化顺序依赖**：桶在 `enable_persistence()` 之前被创建就永远不落盘——对话照常、日志正常、**重启全丢**；顺带发现 `tools/test_context_persistence.py` 27 项断言全绿却**从未进过闸门** | 探针实测两种顺序（先 enable → 2 行 / 先建桶 → **0 行**）；修后补用例 14 + 接进闸门；变异（删补挂）→ `FAIL 14 got=0` 退出码 1；门禁 58→59 |
 | `59b929e` | 23:1x | fix | **出厂模板里 7 个开发机绝对路径**（角色头像/头图指向 G: 盘、本地双工与 omni 的 exe/模型指向 H: 盘）→ 新用户装完就是裂图；顺带挖出**微信回调拒绝时 401 变成连接重置**（不读请求体就 close） | 模板闸门 [6] 扫解析后的 YAML + 两刀变异精确报出 `$.proactive.duplex_local_omni_exe`；回调判据改成"看服务端等不等 body"（不拿竞态当断言），变异 4/4 全抓；新用户自检 16 PASS/3 WARN/0 FAIL；门禁 58/58 连跑两次 |
@@ -81,6 +82,53 @@
 > 代码与测试主体由 `5dbc64c` 收口，**归属以本脚注为准**。
 > 教训：并发会话各自只 `git add` 自己知道的文件，提交前先 `git log` 确认HEAD 没有
 > 在几分钟内被别人推进过。
+
+### 2026-10-21 · 第二批测试普查：6 个收进闸门，1 个假红修好，2 个红着待裁决
+
+接着上一轮普查，又试跑 8 个：
+
+| 测试 | 结果 |
+|---|---|
+| `test_relationship_depth_tier` | 16 PASS ✅ 收进闸门 |
+| `test_relationship_judge` | 15/15 ✅ 收进闸门 |
+| `test_memory_episode` | 13 PASS ✅ 收进闸门 |
+| `test_milestone_emit` | 15 PASS ✅ 收进闸门 |
+| `test_context_recall` | 23 PASS ✅ 收进闸门 |
+| `test_character_card_images` | 18 PASS / 3 FAIL → 修后 21 PASS ✅ 收进闸门 |
+| `test_call_engine_resolve` | **13/20** ❌ 待裁决，不进 |
+| `check_models_layer` | **15/16** ❌ 真漂移，不进 |
+
+**① `test_character_card_images` 是假红（「代码搬家没搬测试」第三例）**
+
+它只读 `src/ui/webapp.py`，而 `/local_img` 路由早随 UI 拆分搬进了 `src/ui/main_window.py`。
+于是"白名单含 `char_banners`/`char_avatars`"三条**恒 FAIL**——功能是好的，是判据看错了地方。
+改成拼接两份源码后 21 PASS / 0 FAIL。
+
+**② `test_call_engine_resolve` 7 项失败，但用例自相矛盾，不能盲改**
+
+- 用例 1.2 要 `config=local_omni → local_omni`
+- 用例 2.2 却写着「★新策略：没显式选本地 → 一律走云端」
+
+**同一个文件里两条用例互相矛盾**，说明 1.2 是旧策略残留。6.x 期望
+`error_code == 'no_cloud_duplex_cfg'`，实际被新门控 `no_cloud_duplex` 抢先拦下
+（两个错误码在 `webapp.py` 里都存在：9230 与 9247）。
+
+→ 先把"用户怎么算显式选本地"这个产品语义定下来，再决定改测试还是改代码。
+
+**③ `check_models_layer` 抓到真漂移**
+
+```
+[FAIL] 引擎表漂移: 仅我有={'edge-tts'} 仅 webapp 有=set()
+```
+
+webapp 侧 10-16 已按发布口径下架 `edge-tts`（用户要求不用微软在线音色），
+`src/models/protocols.py` 的 `TTS_ENGINES` 还留着它，`hint` 甚至写着"零配置、免费、立刻能说"。
+→ models 层还在推荐一个已下架的引擎。删它要走老配置迁移验证，没顺手改。
+
+**验证**：6 个逐个复核退出码 0；角色卡修后 21 PASS；门禁 **77/77 全通过**（新增 6 道只多 4 秒）。
+
+**教训**：测试红了有三种可能——**真 bug**、**假红（判据看错地方）**、**判据自己过时**。
+三种的处理方式完全不同，先分清再动手。把红着的测试硬塞进闸门，只是把噪音变成红灯。
 
 ### 2026-10-21 · 108 个测试里 54 个不在闸门，其中 5 个根本跑不起来
 

@@ -130,6 +130,24 @@ GATES: list[tuple[str, str, list[str], bool]] = [
     ("主动开口冒烟", PY_VENV, ["tools/test_proactive_smoke.py"], False),
     ("关系主动修复", PY_VENV, ["tools/test_relationship_proactive_fixes.py"], False),
     ("写入层", PY_VENV, ["tools/test_write_layer.py"], False),
+    # 第二批普查（2026-10-21 02:0x）：又试跑 8 个，6 个能过 → 收进来。
+    # `test_character_card_images` 原本 3 FAIL 是**假红**：`/local_img` 路由随 UI 拆分
+    # 搬进了 `main_window.py`，测试却还只看 `webapp.py` → 白名单三条恒 FAIL。
+    # 改成拼接两份源码后 21 PASS / 0 FAIL。
+    # 两个**故意不进**的（红着，且不是"能跑就守"能解决的）：
+    #   · `tools/test_call_engine_resolve.py` 13/20 —— 用例 1.2/2.2 自相矛盾
+    #     （1.2 要 config=local_omni 走本地，2.2 说运行态 local_omni 走云端★新策略），
+    #     6.x 的错误码 `no_cloud_duplex_cfg` 已被新门控 `no_cloud_duplex` 抢先拦下。
+    #     疑似测试未跟上策略变更，**需人工裁决**，别盲改测试也别盲改代码。
+    #   · `tools/check_models_layer.py` 15/16 —— `[FAIL] 引擎表漂移: 仅我有={'edge-tts'}`。
+    #     webapp 侧 10-16 已按发布口径下架 edge-tts，`src/models/protocols.py` 的
+    #     TTS_ENGINES 还留着。是真漂移，但删引擎要走老配置迁移验证，单独处理。
+    ("关系深度档", PY_VENV, ["tools/test_relationship_depth_tier.py"], False),
+    ("关系裁判", PY_VENV, ["tools/test_relationship_judge.py"], False),
+    ("记忆片段", PY_VENV, ["tools/test_memory_episode.py"], False),
+    ("里程碑发射", PY_VENV, ["tools/test_milestone_emit.py"], False),
+    ("上下文召回", PY_VENV, ["tools/test_context_recall.py"], False),
+    ("角色卡图片", PY_VENV, ["tools/test_character_card_images.py"], False),
     # 「发给队友的包里到底有什么」：包内容取 git ls-files（.gitignore 是单一事实源），
     # 再叠一层硬排除。这层防御在真实仓库上**一项都不会触发**（gitignore 早洗过了），
     # 所以必须直接对规则表喂路径来证明它是活的——变异 4 刀（规则恒 None / 删红线
