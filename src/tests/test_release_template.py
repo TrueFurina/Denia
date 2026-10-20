@@ -20,6 +20,7 @@
 from __future__ import annotations
 
 import os
+import re as _re
 import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -137,6 +138,48 @@ def main() -> int:
               "提示条可「稍后」——不然每次进来都糊在脸上")
     else:
         check(False, "index.html 不存在")
+
+    print("\n=== [6] 出厂模板不许带开发机绝对路径（新用户没有那些盘） ===")
+    # 【2026-10-20 抓到的第三个真事故】模板里躺着 7 个开发机绝对路径：
+    #   角色 banner/avatar（G: 盘）、本地双工 exe 与参考音（H:/G: 盘）、
+    #   本地 omni 的 resources/python_embed/server_dir/model_dir（H: 盘）。
+    # 危害不是"少个图"这么轻：`avatarUrlOf()` 见 c.avatar 非空就拼 /local_img
+    # 去取图，**内置兜底头像 _role_assets/* 因此永远不会被用上**——只有留空才兜底。
+    # 也就是"填了个坏路径"比"留空"更糟。这类值在开发机上永远看不出问题
+    # （本机早就没有 G:/H: 盘了，只是没人去看那张卡），只有新用户会撞。
+    _abs_re = _re.compile(r"^(?:[A-Za-z]:[\\/]|\\\\|//)")
+    _dev_abs: list[str] = []
+
+    def _walk(node, path):
+        if isinstance(node, dict):
+            for k, v in node.items():
+                _walk(v, f"{path}.{k}")
+        elif isinstance(node, list):
+            for i, v in enumerate(node):
+                _walk(v, f"{path}[{i}]")
+        elif isinstance(node, str) and _abs_re.match(node.strip()):
+            _dev_abs.append(f"{path} = {node.strip()}")
+
+    _walk(tpl, "$")
+    check(not _dev_abs, f"模板里 0 个本机绝对路径（命中 {_dev_abs}）")
+
+    # banner/avatar 是"留空反而更好"的典型：空 → 走内置兜底图；填路径 → 必须真能取到。
+    _media_bad: list[str] = []
+
+    def _walk_media(node, path):
+        if isinstance(node, dict):
+            for k, v in node.items():
+                if k in ("banner", "avatar") and isinstance(v, str) and v.strip():
+                    if not os.path.isfile(os.path.join(ROOT, v.strip())):
+                        _media_bad.append(f"{path}.{k} = {v.strip()}")
+                _walk_media(v, f"{path}.{k}")
+        elif isinstance(node, list):
+            for i, v in enumerate(node):
+                _walk_media(v, f"{path}[{i}]")
+
+    _walk_media(tpl, "$")
+    check(not _media_bad,
+          f"banner/avatar 要么留空、要么指向仓库里真实存在的文件（命中 {_media_bad}）")
 
     print()
     if _fails:

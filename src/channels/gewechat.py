@@ -40,6 +40,13 @@ _INBOX_MAX = 200
 # 与 OneBot(reverse) 的边界同一套标准（见 src/channels/onebot.py:32）。
 _LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1"}
 
+# 拒绝一条回调前最多读掉多少字节的请求体（见 do_POST 里的注释）。
+# 目的：读完 body 再回 401，避免 close() 时残留未读数据 → Windows 发 RST →
+# 对端拿到 ConnectionResetError 而不是 401（实测 256KB 时 20 次里 8 次）。
+# 封顶的原因：未认证对端可以用「声明超大 Content-Length 再滴水」占住一个线程。
+# 正常 Gewechat 回调是几 KB 的 JSON，256KB 已经宽裕。
+_REJECT_DRAIN_CAP = 256 * 1024
+
 
 class GeweClient:
     """Gewechat REST 客户端（纯逻辑，可离线 mock）。"""
@@ -178,6 +185,23 @@ class GewechatChannel(Channel):
                 if not channel._authorized(self):
                     logger.warning("Gewechat 回调被拒绝（令牌不匹配）：来源 %s",
                                    self.client_address[0] if self.client_address else "?")
+                    # 【2026-10-20 修复·拒绝时没读请求体 → 对端收到 RST 而不是 401】
+                    # `BaseHTTPRequestHandler` 不替我们消费 body；直接回 401 再 close()，
+                    # 发送缓冲里还压着没读的请求体，Windows 会发 RST。实测（256KB body，
+                    # 20 次）：**12 次拿到 401、8 次拿到 ConnectionResetError(10054)**。
+                    # 危害不止门禁偶发假红（「微信回调边界」满负载时撞到过）：真实 Gewechat
+                    # 侧同样分不清「鉴权失败」和「网络断了」，可能无限重投。
+                    # 修法：先把这个 body 读掉再回响应 → 优雅关闭，客户端稳定拿到 401。
+                    # 但**必须封顶**：这条路径面对的是未认证的对端，无上限 read() 等于给它
+                    # 一个「声明 Content-Length: 8GB 再慢慢滴水」就能占住一个线程的口子
+                    # （ThreadingHTTPServer 每连接一线程）。超过上限就回 401 直接关，
+                    # 那点 RST 是给恶意对端的，正常回调都是几 KB 的 JSON。
+                    try:
+                        _n = int(self.headers.get("Content-Length", 0) or 0)
+                        if 0 < _n <= _REJECT_DRAIN_CAP:
+                            self.rfile.read(_n)
+                    except Exception:  # noqa: BLE001
+                        pass
                     self.send_response(401)
                     self.end_headers()
                     self.wfile.write(b'{"error":"unauthorized"}')

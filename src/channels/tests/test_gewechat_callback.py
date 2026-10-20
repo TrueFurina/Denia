@@ -120,6 +120,73 @@ async def test_token_enforced() -> None:
     print("✓ token：无/错 401 且不入队，query/头/Bearer 三种带法均放行")
 
 
+def _open_declaring(port: int, n_bytes: int) -> socket.socket:
+    """连上回调端口、只发请求头（声明 n_bytes 的 body），body 留着调用方自己补。"""
+    s = socket.create_connection(("127.0.0.1", port), timeout=5)
+    s.sendall(b"POST / HTTP/1.1\r\nHost: x\r\nContent-Type: application/json\r\n"
+              b"Content-Length: %d\r\n\r\n" % n_bytes)
+    return s
+
+
+def _recv_or_none(s: socket.socket, wait: float):
+    """在 wait 秒内收一段；超时返回 None（表示服务端还没开口）。"""
+    s.settimeout(wait)
+    try:
+        return s.recv(4096)
+    except socket.timeout:
+        return None
+
+
+async def test_reject_drains_body_bounded() -> None:
+    """拒绝回调前要先读掉请求体；但**必须封顶**（未认证对端不许占线程）。
+
+    2026-10-20 实测：不读 body 就 close()，Windows 会给对端发 RST —— 256KB body
+    20 次里 **8 次**客户端拿到 ConnectionResetError(10054) 而不是 401。危害不止
+    门禁偶发假红（「微信回调边界」满负载时撞到过）：真实 Gewechat 侧同样分不清
+    「鉴权失败」与「网络断了」，可能无限重投。
+
+    判据用「等不等 body」而不是「拿没拿到 401」：RST 与响应谁先到是竞态的
+    （同一份代码 20 次里 8 次 RST、12 次 401），拿它当断言就是看运气；
+    「拒之前要不要先把 body 收完」是确定行为，没有竞态。
+
+    两半都要守：
+    ① 正常大小（几 KB～几百 KB）→ 先读完再拒（否则 RST）；
+    ② 超大（> _REJECT_DRAIN_CAP）→ 立刻拒（否则声明个 8GB 再滴水就占住一个线程）。
+    只守 ① 会把「无上限 read」写进去，那是给未认证对端开的 DoS 口子。
+    """
+    port = _free_port()
+    ch = build("0.0.0.0", port=port, token="s3cret")
+    ch._start_callback_server()
+    assert ch._httpd is not None, "配了 token 的非回环监听应能启动"
+    try:
+        # ① 声明 64KB 但先不发 body：服务端应该等着（它要先读完再拒）
+        s = _open_declaring(port, 64 * 1024)
+        try:
+            early = _recv_or_none(s, 1.0)
+            assert early is None, (
+                f"声明 64KB body 却不发，服务端立刻回了 {early!r} → 说明拒绝路径"
+                f"没读请求体，对端会收到 RST 而不是 401")
+            s.sendall(b"x" * (64 * 1024))          # 把 body 补上，服务端才能读完
+            done = _recv_or_none(s, 5.0)
+            assert done is not None and b"401" in done, (
+                f"body 补齐后应当回 401，实际 {done!r}")
+        finally:
+            s.close()
+
+        # ② 声明 8MB 却不发：必须立刻拒（封顶），不许陪着等
+        s2 = _open_declaring(port, 8 * 1024 * 1024)
+        try:
+            big = _recv_or_none(s2, 1.0)
+            assert big is not None and b"401" in big, (
+                f"声明 8MB body 却不发：必须立刻 401（封顶，别等），实际 {big!r}")
+        finally:
+            s2.close()
+    finally:
+        ch._httpd.shutdown()
+        ch._httpd.server_close()
+    print("✓ 拒绝路径：先读 body 再拒（≤256KB），超大 body 立刻拒（不占线程）")
+
+
 async def test_decision_actually_sends() -> None:
     ch = build("127.0.0.1")
     sent: list[tuple] = []
@@ -171,6 +238,7 @@ async def main() -> None:
     test_non_loopback_without_token_refuses()
     await test_loopback_accepts_without_token()
     await test_token_enforced()
+    await test_reject_drains_body_bounded()
     await test_decision_actually_sends()
     await test_send_does_not_block_loop()
     print("\n全部通过 ✅")
