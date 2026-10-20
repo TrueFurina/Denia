@@ -148,6 +148,13 @@ GATES: list[tuple[str, str, list[str], bool]] = [
     ("里程碑发射", PY_VENV, ["tools/test_milestone_emit.py"], False),
     ("上下文召回", PY_VENV, ["tools/test_context_recall.py"], False),
     ("角色卡图片", PY_VENV, ["tools/test_character_card_images.py"], False),
+    # 投影层自检（2026-10-21 02:1x 转绿后收进来）：它比的是 `src/models/protocols.py`
+    # 的 TTS_ENGINES 与 webapp 的 `_VOICE_PROFILE_ENGINES` —— 两处各存一份，天然会漂移。
+    # 本轮抓到真漂移：models 层还列着 10-16 已按发布口径下架的 `edge-tts`。
+    # 顺手治了一条脆弱判据：原来硬编码 `len(TTS_ENGINES) == 11`，删一个引擎就红，
+    # 而数量本身不表达"为什么是 11"；改成"非空下限 + 由白名单逐字比对守具体集合"。
+    # 变异（把 edge-tts 塞回表）→ `[FAIL] 引擎表漂移`，退出码 1。
+    ("投影层自检", PY_VENV, ["tools/check_models_layer.py"], False),
     # 「发给队友的包里到底有什么」：包内容取 git ls-files（.gitignore 是单一事实源），
     # 再叠一层硬排除。这层防御在真实仓库上**一项都不会触发**（gitignore 早洗过了），
     # 所以必须直接对规则表喂路径来证明它是活的——变异 4 刀（规则恒 None / 删红线

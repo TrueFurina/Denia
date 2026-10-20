@@ -160,10 +160,14 @@ def main() -> int:
         fail(f"与 Config 对齐校验失败: {type(e).__name__}: {e}")
 
     # ---------- 5. 元数据完整性 ----------
-    if len(TTS_ENGINES) == 11:
-        ok("TTS 引擎表 11 个（含 fish_audio，与 _VOICE_PROFILE_ENGINES 一致）")
+    # 【2026-10-21 修·数量断言不该是判据】原来硬编码 `len(TTS_ENGINES) == 11`，
+    # 2026-10-16 下架 edge-tts 后表变成 10 个就报 FAIL —— 这不是缺陷，是判据过时。
+    # 数量本身不表达"为什么是 11"，下次增删引擎还得再改一次。
+    # 真正该守的是下面那条「与 webapp 白名单逐字比对」；这里只留一个"别被误清空"的下限。
+    if len(TTS_ENGINES) >= 5:
+        ok(f"TTS 引擎表非空（{len(TTS_ENGINES)} 个，具体集合由 webapp 白名单比对守）")
     else:
-        fail(f"TTS 引擎表应 11 个，实为 {len(TTS_ENGINES)}")
+        fail(f"TTS 引擎表只剩 {len(TTS_ENGINES)} 个，疑似被误清空")
 
     from src.ui import webapp as _wa  # noqa: E402
     # 与 webapp 的白名单逐字比对（防两处漂移）
