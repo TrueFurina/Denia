@@ -24,6 +24,13 @@ if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
 _WEBAPP = os.path.join(ROOT, "src", "ui", "webapp.py")
+# 【2026-10-21 修】`/local_img` 路由已随 UI 拆分搬进 `main_window.py`，测试却还在只看
+# `webapp.py` → 白名单那三条断言恒 FAIL（**假红**：功能是好的，是测试的路径过时了）。
+# 拼接两份源码：既保住原本查 webapp 的断言，也能看到搬走的实现。
+_SRC_FILES = [
+    _WEBAPP,
+    os.path.join(ROOT, "src", "ui", "main_window.py"),
+]
 
 PASS = 0
 FAIL = 0
@@ -40,7 +47,7 @@ def check(cond: bool, label: str) -> None:
 
 
 def main() -> int:
-    src = open(_WEBAPP, encoding="utf-8").read()
+    src = "\n".join(open(p, encoding="utf-8").read() for p in _SRC_FILES)
 
     print("[1] get_characters 透出 banner / avatar")
     # 定位 get_characters 函数体（到下一个 def 为止）
