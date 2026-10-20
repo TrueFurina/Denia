@@ -207,6 +207,24 @@ def main() -> int:
     check(tail != "" and "sessionStorage" not in tail and "localStorage" not in tail,
           "不做「只弹一次」的记忆：每次点发送都是一次真实意图，每次都被同一个原因挡住")
 
+    print("\n=== [5b] 一次只说一句话：浮层在时顶部条让位，关掉后还回来 ===")
+    # 真机截图才看出来的：顶部条和浮层并排出现时说的是同一件事，视线不知道落哪儿
+    check(show_fn != "" and "window.__brainBarRefresh()" in show_fn,
+          "浮层出现时收顶部条，且走 refresh 而不是直接写 hidden")
+    check("function _hintShowing" in html and "classList.contains('show')" in html,
+          "顶部条的判据会看「浮层是不是正显示着」（读 DOM，不另存标志位）")
+    # 这条是探针实测出来的竞态：顶部条会重试，每次重算 hidden，
+    # 直接写 hidden 会在下一次重试时被翻回去（收起后 300ms 又可见）
+    check("bar.hidden = (window.__chatUsable(r) === 'yes') || _hintShowing();" in html,
+          "顶部条重算时把「浮层正显示」算进去（否则重试会把条放回来）")
+    check("window.__brainBarRefresh = ask" in html,
+          "暴露 __brainBarRefresh（否则「稍后」之后顶部条回不来）")
+    check(tail != "" and "window.__brainBarRefresh()" in tail,
+          "「稍后」会把顶部条请回来（它才是常驻的那层兜底）")
+    # 「稍后」只是"现在不想配"，不能顺手把常驻提醒也关掉
+    check(tail != "" and "bar.hidden = true" not in tail,
+          "「稍后」不直接关顶部条（要经 refresh 按真实状态重算）")
+
     print("\n=== [6] 出现方式：立刻可见，不淡入、不遮输入框 ===")
     rule = re.search(r"\.setup-hint\{([^}]*)\}", html)
     body = rule.group(1) if rule else ""

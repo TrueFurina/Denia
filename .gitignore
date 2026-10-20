@@ -68,3 +68,6 @@ tools/daniya_sticker_skill/data/
 
 # 智能体工作目录（项目记忆/会话数据，本地留存，不入库）
 .workbuddy-ai/
+
+# 真机探针产物（tools/_qc_setup_hint.py 每次跑都会重画）
+/_qc_*.png
