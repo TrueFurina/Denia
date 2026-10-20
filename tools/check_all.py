@@ -72,6 +72,10 @@ GATES: list[tuple[str, str, list[str], bool]] = [
     # 再报人话（PID/退出指引）、占用探测不扰民。两刀变异已验：删重试→「确有重试」
     # 红；改回裸 raise→三条诊断断言红。
     ("WS 端口绑定", PY_VENV, ["src/tests/test_ws_port_bind.py"], False),
+    # README/文档的本地链接不悬空。坏法很安静——**没人会点**，断了也不会有人报错，
+    # 直到新来的人照着点一次 404。而"文档搬家"正是最容易制造悬空的动作。
+    # 变异 3 刀全红：搬家没改链接 / 图片路径写错 / 指向不存在的文档。
+    ("文档链接不悬空", PY_VENV, ["tools/check_readme_links.py"], False),
     ("壳桌宠回退", PY_VENV, ["src/tests/test_pet_shell_fallback.py"], False),
     ("桌宠后端决策", PY_VENV, ["src/tests/test_pet_backend.py"], False),
     ("桌宠位置持久化", PY_VENV, ["src/tests/test_pet_state.py"], False),
