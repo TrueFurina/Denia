@@ -65,3 +65,6 @@ tools/_*.png
 
 # 贴纸技能的素材包（67MB 图片，本地产物，不进仓库）
 tools/daniya_sticker_skill/data/
+
+# 智能体工作目录（项目记忆/会话数据，本地留存，不入库）
+.workbuddy-ai/
