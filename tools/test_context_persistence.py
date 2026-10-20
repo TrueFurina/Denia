@@ -185,6 +185,23 @@ def main():
           _u == [("user", "界面里的用户话"), ("assistant", "界面里的AI话")], str(_u))
     _sh.rmtree(_legacy, ignore_errors=True)
 
+    # ---- 14 初始化顺序无关：先建桶、后启用，也必须落盘 ----
+    # 【2026-10-21 修】`_make_history()` 只在**建桶那一刻**看 `_PERSIST_BASE` 决定挂不挂
+    # 写回调。顺序一旦反过来（任何模块在 webapp 启用持久化之前调过 shared_history），
+    # 那个桶从此纯内存：对话照常进行、日志一切正常，**重启全丢**。
+    # 探针实测（修复前）：先 enable 后建桶 → 落盘 2 行；先建桶后 enable → 落盘 0 行。
+    _ord = tempfile.mkdtemp(prefix="ctx_order_")
+    try:
+        CH._shared_by_char.clear()
+        CH._PERSIST_BASE = None                    # 模拟进程刚起、尚未启用
+        _early = CH.shared_history_for("early")    # 桶先建好（此刻没有写回调）
+        CH.enable_persistence(_ord)                # 之后才启用
+        _early.add_turn("user", "先建桶后启用")
+        _got = _lines_of(_ord, "early")
+        check("14 初始化顺序无关：先建桶后启用也落盘", len(_got) == 1, f"got={len(_got)}")
+    finally:
+        shutil.rmtree(_ord, ignore_errors=True)
+
     print("\n结果: %d PASS / %d FAIL" % (PASS, FAIL))
     return 0 if FAIL == 0 else 1
 

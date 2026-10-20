@@ -107,6 +107,11 @@ GATES: list[tuple[str, str, list[str], bool]] = [
     # ④文案承诺的「原话还在输入框里」有代码保证。判据真值表直接交给 node 跑，
     # 不在 Python 里复刻逻辑（复刻只能证明"我两次写得一样"）。变异 9 刀全红。
     ("首启承接浮层", PY_VENV, ["src/tests/test_setup_hint.py"], False),
+    # 会话上下文落盘（写穿透 / 重启回填 / 老日志迁移 / **初始化顺序无关**）。
+    # 最后那条是 2026-10-21 补的：`_make_history()` 只在建桶那一刻决定挂不挂写回调，
+    # 顺序反过来（先 shared_history 后 enable）那个桶就永远纯内存——对话照常、日志正常、
+    # 重启全丢。这条测试此前 198 行、27 项全绿，却**从来没进过闸门**。
+    ("会话上下文落盘", PY_VENV, ["tools/test_context_persistence.py"], False),
     # 「发给队友的包里到底有什么」：包内容取 git ls-files（.gitignore 是单一事实源），
     # 再叠一层硬排除。这层防御在真实仓库上**一项都不会触发**（gitignore 早洗过了），
     # 所以必须直接对规则表喂路径来证明它是活的——变异 4 刀（规则恒 None / 删红线
