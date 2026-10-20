@@ -454,8 +454,14 @@ characters:
   voice_profile: ''
   cloud_voice_id: ''
   ref_audio: ''
-  banner: G:\ai对话\11\data\char_banners\1791656641149.jpg
-  avatar: G:\ai对话\11\data\char_avatars\1791658180754.jpg
+  # 【2026-10-20 修复·出厂模板带开发机绝对路径】原值是开发机上的两个绝对路径
+  # （banner 指 char_banners 下的一张 jpg，avatar 指 char_avatars 下的一张 jpg）。
+  # 新用户装完这两个文件根本不存在 → 角色卡头图/头像直接裂图。更糟的是前端
+  # `avatarUrlOf()` 只要 c.avatar 非空就拼 /local_img 去取图，**内置兜底头像
+  # _role_assets/* 永远不会被用上**——只有留空才会兜底。所以空串才是
+  # 「装完就能看」的值。用户想要自己的头像：角色编辑页选图，会复制进 data/char_avatars。
+  banner: ''
+  avatar: ''
 companion_mode: cloud_pay
 companion_features:
 - id: cloud_duplex
@@ -1345,10 +1351,15 @@ proactive:
   duplex_call_frame_interval_s: 0.5
   duplex_interval_s: 2
   duplex_local_omni_endpoint: https://localhost:8006
-  duplex_local_omni_exe: H:\Comni_MASKED\Comni.exe
+  # 【2026-10-20】原值是开发机的绝对路径（H: 盘）。留空 = 「没装本地双工引擎」，
+  # 代码里所有读取点都是 `(x or '')` 真值判断，空串安全；填了错路径反而会让
+  # 「本地引擎可用吗」的判断在每次启动时去探测一个不存在的 exe。
+  duplex_local_omni_exe: ''
   duplex_call_listen_prob_scale: 1.0
   duplex_local_omni_listen_prob_scale: 0.3
-  duplex_local_omni_ref_audio: G:\ai对话\11\assets\voices\daniya_ref_0813_24k.wav
+  # 【2026-10-20】原值指向开发机的绝对路径（G: 盘），新用户没有这个盘 →
+  # 本地双工一旦启用就找不到参考音。改成随包分发的相对路径（assets/voices 在仓库里）。
+  duplex_local_omni_ref_audio: assets/voices/daniya_ref_0813_24k.wav
   duplex_local_omni_unload_on_game: true
   force_kill_omni_on_unload: true
   duplex_max_width: 768
@@ -1452,16 +1463,18 @@ proactive:
   llm_timeout_s: 5
   local_omni_engine:
     auto_start: false
-    comni_resources_dir: H:\Comni\_internal\resources
+    # 【2026-10-20】下面三个原值是开发机的 H: 盘路径。留空 = 「本机没装这套引擎」，
+    # 由用户自己在设置页装/指路径；填开发机路径只会让「装了没」的判断永远为真。
+    comni_resources_dir: ''
     gateway_port: 8006
     gpu_id: 0
     health_timeout_s: 180
     kill_stray_on_port: true
-    python_embed: H:\Comni\_internal\resources\python-embed\python.exe
-    server_dir: H:\Comni\_internal\resources\apps\server
+    python_embed: ''
+    server_dir: ''
     worker_port: 22700
     comni_engine_url: https://github.com/tc-mb/llama.cpp-omni/releases/latest/download/Comni-Setup-win64.exe
-    model_dir: H:\ceshi
+    model_dir: ''
   local_omni_engine_type: own_llama_server
   duplex_vram_profile: stock_8k
   duplex_vram_budget_gb: 12
