@@ -21,15 +21,14 @@ from __future__ import annotations
 #       src/voice/tts_backends.py:1339-1354（create_backend 的 engine_map）
 
 TTS_ENGINES: dict[str, dict] = {
-    "edge-tts": {
-        "name": "微软 Edge TTS",
-        "local": False, "cloud": True, "free": True, "clone": False,
-        # 来源 tts_backends.py:59-64 EdgeTTSBackend.__init__
-        "required_fields": ["voice"],
-        "optional_fields": ["rate", "pitch", "volume", "fallback_pyttsx3"],
-        "endpoint": "（edge-tts 官方服务，无需端点）",
-        "hint": "零配置、免费、立刻能说；但不能克隆音色",
-    },
+    # 【2026-10-21 修·引擎表漂移】原来这里还列着 `edge-tts`（微软在线音色），
+    # 而 webapp 侧 2026-10-16 已按发布口径**下架**它（用户要求不使用微软在线音色，
+    # 见 webapp.py 的 `_VOICE_PROFILE_ENGINES` 与"不再出现在可选清单里"那段）。
+    # 结果：models 层（catalog 的引擎清单）还在推荐一个已下架的引擎，
+    # `tools/check_models_layer.py` 报 `[FAIL] 引擎表漂移: 仅我有={'edge-tts'}`。
+    # 注意：**后端没删**——`tts_backends.EdgeTTSBackend` 仍保留，老配置里写着
+    # `engine: edge-tts` 的用户照样能出声（`_TTS_ENGINE_ALIASES["edge"]` 也保留）。
+    # 这里只把它从「推荐/可选清单」里摘掉。
     "dashscope_cosy": {
         "name": "阿里云百炼 CosyVoice / Qwen-Audio-TTS",
         "local": False, "cloud": True, "free": False, "clone": True,
