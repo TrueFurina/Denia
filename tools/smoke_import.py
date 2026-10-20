@@ -91,11 +91,18 @@ def run_one(exe: str, root: str, mod: str, timeout: int) -> dict:
     }
 
 
-def load_allow(path: str) -> dict[str, str]:
-    """读白名单：每行 `模块名  # 原因`。允许清单只有带原因才收。"""
+def load_allow(path: str) -> tuple[dict[str, str], list[str]]:
+    """读白名单：每行 `模块名  # 原因`。**没写原因的条目单独返回**，由调用方判错。
+
+    【2026-10-21 修·判据松了一档】原实现是 `out[mod] = why.strip() or "（未写原因）"`，
+    等于允许无原因加入白名单。白名单是藏污纳垢的经典位置：一旦可以无原因加进去，
+    下一个真 bug 就会被「顺手加一行」永久埋掉，而「（未写原因）」在输出里看着还像
+    一句说明，比留空更隐蔽。变异实测：不写原因 → 旧实现 exit 0（放行）。
+    """
     out: dict[str, str] = {}
+    no_reason: list[str] = []
     if not path or not os.path.exists(path):
-        return out
+        return out, no_reason
     with open(path, encoding="utf-8") as fh:
         for line in fh:
             line = line.strip()
@@ -104,8 +111,10 @@ def load_allow(path: str) -> dict[str, str]:
             mod, _, why = line.partition("#")
             mod = mod.strip()
             if mod:
-                out[mod] = why.strip() or "（未写原因）"
-    return out
+                out[mod] = why.strip()
+                if not why.strip():
+                    no_reason.append(mod)
+    return out, no_reason
 
 
 def main() -> int:
@@ -140,10 +149,11 @@ def main() -> int:
     results.sort(key=lambda r: (r["status"] != "FAIL", r["module"]))
     fails = [r for r in results if r["status"] != "OK"]
 
-    allow = load_allow(os.path.join(root, args.allow) if not os.path.isabs(args.allow) else args.allow)
+    allow, no_reason = load_allow(os.path.join(root, args.allow) if not os.path.isabs(args.allow) else args.allow)
     unexpected = [r for r in fails if r["module"] not in allow]
     known = [r for r in fails if r["module"] in allow]
-    stale = [m for m in allow if m not in {r["module"] for r in results}]
+    # `--only` 下大部分模块压根没跑，把它们当"已不再失败"会误导人去删白名单条目。
+    stale = [] if args.only else [m for m in allow if m not in {r["module"] for r in results}]
 
     kinds: dict[str, int] = {}
     for r in fails:
@@ -167,13 +177,17 @@ def main() -> int:
         print("\n=== 白名单里已不再失败的条目（建议清理）===")
         for m in stale:
             print(f"  {m}")
+    if no_reason:
+        print("\n=== 白名单条目缺原因（必须补上，否则等于没有白名单）===")
+        for m in no_reason:
+            print(f"  {m}")
 
     if args.json:
         with open(args.json, "w", encoding="utf-8") as fh:
             json.dump(results, fh, ensure_ascii=False, indent=1)
         print(f"\n完整结果已写入 {args.json}")
 
-    if args.strict and unexpected:
+    if args.strict and (unexpected or no_reason):
         return 1
     return 0
 

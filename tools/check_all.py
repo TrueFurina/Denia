@@ -210,6 +210,13 @@ GATES: list[tuple[str, str, list[str], bool]] = [
     ("OneBot 协议", PY_VENV, ["src/channels/tests/test_onebot.py"], True),
     ("OneBot 反连鉴权", PY_VENV, ["src/channels/tests/test_onebot_reverse_auth.py"], True),
     ("命令白名单", PY_VENV, ["src/llm/tests/test_run_command_whitelist.py"], True),
+    # 导入冒烟：逐个 import 每个模块（独立子进程，并发 8），抓「导入期就崩」。
+    # compileall 只保证语法和名字对得上，保证不了能不能被加载——2026-10-17 实测两例
+    # （import 期 mkdir('G:\\')、顶层 argtypes 引用已删的 _u32）compileall 全绿。
+    # 172 个模块约 24s，故标慢项。白名单只收「确认不影响主程序启动」且**必须写原因**。
+    # 变异三刀：非白名单坏模块→1；白名单内有原因→0（对照组，证明白名单真生效）；
+    # 白名单内不写原因→1（2026-10-21 修，原实现无原因也放行）。
+    ("导入冒烟", PY_VENV, ["tools/smoke_import.py", "--strict"], True),
 ]
 
 
