@@ -308,6 +308,16 @@
             ? '刚才那句话没送到她那里——配好之后直接开口说就行。'
             : '刚才那句话还在输入框里——配好之后直接点发送就行。';
           sh.classList.add('show');
+          /* 一次只说一句话：顶部条此刻说的和这张卡是同一件事，留着就是噪音。
+             走 refresh 而不是直接写 hidden —— 顶部条会重试（后端慢时最多 12 次），
+             它每次都会重算 hidden，直接写会被下一次重试翻回去（探针实测：
+             收起后 300ms 又变回可见）。refresh 里的判据会看"浮层是不是正显示着"。 */
+          if (typeof window.__brainBarRefresh === 'function') {
+            window.__brainBarRefresh();
+          } else {
+            var _bar = document.getElementById('brainBar');
+            if (_bar) _bar.hidden = true;
+          }
         };
         /* 查一次能力槽再决定弹不弹。只有 'no'（确定聊不了）才弹：
            'unknown'（后端没就绪）弹「没接上大脑」是假结论。 */
@@ -327,6 +337,12 @@
         try { if (sessionStorage.getItem('danya_brain_bar_muted') === '1') return; } catch (e) {}
         var tries = 0;
         function retry(){ if (tries++ < 12) setTimeout(ask, 1200); }
+        /* 承接浮层正显示着吗？顶部条据此让位——判据读 DOM 而不是另存一个标志位，
+           省掉"两个变量谁先更新"的同步问题。 */
+        function _hintShowing(){
+          var h = document.getElementById('setupHint');
+          return !!(h && h.classList.contains('show'));
+        }
         function ask(){
           var B = window.Backend;
           if (!B || typeof B.getCapabilitySlots !== 'function') return retry();
@@ -336,7 +352,7 @@
           p.then(function(r){
             if (!r || r.success === false) return retry();
             // ok=已连通；「聊天已通·看屏未配」也能聊 → 都不打扰
-            bar.hidden = (window.__chatUsable(r) === 'yes');
+            bar.hidden = (window.__chatUsable(r) === 'yes') || _hintShowing();
           }).catch(retry);
         }
         document.getElementById('brainBarGo').addEventListener('click', function(){
@@ -346,6 +362,8 @@
           try { sessionStorage.setItem('danya_brain_bar_muted', '1'); } catch (e) {}
           bar.hidden = true;
         });
+        // 承接浮层点「稍后」后要把顶部条还回来（它是常驻的那一层兜底）
+        window.__brainBarRefresh = ask;
         ask();
       })();
       </script>
@@ -3779,7 +3797,12 @@
   var go = document.getElementById('setupHintGo');
   var x  = document.getElementById('setupHintX');
   if(go) go.addEventListener('click', function(){ location.href = '/redesign/ui_redesign_modelapi.html'; });
-  if(x)  x.addEventListener('click', function(){ el.classList.remove('show'); });
+  /* 关掉浮层后把顶部条请回来：它是常驻的那一层兜底，浮层只是"此刻"的一句话。
+     不还回来的话，点一次「稍后」就等于把提醒永久关掉了——而用户只是说"现在不想配"。 */
+  if(x)  x.addEventListener('click', function(){
+    el.classList.remove('show');
+    if (typeof window.__brainBarRefresh === 'function') window.__brainBarRefresh();
+  });
 })();
 </script>
 
