@@ -616,6 +616,31 @@ def check_ports(cfg: object) -> tuple[str, str, str, str]:
             "确认是不是本程序的残留进程；是的话在任务管理器结束 electron.exe / python.exe")
 
 
+def _has_any_api_key(node) -> bool:
+    """递归找任何一个非空的 api_key（用于「升级覆盖检测」）。
+
+    【2026-10-21 修·判据恒真】原判据是 `raw_cfg.get("api_key")` —— 而**顶层根本没有
+    `api_key` 这个键**：模板与实配都没有，密钥在 `llm.openai` / `text_chat.providers[]` /
+    `vision_models.models[]` / `voice` / `voice_profiles[]` 里。于是 `keys_empty` 恒为 True，
+    只要 `data/` 非空就恒报「配置可能被覆盖」——**所有真正在用的人都看到这条假警**，
+    而他们的配置是好的。危害是"狼来了"：一条恒真的 WARN 会把真 WARN 淹掉
+    （它今天就和「唤醒词像遗留音色名」那条混在一起，差点被当噪音跳过）。
+
+    注意 `${ZHIPU_API_KEY}` 这种**算非空**——它表示"从环境变量读"，是有配置的。
+    """
+    if isinstance(node, dict):
+        for k, v in node.items():
+            if k == "api_key" and isinstance(v, str) and v.strip():
+                return True
+            if _has_any_api_key(v):
+                return True
+    elif isinstance(node, list):
+        for x in node:
+            if _has_any_api_key(x):
+                return True
+    return False
+
+
 def check_config(path: str) -> tuple[str, str, str, str]:
     if not os.path.isfile(path):
         # 【2026-10-20】源码包第一次跑必然撞这一条：包里有模板、没有实配。
@@ -667,7 +692,8 @@ def check_config(path: str) -> tuple[str, str, str, str]:
         return (WARN, "配置文件", "发现 config.user.bak.yaml——你的旧配置被新版本覆盖了",
                 "对比 config.user.bak.yaml 与 config.yaml，把 API Key 等改动补回来")
     raw_cfg = getattr(cfg, "raw", None) or {}
-    keys_empty = all(not (raw_cfg.get(k) or "") for k in ("api_key",))
+    # 递归扫，别猜某个顶层键——见 `_has_any_api_key` 的注释（原判据恒真）。
+    keys_empty = not _has_any_api_key(raw_cfg)
     if keys_empty and os.path.isdir(data_dir) and os.listdir(data_dir):
         return (WARN, "配置文件", "config.yaml 是出厂默认值，但 data/ 里有使用痕迹",
                 "若你之前填过 API Key，配置可能被升级覆盖；找 config.user.bak.yaml 或重新填写")
