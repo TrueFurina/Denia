@@ -13,6 +13,7 @@
 
 | commit | 时间 | 类型 | 一句话 | 验证 |
 |---|---|---|---|---|
+| `待填` | 02:2x | fix | **doctor「配置文件」判据恒真**：`raw_cfg.get("api_key")` 读的顶层键**根本不存在**（密钥在 `llm.openai` / `text_chat.providers[]` 等处），于是只要有 `data/` 就恒报「配置可能被覆盖」——所有在用的用户都看到假警。改成递归扫任何非空 `api_key` | 三态 + 对照组 9 项（含「有 Key 不许报」）；变异（判据退回旧写法）→ 场景 2/4a 变红退出码 1；`--doctor` 16 PASS/3 WARN → **17 PASS/2 WARN**；门禁 79/79 |
 | `80eb3d7` | 02:1x | fix | **models 层不再推荐已下架的 `edge-tts`**：`protocols.py` 的 `TTS_ENGINES` 还留着它，`hint` 甚至写着「零配置、免费、立刻能说」，而 webapp 侧 10-16 已按发布口径下架。只从推荐清单摘掉，后端保留（老配置仍能解析，静音是 10-16 的有意设计）。顺带治了一条脆弱判据：`check_models_layer` 硬编码 `len(TTS_ENGINES)==11` | 修前 15/16 → 修后 16/16；变异（把 edge-tts 塞回表）→ `[FAIL] 引擎表漂移` 退出码 1；投影层自检收进闸门，门禁 78/78 |
 | `4f85ac9` | 02:1x | test | **第二批测试普查**：又试跑 8 个，6 个能过收进闸门（71→77）；`test_character_card_images` 的 3 FAIL 是**假红**（`/local_img` 早随 UI 拆分搬进 `main_window.py`，测试还在看 `webapp.py`）；`test_call_engine_resolve` 7 项红着但**用例自相矛盾**（1.2 与 2.2 冲突），标为待裁决；`check_models_layer` 抓到**真漂移**——models 层还在推荐 10-16 已下架的 `edge-tts` | 逐个复核退出码 0；角色卡修后 21 PASS / 0 FAIL；门禁 77/77 |
 | `63e21bc` | 02:0x | test | **108 个测试里 54 个不在闸门**；其中 5 个硬编码 `G:\ai对话\11`（旧项目路径）→ **从搬进本仓库那天起就跑不了**，自然没人发现它们不在名单上；`test_write_layer` 还缺退出码（FAIL 也返回 0，装饰闸门） | 逐个试跑确认后加 12 道（59→71，合计只多 16.6s）；退出码变异（强制 `sys.exit(1)`）验证为 1；门禁 71/71 |
@@ -83,6 +84,47 @@
 > 代码与测试主体由 `5dbc64c` 收口，**归属以本脚注为准**。
 > 教训：并发会话各自只 `git add` 自己知道的文件，提交前先 `git log` 确认HEAD 没有
 > 在几分钟内被别人推进过。
+
+### 2026-10-21 · doctor「配置文件」判据恒真：所有在用的用户都在看一条假警
+
+**问题**（本轮体检第一轮就发现）：
+
+```python
+keys_empty = all(not (raw_cfg.get(k) or "") for k in ("api_key",))
+if keys_empty and os.path.isdir(data_dir) and os.listdir(data_dir):
+    return (WARN, "配置文件", "config.yaml 是出厂默认值，但 data/ 里有使用痕迹", ...)
+```
+
+**顶层根本没有 `api_key` 这个键**——模板与实配都没有。密钥在 `llm.openai` /
+`text_chat.providers[]` / `vision_models.models[]` / `voice` / `voice_profiles[]` 里。
+于是 `keys_empty` 恒为 `True`，**只要 `data/` 非空就恒报**。
+
+危害不是"多一行噪音"，是**狼来了**：它今天就和「唤醒词像遗留音色名」那条混在一起，
+差点把后者也当噪音跳过。
+
+**修法**：加 `_has_any_api_key(node)` 递归扫任何非空 `api_key`，
+判据改成 `keys_empty = not _has_any_api_key(raw_cfg)`。
+
+**顺手查清一件事**：`cfg.raw` 是**环境变量展开后**的配置，不是原始 YAML 文本。
+所以 `${ZHIPU_API_KEY}` 在环境里没有时会展开成空串 → 报 WARN 是**正确**的（真的没 Key）。
+第一版测试把这条写成"占位符就算有配置"，跑出来红——**是测试的期望错了，不是代码错**。
+
+**验证**：新测试 `src/tests/test_doctor_config_warn.py`，三态 + 对照组共 9 项：
+
+| 场景 | 期望 |
+|---|---|
+| 全空 + 有 `data/` | WARN（老用户被覆盖） |
+| **有 Key + 有 `data/`** | **PASS（对照组：本次修复的主角）** |
+| 全空 + 无 `data/`（新用户） | PASS |
+| `${ENV}`（环境有值）+ 有 `data/` | PASS |
+| `${ENV}`（环境无值→展开为空）+ 有 `data/` | WARN |
+
+- 变异（判据退回 `raw_cfg.get("api_key")`）→ 场景 2/4a 变红，退出码 **1**；恢复 → 9/9
+- `main.py --doctor` 实测：**16 PASS / 3 WARN → 17 PASS / 2 WARN**（假警消失）
+- 收进闸门，**79/79 全通过**
+
+**教训**：判据读一个**不存在的键**，就恒为"空/假"——这不是"宽松"，是**恒真**。
+凡 `raw.get("x")` 形式的判据，先确认那个键在模板里真的存在（`grep` 一下模板的顶层键）。
 
 ### 2026-10-21 · models 层不再推荐已下架的 edge-tts；顺手治了一条「数量断言」
 

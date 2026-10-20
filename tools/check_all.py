@@ -155,6 +155,11 @@ GATES: list[tuple[str, str, list[str], bool]] = [
     # 而数量本身不表达"为什么是 11"；改成"非空下限 + 由白名单逐字比对守具体集合"。
     # 变异（把 edge-tts 塞回表）→ `[FAIL] 引擎表漂移`，退出码 1。
     ("投影层自检", PY_VENV, ["tools/check_models_layer.py"], False),
+    # 【2026-10-21】doctor「配置文件」检查项的升级覆盖检测：原判据 `raw_cfg.get("api_key")`
+    # **恒真**（顶层根本没这个键），只要有 data/ 就恒报「配置可能被覆盖」——所有真正在用的
+    # 人都看到假警。改成递归扫任何非空 api_key。三态 + 对照组（有 Key 的老用户不许报）。
+    # 变异（判据退回顶层 api_key）→ 场景 2/4a 变红，退出码 1。
+    ("配置覆盖检测", PY_VENV, ["src/tests/test_doctor_config_warn.py"], False),
     # 「发给队友的包里到底有什么」：包内容取 git ls-files（.gitignore 是单一事实源），
     # 再叠一层硬排除。这层防御在真实仓库上**一项都不会触发**（gitignore 早洗过了），
     # 所以必须直接对规则表喂路径来证明它是活的——变异 4 刀（规则恒 None / 删红线
