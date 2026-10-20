@@ -1,8 +1,9 @@
 # -*- coding: utf-8 -*-
 """离线验证「编造检测闸」_looks_fabricated：不需要 LLM。"""
+import os
 import sys, tempfile
 from pathlib import Path
-sys.path.insert(0, r"G:\ai对话\11")
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from src.proactive_pack.pack import ProactivePack
 
 pack = ProactivePack(base_dir=Path(tempfile.mkdtemp()))

@@ -9,9 +9,10 @@
   6. report 里能看见 warn（Key 分裂应被报出）
   7. suggest_for_changed 精准匹配
 """
+import os
 import sys, copy, json
 
-sys.path.insert(0, r"G:\ai对话\11")
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 PASS = 0
 FAIL = 0
@@ -199,4 +200,8 @@ log("=" * 60)
 log("总计: PASS=%d  FAIL=%d" % (PASS, FAIL))
 log("=" * 60)
 
-open(r"G:\ai对话\11\docs\_p3test.txt", "w", encoding="utf-8").write("\n".join(OUT))
+# 【2026-10-21 修·两处】
+# ① 原来把结果写到 `G:\ai对话\11\docs\_p3test.txt` —— 旧项目目录，本机不存在，
+#    直接 FileNotFoundError。结果已经打在日志里，不再写盘。
+# ② 原来**没有设置退出码**：即使 FAIL 也返回 0，是典型的「装饰闸门」。
+sys.exit(0 if FAIL == 0 else 1)

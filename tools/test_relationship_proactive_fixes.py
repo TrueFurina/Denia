@@ -14,11 +14,12 @@
 """
 import asyncio
 import inspect
+import os
 import sys
 import time
 from unittest import mock
 
-sys.path.insert(0, "G:/ai对话/11")
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import src.companion.relationship as R
 from src.companion.relationship import _proactive_decision, get_relationship_manager

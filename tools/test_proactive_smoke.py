@@ -13,6 +13,7 @@
   python tools/test_proactive_smoke.py
 退出码：0=全过，1=有失败。
 """
+import os
 import sys
 import time
 import asyncio
@@ -20,7 +21,7 @@ import inspect
 import datetime
 import types
 
-sys.path.insert(0, r"G:/ai对话/11")
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from src.companion import relationship as REL
 from src.companion.proactive import ProactiveStrategy

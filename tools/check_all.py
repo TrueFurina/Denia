@@ -112,6 +112,24 @@ GATES: list[tuple[str, str, list[str], bool]] = [
     # 顺序反过来（先 shared_history 后 enable）那个桶就永远纯内存——对话照常、日志正常、
     # 重启全丢。这条测试此前 198 行、27 项全绿，却**从来没进过闸门**。
     ("会话上下文落盘", PY_VENV, ["tools/test_context_persistence.py"], False),
+    # 【2026-10-21】「测试写了没进闸门」普查：仓库里 108 个 test_*/check_*，54 个不在名单上。
+    # 下面这批是**逐个跑通确认后**才加的，不是按文件名猜的。
+    # 其中 5 个（tools/test_*.py）原来硬编码 `G:\ai对话\11`——旧项目路径，本机早没了，
+    # 于是它们从搬进本仓库那天起就跑不了，自然也没人发现它们不在闸门里。
+    # `test_write_layer` 还额外缺退出码（FAIL 也返回 0），是典型「装饰闸门」，一并修了。
+    # 剩下的 42 个仍在待评估清单里（多数是一次性诊断脚本或需要真机/网络），不要盲加。
+    ("io 安全三态", PY_VENV, ["src/tests/test_io_safe.py"], False),
+    ("感知哈希", PY_VENV, ["src/tests/test_phash.py"], False),
+    ("密钥盒加密", PY_VENV, ["src/tests/test_secret_box.py"], False),
+    ("开机自启", PY_VENV, ["src/tests/test_autostart.py"], False),
+    ("裁判确认条款", PY_VENV, ["tools/test_judge_confirm_clause.py"], False),
+    ("陪伴话术条款", PY_VENV, ["tools/test_prompt_companion_clause.py"], False),
+    ("历史隔离", PY_VENV, ["tools/test_history_isolation.py"], False),
+    ("js_api 状态分叉", PY_VENV, ["tools/test_jsapi_state_split.py"], False),
+    ("虚构守卫", PY_VENV, ["tools/test_fabrication_guard.py"], False),
+    ("主动开口冒烟", PY_VENV, ["tools/test_proactive_smoke.py"], False),
+    ("关系主动修复", PY_VENV, ["tools/test_relationship_proactive_fixes.py"], False),
+    ("写入层", PY_VENV, ["tools/test_write_layer.py"], False),
     # 「发给队友的包里到底有什么」：包内容取 git ls-files（.gitignore 是单一事实源），
     # 再叠一层硬排除。这层防御在真实仓库上**一项都不会触发**（gitignore 早洗过了），
     # 所以必须直接对规则表喂路径来证明它是活的——变异 4 刀（规则恒 None / 删红线
