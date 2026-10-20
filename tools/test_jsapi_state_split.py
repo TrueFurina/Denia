@@ -6,10 +6,14 @@
 运行：python tools/test_jsapi_state_split.py
 """
 
+import os
 import sys
 from collections import deque
 
-sys.path.insert(0, r"G:/ai对话/11")
+# 【2026-10-21 修】原来硬编码 `G:/ai对话/11` —— 那是搬过来之前的旧项目路径，
+# 本机 G: 盘早没了。于是这个测试**从搬进本仓库那天起就跑不了**，
+# 也就没人发现它一直不在闸门里。改成按本文件位置推导仓库根。
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 PASS = 0
 FAIL = 0
