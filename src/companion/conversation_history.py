@@ -194,6 +194,17 @@ def enable_persistence(base_dir) -> bool:
         d.mkdir(parents=True, exist_ok=True)
         with _PERSIST_LOCK:
             _PERSIST_BASE = base
+            # 【2026-10-21 修·先建桶后启用 → 那个桶永远不落盘】
+            # `_make_history()` 只在**建桶那一刻**看 `_PERSIST_BASE` 决定挂不挂写回调。
+            # 顺序一旦反过来（任何模块在 webapp 启用持久化之前调过 shared_history），
+            # 那个桶从此纯内存：对话照常进行、日志一切正常，**重启全丢**。
+            # 探针实测（同一进程、同一临时根）：
+            #   先 enable 后建桶 → 落盘 2 行；先建桶后 enable → 落盘 0 行。
+            # 这里给已存在的桶补挂，让结果与初始化顺序无关。
+            for _k, _h in list(_shared_by_char.items()):
+                if getattr(_h, "_persist", None) is None:
+                    _h._bind(_k, _append_row)
+                    _h._persist_clear = _clear_rows
         return True
     except Exception:  # noqa: BLE001 落盘不可用就该安静地降级为纯内存
         _PERSIST_BASE = None
