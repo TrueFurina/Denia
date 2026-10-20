@@ -68,13 +68,26 @@ def main() -> int:
             if not os.path.exists(full):
                 errors.append("%s → %s（解析为 %s）" % (rel, tgt, full))
 
+    # 根目录的 .md 必须都在 README 里被提到一次：
+    # 否则新来的人打开仓库看到一堆带日期的文件，只能靠猜哪份该读。
+    # 这条也是"加文档时顺手更新门面"的强制点——不加就红。
+    readme = os.path.join(ROOT, "README.md")
+    if os.path.isfile(readme):
+        with open(readme, encoding="utf-8") as f:
+            rd = f.read()
+        for name in sorted(os.listdir(ROOT)):
+            if not name.endswith(".md") or name == "README.md":
+                continue
+            if name not in rd:
+                errors.append("根目录 %s 没在 README 的文档地图里出现" % name)
+
     print("检查 %d 个文件，本地链接 %d 条" % (len(TARGETS), checked))
     if errors:
         for e in errors:
             print("  ✗ " + e)
-        print("\n✗ %d 条链接悬空：文档搬家后要同步改链接" % len(errors))
+        print("\n✗ %d 项未通过：链接悬空或文档没进索引" % len(errors))
         return 1
-    print("✓ 本地链接全部可解析")
+    print("✓ 本地链接全部可解析，根目录文档都有索引")
     return 0
 
 
