@@ -13,6 +13,7 @@
 
 | commit | 时间 | 类型 | 一句话 | 验证 |
 |---|---|---|---|---|
+| `第三批普查` | 03:0x | test | **27 个测试没进闸门**：14 个本来就绿、13 个红但**没有一个是产品功能坏了**——全是"测试与产品脱节"（桩缺导出名 ×2、判据过时、回调签名过时、fire-and-forget 时序、硬编码旧路径 ×2）。顺着其中一条查出**出厂缺陷**：模板里 qq/wechat/qzone 三个通道默认 `enabled: true`，新用户装完就去连不存在的本地服务，OneBot 每 5s 刷一条 warning 永不停 | 修好 7 个；变异（模板改回 true）→ 报 `实际构建了 ['qq']` 退出码 1；闸门 80→100，全量 100/100 |
 | `62287f4` | 02:3x | fix | **导入冒烟收进闸门**（79→80）：它抓的「这个模块能不能被加载」没有任何别的门禁能抓——`compileall` 只保证语法和名字对得上（10-17 两例实测全绿）；顺手修掉它自己的松口子：白名单 `why.strip() or "（未写原因）"` 等于**允许无原因加入** | 172 模块 0 非预期失败；变异三刀 1/0/1（含对照组）；全量 80/80 通过，导入冒烟真跑 23.2s |
 | `c6ff5e4` | 02:2x | fix | **doctor「配置文件」判据恒真**：`raw_cfg.get("api_key")` 读的顶层键**根本不存在**（密钥在 `llm.openai` / `text_chat.providers[]` 等处），于是只要有 `data/` 就恒报「配置可能被覆盖」——所有在用的用户都看到假警。改成递归扫任何非空 `api_key` | 三态 + 对照组 9 项（含「有 Key 不许报」）；变异（判据退回旧写法）→ 场景 2/4a 变红退出码 1；`--doctor` 16 PASS/3 WARN → **17 PASS/2 WARN**；门禁 79/79 |
 | `80eb3d7` | 02:1x | fix | **models 层不再推荐已下架的 `edge-tts`**：`protocols.py` 的 `TTS_ENGINES` 还留着它，`hint` 甚至写着「零配置、免费、立刻能说」，而 webapp 侧 10-16 已按发布口径下架。只从推荐清单摘掉，后端保留（老配置仍能解析，静音是 10-16 的有意设计）。顺带治了一条脆弱判据：`check_models_layer` 硬编码 `len(TTS_ENGINES)==11` | 修前 15/16 → 修后 16/16；变异（把 edge-tts 塞回表）→ `[FAIL] 引擎表漂移` 退出码 1；投影层自检收进闸门，门禁 78/78 |
@@ -85,6 +86,73 @@
 > 代码与测试主体由 `5dbc64c` 收口，**归属以本脚注为准**。
 > 教训：并发会话各自只 `git add` 自己知道的文件，提交前先 `git log` 确认HEAD 没有
 > 在几分钟内被别人推进过。
+
+### 2026-10-21 · 第三批测试普查：27 个没进闸门的测试，抓到第 5 起出厂缺陷
+
+**方法**：按文件名比对 `check_all.py`，列出 27 个没进闸门的 `test_*.py`，逐个试跑
+（超时 120s），按退出码分三类。结果：**14 个本来就绿**、**13 个红**。
+
+13 个红里**没有一个是"产品功能坏了"**——全是测试与产品脱节，分四种：
+
+| 类型 | 例子 | 现象 |
+|---|---|---|
+| 桩缺导出名 | `test_screen_capture_perf_guard`、`test_desktop_watch_hotapply` | `ImportError: cannot import name 'sensitive_skip_reason'`——产品给 privacy 加了「敏感窗口整帧不采集」，桩只塞了 `privacy_mode` |
+| 判据过时 | `test_onboarding_tts_key` | 守的是 `_ttsPayload → BAILIAN_TTS_PAYLOAD → VOICE_PAYLOAD` 三级回退链，该机制随能力槽重构整条退场 |
+| 回调签名过时 | `test_video_watch_progress` | `on_progress` 产品已传第 5 个参数 `meta`，测试 lambda 还是 4 参 |
+| 时序契约不一致 | `test_desktop_video_e2e` | 桌面来源走 `create_task` fire-and-forget，`asyncio.run` 收尾会取消未完成任务 → 回复永远记录不到 |
+| 硬编码旧路径 | `test_onboarding_integration`、`test_onboarding_tts_key` | `G:\ai对话\11` |
+
+**最值得记的是"桩缺导出名"**：桩只给「当前需要的名字」，产品一加导出名桩就跟不上。
+正确写法是**先复制真模块的公开名字、再覆盖要替换的那几个**：
+
+```python
+import src.perception.privacy as _real
+m = types.ModuleType("src.perception.privacy")
+for _n in dir(_real):
+    if not _n.startswith("__"):
+        setattr(m, _n, getattr(_real, _n))
+m.privacy_mode = lambda: False      # 覆盖
+```
+
+这次运气好——桩缺名字表现为**响亮地崩**（ImportError）；更糟的形态是「`typeof` 守卫
+伪装接线漏洞」，桩缺方法会被产品当成「环境不支持」静默降级。
+
+#### 抓到的出厂缺陷（第五起）
+
+`test_config_wiring` 报「默认应无通道，实际 [qq, wechat]」。顺着查：**它读错了文件**——
+读的是 `config.yaml`（开发机实配、被 gitignore），而它想验的是**出厂行为**。
+改成读 `config.release.yaml` 后立刻红：模板里 **qq / wechat / qzone 三个通道全是
+`enabled: true`**。
+
+危害（读代码确认）：新用户没有 OneBot(3001) / Gewechat(2531) / QQ 空间 cookie，
+`build_channels` 只按 `enabled` 建实例、**不检查服务可达性**，于是 OneBot 的
+`_connect_forward` 在 `while self._running` 里每 5s 打一条「连接断开，5s 后重连」
+warning，**永不停**（一天上万条），Gewechat 同理轮询。
+
+修：模板三处改 `enabled: false`，段首写清原因。变异（改回 true）→ 断言报
+`实际构建了 ['qq']`、退出码 1；恢复 → 0。
+
+**方法学**：凡是要验「默认值 / 出厂状态」的测试，必须读 `config.release.yaml`。
+读 `config.yaml` 等于在验「我这台机器现在是什么样」，不是验新用户会拿到什么。
+
+#### 顺手修的静默
+
+`video_watch._prog` 里 `except Exception: pass` 把回调异常全吞了——这次正是它把
+「lambda 少一个参数」的 TypeError 吞成「一个阶段都没收到」，**零报错**。
+改成 `logger.debug(..., exc_info=True)`：回调失败仍不影响观看，但日志留痕。
+
+#### 自己踩的坑
+
+批量试跑时我在脚本里设了 `PYTHONPATH=os.getcwd()`。于是 `test_duplex_link_routing`
+（自己没设 `sys.path`）在我的批量脚本里过、在闸门里 `ModuleNotFoundError: No module
+named 'src'`。**试跑脚本顺手设的环境变量会掩盖测试本身的缺陷**——同型错误是
+「模拟新用户时必须剥掉 API Key」。修完用 `env -u PYTHONPATH` 复验。
+
+#### 闸门
+
+收进 20 项（14 个本来就绿 + 6 个修好），**80 → 100 道**，全量 100/100。
+`test_onboarding_integration`（99 PASS / 5 FAIL）**不收**：那 5 个 FAIL 是「引导页设计稿
+未落地」的产品待办，收进去只会让闸门常红——**红着的门禁会被训练成噪音**。
 
 ### 2026-10-21 · 导入冒烟收进闸门：它抓的东西没有别的门禁能抓
 
