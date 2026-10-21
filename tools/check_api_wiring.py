@@ -79,8 +79,12 @@ KNOWN_UNWIRED = {
     "set_archetype_manual",     # 手动指定原型（面板会显示"·自动"，但没有改的入口）
     "clear_pet_cache",          # 桌宠缓存清理
     "prevent_window_close",     # 关窗拦截（WindowAPI）
-    # —— 旧架构残留，建议删（见 AGENTS.md「发现过」那条）——
-    "pet_hit_rect",             # native.set_pet_hit_rect 全仓不存在；前端 reportPetBody 从未实现
+    # —— 已裁决 / 旧架构残留 ——
+    # pet_hit_rect：**已裁决保留**（2026-10-21 核实）。它是纯 no-op（前端 reportPetBody
+    #   从未实现 / `_pet_win.native` 恒 None / `set_pet_hit_rect` 全仓不存在），但它是
+    #   "点击穿透只认角色像素"这个需求的唯一落点，删掉就没痕迹了 —— 理由写在
+    #   `api_pet.py` 的 docstring 里。**要真做得按当前架构（WebView2 alpha）重写。**
+    "pet_hit_rect",
 }
 
 PY_ROOTS = ("src", "tools")
