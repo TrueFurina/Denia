@@ -13,6 +13,7 @@
 
 | commit | 时间 | 类型 | 一句话 | 验证 |
 |---|---|---|---|---|
+| 待提交 | 14:4x | fix | **「出厂状态」第 6 起**：`model_catalog` 三处（`_build_cmd` / `download_model_quant` / `download_bundle`）在"用户还没选目录"时都回落到开发机的 `H:\minicpm models\...` —— 新用户没有 H 盘，点下载直接失败、复制出来的"可手动执行命令"也指着 H 盘。改成跟着程序走（`<程序目录>/models/...`）。顺带救活一个**搬家后就跑不了**的死引用看门狗（`ROOT = r"G:\ai对话\11"`），它还把结果写进未忽略的 `docs/` | 变异（默认目录改回 H: 盘）→ `默认目录在程序目录下（可移植）` 红；死引用看门狗变异（塞一个不存在的 id）→ 报 `[DEAD] zzzNotExistProbe 首见于第 6718 行` 退出码 1；闸门 109→**110**，全量 110/110 |
 | 待提交 | 13:1x | fix | **桥接闸门只扫 HTML 内联 `<script>`，外链 JS 全是盲区** —— 补上后发现引导页「下载语音模型」调的是 `B.downloadVoiceModel`，而适配层导出的名字是 `downloadModel`。于是 `if(B.downloadVoiceModel)` 恒 false → 静默落到「无桥降级」分支：**假进度条**（固定 8.2MB/s）走到 100% 还提示"下载完成"，一个字节没下。顺带把三条**早已落地却一直挂着**的「发现」F1/F2/F3 换成真断言 | 变异（塞 `B.zzzNotARealBridgeMethod` / 删后端 model_3d 兜底 / 合并层改成无条件写空 Key）三刀全红；引导页集成 108 PASS / 0 FAIL；全量闸门 109/109 |
 | 待提交 | 10:1x | fix | **`_save_config()` 里一个静默 no-op，让参考音"上传了却没生效"**：`refresh_characters_map() if hasattr(...)` —— `Config` 上只有 `refresh_characters()`，`hasattr` 恒 False，整行恒等于 `None`。于是保存只写 raw、角色表 `_characters_map` 不跟着变，`get_characters()` 回读 `voice.reference_audio` 永远是空 → 用户反复重传。顺带把 `test_onboarding_integration`（106 项）修绿并收进闸门，删掉 `check_all` 里**重复登记**的导入冒烟 | 变异（把幽灵调用放回去）→ `[B15] 参考音已落角色` 红、退出码 1；闸门 109 项全绿（引导页集成 35.4s）；顺带修好「闸门失败摘要只摘最后 4 行、恰好摘到白名单明细表」 |
 | `55484a3` | 03:5x | fix | **变异脚本的锚点全失效**：26 个 `_qc_*` 里只有 2 个在闸门，另有 4 个变异脚本不在——而它们验证的检查器**全在闸门里**（等于 4 个判据可能早已没牙齿却没人验证）。2 个红的真因是 `run_all` 加了 `check_wake_words`，锚点原假定 `check_asr` 是列表最后一项。顺带查清一个更隐蔽的坑：**我自己用 `io.open(p,"w")` 改源码，把 1398 行全写成 CRLF**，于是所有 `\n` 锚点静默失效 | 两处锚点改成不依赖位置 → 0 跳过、七刀全红；加 `.gitattributes` 固定 LF（实测 checkout 能把 CRLF 纠正回 LF）；4 个变异脚本进闸门 105→109，全量 109/109 |
@@ -90,6 +91,49 @@
 > 代码与测试主体由 `5dbc64c` 收口，**归属以本脚注为准**。
 > 教训：并发会话各自只 `git add` 自己知道的文件，提交前先 `git log` 确认HEAD 没有
 > 在几分钟内被别人推进过。
+
+### 2026-10-21 · 「出厂状态」第 6 起：模型默认下载目录是别人机器上的 H 盘
+
+这一起不是模板里的路径，而是**源码里的默认值**：
+
+```python
+model_dir = data.get("model_dir") or _comni_model_dir()
+if not model_dir:
+    model_dir = r"H:\minicpm models\MiniCPM-o-4_5-gguf"     # ← 开发机
+```
+
+`download_model_quant` / `download_bundle` / `_build_cmd` 三处都这么写。触发条件是
+「用户还没选目录」——而下载器初始 `dir` 就是空的（前端注释写着"catalog.model_dir
+可能为空 → 留空让用户选"）。于是新用户：点下载 → `modelscope download --local_dir
+"H:\minicpm models\..."` → 那台机器上没有 H 盘，直接失败；点"复制命令"→ 拿到的也是一条
+指着 H 盘的命令，照着敲必然失败。
+
+开发机上永远是对的，**只有新用户才撞**——与前五起同一个判据。改成
+`default_model_dir()`：`<程序目录>/models/MiniCPM-o-4_5-gguf`，谁装在哪就下在哪。
+
+回归判据写进 `tools/test_model_downloader.py` 的 [7]：默认目录必须在程序目录下、
+目录名带仓库名、`_build_cmd` 缺参时用的是它。变异（把函数改回 H: 盘）→
+`默认目录在程序目录下（可移植）` 红。
+
+#### 顺带：一个「搬家后就跑不了」的死引用看门狗
+
+查源码里的硬编码盘符时（全仓 620 处，绝大多数是 docstring 里的叙述，不值得设闸门），
+发现 `tools/audit_dead_ids.py` 的 `ROOT = r"G:\ai对话\11"`。它的 docstring 明明写着
+"纳入自测后即成为回归闸门"，但两件事一直没做：
+
+1. 仓库搬到 `D:\Denia` 之后它**从那天起就跑不了**（`!! 文件不存在：src/ui/web/...`），
+   而它不在闸门里，所以没人发现——与之前修过的 5 个硬编码旧项目根的测试同一个坑；
+2. 它把结果写进 `docs/_audit_dead_ids.txt`，而 `docs/` 不是忽略目录 → **每跑一次工作区
+   就多一个未跟踪文件**，谁顺手 `git add -A` 就会把生成物提交进去。
+
+已改成按文件位置推 ROOT、产物写 `logs/`（已 gitignore），并收进闸门（约 0.2s）。
+当前结果：12 个已知死引用（白名单每条都写了原因），0 个未登记。变异（往设置页塞一个
+`getElementById('zzzNotExistProbe')`）→ `[DEAD] zzzNotExistProbe 首见于第 6718 行`、
+退出码 1。
+
+**一个自己踩的小坑**：第一次试跑时我用 `| tail -12` 看输出，于是 `$?` 拿到的是 `tail`
+的 0，差点判成"这脚本连退出码都不设"（其实它 `sys.exit(1 if fail_total else 0)` 写得好好的）。
+这条纪律本仓已经记过一次——**读退出码别接管道**。
 
 ### 2026-10-21 · 桥接闸门只看内联 `<script>`，于是它看不见"下载按钮是假的"
 

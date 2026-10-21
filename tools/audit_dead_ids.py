@@ -23,7 +23,11 @@ import os
 import re
 import sys
 
-ROOT = r"G:\ai对话\11"
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+# 【2026-10-21 修·旧机器路径】原来是 `ROOT = r"G:\ai对话\11"` —— 仓库搬到 D:\Denia 之后，
+# 这个工具**从搬家那天起就跑不了**（`!! 文件不存在：src/ui/web/...`），而它不在闸门里，
+# 所以没人发现。与本仓此前修过的 5 个测试同一个坑：**硬编码旧项目根**。
+# 它的 docstring 写着"纳入自测后即成为回归闸门"，但一直没进 check_all —— 本次一并处理。
 
 # 目标页面：设置页（死引用最多、且是用户改模型/音色的主战场）
 TARGETS = [
@@ -127,11 +131,14 @@ else:
 log("=" * 60)
 
 # 落盘一份，便于 diff 历史
+# 【2026-10-21 修·别往仓库目录写产物】原来写 `docs/_audit_dead_ids.txt` —— 而 docs/ 不是
+# 忽略目录，于是**每跑一次工作区就多一个未跟踪文件**（`git status` 里一直是 `?? docs/...`），
+# 谁顺手 `git add -A` 就会把生成物提交进去。生成物一律写到 logs/（已 gitignore）。
 try:
-    d = os.path.join(ROOT, "docs")
-    if os.path.isdir(d):
-        io.open(os.path.join(d, "_audit_dead_ids.txt"), "w",
-                encoding="utf-8").write("\n".join(OUT))
+    d = os.path.join(ROOT, "logs")
+    os.makedirs(d, exist_ok=True)
+    io.open(os.path.join(d, "audit_dead_ids.txt"), "w",
+            encoding="utf-8").write("\n".join(OUT))
 except Exception:  # noqa: BLE001
     pass
 

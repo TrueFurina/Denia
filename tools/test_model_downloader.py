@@ -87,6 +87,19 @@ def main():
     chk("暂停成功", r4.get("success") is True)
     chk("状态变 paused", mc.get_download_status(tid).get("status") == "paused")
 
+    print("[7] 默认模型目录：跟着程序走，不是开发机路径")
+    # 【2026-10-21 加·出厂缺陷回归】model_catalog 原来三处（_build_cmd /
+    # download_model_quant / download_bundle）在"用户还没选目录"时都回落到开发机的
+    # `H:\minicpm models\MiniCPM-o-4_5-gguf`。新用户没有 H 盘 → 点下载直接失败，
+    # 复制的"可手动执行命令"也指着 H 盘。开发机上永远是对的，只有新用户才撞。
+    dd = mc.default_model_dir()
+    _app_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(mc.__file__))))
+    chk("默认目录在程序目录下（可移植）",
+        os.path.abspath(dd).startswith(os.path.abspath(_app_root)), dd)
+    chk("默认目录名带量化仓库名", os.path.basename(dd) == "MiniCPM-o-4_5-gguf", dd)
+    chk("_build_cmd 缺 model_dir 时用默认目录（不再指别人的盘）",
+        mc.default_model_dir() in mc._build_cmd("x.gguf"))
+
     print("\n结果: %d PASS / %d FAIL" % (OK, FAIL))
     return 0 if FAIL == 0 else 1
 
