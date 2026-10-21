@@ -9188,6 +9188,12 @@ class CharacterAPI(PetAPI, WindowAPI):
                         "（来源=%s）", _eng_src or "未指定")
         # 档位能力表：仅用于诊断日志（拨号放行与否已改由"是否绑了云端双工"决定，
         # 见上方 no_cloud_duplex 门控）。这里必须保留计算——下方"拨号发起"日志会打印它。
+        # 【2026-10-21 注·别被上面那段注释骗了】9172~9188 的「显式选本地双工就走本地」
+        # **结果不生效**：紧接着 9196 起按 2026-10-16 用户决策无条件 `target = "realtime"`。
+        # 那段留着是因为它顺带算出了 eng / _eng_src 供日志归因，但读到 9182「只有用户显式
+        # 选择本地才走本地」时别当真 —— 那是 10-09 的策略，**10-16 已被否决**。
+        # 当前契约由 `tools/test_call_engine_resolve.py` 组 1 守着：任何输入组合（内存值 /
+        # config / 档位反推 / 弹窗显式指定本地）target 都必须是 realtime。
         _caps: set = set()
         try:
             _caps = set(pro.capabilities())
@@ -9233,6 +9239,13 @@ class CharacterAPI(PetAPI, WindowAPI):
 
         # 【2026-09-30】云端双工(realtime=Qwen-Omni-Realtime)需用户自己的 cloud_omni Key/模型；
         # 未配置不要静默回退 MiniCPM 网关（实测 WS 握手超时、且同样要 Key），直接如实拦截提示。
+        # 【2026-10-21 注·下面这段目前**不可达**】`_co_ok` 在 9216 已被判定为真（否则早 return
+        # 了 no_cloud_duplex），而 `_cloud_omni_enabled()` 只读配置、同一调用内结果稳定，
+        # 所以 `if not _co_ok` 恒假；同理下方 `if target in ("local_omni", "local")` 也恒假
+        # （target 已在 9207 被强制成 realtime）。保留代码是为了"恢复本地双工"时有据可查，
+        # **但不是活路径**：`no_cloud_duplex_cfg` / `fallback` / `no_cloud_tts` 三个旧契约
+        # 已随 10-16 决策下线，`test_call_engine_resolve.py` 组 3 用 240 组输入证明它们不出现。
+        # 谁要把本地双工加回来，必须同时改那段注释、这组测试，并确认用户是否真要恢复。
         if target == "realtime":
             _co_ok = False
             try:
