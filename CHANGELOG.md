@@ -2665,24 +2665,32 @@ scipy/pywt 消失，包内 phash 零 imagehash 依赖可用）。门禁 27/27。
 | `cac2760` | 00:53 | chore | 锁定 Electron 依赖版本 | — |
 | `4792f40` | 01:20 | feat | 换壳 1/2 步：CharacterAPI 暴露本地 RPC + 壳侧 shim | 19 方法两通道一致；端到端五项全通过 |
 | `6801aee` | 02:10 | feat | 换壳 3 步：桌宠窗改由 Electron 壳承载（主窗口仍 pywebview） | 壳桌宠冒烟 11 项连续三次通过 |
-| 待提交 | 10-18 | fix | `main.py` 模块级 ImportError：双击直接崩 | `--help` / `--doctor` 实测通过 |
-| 待提交 | 10-18 | feat | `ui.pet_backend` 配置项 + 两处入口统一接线 | 22 项测试 + 变异 2 次 FAIL |
-| 待提交 | 10-18 | feat | 桌宠位置持久化（按工作区比例存） | 18 项测试 + 突变越界夹取 FAIL |
-| 待提交 | 10-18 | feat | 版本号单点 `src/version.py` | 三处口径归一 |
-| 待提交 | 10-18 | feat | `--doctor` 一键自检（9 项） | 每项带修复提示，支持 `--json` |
-| 待提交 | 10-18 | feat | 壳自愈 + 退出清理 + 崩溃降级 | 单测 13 组；端到端真杀进程验证 |
-| 待提交 | 10-18 | feat | `make_dist --install-deps`：依赖按档装进包内运行时 | 包内 `--doctor` 9 PASS / 0 FAIL |
-| 待提交 | 10-18 | feat | `make_dist --report`：体积可拆（谁占了 408MB） | 实测 python/ 占 93.1%，scipy 109MB |
-| 待提交 | 10-18 | fix | RPC 长连接被 401 残留 body 污染（P1） | 压测 720 次 0 失败；3 项变异全 FAIL |
-| 待提交 | 10-18 | feat | 交付包运行期隔离（`pythonXY._pth`）+ pywin32 DLL 铺放（C6） | 隔离环境 doctor 11 项；摘掉包内 rich → 报缺失 exit 1；8 项变异全 FAIL |
-| 待提交 | 10-18 | feat | `--doctor` 增「干净机器三件套」：WebView2 / UCRT / 代码签名（C4+C7） | 包内 12 PASS / 2 WARN / 0 FAIL；26 项断言 + 7 项变异全 FAIL |
-| 待提交 | 10-18 | fix | 升级吞配置：装配覆盖前抢救改过的 config.yaml（P1） | `preserve_user_config` + doctor「出厂默认+使用痕迹」检测；3 道变异全红 |
-| 待提交 | 10-18 | fix | 启动令牌全量打进日志（P2） | `%.8s` 截断 + 新门禁「凭据日志卫生」（27 项）；4 轮调试闭环 |
-| 待提交 | 10-18 | fix | **make_dist.py 被 `git checkout --` 误还原，从测试规格+产物重放**（P0 事故） | 21 段测试全绿 + 隔离环境端到端验证通过；教训：变异还原禁用 git checkout |
+| `5dbc64c` | 10-18 | fix | `main.py` 模块级 ImportError：双击直接崩 | `--help` / `--doctor` 实测通过 |
+| `5dbc64c` | 10-18 | feat | `ui.pet_backend` 配置项 + 两处入口统一接线 | 22 项测试 + 变异 2 次 FAIL |
+| `5dbc64c` | 10-18 | feat | 桌宠位置持久化（按工作区比例存） | 18 项测试 + 突变越界夹取 FAIL |
+| `5dbc64c` | 10-18 | feat | 版本号单点 `src/version.py` | 三处口径归一 |
+| `5dbc64c` | 10-18 | feat | `--doctor` 一键自检（9 项） | 每项带修复提示，支持 `--json` |
+| `5dbc64c` | 10-18 | feat | 壳自愈 + 退出清理 + 崩溃降级 | 单测 13 组；端到端真杀进程验证 |
+| `5dbc64c` | 10-18 | feat | `make_dist --install-deps`：依赖按档装进包内运行时 | 包内 `--doctor` 9 PASS / 0 FAIL（后由 `c010d83` 收口成「依赖真离线化」） |
+| `b87a8c1` | 10-18 | feat | `make_dist --report`：体积可拆（谁占了 408MB） | 实测 python/ 占 93.1%，scipy 109MB |
+| `422f140` | 10-18 | fix | RPC 长连接被 401 残留 body 污染（P1） | 压测 720 次 0 失败；3 项变异全 FAIL（速览表另有一条） |
+| `5dbc64c` | 10-18 | feat | 交付包运行期隔离（`pythonXY._pth`）+ pywin32 DLL 铺放（C6） | 隔离环境 doctor 11 项；摘掉包内 rich → 报缺失 exit 1；8 项变异全 FAIL |
+| `5dbc64c` | 10-18 | feat | `--doctor` 增「干净机器三件套」：WebView2 / UCRT / 代码签名（C4+C7） | 包内 12 PASS / 2 WARN / 0 FAIL；26 项断言 + 7 项变异全 FAIL |
+| `b87a8c1` | 10-18 | fix | 升级吞配置：装配覆盖前抢救改过的 config.yaml（P1） | `preserve_user_config` + doctor「出厂默认+使用痕迹」检测；3 道变异全红 |
+| `5dbc64c` | 10-18 | fix | 启动令牌全量打进日志（P2） | `%.8s` 截断 + 新门禁「凭据日志卫生」（27 项，`check_log_leak.py` 由 `8f28cc0` 建）；4 轮调试闭环 |
+| `b87a8c1` | 10-18 | fix | **make_dist.py 被 `git checkout --` 误还原，从测试规格+产物重放**（P0 事故） | 21 段测试全绿 + 隔离环境端到端验证通过；教训：变异还原禁用 git checkout |
+
+> **本批提交号怎么定下来的（2026-10-21 回填）**：这 14 条原先全挂「待提交」，但工作
+> 本身早已在树里——`src/version.py` / `tools/doctor.py` / `src/ui/pet_backend.py` /
+> `pet_state.py` 都是 `5dbc64c`（13:23「深度质检收口」）带进来的，`preserve_user_config`
+> 和 `--report` 在 `b87a8c1`。**和速览表头顶那条脚注是同一个现象**：并发会话只 add 自己
+> 知道的文件，收口提交就把别人的改动一起吞了。逐条对应关系是用 `git log -S` 按特性串
+> 反查出来的，不是按提交信息猜的——`--report` 这种词太泛（基线里就有），单独一条查不出
+> 来，是靠「体积可拆 / 408MB」两串才定位到 `b87a8c1`。
 
 ---
 
-## 2026-10-18（待提交）
+## 2026-10-18
 
 ### 阶段 C8：产品化缺口两刀 + 一次误还原事故
 
