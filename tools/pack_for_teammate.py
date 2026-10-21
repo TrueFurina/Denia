@@ -89,6 +89,32 @@ EXCLUDE_SUFFIX = (
     ".bak", ".swapbak", ".orig", ".rej", ".tmp",
 )
 
+# 5) 开发期残留页面：`src/ui/web/redesign/` 下带 `_` 前缀的设计稿 / 重构前备份 /
+#    测试台。它们全仓零引用（grep 过），但按 `git ls-files` 会进包。
+#    **不用"前缀一刀切"**：`src/ui/web/_gpu.txt` 同样带 `_` 前缀，却是
+#    `proactive._has_usable_gpu()` 写的运行时数据，排了会坏功能。
+#    所以这里精确列路径，并由 test_pack_for_teammate 反向盯着：
+#    新出现的未登记 `_` 页面必须报错（要么登记、要么删），不许悄悄进包。
+EXCLUDE_DEAD_WEB = {
+    "src/ui/web/redesign/_av_test.html": "开发期测试页（音视频联调），零引用",
+    "src/ui/web/redesign/_settings_pre_iarestructure.html":
+        "IA 结构重构前的旧设置页备份（350KB），现版是 redesign/settings.html",
+    "src/ui/web/redesign/_te_bridge.js": "测试台之间的桥，只被同组 _te_* 用",
+    "src/ui/web/redesign/_te_real_characters.html": "真实角色数据测试台",
+    "src/ui/web/redesign/_te_real_chat.html": "真实聊天数据测试台",
+    "src/ui/web/redesign/_theme_editor_design.css": "主题编辑器设计稿（早期）",
+    "src/ui/web/redesign/_theme_editor_design.html": "主题编辑器设计稿（早期）",
+    "src/ui/web/redesign/_theme_editor_design.js": "主题编辑器设计稿（早期）",
+    "src/ui/web/redesign/_theme_editor_upgrade_proposal.html": "主题升级提案稿",
+    "src/ui/web/redesign/_theme_editor_v5.css": "主题编辑器 v5 迭代稿",
+    "src/ui/web/redesign/_theme_editor_v5.html": "主题编辑器 v5 迭代稿",
+    "src/ui/web/redesign/_theme_editor_v5.js": "主题编辑器 v5 迭代稿",
+    "src/ui/web/redesign/_theme_editor_v5_design_1to6.html": "v5 六个设计案并列稿",
+    "src/ui/web/redesign/_theme_editor_v5_review.html": "v5 评审稿",
+}
+# 哪些目录要接受"未登记 _ 前缀文件"的反向检查
+DEAD_WEB_SCAN_DIR = "src/ui/web/redesign/"
+
 # 组装后必须存在的路径。缺一个就是"打包漏件"——2026-10-17 看板娘那次事故的形状：
 # live2d/rig 曾是无 .gitmodules 的 gitlink，重新 clone 后目录为空，看板娘静默消失，
 # 日志里只有一条 404。宁可出包失败，也不要发一个"看起来完整"的空壳。
@@ -150,6 +176,10 @@ def _exclude_reason(rel: str) -> str | None:
         return "编辑器交换备份"
     if low.endswith(EXCLUDE_SUFFIX):
         return f"后缀 {low.rsplit('.', 1)[-1]}"
+    # 开发期残留页面（精确清单，不用前缀一刀切——见 EXCLUDE_DEAD_WEB 上面的注释）
+    rel_posix = rel.replace("\\", "/")
+    if rel_posix in EXCLUDE_DEAD_WEB:
+        return f"开发期残留页面：{EXCLUDE_DEAD_WEB[rel_posix]}"
     # 条目本身就是个目录名（zip 的目录项不一定带尾斜杠，verify_zip 拿到的
     # 可能就是 "T/logs" 这种）。不认这一条，目录项会从缝里漏过去。
     if low in EXCLUDE_DIR_ANY:
