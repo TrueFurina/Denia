@@ -1,0 +1,65 @@
+# 行尾统一为 LF（2026-10-21 加）
+#
+# 为什么需要它
+# ------------
+# 本仓大量判据是**源码级字符串锚点**（`"…\n…"` 拼出来的）：
+#   · `tools/_qc_*.py` 变异脚本的每一把刀
+#   · `tools/test_onboarding_tts_key.py` 之类直接读 HTML/JS 源码做正则断言的测试
+# 一旦目标文件是 CRLF，这些锚点就全部"命中 0 次"——**判据静默失效**。
+#
+# 实测（2026-10-21）：`tools/doctor.py` 被写成 CRLF 之后，
+# `_qc_voice_mutation.py` 的 A/B/C/E 四刀、`_qc_asr_mutation.py` 的若干刀
+# 全部跳过。幸好这两个脚本把"跳过"记成失败（退出码 1），没有假绿；
+# 但**红的原因极难看出**——报的是"锚点命中 0 次"，看着像脚本自己坏了。
+#
+# 加了 `eol=lf` 之后的行为（实测）：
+#   人为把 doctor.py 转成 CRLF(1398) → `git checkout --` → 回到 LF(1398) ✓
+# 没有这行时 checkout 会把 CRLF **原样保留**，错误状态就一直挂着。
+#
+# 注意：`.bat` / `.cmd` / `.ps1` 不在此列（Windows 脚本需要 CRLF）。
+#
+# 另一条同样重要的纪律（不是靠这个文件解决的）：**改源码做变异必须用二进制模式**
+# （`open(p,"rb")` / `open(p,"wb")`）。用 `io.open(p,"w")` 在 Windows 上会把整个
+# 文件的行尾改成 CRLF——这次就是临时注入脚本这么写才踩的。
+* text=auto
+
+# 它自己也得是 LF（否则 git 会提示 "will be replaced by CRLF"）
+.gitattributes text eol=lf
+
+*.py    text eol=lf
+*.js    text eol=lf
+*.mjs   text eol=lf
+*.ts    text eol=lf
+*.html  text eol=lf
+*.htm   text eol=lf
+*.css   text eol=lf
+*.json  text eol=lf
+*.md    text eol=lf
+*.yaml  text eol=lf
+*.yml   text eol=lf
+*.txt   text eol=lf
+*.ini   text eol=lf
+*.toml  text eol=lf
+*.cfg   text eol=lf
+*.sh    text eol=lf
+*.bat   text eol=crlf
+*.cmd   text eol=crlf
+*.ps1   text eol=crlf
+
+# 二进制：明确标出来，防止被当文本转换
+*.png   binary
+*.jpg   binary
+*.jpeg  binary
+*.gif   binary
+*.ico   binary
+*.webp  binary
+*.wav   binary
+*.mp3   binary
+*.mp4   binary
+*.zip   binary
+*.exe   binary
+*.dll   binary
+*.pyd   binary
+*.pyc   binary
+*.pak   binary
+*.gguf  binary
