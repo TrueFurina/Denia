@@ -536,6 +536,7 @@
              不再混在设置页。侧栏「开发者」可进该页。 -->
         <button data-to="social" type="button">社交渠道</button>
         <button data-to="proactive" type="button">主动互动</button>
+        <button data-to="about" type="button">关于</button>
       </nav>
 
       <div class="set-hitbar" id="setHitbar" hidden></div>
@@ -1235,6 +1236,27 @@
           <div id="ppDiag" class="pp-diag" hidden></div>
         </div>
       </div>
+
+      <div class="tier" id="about">
+        <div><div class="kicker">关于</div><div class="lead">版本号 · 开机自启</div></div>
+
+        <div class="group" data-scope="both"><div class="gt">版本</div>
+          <div class="srow">
+            <div class="tl"><span>当前版本</span><span class="hint">排障时把它一起贴出来。版本号只在 <code>src/version.py</code> 定义一处，这里只显示、不另存</span></div>
+            <b id="aboutVersion" style="font-variant-numeric:tabular-nums">读取中…</b>
+          </div>
+        </div>
+
+        <div class="group" data-scope="both"><div class="gt">启动</div>
+          <div class="srow">
+            <div class="tl"><span>开机自启</span><span class="hint">登录 Windows 后自动启动（用 <code>pythonw</code>，不会弹控制台黑框）。只对<b>安装版</b>有效；开发环境（.venv）写不了注册表</span></div>
+            <button class="switch" id="autostartSwitch" role="switch" aria-checked="false" type="button"><i></i></button>
+          </div>
+          <div class="sw-reason" id="autostartReason"></div>
+          <div class="note">关掉它 = 只删注册表里的启动项，不卸载、不影响已经打开的窗口。</div>
+        </div>
+      </div>
+
 
 
       </div>
@@ -2044,7 +2066,7 @@
      ⚠️ 所有既有 id 与后端绑定一个都没动，只改"显示哪个"。
      ⚠️ 同时移除了原 IntersectionObserver 高亮：一次一屏下滚动不再切分类，
         留着会让 subnav 高亮与实际显示不一致（本项目老坑：逻辑残留）。 */
-  var TIERS = ['appearance', 'sound', 'callTier', 'agent', 'aiapi', 'privacy', 'social', 'proactive'];
+  var TIERS = ['appearance', 'sound', 'callTier', 'agent', 'aiapi', 'privacy', 'social', 'proactive', 'about'];
   /* ★ 分类描述的**唯一来源**（2026-10-08 合并）。
      历史上两份各写各的：TIER_META（面包屑）与 buildTierHeaders 里的 MAP（吸顶头），
      改文案漏一处就会出现「大标题新、吸顶头旧」—— 本项目已踩过。
@@ -2058,7 +2080,8 @@
     aiapi:      { name:'模型与 API', lead:'模型一览 · 显存预算 · 档位 · 主 LLM', tag:'大脑和接口', ico:'✦' },
     privacy:    { name:'数据与隐私', lead:'记忆 · 知识 · 感知急停 · 清理数据', tag:'记忆、知识与信任', ico:'⛨' },
     social:     { name:'社交渠道', lead:'陪你看视频 · QQ / 微信 · 摄入记忆', tag:'接到 QQ / 微信', ico:'✉' },
-    proactive:  { name:'主动互动', lead:'她主动找你聊 · 回访 · 节日 · 兴趣分享', tag:'让她主动开口', ico:'💬' }
+    proactive:  { name:'主动互动', lead:'她主动找你聊 · 回访 · 节日 · 兴趣分享', tag:'让她主动开口', ico:'💬' },
+    about:      { name:'关于', lead:'版本号 · 开机自启', tag:'版本与启动', ico:'ⓘ' }
   };
 
   function showTier(id, opts) {
@@ -6712,6 +6735,99 @@
   /* Backend 可能晚于本脚本注入 → 轮询几秒 */
   if (!load()){ var n = 0; var t = setInterval(function(){ if (load() || ++n > 20) clearInterval(t); }, 300); }
 })();
+  /* ===== 关于：版本号 + 开机自启（2026-10-21 补出口）=====
+     后端 get_version / get_autostart / set_autostart 早就实现好了（docstring 里甚至写着
+     "给关于页与排障用" / "UI 设置开关读取"），但界面上一直没有入口 ——
+     tools/check_api_wiring.py 把这种形态叫「有实现、没出口」，这道门就是为它加的。 */
+  (function aboutTier(){
+    var ver = document.getElementById('aboutVersion');
+    var sw  = document.getElementById('autostartSwitch');
+    var why = document.getElementById('autostartReason');
+    if (!ver && !sw) return;
+
+    var SUP = null;               // null=还没读到 / true / false（开发环境写不了注册表）
+    function paint(on){
+      if (!sw) return;
+      sw.classList.toggle('on', !!on);
+      sw.setAttribute('aria-checked', on ? 'true' : 'false');
+    }
+    function say(t){
+      if (!why) return;
+      why.textContent = t || '';
+      why.classList.toggle('show', !!t);
+    }
+
+    function loadVersion(){
+      if (!ver || ver.dataset.done) return true;
+      if (!window.Backend || typeof Backend.getVersion !== 'function') return false;
+      ver.dataset.done = '1';
+      Promise.resolve(Backend.getVersion()).then(function(r){
+        if (r && r.ok) ver.textContent = r.text || ('v' + (r.version || '?'));
+        else ver.textContent = '读取失败' + ((r && r.error) ? '：' + r.error : '');
+      }).catch(function(){ ver.textContent = '读取失败（后端未连接）'; });
+      return true;
+    }
+
+    function loadAutostart(){
+      if (!sw || sw.dataset.done) return true;
+      if (!window.Backend || typeof Backend.getAutostart !== 'function') return false;
+      sw.dataset.done = '1';
+      Promise.resolve(Backend.getAutostart()).then(function(r){
+        /* 三态，别把"问不出来"压成"没有"：后端没连上时既不知道状态也不知道是否支持，
+           这时报"开发环境"是假话（用户在安装版里只是后端没起来）。 */
+        if (!r || r.ok !== true){
+          SUP = null;
+          say('读取开机自启状态失败' + ((r && r.error) ? '：' + r.error : ''));
+          return;
+        }
+        SUP = !!r.supported;
+        paint(r.enabled);
+        /* 不支持 ≠ 关着：置灰但仍然可点（点了会告诉你为什么），
+           与 setSwitchState 里 inert 的处理一致 */
+        sw.classList.toggle('inert', !SUP);
+        say(SUP ? '' : '当前是开发环境（.venv），只有安装版能设置开机自启');
+      }).catch(function(){
+        SUP = null;
+        say('读取开机自启状态失败（后端未连接）');
+      });
+      return true;
+    }
+
+    if (sw && !sw.dataset.bound){
+      sw.dataset.bound = '1';
+      sw.addEventListener('click', function(){
+        if (SUP === false){
+          /* 不翻 UI、不谎报成功：开发环境根本写不了注册表 */
+          say('开发环境不支持开机自启（只有安装版可用）');
+          if (typeof uiAlert === 'function'){
+            uiAlert('开机自启只有安装版可用。\n\n当前是开发环境（.venv），写不了注册表。',
+                    { title: '开发环境不支持' });
+          }
+          return;
+        }
+        var next = !sw.classList.contains('on');
+        paint(next);                                   // 先翻面，失败再翻回来
+        Promise.resolve(Backend.setAutostart(next)).then(function(r){
+          if (r && r.success){
+            if (typeof toast === 'function') toast(next ? '已开启：登录 Windows 后自动启动' : '已关闭：不再自动启动');
+          } else {
+            paint(!next);
+            if (typeof toast === 'function') toast('设置失败：' + ((r && r.error) || '未知原因'), 'err');
+          }
+        }).catch(function(){
+          paint(!next);
+          if (typeof toast === 'function') toast('设置失败（后端未连接）', 'err');
+        });
+      });
+    }
+
+    /* Backend 可能晚于本脚本注入 → 轮询几秒（照抄本页既有写法） */
+    var n = 0;
+    var t = setInterval(function(){
+      if ((loadVersion() && loadAutostart()) || ++n > 20) clearInterval(t);
+    }, 300);
+    loadVersion(); loadAutostart();
+  })();
 </script>
 
 </body>

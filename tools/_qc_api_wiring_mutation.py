@@ -116,11 +116,20 @@ def main() -> int:
         else:
             print("  PASS %s：报了 %s 分支" % (label, want))
 
-    # M2：往一个真实加载的 JS 末尾加一句调用（清单里的 get_version）
+    # M2：往一个真实加载的 JS 末尾加一句调用，目标是**清单里还在的**某个名字。
+    # 【为什么动态取】原来写死 `get_version`，而它已经被接进设置页「关于」并移出清单
+    # —— 于是这一刀永远"闸门仍然绿"，成了假红（2026-10-21 全量门禁抓到）。
+    # 从 KNOWN_UNWIRED 里现取，清单怎么变这一刀都成立。
+    from check_api_wiring import KNOWN_UNWIRED  # noqa: E402  同目录
+    cands = sorted(n for n in KNOWN_UNWIRED if not n.startswith("_"))
+    if not cands:
+        print("  FAIL M2：KNOWN_UNWIRED 空了，没有可用的变异目标")
+        return 1
+    target = cands[0]
     data = _read(PANEL)
     eol = _eol(data)
     add = (eol + b"window.__qc_probe = function(){"
-           b" return window.pywebview.api.get_version(); };" + eol)
+           b" return window.pywebview.api." + target.encode() + b"(); };" + eol)
     _write(PANEL, data + add)
     try:
         code, out = run_gate()
@@ -129,12 +138,12 @@ def main() -> int:
     if code == 0:
         print("  FAIL M2 给清单里的方法加真实调用点：闸门仍然绿（清单会腐烂）")
         bad += 1
-    elif "①" not in out or "get_version" not in out:
-        print("  FAIL M2：没报 ① get_version（清单腐烂没被拦）")
+    elif "①" not in out or target not in out:
+        print("  FAIL M2：没报 ① %s（清单腐烂没被拦）" % target)
         print(out[-600:])
         bad += 1
     else:
-        print("  PASS M2 给清单里的方法加真实调用点：报了 ① get_version")
+        print("  PASS M2 给清单里的方法加真实调用点：报了 ① %s" % target)
 
     code, out = run_gate()
     if code != 0:

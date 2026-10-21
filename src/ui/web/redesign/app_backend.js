@@ -688,6 +688,14 @@ const getOnboardingDefaults = (p) => call('get_onboarding_defaults', p || {});
   // UI 健康诊断快照（开发者页健康面板每 1s 调用）：GUI 活性 / 前端心跳 / WebView2 窗口数 / 最近发送 / 冻结现场
   const getUiHealth = () => call('get_ui_health');
 
+  /* —— 关于（设置页「关于」分类）：版本号 + 开机自启（2026-10-21 补出口）——
+     后端 get_version / get_autostart / set_autostart 早就写好了，适配层一直没导出，
+     于是界面上没有任何入口。tools/check_api_wiring.py（反向接线闸门）就是为这种
+     「有实现、没出口」加的。无参方法不能塞 {}（见 call() 上方注释）。 */
+  const getVersion = () => call('get_version');
+  const getAutostart = () => call('get_autostart');
+  const setAutostart = (on) => call('set_autostart', !!on);
+
   /* ============ 开发者页：OCR 分块调优 + 文字锚点 ============ */
   /* 读取复用已有 getVisionDebug()（其 d.ocr 含 regions / region_texts /
      anchors / player_name / anchor_hit_*），这里只暴露「写」接口。 */
@@ -794,6 +802,8 @@ const getOnboardingDefaults = (p) => call('get_onboarding_defaults', p || {});
     open_data_file,
     /* 【2026-10-17】麦克风验证结果轮询（切设备后后端开 3 秒检测窗口） */
     getMicVerifyResult,
+    /* 关于页：版本号 + 开机自启 */
+    getVersion, getAutostart, setAutostart,
   };
 })();
 
