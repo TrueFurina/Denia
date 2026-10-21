@@ -50,6 +50,19 @@ def collect(root: str) -> list[tuple[str, str]]:
     return sorted(out)
 
 
+_MEM_FAIL_MARK = "Memory allocation still failed"
+
+
+def is_mem_contention(result: dict) -> bool:
+    """这条失败是不是「并发下 OpenBLAS 分配不到内存」—— 唯一允许串行复核一次的错。
+
+    为什么只认这一种：**复核会掩盖真缺陷**。这条错误有外部证据（同一模块单独跑就过、
+    文案来自 OpenBLAS 而不是产品代码），别的错误没有这个证据。所以判据是"错误文案"
+    而不是"失败了几条"或"是不是第一次跑"。
+    """
+    return _MEM_FAIL_MARK in ((result.get("detail") or "") + (result.get("trace") or ""))
+
+
 def classify(err: str) -> str:
     if "ModuleNotFoundError" in err or "ImportError" in err:
         return "缺依赖"
@@ -152,15 +165,46 @@ def main() -> int:
     allow, no_reason = load_allow(os.path.join(root, args.allow) if not os.path.isabs(args.allow) else args.allow)
     unexpected = [r for r in fails if r["module"] not in allow]
     known = [r for r in fails if r["module"] in allow]
+
+    # 【2026-10-21】并发下 OpenBLAS 分配失败 → **串行复核一次**。
+    # 实测：本机空闲内存只剩 2.4G 时，8 个并发子进程各 import numpy/scipy，OpenBLAS 报
+    # "Memory allocation still failed after 10 retries" —— 3 个模块被判红，而产品没有
+    # 任何问题（同一批模块单独跑就过）。这是**闸门自己在造噪音**：红成噪音之后，真红
+    # 就没人看了。
+    # 三条边界，缺一条就变成"用重试糊过去"：
+    #   ① 只复核**这一种错误**（别的错不重试 —— 重试会把真缺陷盖掉）；
+    #   ② **串行**复核（一次一个子进程，这才是排除内存竞争的办法）；
+    #   ③ **打印复核了几条、结果如何**，不静默。
+    serial_ok: list[str] = []
+    if unexpected:
+        _mem = [r for r in unexpected if is_mem_contention(r)]
+        for r in _mem:
+            again = run_one(exe, root, r["module"], args.timeout)
+            if again["status"] == "OK":
+                for i, x in enumerate(results):
+                    if x is r:
+                        results[i] = again
+                        break
+                unexpected.remove(r)
+                serial_ok.append(r["module"])
+            else:
+                r["detail"] = (r.get("detail") or "") + "（串行复核仍失败）"
     # `--only` 下大部分模块压根没跑，把它们当"已不再失败"会误导人去删白名单条目。
     stale = [] if args.only else [m for m in allow if m not in {r["module"] for r in results}]
 
+    # 复核通过的要从 fails 里摘掉，否则"通过数/失败数"还是旧账（数字对不上就是谎话）。
+    # known 同理：它在复核**之前**算过，若救回的那条正好在白名单里，不重算就会印出
+    # "白名单内 1 条"而实际 0 条。
+    fails = [r for r in results if r["status"] != "OK"]
+    known = [r for r in fails if r["module"] in allow]
     kinds: dict[str, int] = {}
     for r in fails:
         kinds[r["kind"]] = kinds.get(r["kind"], 0) + 1
-
     print(f"\n=== 结果：{len(results)} 个模块，通过 {len(results) - len(fails)}，失败 {len(fails)} ===")
     print(f"    其中白名单内（已知可选）{len(known)}，**非预期失败 {len(unexpected)}**")
+    if serial_ok:
+        print(f"    [串行复核] {len(serial_ok)} 条并发下 OpenBLAS 内存分配失败，"
+              f"串行后全部通过：{', '.join(serial_ok)}")
     for k, c in sorted(kinds.items(), key=lambda x: -x[1]):
         print(f"  {k:10s} {c}")
 
