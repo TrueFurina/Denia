@@ -319,6 +319,14 @@ GATES: list[tuple[str, str, list[str], bool]] = [
     # 三刀：去掉开发环境守卫 / 三态压二态 / 失败不翻回去。本机没 node → 77 跳过。
     ("关于页真值表", PY_RUNTIME, ["tools/test_about_tier.py"], False),
     ("关于页变异", PY_RUNTIME, ["tools/_qc_about_tier_mutation.py"], True),
+    # 音色克隆「录音」按钮（2026-10-21 修的 bug）：它原来调 `record_audio_reference`
+    # —— 那个方法录的是**系统输出**（游戏音效识别），事件类型白名单里没有 'reference'，
+    # 于是按钮每一次都失败。设备方向相反的两个动作共用一个名字是根因，现在分开。
+    # 判据：帧数/声道/格式对得上时长、时长收进 [1.5,30]、失败如实报、
+    # **绝不调用 record_audio_reference**（bug 墓碑）。假 PyAudio，不碰真实设备。
+    # 三刀：去掉时长上限 / 立体声不下混 / 失败当成功。约 1s。
+    ("音色录音", PY_VENV, ["tools/test_voice_ref_record.py"], False),
+    ("音色录音变异", PY_VENV, ["tools/_qc_voice_ref_mutation.py"], True),
     # 导入冒烟：逐个 import 每个模块（独立子进程，并发 8），抓「导入期就崩」。
     # compileall 只保证语法和名字对得上，保证不了能不能被加载——2026-10-17 实测两例
     # （import 期 mkdir('G:\\')、顶层 argtypes 引用已删的 _u32）compileall 全绿。
@@ -326,6 +334,13 @@ GATES: list[tuple[str, str, list[str], bool]] = [
     # 变异三刀：非白名单坏模块→1；白名单内有原因→0（对照组，证明白名单真生效）；
     # 白名单内不写原因→1（2026-10-21 修，原实现无原因也放行）。
     ("导入冒烟", PY_VENV, ["tools/smoke_import.py", "--strict"], True),
+    # 导入冒烟的「串行复核」逻辑（2026-10-21）：并发 import 时 OpenBLAS 分配不到内存会
+    # 让 3 个模块假红（本机空闲 2.4G 时实测）。修法是只对**这一种错误**串行复核一次。
+    # 这个修法本身有两个危险方向（都会让闸门更绿），所以必须有刀守着：
+    # 复核范围放宽 → 真缺陷被重试掩盖；复核一律判过 → 真失败被洗出判决。
+    # 用**独立假根**（临时目录的 src/）跑真工具，不碰真仓库模块。约 2s。
+    ("导入冒烟复核", PY_VENV, ["tools/test_smoke_import_retry.py"], False),
+    ("导入冒烟复核变异", PY_VENV, ["tools/_qc_smoke_retry_mutation.py"], True),
 ]
 
 
