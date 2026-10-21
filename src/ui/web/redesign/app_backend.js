@@ -506,6 +506,9 @@ const getOnboardingDefaults = (p) => call('get_onboarding_defaults', p || {});
   const devMicLevel = (d) => call('dev_mic_level', d || {});
   const devPlayTone = (d) => call('dev_play_tone', d || {});
   const pickReferenceAudio = () => call('pick_reference_audio');
+  /* 【2026-10-22】随包参考音频（_role_assets/ref/*.wav）物化成磁盘真实路径：
+     首启克隆面板「预填她的」用——本地克隆引擎只认磁盘路径。 */
+  const useBundledRefAudio = (data) => call('use_bundled_ref_audio', data || {});
   /* 角色卡头图（2026-09-29） */
   const pickCharacterBanner = () => call('pick_character_banner');
   /* 角色头像（2026-10-11）：1:1 方图，角色卡 + 聊天页 AI 头像共用 */
@@ -778,6 +781,7 @@ const getOnboardingDefaults = (p) => call('get_onboarding_defaults', p || {});
     getOnboardingEnv, ensureComniLayout, listMicDevices, testMicDevice, setMicDevice,
     devMicLevel, devPlayTone,
     pickReferenceAudio, setReferenceAudio, applyOnboardingVoice, getModelBundleStatus,
+    useBundledRefAudio,
     /* 统一声音绑定（2026-09-25）：能力探针 + 云端试听 + 云端音色清单/建档 */
     getVoiceCapability, previewCloudVoice, listCloudVoices, ensureCloudVoiceProfile,
     getRoleVoiceContext, generateCharacter, getOnboardingDefaults,

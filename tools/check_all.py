@@ -321,6 +321,19 @@ GATES: list[tuple[str, str, list[str], bool]] = [
     # 四刀：调错方法名 / 下拉写死枚举 / 事件行走 innerHTML / 不再拉事件。会改源码再
     # 还原，标慢项。
     ("关系面板变异", PY_VENV, ["tools/_qc_relation_panel_mutation.py"], True),
+    # 克隆面板「预填她的」（2026-10-22 修的真缺陷）：预置角色的参考音频随包分发
+    # （_role_assets/ref/xiaowei.wav），而旧面板**预填写一份、按钮读另一份**——
+    # 试听/开始克隆只读 c.voice.ref，预置角色里没有 ⇒ 试听静默失效、克隆画假进度条
+    # 还谎报「克隆完成」（用户机器上什么都没发生）。判据是"点了以后发生什么"，
+    # 所以 jsdom **原样加载** onboarding_role.js 整文件真点真走（不抽片段）。
+    # 四个场景含两个对照组：随包资产 / 用户自选文件 / 无桥。缺 node 或 jsdom → 77。
+    ("克隆面板真值表", PY_VENV, ["tools/test_clone_card_ui.py"], False),
+    # 六刀：试听读回 voice.ref / 随包资产不物化 / 无桥改回假进度谎报 /
+    # 预置加回开发机路径 / 后端白名单前缀改严 / 去掉 wav 音频类型。会改源码再还原。
+    ("克隆面板变异", PY_VENV, ["tools/_qc_clone_card_mutation.py"], True),
+    # 后端侧：use_bundled_ref_audio 把随包资产物化成 data/voice_ref/ 真实路径 +
+    # 白名单（防路径穿越）+ /local_img 音频 Content-Type + register_local_img_dir。
+    ("参考音频物化", PY_VENV, ["tools/test_clone_ref_audio.py"], False),
     # ---- 引导页集成（106 项）----
     # 【为什么现在收了】上一轮我判定「不收：5 个 FAIL 是设计稿未落地的产品待办」——
     # 那个判断是**错的**。逐个查下来 5 个里没有一个是"要动产品"的：A1 拿仓库里

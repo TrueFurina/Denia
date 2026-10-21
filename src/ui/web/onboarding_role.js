@@ -580,7 +580,10 @@ var PRESETS = [
    desc:'温柔体贴的二次元女友，偶尔傲娇，关心你的健康和作息，能看见屏幕活动陪你工作。',
    voice:{kind:'none'},
    demo:{kind:'local', engine:'voxcpm',
-     ref:{name:'xiaowei.wav', path:'D:/GPT-SoVITS/ref_audio/xiaowei.wav', url:'_role_assets/ref/xiaowei.wav',
+     /* 【2026-10-22】ref.path 原为开发机绝对路径（D 盘 GPT-SoVITS 目录下的 wav）：
+        会显示给新用户、且用户机器上根本没有这个文件。随包资产只保留 url（web 相对
+        路径），克隆时由 use_bundled_ref_audio 物化成 data/voice_ref/ 下的真实路径。 */
+     ref:{name:'xiaowei.wav', url:'_role_assets/ref/xiaowei.wav',
           secs:9, text:'今天过得怎么样呀？不要太辛苦哦，我会一直陪在你身边的，有什么想说的都可以告诉我。'}}},
   {id:'ai_teacher', name:'AI老师', c1:'#7F77DD', c2:'#378ADD', avatar:'',
    tag:'专业但亲切，爱用类比讲概念',
@@ -892,18 +895,27 @@ function openRoute(c){
 
 /* ================= 模态 2：本地克隆 ================= */
 var _clChar = null;
+/* 【2026-10-22】克隆面板当前参考音频：预填、试听、开始克隆**共用同一份**。
+   原来预填写的是 `voice.ref || demo.ref`，而试听/开始克隆只读 `c.voice.ref` ——
+   预置角色（温柔女友）只有 demo.ref ⇒ 按钮读到空：试听静默 return、克隆落到
+   「无桥降级」画假进度条还谎报「克隆完成」。分歧的根源是两份读取路径，这里合一。 */
+var _clRef = null;
 function openCloneCard(c){
   _clChar = c;
+  _clRef = (c.voice && c.voice.ref) || (c.demo && c.demo.ref) || null;
   stopAudio();
   $('clName').textContent = c.name;
   /* 模型门控 + 引擎列表（适配器数据渲染） */
   $('clModelWarn').classList.toggle('on', !S.cloneModel);
   renderClEngines();
-  /* 参考音频：预填她的 */
-  var ref = (c.voice && c.voice.ref) || (c.demo && c.demo.ref) || null;
+  /* 参考音频：预填她的（url=随包资产 _role_assets/ref/*.wav；path=磁盘文件） */
+  var ref = _clRef;
   if(ref){
     $('clAudioName').textContent = ref.name;
-    $('clAudioSub').textContent = '她的原始录音 · ' + (ref.secs||'?') + ' 秒 · ' + ref.path;
+    /* path 只在真有磁盘文件时显示：随包资产物化前没有 path，
+       原来这里直接把开发机的绝对路径显示给用户。 */
+    $('clAudioSub').textContent = '她的原始录音 · ' + (ref.secs||'?') + ' 秒' +
+      (ref.path ? (' · ' + ref.path) : '');
     $('clRefText').value = ref.text || '';
     $('clAudioRow').style.display = '';
     $('clAudioHint').style.display = 'none';
@@ -966,8 +978,11 @@ $('clGoDl').addEventListener('click', function(){
 });
 /* 参考音频试听（真实播放） */
 $('clAudioPlay').addEventListener('click', function(){
-  var c = _clChar; if(!c || !c.voice || !c.voice.ref) return;
-  var src = c.voice.ref.url || (c.voice.ref.path ? ('/local_img?path=' + encodeURIComponent(c.voice.ref.path)) : '');
+  /* 【2026-10-22】读 _clRef（与面板预填同一份），不再只认 c.voice.ref ——
+     原来预置角色只有 demo.ref，这个按钮每次都静默 return（点了没反应）。
+     播放源优先 url（随包资产由 web 静态路由直接吐），否则走 /local_img。 */
+  var ref = _clRef; if(!ref) return;
+  var src = ref.url || (ref.path ? ('/local_img?path=' + encodeURIComponent(ref.path)) : '');
   if(!src){ toast('这段音频没法直接播放——重新选一个本地文件即可'); return; }
   stopAudio();
   var a = new Audio(src);
@@ -976,15 +991,40 @@ $('clAudioPlay').addEventListener('click', function(){
   a.play().catch(function(){});
   a.onended = function(){ $('clAudioPlay').classList.remove('playing'); };
 });
-/* 开始克隆（本地跑，模拟进度；真实环境=本地引擎克隆任务） */
+/* 把面板当前参考音频归一成**真实磁盘路径**（Promise<string>，拿不到 resolve('')）。
+   本地克隆引擎（VoxCPM 等）把 reference_audio 当 prompt_wav_path 直送本地 HTTP
+   服务，只认磁盘路径：
+     · 用户自选文件：path 即真实路径，直接用；
+     · 随包资产（有 url）：经 use_bundled_ref_audio 复制到 data/voice_ref/；
+     · 都没有（如无桥预览）：返回 ''，由调用方明确告知，不许画假进度。 */
+function ensureCloneRef(){
+  var ref = _clRef;
+  if(!ref) return Promise.resolve('');
+  if(ref.path && !ref.url) return Promise.resolve(ref.path);
+  if(ref.url){
+    var B = _b();
+    if(B && B.useBundledRefAudio){
+      return Promise.resolve(B.useBundledRefAudio({url: ref.url})).then(function(r){
+        if(r && r.success && (r.stored_path || r.path)){
+          ref.path = r.stored_path || r.path;   /* 物化成功：之后试听/保存都走真实路径 */
+          return ref.path;
+        }
+        return '';
+      }).catch(function(){ return ''; });
+    }
+    return Promise.resolve('');
+  }
+  return Promise.resolve(ref.path || '');
+}
+/* 开始克隆（真实环境=本地引擎零样本试合成验证） */
 /* 本地克隆=零样本：直接拿参考音频试合成一句，成功即可用（无需训练/注册/额度） */
-function realClone(c, eng){
+function realClone(c, eng, refPath){
   var B = _b();
   var cfg = {
     engine: eng,
-    reference_audio: (c.voice && c.voice.ref && c.voice.ref.path) || '',
+    reference_audio: refPath,
     reference_text: (($('clRefText') && $('clRefText').value.trim()) ||
-                     (c.voice && c.voice.ref && c.voice.ref.text) || ''),
+                     (_clRef && _clRef.text) || ''),
     rate: '+0%', pitch: '+0Hz', volume: '+0%', speed: 1.0
   };
   return Promise.resolve(B.testVoice(cfg, '你好呀，我是' + c.name + '～')).then(function(r){
@@ -1015,14 +1055,28 @@ $('clStart').addEventListener('click', function(){
   var B = _b();
   var engEl = _root ? _root.querySelector('#clEngines .eng.sel') : null;
   var eng = (engEl && engEl.getAttribute('data-eng')) || 'voxcpm';
-  var refPath = (c.voice && c.voice.ref && c.voice.ref.path) || '';
-  /* 真实环境：本地克隆走零样本试合成验证（不画假训练进度） */
-  if(B && B.testVoice && B.getVoiceTestStatus && refPath){
+  /* 【2026-10-22 修·假进度/谎报】先把参考音频归一成真实磁盘路径，再开克隆。
+     旧代码 refPath 只从 c.voice.ref.path 取，而面板预填写的是 voice.ref||demo.ref：
+     预置角色（温柔女友）取到空 → 跳过真实克隆、落到「无桥降级」画一条假进度条，
+     再 toast「克隆完成」——用户机器上什么都没发生（本文件红线：不画假进度）。
+     现在：随包资产经后端物化，用户自选文件直接用，拿不到就明说。 */
+  btn.disabled = true; btn.textContent = '准备中…';
+  ensureCloneRef().then(function(refPath){
+    btn.disabled = false; btn.textContent = '开始克隆';
+    if(!(B && B.testVoice && B.getVoiceTestStatus)){
+      toast('软件运行时这里会真的本地克隆（当前环境没有语音桥，不模拟进度）');
+      return;
+    }
+    if(!refPath){
+      toast('还没有可用的参考音频：点「选择音频文件」选一段 10 秒左右的清晰人声');
+      return;
+    }
+    /* 真实环境：本地克隆走零样本试合成验证（不画假训练进度） */
     btn.disabled = true; btn.textContent = '验证中…';
     $('clProgWrap').classList.add('on');
     $('clProgFill').style.width = '35%'; $('clProgPct').textContent = '35%';
     $('clProgTxt').textContent = '正在用参考音频试合成…';
-    realClone(c, eng).then(function(){
+    realClone(c, eng, refPath).then(function(){
       btn.disabled = false; btn.textContent = '开始克隆';
       $('clProgFill').style.width = '100%'; $('clProgPct').textContent = '100%';
       $('clProgTxt').textContent = '可用（本地零样本，无需训练）';
@@ -1043,32 +1097,7 @@ $('clStart').addEventListener('click', function(){
       $('clProgWrap').classList.remove('on');
       toast('试合成失败：' + ((err && err.message) ? err.message : err));
     });
-    return;
-  }
-  /* 无桥降级：稿内模拟进度 */
-  btn.disabled = true;
-  btn.textContent = '克隆中…';
-  $('clProgWrap').classList.add('on');
-  var pct = 0;
-  var t = setInterval(function(){
-    pct = Math.min(100, pct + (6 + Math.random()*9));
-    $('clProgFill').style.width = pct + '%';
-    $('clProgPct').textContent = Math.round(pct) + '%';
-    $('clProgTxt').textContent = pct < 45 ? '正在分析参考音频…' : (pct < 85 ? '正在本地克隆音色…' : '正在写入角色…');
-    if(pct >= 100){
-      clearInterval(t);
-      S.cloned[c.id] = true;
-      $('clDoneSub').textContent = '音色已写入「' + c.name + '」，她说的话以后都是这个声音';
-      $('clDone').classList.add('on');
-      syncPills();
-      toast('克隆完成：' + c.name + ' 现在有专属声音了');
-      setTimeout(function(){
-        $('cloneMask').classList.remove('on');
-        var card = document.querySelector('.pcard[data-char-id="'+c.id+'"]');
-        if(card){ var vb = card.querySelector('.vbtn'); play(vb, c); }
-      }, 1400);
-    }
-  }, 220);
+  });
 });
 
 /* ================= 模态 3：云端克隆卡 ================= */
@@ -1943,28 +1972,34 @@ $("clPickAudio").addEventListener("click", function(){
   if(!c) return;
   var B = _b();
   /* 无桥：保留稿内演示 */
-  if(!(B && B.pickAudioFile)){
+  if(!(B && (B.pickReferenceAudio || B.pickAudioFile))){
     toast("预览模式：软件运行时弹出系统文件框，选一段 10 秒左右的清晰人声");
     c.voice = c.voice || {};
     c.voice.ref = {name:"示例录音.wav", path:"", url:"", secs:12, text:""};
     openCloneCard(c);
     return;
   }
-  Promise.resolve(B.pickAudioFile()).then(function(r){
+  /* 【2026-10-22】优先 pickReferenceAudio：它校验时长，并把文件复制到
+     data/voice_ref/ 持久（修 B3：用户从下载目录选的文件被清理后，参考音就失效）。
+     旧桥只有 pickAudioFile 时回退它（不持久，仅预览可用）。 */
+  var picking = B.pickReferenceAudio ? B.pickReferenceAudio() : B.pickAudioFile();
+  Promise.resolve(picking).then(function(r){
     if(!(r && r.success && r.path)){
       if(r && r.error) toast("选音频失败：" + r.error);
       return;
     }
-    var fn = r.path.split(/[\\/]/).pop() || "参考音频";
+    var real = r.stored_path || r.path;   /* 持久副本优先；旧桥没有 stored_path 时用原路径 */
+    var fn = real.split(/[\\/]/).pop() || "参考音频";
+    var secs = Math.round((r.duration_s != null ? r.duration_s : r.duration) || 0);
     c.voice = c.voice || {};
-    c.voice.ref = {name:fn, path:r.path, url:"", secs:Math.round(r.duration || 0), text:""};
+    c.voice.ref = {name:fn, path:real, url:"", secs:secs, text:""};
     openCloneCard(c);
     /* 落进角色：后端 set_reference_audio（写 voice.reference_audio + 同步 proactive） */
     if(B.setReferenceAudio){
       var txt = ($("clRefText") && $("clRefText").value.trim()) || "";
-      Promise.resolve(B.setReferenceAudio({path:r.path, character_id:c.id, text:txt})).catch(function(){});
+      Promise.resolve(B.setReferenceAudio({path:real, character_id:c.id, text:txt})).catch(function(){});
     }
-    toast("已选：" + fn + (c.voice.ref.secs ? ("（" + c.voice.ref.secs + "s）") : ""));
+    toast("已选：" + fn + (secs ? ("（" + secs + "s）") : ""));
   }).catch(function(e){ toast("选音频失败：" + e); });
 });
 /* ================= 真实数据接入（引导页场景；无桥时保留稿内 mock） ================= */
