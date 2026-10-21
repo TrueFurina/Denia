@@ -27,14 +27,16 @@ if (typeof Backend.probeVisionModel === 'function') {
 
 1. 从 `app_backend.js` 的 `return { … }` 解析出导出名集合（复用 `check_bridge_methods.
    exported()` —— 内联与外链共用同一份解析，别再写第二套）。
-2. 扫全部真页面/真 JS 里的 `typeof (window.)?(Backend|B).<name>`，取 `<name>`。
+2. 扫全部真页面/真 JS 里的三种"守卫"形态，取 `<name>`：
+   - `typeof (window.)?(Backend|B).<name>`（能力探测）
+   - `if ((window.)?(Backend|B).<name>`（存在性判断，含 `if (B.x && …)`）
+   - `!(window.)?(Backend|B).<name>`（否定式降级）
 3. `<name>` 不在导出集合 → 红，报 `文件:行号 名字`。
 
-## 为什么只查 typeof，不查 `if (B.x)`
-
-`if (B.x)` 里 x 可能是数据字段（`if (B.ready)`）、也可能是另一个对象上的方法，误报率高。
-`typeof … === 'function'` 是**明确的"我要调它"**，语义单一，适合做硬判据。
-真要扩，先量一遍误报再说。
+**为什么 `if (B.x)` 也要查**：2026-10-21 删掉的那段平行绑定就是 `if (B.setArchetypeManual)`
+—— 守卫恒 false，于是后端没调却 toast「关系已重置」，**谎报**。同一天 `probeVisionModel`
+是同一种病的 typeof 版。实测这几种形态在真实仓库上误报为 0（唯一命中是我自己写的注释，
+而注释会被剥掉），所以收进来。
 
 用法：python tools/check_bridge_guards.py
 退出码：0 = 全对得上；1 = 有守卫指向不存在的导出；2 = 闸门自己失效（解析不到 / 扫不到）。
@@ -64,10 +66,15 @@ KNOWN_GUARD_MISSING: dict[str, str] = {}
 # 这几个文件必须在扫描结果里出现，否则说明"扫描范围悄悄变小了"（改名/搬家都会）。
 MUST_SCAN = ["redesign/app_backend.js", "index.html"]
 
-_GUARD = re.compile(r"typeof\s+(?:window\.)?(?:Backend|B)\s*\.\s*([A-Za-z_$][\w$]*)")
+_TARGET = r"(?:window\.)?(?:Backend|B)\s*\.\s*([A-Za-z_$][\w$]*)"
+_GUARD = re.compile(
+    r"typeof\s+" + _TARGET          # ① 能力探测
+    + r"|if\s*\(\s*" + _TARGET      # ② if (B.x) / if (B.x && …)
+    + r"|!\s*" + _TARGET            # ③ !B.x
+)
 
 MIN_EXPORTS = 100      # 导出表解析出来不足这么多 → 解析坏了
-MIN_GUARDS = 20        # 全站守卫不足这么多 → 正则坏了
+MIN_GUARDS = 100       # 全站守卫不足这么多 → 正则坏了（现在 220 处）
 
 
 def _strip_comments(txt: str) -> str:
@@ -103,7 +110,9 @@ def guards_in(path: str) -> list[tuple[int, str]]:
     out = []
     for i, line in enumerate(txt.splitlines(), 1):
         for m in _GUARD.finditer(line):
-            out.append((i, m.group(1)))
+            name = m.group(1) or m.group(2) or m.group(3)
+            if name:
+                out.append((i, name))
     return out
 
 
@@ -137,10 +146,10 @@ def main() -> int:
                 "%s:%d" % (os.path.relpath(p, ROOT).replace("\\", "/"), ln))
 
     if total < MIN_GUARDS:
-        print("✗ 全站只扫到 %d 处 typeof 守卫（< %d）—— 正则坏了" % (total, MIN_GUARDS))
+        print("✗ 全站只扫到 %d 处守卫（< %d）—— 正则坏了" % (total, MIN_GUARDS))
         return 2
 
-    print("扫 %d 个文件 / %d 处 typeof 守卫 / %d 个不同名字；导出表 %d 个名字"
+    print("扫 %d 个文件 / %d 处守卫（typeof + if + !）/ %d 个不同名字；导出表 %d 个名字"
           % (len(files), total, len(distinct), len(names)))
 
     stale = [n for n in KNOWN_GUARD_MISSING if n not in missing]
@@ -154,7 +163,7 @@ def main() -> int:
             print("   %-28s %s" % (n, "、".join(locs[:4])))
         return 1
 
-    print("✓ 所有 typeof 守卫的目标都在导出表里")
+    print("✓ 所有守卫（typeof / if / !）的目标都在导出表里")
     return 0
 
 

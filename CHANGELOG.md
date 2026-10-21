@@ -13,7 +13,7 @@
 
 | commit | 时间 | 类型 | 一句话 | 验证 |
 |---|---|---|---|---|
-| `b12dd39` | 20:1x | fix | **额度浮层「再试一次」点了什么都不做**：`app_backend.js` 里 `typeof Backend.probeVisionModel === 'function'` **恒为 false** —— 后端 `probe_vision_model` 一直在，适配层从没导出它。补导出；并新增闸门 `check_bridge_guards.py` 专守「`typeof` 守卫的目标必须在导出表里」（全站 138 处守卫 / 74 个不同名字 / 导出表 255 个） | 四刀变异全红（导出少了 → 报 `probeVisionModel`；页面出现假守卫 → 报名字；**正则坏了 → 必须 exit 2**；对照组：注释里复述守卫名必须仍绿）；闸门 124→**126** |
+| `b12dd39` | 20:1x | fix | **额度浮层「再试一次」点了什么都不做**：`app_backend.js` 里 `typeof Backend.probeVisionModel === 'function'` **恒为 false** —— 后端 `probe_vision_model` 一直在，适配层从没导出它。补导出；并新增闸门 `check_bridge_guards.py` 专守「守卫的目标必须在导出表里」（`typeof` + `if (B.x)` + `!B.x` 三种形态，全站 **220 处** / 109 个不同名字 / 导出表 255 个） | 五刀变异全红（导出少了 / 页面出现假守卫 / **正则坏了 → 必须 exit 2** / 对照组：注释里复述守卫名必须仍绿 / `if (B.x)` 形态也要查）；闸门 124→**126** |
 | `5d3c02a` | 20:1x | fix | **6 个「同一份数据的第二个出口」删掉**：`get_audio_status` / `ocr_get_regions` / `ocr_get_anchors` / `chat_overlay_state` 返回的全是 `get_vision_debug()` 里 `ocr`/`audio`/`chat_overlay_open` 的子集（调试台只轮询那一个）；`get_bailian_quota` 是 09-29「额度卡改用内嵌控制台看真实额度」后废弃的本地估算；`get_model_3d_options` 是没人读的写死清单。未接线 **12 → 5**，后端公开 325 → **315** | 反向接线闸门 315 / 有人调 310 / 未接线 5 全绿；三刀变异全红；桥接闸门 166 个调用三层全对得上 |
 | `73d1564` | 20:1x | fix | **`smoke_import` 的复核范围太窄**（修上一条留下的）：它只遍历「非预期失败」，而白名单里的模块同样会因为抢内存假红，却**永远不进复核** → 印出「白名单内 1 条」而它其实单独跑能过。改成复核全部失败项 | 自测 12 项（新增"确实进了复核"的前置断言，否则后一条是空断言）；三刀变异全红（M2 锚点因缩进变化失效 → 按"命中 0 次"报红而不是静默跳过） |
 | `3689221` | 19:5x | fix | **设置页「录音」按钮从来没成功过**：它调的 `record_audio_reference` 录的是**系统输出** loopback（给游戏音效用的），而参考音要的是**麦克风**；事件白名单又不认 `'reference'` → 点了必失败。新写 `src/audio/voice_ref_record.py` + 桥方法 `record_voice_reference`，前端两处改成 `Backend.recordAudio(2.5)` | 自测 **38 项**（假设备：时长窗口 / 帧数与格式 / 立体声下混 / 99 秒只录 30 秒 / 失败如实报 / 墓碑：假 `record_audio_reference` 一旦被调即 AssertionError）；三刀变异全红；真机录到 176172 字节（本机麦克风静音，peak=2，不是代码问题） |
@@ -138,8 +138,9 @@ probeVisionModel` 是 `undefined` → 守卫恒 false。
    导出名集合（**复用** `check_bridge_methods.exported()`，不写第二套解析），扫全部真
    页面/真 JS 的 `typeof (window.)?(Backend|B).<name>`，`<name>` 不在集合里就红。
 
-**为什么只查 `typeof` 不查 `if (B.x)`**：后者可能是数据字段（`if (B.ready)`）或别的
-对象上的方法，误报率高；`typeof … === 'function'` 语义单一（"我要调它"），适合做硬判据。
+**`if (B.x)` 也查**：先量了一遍误报（0 处），而且这个形态今天已经骗过一次 —— 删掉的
+那段平行绑定就是 `if (B.setArchetypeManual)`，守卫恒 false，后端没调却 toast「关系已
+重置」。收进来后全站从 138 处涨到 **220 处**。
 
 #### 验证
 
@@ -151,6 +152,7 @@ probeVisionModel` 是 `undefined` → 守卫恒 false。
 | M2 | `notify.html` 里塞 `typeof Backend.zzzNotARealBridge` | 红，点名它 |
 | M3 | 把守卫正则换成永不匹配的模式 | **exit 2**（0 命中不许当成通过） |
 | M4 | 对照组：注释里复述守卫名 | **仍然绿** |
+| M5 | `if (B.zzzIfGuard)` | 红，点名它 |
 
 M3 是这类闸门最阴的失效方式：正则坏了 → 0 命中 → 没有违规 → 打印"✓"退出 0。所以
 闸门里有 `MIN_GUARDS`（扫不到 20 处就 exit 2）和 `MIN_EXPORTS`（解析不足 100 个名字就

@@ -16,6 +16,9 @@
      锚点：notify.html 插一行 `// typeof Backend.zzzInComment === 'function'`
      没有这一刀，M2 的"红"可能只是因为闸门根本不剥注释（那样任何注释里提到守卫名
      都会误报，下一个人会去放宽判据）。
+  M5 `if (B.x)` 形态的守卫也要查（10-21 删掉的那段平行绑定就是它：守卫恒 false
+     → 后端没调却 toast「关系已重置」，**谎报**）
+     锚点：notify.html 插 `if (B.zzzIfGuard) { }`
 
 改源码一律按**字节**读写，锚点按各文件实际换行符拼（`_encode`）：文本模式在 Windows
 上会把 `\\n` 写成 `\\r\\n`，锚点静默失效。
@@ -70,8 +73,8 @@ KNIVES = [
      1, "zzzNotARealBridge"),
     ("M3 守卫正则坏了（0 命中不许当成通过）",
      GATE,
-     '_GUARD = re.compile(r"typeof\\s+(?:window\\.)?(?:Backend|B)\\s*\\.\\s*([A-Za-z_$][\\w$]*)")',
-     '_GUARD = re.compile(r"__never_matches_this__\\s*\\.\\s*([A-Za-z_$][\\w$]*)")',
+     '_TARGET = r"(?:window\\.)?(?:Backend|B)\\s*\\.\\s*([A-Za-z_$][\\w$]*)"',
+     '_TARGET = r"__never_matches_this__\\s*\\.\\s*([A-Za-z_$][\\w$]*)"',
      2, "正则坏了"),
     ("M4 对照组：注释里复述守卫名 → 仍然绿",
      PAGE,
@@ -79,6 +82,11 @@ KNIVES = [
      "<script>// typeof Backend.zzzInComment === 'function' 这行是注释，不该被算\n"
      "</script>\n</body>\n</html>",
      0, "✓"),
+    ("M5 if (B.x) 形态的守卫也要查",
+     PAGE,
+     "</body>\n</html>",
+     "<script>if (B.zzzIfGuard) { /* 后端没调却往下走 */ }</script>\n</body>\n</html>",
+     1, "zzzIfGuard"),
 ]
 
 
