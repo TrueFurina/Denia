@@ -304,6 +304,13 @@ GATES: list[tuple[str, str, list[str], bool]] = [
     # 三刀：加没人调的方法→③ / 改名→② / 给清单项加真实调用点→①。约 8s，标慢项。
     ("反向接线", PY_VENV, ["tools/check_api_wiring.py"], False),
     ("反向接线变异", PY_VENV, ["tools/_qc_api_wiring_mutation.py"], True),
+    # 设置页「关于」分类（2026-10-21）：版本号 + 开机自启。这两个后端早就有、
+    # 界面上一直没有入口（反向接线闸门抓到的第一批）。
+    # 判据是"点了以后界面变成什么样"，所以**真值表交给 node 跑页面里的真 JS**：
+    # JS 测试从 ui_redesign_settings.html 里原样抽 aboutTier 那个 IIFE 在假 DOM 里跑。
+    # 三刀：去掉开发环境守卫 / 三态压二态 / 失败不翻回去。本机没 node → 77 跳过。
+    ("关于页真值表", PY_RUNTIME, ["tools/test_about_tier.py"], False),
+    ("关于页变异", PY_RUNTIME, ["tools/_qc_about_tier_mutation.py"], True),
     # 导入冒烟：逐个 import 每个模块（独立子进程，并发 8），抓「导入期就崩」。
     # compileall 只保证语法和名字对得上，保证不了能不能被加载——2026-10-17 实测两例
     # （import 期 mkdir('G:\\')、顶层 argtypes 引用已删的 _u32）compileall 全绿。

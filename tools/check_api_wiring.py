@@ -55,11 +55,12 @@ from check_bridge_methods import (  # noqa: E402
 
 # 已知未接线（2026-10-21 首次盘点）。处理方式只有两种：接线，或删掉。
 # 不要往里加新名字来"消红"——那正是这道门要拦的事。
+#
+# 【已接线，2026-10-21 从清单移除】get_version / get_autostart / set_autostart
+#   → 设置页新增「关于」分类（版本号 + 开机自启开关）。这三条就是这道门自己催着删的
+#   —— 接线后它们立刻报 ①「现在有人调了」，不删就红。
 KNOWN_UNWIRED = {
     # —— 后端能力完整、前端从未做过入口（"待接线"）——
-    "get_autostart",            # 开机自启：有 src/autostart.py，没有开关
-    "set_autostart",
-    "get_version",              # 版本号：关于页没有显示
     "get_backend_options",      # 后端下拉选项
     "get_model_3d_options",     # 3D 模型下拉选项
     "get_bailian_quota",        # 百炼额度快照
