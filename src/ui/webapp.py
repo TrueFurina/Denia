@@ -634,13 +634,11 @@ class CharacterAPI(PetAPI, WindowAPI):
             self._asr = asr
             self._memory_store = memory_store
             self._vision_router = vision_router
-            # 【2026-10-02】额度耗尽提醒：视觉模型免费额度用完时，广播给前端弹询问浮层
-            # （问用户是否切换到还有额度的模型），避免静默失败 + 每 60s 重试刷屏。
-            try:
-                if vision_router is not None and hasattr(vision_router, "set_quota_alert_callback"):
-                    vision_router.set_quota_alert_callback(self._on_vision_quota_alert)
-            except Exception:  # noqa: BLE001
-                logger.debug("注入额度提醒回调失败（忽略）", exc_info=True)
+            # 【2026-10-22 删】原来这里给 vision_router 注册"额度耗尽主动弹询问浮层"的回调。
+            # 那个行为 2026-10-02 已由用户决策停掉（_on_vision_quota_alert 只记日志），
+            # 前端浮层与 quota_alert 广播分支同日成为死代码 → 连注册一起删。
+            # 额度信息现在的出口：随"那次失败消息"给出，数据源是 quota_state()。
+            # 判据：src/channels/tests/test_quota_alert.py 的两层墓碑。
             self._activity_reporter = activity_reporter
             self._course_recorder = course_recorder
             self._relationship_reporter = relationship_reporter
@@ -1970,27 +1968,11 @@ class CharacterAPI(PetAPI, WindowAPI):
         except Exception:  # noqa: BLE001
             logger.debug("[视频进度] 写入聊天状态卡失败", exc_info=True)
 
-    def _on_vision_quota_alert(self, info: dict) -> None:
-        """视觉模型免费额度耗尽 —— **不再主动广播弹窗**（2026-10-02 用户决策）。
-
-        【为什么停】额度耗尽是**持续状态**，不是一次性事件：只要没充值/没关
-        「仅免费额度」，它就一直为真。而失败会发生在桌面看屏、陪你看视频、聊天
-        发图、视觉分析等多条链路，各有各的重试与冷却 → 主动弹窗必然反复打扰，
-        且弹的那一刻用户不知道"这对我有什么影响"，只能含糊说成"其它候选也暂
-        不可用"（实测同一 Key 下文本模型全部可用，文字聊天根本不受影响）。
-
-        【改成什么】额度信息由 VisionRouter 挂在**失败消息**里
-        （`_explain_all_cooling` / `_explain_all_failed`，明确说"文字聊天不受
-        影响"），只在用户**真的用到视觉且失败**那一刻随那条消息给出。
-
-        本方法保留：若将来要做"用户主动点『检测额度』"，复用此广播通道。
-        """
-        try:
-            d = info or {}
-            logger.info("[额度状态] 视觉模型 %s 额度耗尽（不主动弹窗，随失败消息提示）",
-                        d.get("model_id"))
-        except Exception:  # noqa: BLE001
-            logger.debug("额度状态记录失败（忽略）", exc_info=True)
+    # 【2026-10-22 删】_on_vision_quota_alert：额度耗尽不再主动弹窗（2026-10-02 用户
+    # 决策）之后，它退化成只打一行日志的存根；注册点同日删掉后，它连"被调用"都没了。
+    # 前端浮层（window.__quotaAlert）与 quota_alert 广播分支一并删除。
+    # 额度信息现在的出口：随"那次失败消息"给出；数据源 VisionRouter.quota_state()。
+    # 判据：src/channels/tests/test_quota_alert.py 的两层墓碑（Router 层 + 产品层）。
 
     def get_video_watch_diag(self) -> dict:
         """开发者页「陪你看视频」诊断卡：依赖可用性 + 开关 + 最近观看记录。

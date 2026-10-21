@@ -206,6 +206,98 @@ class TestProbeModel(unittest.TestCase):
         res = asyncio.run(r.probe_model("nope"))
         self.assertFalse(res["ok"])
 
+    # ---------------------------------------------------------------- 产品层墓碑
+    # 2026-10-22 删掉了三段死代码：webapp 的注册点、只打日志的存根方法、前端
+    # quota_alert 浮层与广播分支。删之前它是"三段各自看着都在工作、合起来是死的"：
+    #   Router 有回调槽位（set_quota_alert_callback）但 _fire_quota_alert 不调；
+    #   webapp 注册了回调，但存根只 logger.info，从不广播；
+    #   前端有浮层、有 quota_alert 分支，但后端广播 type 全集里从来没有它。
+    # 只测 Router 层不够——注册点写着"主动广播给前端弹询问浮层"，谁把它加回来，
+    # Router 层那条仍然绿，而主动打扰已经铺回产品里了。所以这里补产品层。
+
+    @staticmethod
+    def _code_only(path: str) -> str:
+        """剥掉注释与字符串后剩下的**代码 token**。
+
+        【为什么必须剥】删代码时按本仓惯例在原处留了"为什么删"的注释，注释里就含
+        `_on_vision_quota_alert` 这个名字。不剥的话这条判据会被自己的注释满足
+        （要么恒绿、要么恒红）——同一坑在 check_bridge_guards 上踩过。
+        """
+        import io as _io
+        import tokenize as _tk
+        out = []
+        with _io.open(path, "rb") as f:
+            for tok in _tk.tokenize(f.readline):
+                if tok.type in (_tk.COMMENT, _tk.STRING):
+                    continue
+                out.append(tok.string)
+        return " ".join(out)
+
+    def test_product_code_does_not_register_proactive_popup(self):
+        """webapp 不许再注册额度回调（产品层墓碑，2026-10-22）。
+
+        注册点 + 存根 + 前端浮层三段一起才构成"主动弹窗"。只拆其中一段，
+        另外两段还在，行为就还有可能被接回来——所以这条盯的是**注册点**：
+        它一出现，就说明有人重新铺"主动打扰"这条路。
+        """
+        code = self._code_only(os.path.join(ROOT, "src", "ui", "webapp.py"))
+        for name in ("set_quota_alert_callback", "_on_vision_quota_alert"):
+            self.assertNotIn(
+                name, code,
+                "webapp 里又出现了 %s —— 主动弹窗这条路是 2026-10-02 用户决策停掉的，"
+                "额度信息只能随失败消息给出（数据源 VisionRouter.quota_state()）" % name)
+
+    @staticmethod
+    def _strip_js_comments(txt: str) -> str:
+        """剥掉 JS 的行注释与块注释，返回剩下的代码。
+
+        【为什么必须是状态机，不能两条正则】先剥行注释会**破坏块注释结构**：
+        块注释里只要出现 `//`（URL 最常见），`(?<![:\\w])//.*$` 就从那儿删到
+        行尾，把同行的 `*/` 一起删掉 → 块注释变成"只有 /* 没有 */" → 第二条
+        `/\\*.*?\\*/` 匹配错位，**吃掉后面大段真实代码**。
+
+        这个坑是变异刀 M2 抓到的：把 quota_alert 分支加回 app_backend.js，
+        判据却仍然绿——正因为插入点前一个块注释里含 URL，剥离后连插入行一起
+        被吃掉了。没有对照组 + 变异刀，这条判据会一直"绿着失效"。
+
+        `//` 前面是 `:` 或单词字符时不算注释起点（https:// 、a//b）。
+        """
+        out = []
+        i, n = 0, len(txt)
+        while i < n:
+            if txt.startswith("/*", i):
+                j = txt.find("*/", i + 2)
+                i = (j + 2) if j >= 0 else n
+                out.append(" ")
+            elif txt.startswith("//", i) and not (
+                    i > 0 and (txt[i - 1] == ":" or txt[i - 1].isalnum()
+                               or txt[i - 1] == "_")):
+                j = txt.find("\n", i)
+                i = j if j >= 0 else n
+                out.append(" ")
+            else:
+                out.append(txt[i])
+                i += 1
+        return "".join(out)
+
+    def test_frontend_has_no_quota_alert_branch(self):
+        """前端不许再出现 quota_alert 消息分发（2026-10-22）。
+
+        后端广播 type 全集：chat_push / call_push / pet_tip / video_watch，
+        外加 agent_confirm_broker 注入的 agent_confirm。**从来没有 quota_alert**——
+        停掉主动弹窗后前端那个分支收不到任何消息，与浮层一起是死代码。
+
+        剥注释后再比：注释里提这个名字是在说明"为什么删"，不算违规。
+        """
+        path = os.path.join(ROOT, "src", "ui", "web", "redesign", "app_backend.js")
+        with open(path, "r", encoding="utf-8") as f:
+            txt = f.read()
+        code = self._strip_js_comments(txt)
+        self.assertNotIn(
+            "quota_alert", code,
+            "app_backend.js 里又出现了 quota_alert —— 后端从不广播这个 type，"
+            "该分支收不到消息（浮层已于 2026-10-22 删除）")
+
 
 if __name__ == "__main__":
     unittest.main()

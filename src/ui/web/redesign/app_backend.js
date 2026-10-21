@@ -1748,148 +1748,6 @@ function startChatLive(){
   window.pollChat = pollChat;
   window.pollChatLock = pollChatLock;
 
-  /* ============================================================
-     免费额度耗尽 · 询问浮层（2026-10-02）
-     后端 vision_router 判定某模型额度耗尽 → 广播 quota_alert → 这里弹一个挂 body 的
-     询问条：告知哪个模型额度用完、列出还没耗尽的候选，让用户决定"切换 / 暂不"。
-     ⚠️ 只询问、不自动切换（用户明确要求）。跟随 design_tokens，深浅主题自动适配。
-     ============================================================ */
-  window.__quotaAlert = (function(){
-    var box = null;
-    function ensure(){
-      if (box && box.isConnected) return box;
-      box = document.getElementById('quotaAlertBox');
-      if (!box){
-        box = document.createElement('div');
-        box.id = 'quotaAlertBox';
-        box.className = 'qa-box';
-        box.innerHTML =
-          '<div class="qa-ic"><span class="qa-dot"></span></div>' +
-          '<div class="qa-main">' +
-            '<div class="qa-t"></div>' +
-            '<div class="qa-s"></div>' +
-          '</div>' +
-          '<div class="qa-ops">' +
-            '<select class="qa-sel"></select>' +
-            '<button class="btn sm primary qa-ok" type="button">切换</button>' +
-            '<button class="btn sm qa-retry" type="button">再试一次</button>' +
-            '<button class="btn sm qa-later" type="button">暂不</button>' +
-          '</div>';
-        (document.body || document.documentElement).appendChild(box);
-        box.querySelector('.qa-later').addEventListener('click', function(){ hide(); });
-        box.querySelector('.qa-retry').addEventListener('click', function(){
-          var btn = box.querySelector('.qa-retry');
-          var mid = btn.getAttribute('data-mid') || '';
-          if (!mid) return;
-          btn.disabled = true; btn.textContent = '探测中…';
-          var done = function(r){
-            btn.disabled = false; btn.textContent = '再试一次';
-            if (r && r.ok){
-              hide();
-              if (typeof Backend.toast === 'function') Backend.toast('「' + mid + '」已恢复，可以继续看图/看视频了');
-            } else if (typeof Backend.toast === 'function'){
-              Backend.toast('仍未恢复：' + ((r && (r.hint || r.error)) || '未知原因'), 'err');
-            }
-          };
-          try {
-            if (typeof Backend.probeVisionModel === 'function'){
-              /* pywebview js_api 方法名自动 snake→camel：probe_vision_model → probeVisionModel */
-              Backend.probeVisionModel(mid).then(done).catch(function(e){
-                btn.disabled = false; btn.textContent = '再试一次';
-                if (typeof Backend.toast === 'function') Backend.toast('探测异常：' + e, 'err');
-              });
-            } else {
-              btn.disabled = false; btn.textContent = '再试一次';
-            }
-          } catch(e){
-            btn.disabled = false; btn.textContent = '再试一次';
-          }
-        });
-        box.querySelector('.qa-ok').addEventListener('click', function(){
-          var sel = box.querySelector('.qa-sel');
-          var target = sel && sel.value;
-          if (!target){ hide(); return; }
-          hide();
-          try {
-            if (typeof Backend.switchVisionModel === 'function'){
-              Backend.switchVisionModel(target).then(function(r){
-                if (r && r.success){
-                  if (typeof Backend.toast === 'function') Backend.toast('已切换视觉模型：' + target);
-                } else if (typeof Backend.toast === 'function'){
-                  Backend.toast('切换失败：' + ((r && r.error) || '未知原因'), 'err');
-                }
-              }).catch(function(e){
-                if (typeof Backend.toast === 'function') Backend.toast('切换异常：' + e, 'err');
-              });
-            }
-          } catch(e){}
-        });
-      }
-      return box;
-    }
-    function hide(){ if (box) box.classList.remove('qa-show'); }
-    return function(d){
-      try {
-        if (!d) return;
-        var b = ensure();
-        var name = d.model_name || d.model_id || '该模型';
-        var mid = d.model_id || '';
-        b.querySelector('.qa-t').textContent = '「' + name + '」免费额度已用完';
-        var retryBtn = b.querySelector('.qa-retry');
-        if (retryBtn) retryBtn.setAttribute('data-mid', mid);
-        var cands = d.candidates || [];
-        var sel = b.querySelector('.qa-sel');
-        if (sel){
-          sel.innerHTML = '';
-          cands.forEach(function(c){
-            var o = document.createElement('option');
-            o.value = c.id;
-            o.textContent = (c.name || c.id) + (c.quota_exhausted ? '（额度已耗尽，可切回重试）' : '（还有免费额度）');
-            sel.appendChild(o);
-          });
-          var usable = cands.filter(function(c){ return !c.quota_exhausted; });
-          sel.style.display = cands.length ? '' : 'none';
-          var okBtn = b.querySelector('.qa-ok');
-          if (okBtn) okBtn.style.display = usable.length ? '' : 'none';
-        } else {
-          var okBtn2 = b.querySelector('.qa-ok');
-          if (okBtn2) okBtn2.style.display = 'none';
-        }
-        var hasCand = cands.some(function(c){ return !c.quota_exhausted; });
-        b.querySelector('.qa-s').textContent = hasCand
-          ? '可选：切换到还有免费额度的模型（也可去阿里云控制台处理后点「再试一次」）'
-          : '当前清单里其它候选也暂不可用：阿里云每个模型各有独立免费额度，可去控制台开通新模型后加进设置，或充值后点「再试一次」验证恢复';
-        b.classList.add('qa-show');
-      } catch(e){}
-    };
-  })();
-
-  /* ============================================================
-     达妮娅「在场感」浮层 · 共享样式注入器
-     两个浮层（正在看 / Agent 执行）共用同一套 design_tokens，深浅主题 + 强调色自动适配。
-     样式注入 document.head（SPA 安全：随 app_backend.js 分发到所有子页）。
-     —— 动效规范（GitHub 调研沉淀，见下方 agent card 注释）：
-        · 物理属性（位移/缩放）用弹簧曲线 cubic-bezier(.34,1.56,.64,1)；
-        · 视觉属性（颜色/透明度）用缓动过渡，绝不对 opacity 用弹簧（会显"迟滞"）；
-        · 退场比入场快（约 2:3）；
-        · 状态切换 200–300ms；尊重 prefers-reduced-motion（只留交叉淡入，去掉位移/缩放）。 */
-  function __daniInjectStyle(id, css){
-    if (document.getElementById(id)) return;
-    var st = document.createElement('style');
-    st.id = id;
-    st.textContent = css;
-    (document.head || document.documentElement).appendChild(st);
-  }
-  /* 下一帧执行（双 rAF）：新插入的元素若在「同一帧」改 class，
-     浏览器没有 before-change style，transition 会静默不跑 → 必须在下一帧再加类。 */
-  function __daniNextFrame(fn){
-    try {
-      var raf = (typeof requestAnimationFrame === 'function') ? requestAnimationFrame : null;
-      if (raf){ raf(function(){ raf(function(){ fn(); }); }); }
-      else { setTimeout(fn, 32); }
-    } catch(e){ fn(); }
-  }
-
   /* ——「正在看」链接/视频 气泡（2026-10-03 重做）——
      后端 video_watch 阶段事件 → 输入框上方玻璃气泡：头像光环 + 眼睛图标 +
      阶段文字交叉淡入 + 下载确定进度 / 其它阶段流光不定态 + 弹簧入场 + 完成打勾 / 失败变红退场。 */
@@ -3066,7 +2924,9 @@ function startChatLive(){
                结果回传 resolveAgentConfirm；此前 redesign 漏接此分支→确认框不弹→60s 超时拒绝。 */
             if (typeof showAgentConfirm === 'function') showAgentConfirm(d.key, d.desc);
           }
-          else if (d.type === 'quota_alert') { if (window.__quotaAlert) window.__quotaAlert(d); }
+          /* 2026-10-22 删·quota_alert 分支：后端自 2026-10-02 起不再主动广播额度提醒
+             （_on_vision_quota_alert 只记日志），这条分支与 window.__quotaAlert 浮层
+             一起成了死代码。额度信息改随"那次失败消息"给出，见 test_quota_alert。 */
         } catch(e){}
       });
     }
