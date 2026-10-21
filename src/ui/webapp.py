@@ -5306,6 +5306,26 @@ class CharacterAPI(PetAPI, WindowAPI):
                     logger.debug("热更新本地双工参考音失败", exc_info=True)
         self._cfg.save()
 
+    def _broadcast_character_switched(self, char_id: str) -> None:
+        """切角色成功后广播 character_switched，让前端刷新写死的角色名。
+
+        【2026-10-22 修·死分支】前端 `app_backend.js` 的 applyCharacterNameBoot 一直
+        监听着角色切换消息（2026-10-02 为"切换角色后界面名字不跟随"而写），但后端
+        **从来没往 WebView2 通道发过这个 type**：EventType.CHARACTER_SWITCHED 只经
+        ws_server 广播（`{message_type, payload}` 信封，给 Unity 与旧壳 app.js 用），
+        而 app_backend.js 里没有 WebSocket 客户端 → 那条分支自写下那天起就是死的。
+        用户点「设为默认角色」后，侧边栏 / 通话页 / 输入框 placeholder 里的名字一直
+        是旧角色，直到刷新页面。
+
+        注意：只补广播不够。rig 页 2026-09-03 实测 PostWebMessageAsJson 有
+        "3 次广播 / 0 回执"的前科，所以前端 setDefault() 里也显式调了
+        refreshCharacterName() 兜底 —— 两端都修，见 CHANGELOG 2026-10-22。
+        """
+        try:
+            _wv2_broadcast({"type": "character_switched", "char_id": char_id})
+        except Exception:  # noqa: BLE001  广播失败不该让"切换角色"本身失败
+            logger.debug("character_switched 广播失败", exc_info=True)
+
     def switch_character(self, char_id: str) -> dict:
         """切换当前角色（优先走 dialogue.switch_character()，失败则回退配置级切换）。"""
         if not self._cfg:
@@ -5339,6 +5359,7 @@ class CharacterAPI(PetAPI, WindowAPI):
                 # 表现为"换了角色聊天页还显示上一个角色的消息"。与 clear_chat 同口径
                 # （但不删落盘——历史按 char 分文件隔离，切回该角色仍可见）。
                 self._reset_chat_session_state()
+                self._broadcast_character_switched(char_id)
                 return {"success": True, "active_id": char_id, "via_runtime": True,
                         "duplex_reconnected": bool(_duplex_re)}
             # dialogue 切换失败（比如不存在）
@@ -5365,6 +5386,7 @@ class CharacterAPI(PetAPI, WindowAPI):
             self._chat_buffer.clear()
             self._chat_history_loaded = False
             self._reset_chat_session_state()
+            self._broadcast_character_switched(char_id)
             return {"success": True, "active_id": char_id, "via_runtime": False}
         return {"success": False, "error": f"角色不存在: {char_id}"}
 

@@ -516,7 +516,16 @@ function setDefault(id){
     return;
   }
   Backend.switchCharacter(id).then(r=>{
-    if (r && r.success){ Backend.toast('已切换为默认角色' + (r.duplex_reconnected ? '，双工已重连加载新人格' : '')); renderChars(currentList, id); }
+    if (r && r.success){
+      Backend.toast('已切换为默认角色' + (r.duplex_reconnected ? '，双工已重连加载新人格' : ''));
+      renderChars(currentList, id);
+      /* 【2026-10-22】显式刷新界面里写死的角色名（侧边栏/通话页/输入框 placeholder）。
+         不能只等后端广播 character_switched：rig 页 2026-09-03 实测
+         PostWebMessageAsJson 有"3 次广播 / 0 回执"的前科，通道静默失败时
+         这里就是唯一的兜底。后端侧也已补广播（webapp._broadcast_character_switched），
+         两端都修——见 CHANGELOG 2026-10-22。 */
+      try { if (window.refreshCharacterName) window.refreshCharacterName(); } catch(_){}
+    }
     else Backend.toast(r&&r.error?('切换失败：'+r.error):'后端未连接（仅本地预览）','err');
   });
 }
