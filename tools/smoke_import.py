@@ -175,20 +175,23 @@ def main() -> int:
     #   ① 只复核**这一种错误**（别的错不重试 —— 重试会把真缺陷盖掉）；
     #   ② **串行**复核（一次一个子进程，这才是排除内存竞争的办法）；
     #   ③ **打印复核了几条、结果如何**，不静默。
+    # ④ 复核范围是**全部失败项**，不只是"非预期失败"（2026-10-21 修）：白名单里的模块
+    #    同样会因为并发抢内存而假红，而它会被印成「白名单内 N 条」—— 数字上没错，但
+    #    那个 N 在骗人（它让"白名单条目是否还该留着"这个判断失去依据）。
     serial_ok: list[str] = []
-    if unexpected:
-        _mem = [r for r in unexpected if is_mem_contention(r)]
-        for r in _mem:
-            again = run_one(exe, root, r["module"], args.timeout)
-            if again["status"] == "OK":
-                for i, x in enumerate(results):
-                    if x is r:
-                        results[i] = again
-                        break
+    _mem = [r for r in fails if is_mem_contention(r)]
+    for r in _mem:
+        again = run_one(exe, root, r["module"], args.timeout)
+        if again["status"] == "OK":
+            for i, x in enumerate(results):
+                if x is r:
+                    results[i] = again
+                    break
+            if r in unexpected:
                 unexpected.remove(r)
-                serial_ok.append(r["module"])
-            else:
-                r["detail"] = (r.get("detail") or "") + "（串行复核仍失败）"
+            serial_ok.append(r["module"])
+        else:
+            r["detail"] = (r.get("detail") or "") + "（串行复核仍失败）"
     # `--only` 下大部分模块压根没跑，把它们当"已不再失败"会误导人去删白名单条目。
     stale = [] if args.only else [m for m in allow if m not in {r["module"] for r in results}]
 

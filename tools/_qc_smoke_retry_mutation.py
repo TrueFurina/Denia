@@ -37,8 +37,8 @@ MUTS = [
      '    return True',
      "real **没有**复核标记"),
     ("M2 复核一律判过",
-     '            if again["status"] == "OK":',
-     '            if True:',
+     '        if again["status"] == "OK":',
+     '        if True:',
      # 打中的是"非预期失败计数"这条：memfail 串行复核也失败，被 `if True` 当成救回来了
      # → 它从"非预期失败"里消失（计数 2 → 1）。这是最危险的方向：**真失败被洗出闸门的
      # 判决**，而 JSON 里它的 status 还是 FAIL —— 只看单条结果根本发现不了。
