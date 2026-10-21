@@ -45,9 +45,13 @@ MUTS = [
     ("C 从 run_all 摘掉（写成工具却没接线）",
      # 注意：必须保持语法合法（保留 for 的冒号），否则测试是被 SyntaxError
      # 崩掉的，不是被断言抓住的——那种"红"没有区分力。
+     # 【2026-10-21 修·锚点过时】原来锚 `(check_voice_backend, cfg)):`，
+     # 假定它是列表**最后一项**。run_all 后来又加了 check_asr / check_wake_words，
+     # `):` 移到了新项之后 → 锚点命中 0 次，这一刀被跳过（记成"1 处异常"）。
+     # 现在只锚这一行本身。
      E("                    (check_llm_channel, cfg),\n"
-       "                    (check_voice_backend, cfg)):"),
-     E("                    (check_llm_channel, cfg)):")),
+       "                    (check_voice_backend, cfg),"),
+     E("                    (check_llm_channel, cfg),")),
 
     ("D 真合成失败也放过（后端说能出声就信）",
      E("            return (FAIL, \"语音合成\", f\"{label}：真合成失败 {type(e).__name__}: {e}\","),

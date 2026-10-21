@@ -55,9 +55,15 @@ MUTS = [
 
     ("⑤ doctor：从 run_all 摘掉 check_asr",
      DR, T2,
+     # 【2026-10-21 修·锚点过时】原来是
+     #   "(check_voice_backend, cfg),\n                    (check_asr, cfg)):"
+     # 也就是假定 check_asr 是列表**最后一项**。后来 run_all 里又加了
+     # check_wake_words，于是 check_asr 后面多了个逗号、`):` 也移到了新项之后，
+     # 锚点命中 0 次 → 这一刀被跳过（脚本把跳过记成失败，所以是"1 处异常"）。
+     # 现在只锚 check_asr 那一行本身，不依赖它是不是最后一项。
      E("                    (check_voice_backend, cfg),\n"
-       "                    (check_asr, cfg)):"),
-     E("                    (check_voice_backend, cfg)):")),
+       "                    (check_asr, cfg),"),
+     E("                    (check_voice_backend, cfg),")),
 
     ("⑥b doctor：麦克风关着也判 PASS（模型就绪但她照样听不见）",
      DR, T2,

@@ -242,6 +242,19 @@ GATES: list[tuple[str, str, list[str], bool]] = [
     ("主动输出分流", PY_VENV, ["tools/test_proactive_chat_routing.py"], False),
     ("关系接线", PY_VENV, ["tools/test_relationship_wiring.py"], False),
     ("关系集成", PY_VENV, ["tools/test_relationship_integration.py"], False),
+    # ---- 变异脚本（判据的判据）：验证闸门里的检查器**真的还有牙齿** ----
+    # 【为什么必须收进来】2026-10-21 实测：doctor.run_all 里加了一项之后，
+    # `_qc_voice_mutation` 的 A/B/C/E 四刀与 `_qc_asr_mutation` 的若干刀
+    # 全部"锚点命中 0 次"→ 整把刀被跳过。脚本本身是健全的（它把"跳过"记成失败），
+    # 但**没人跑就没人知道**——那 4 个检查器（语音合成/语音识别/配置引用/静默吞异常）
+    # 都还在闸门里跑，等于一直在跑一个"可能已经没有牙齿"的判据。
+    # 【代价】合计约 43s（12+12+17+2），故全标慢项，`--fast` 跳过。
+    # 【注意】这些脚本会**改源码再还原**（二进制读写 + finally 还原 + 末尾 hash 校验）。
+    # **不要并发跑两份 check_all**，否则两份会同时改同一个文件、互相破坏。
+    ("静默吞异常变异", PY_VENV, ["tools/_qc_silent_mutation.py"], True),
+    ("语音合成变异", PY_VENV, ["tools/_qc_voice_mutation.py"], True),
+    ("语音识别变异", PY_VENV, ["tools/_qc_asr_mutation.py"], True),
+    ("配置引用变异", PY_VENV, ["tools/_qc_pathrefs_mutation.py"], True),
     # 导入冒烟：逐个 import 每个模块（独立子进程，并发 8），抓「导入期就崩」。
     # compileall 只保证语法和名字对得上，保证不了能不能被加载——2026-10-17 实测两例
     # （import 期 mkdir('G:\\')、顶层 argtypes 引用已删的 _u32）compileall 全绿。
