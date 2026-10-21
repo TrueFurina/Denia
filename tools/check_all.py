@@ -5,7 +5,7 @@
 
 用法：
   python tools/check_all.py            # 全量（含导入冒烟与回归测试，约 1~2 分钟）
-  python tools/check_all.py --fast     # 跳过慢项，改代码时的快速回环（约 5 秒）
+  python tools/check_all.py --fast     # 跳过慢项，改代码时的快速回环（约 4 分钟，不是 5 秒）
   python tools/check_all.py --list     # 只看有哪些闸门
 
 退出码：0=全部通过；1=有闸门失败（失败项会列出来）。
@@ -333,6 +333,26 @@ def main(argv: list[str]) -> int:
                 r"(非预期|FAIL|FAILED|ERROR|Error|Traceback|异常|失败|not found|No module)")
             hits = [ln for ln in lines if _err_pat.search(ln)]
             detail = " | ".join((hits or lines)[-4:])
+            # 【2026-10-21 补·把全文落盘】只摘 4 行在"端到端类"闸门上仍然不够：
+            # `pet_shell_selfheal_smoke` 失败时最后一行是它自己的汇总（"FAIL：1 项未通过"），
+            # 真正失败的是哪一步、报了什么，全在中间被截掉 —— 想复查只能整轮重跑
+            # （而它一轮 20 分钟）。所以失败项**完整输出**写到 logs/ 下（已 gitignore），
+            # 并在汇总里给出路径。
+            try:
+                _dir = os.path.join(ROOT, "logs", "gate_failures")
+                os.makedirs(_dir, exist_ok=True)
+                _safe = re.sub(r"[^\w\u4e00-\u9fa5.-]+", "_", name)
+                _fp = os.path.join(_dir, f"{_safe}.log")
+                with open(_fp, "w", encoding="utf-8") as _f:
+                    _f.write(f"# {name}\n# 退出码 {p.returncode}，耗时 {cost:.1f}s\n")
+                    _f.write(f"# cmd: {exe} {' '.join(args)}\n\n")
+                    _f.write(p.stdout or "")
+                    if p.stderr:
+                        _f.write("\n--- stderr ---\n")
+                        _f.write(p.stderr)
+                detail += f" ｜全文：{os.path.relpath(_fp, ROOT)}"
+            except Exception as _e:  # noqa: BLE001  落盘失败不该掩盖失败本身
+                detail += f" ｜全文落盘失败：{_e}"
         results.append((name, ok, cost, detail))
         print(f"  {'✓' if ok else '✗'} {name:14s} {cost:5.1f}s")
 

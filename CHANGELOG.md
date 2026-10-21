@@ -13,6 +13,7 @@
 
 | commit | 时间 | 类型 | 一句话 | 验证 |
 |---|---|---|---|---|
+| 待提交 | 13:1x | fix | **桥接闸门只扫 HTML 内联 `<script>`，外链 JS 全是盲区** —— 补上后发现引导页「下载语音模型」调的是 `B.downloadVoiceModel`，而适配层导出的名字是 `downloadModel`。于是 `if(B.downloadVoiceModel)` 恒 false → 静默落到「无桥降级」分支：**假进度条**（固定 8.2MB/s）走到 100% 还提示"下载完成"，一个字节没下。顺带把三条**早已落地却一直挂着**的「发现」F1/F2/F3 换成真断言 | 变异（塞 `B.zzzNotARealBridgeMethod` / 删后端 model_3d 兜底 / 合并层改成无条件写空 Key）三刀全红；引导页集成 108 PASS / 0 FAIL；全量闸门 109/109 |
 | 待提交 | 10:1x | fix | **`_save_config()` 里一个静默 no-op，让参考音"上传了却没生效"**：`refresh_characters_map() if hasattr(...)` —— `Config` 上只有 `refresh_characters()`，`hasattr` 恒 False，整行恒等于 `None`。于是保存只写 raw、角色表 `_characters_map` 不跟着变，`get_characters()` 回读 `voice.reference_audio` 永远是空 → 用户反复重传。顺带把 `test_onboarding_integration`（106 项）修绿并收进闸门，删掉 `check_all` 里**重复登记**的导入冒烟 | 变异（把幽灵调用放回去）→ `[B15] 参考音已落角色` 红、退出码 1；闸门 109 项全绿（引导页集成 35.4s）；顺带修好「闸门失败摘要只摘最后 4 行、恰好摘到白名单明细表」 |
 | `55484a3` | 03:5x | fix | **变异脚本的锚点全失效**：26 个 `_qc_*` 里只有 2 个在闸门，另有 4 个变异脚本不在——而它们验证的检查器**全在闸门里**（等于 4 个判据可能早已没牙齿却没人验证）。2 个红的真因是 `run_all` 加了 `check_wake_words`，锚点原假定 `check_asr` 是列表最后一项。顺带查清一个更隐蔽的坑：**我自己用 `io.open(p,"w")` 改源码，把 1398 行全写成 CRLF**，于是所有 `\n` 锚点静默失效 | 两处锚点改成不依赖位置 → 0 跳过、七刀全红；加 `.gitattributes` 固定 LF（实测 checkout 能把 CRLF 纠正回 LF）；4 个变异脚本进闸门 105→109，全量 109/109 |
 | `7108ce8` | 03:3x | test | **第三批普查第二轮**：剩下 5 个红全修好，无一需要改产品行为。最值钱的两条：`test_relationship_wiring` 的白名单抄的是 **v1** 的 `MOODS`（6 种），运行时用 **v2**（17 种含「困倦」）→ **凌晨红、白天绿**，一条依赖时间的判据；`test_quota_alert` 验的是「额度耗尽主动弹窗」，而该行为 **2026-10-02 已被用户停掉** | 5 刀变异全红（清空预设 / 清空 MOODS_V2 / 把弹窗接回去）；闸门 100→105，全量 105/105 |
@@ -89,6 +90,78 @@
 > 代码与测试主体由 `5dbc64c` 收口，**归属以本脚注为准**。
 > 教训：并发会话各自只 `git add` 自己知道的文件，提交前先 `git log` 确认HEAD 没有
 > 在几分钟内被别人推进过。
+
+### 2026-10-21 · 桥接闸门只看内联 `<script>`，于是它看不见"下载按钮是假的"
+
+起因是 `test_onboarding_integration` 跑绿之后还剩一条「⚠ 发现 F1」：说
+`getVoiceVramAdvice().engines` 缺 `kind/repo/note`，「落地需新增克隆引擎清单接口」。
+去查的时候发现那个接口**早就有了**（`list_clone_engines`，同一份测试的 B19 正在逐项验它）。
+
+于是顺手查了 F2、F3：
+
+| 发现 | 声称的问题 | 实测 |
+|---|---|---|
+| F1 | 缺「克隆引擎清单」接口 | `list_clone_engines()` 早已存在 |
+| F2 | 后端不守非达妮娅 `model_3d` | `save_character` 里早就有 `if char_id != "danya": enabled=False` |
+| F3 | 空 `api_key` 会擦掉已存 Key | `merge_cloud_tts_provider` 早就改成"空值不改"，注释里甚至写着「修 F3」 |
+
+**三条全部已落地，一条都没被撤下来。** 发现栏不红、也不会自己消失，于是从"待办"变成
+了"背景噪音"——和"红着的门禁会被训练成噪音"是同一个毛病，只是它连红都不红，更隐蔽。
+已全部换成真断言（能守的行为就别只记一条愿望），并在 `finding()` 的 docstring 里写死
+规矩：**新加发现必须写明复核日期和删除条件**。
+
+#### 真正的收获：外链 JS 从来没被桥接闸门扫过
+
+`tools/check_bridge_methods.py` 只扫 HTML 里的**内联** `<script>`。而引导页把「建角色」
+整步拆进了 `onboarding_role.js`（2000+ 行，`<script src>` 加载），它的桥调用对闸门完全
+不可见。补上这一层（22 个外链 JS、56 个桥方法名）之后，第一次运行就报：
+
+```
+① src\ui\web\onboarding_role.js: Backend.downloadVoiceModel 未导出
+```
+
+去查：适配层导出的名字是 `downloadModel`（`app_backend.js:215` →
+`call('download_voice_model')`），全仓只有这一处写成 `downloadVoiceModel`。而它外面套着
+
+```js
+if(B && B.downloadVoiceModel){ …真下载… }
+/* 无桥降级：稿内模拟进度 */
+```
+
+所以真实行为是：**守卫恒 false → 落到模拟分支 → 进度条按固定 8.2MB/s 往上走 → 到 100%
+提示「下载完成，可以开始克隆了」，而一个字节都没下。** 这正好绕过了该文件开头那条红线
+「不画假进度」。用户第一次装软件，走到「建角色」想下载一个本地音色，看到的是个假进度条。
+
+这是 `typeof Backend.x === 'function'` 那个老坑的又一例：**守卫把"名字写错了"伪装成
+"这个环境没有桥"**，而且它比 `typeof` 版本更安静——连降级提示都没有，直接进入"看起来
+很正常"的假流程。
+
+#### 外链扫描的两个坑（不处理就会变成噪音或假绿）
+
+1. **别名认不全 → 假绿**：`B` 是常见别名，但来源有三种——`function getB()`、直接
+   `window.Backend`、以及 `llm_write.js` 的**工厂参数** `function make(B)`（调用方写
+   `LlmWrite.make(Backend)`）。第一版只认前两种，于是 `llm_write.js`（调 5 个桥方法）
+   整文件漏扫，闸门照样绿。补上工厂形态后总数从 44 涨到 56。
+2. **`B` 太泛 → 误伤**：`_theme_editor_v5.js` 里的 `B` 是它自己的局部对象
+   （`B.tStickerDel` 之类根本不存在）。处理：单字母别名要求文件里真出现过"取 Backend"的
+   动作；同时排除 `_` 前缀的设计稿/实验稿与第三方 bundle（`morphicons/`、`*.min.js`）。
+
+变异验证：往 `onboarding_role.js` 塞一个 `B.zzzNotARealBridgeMethod()` → 闸门红并点名；
+还原后绿。另两刀（删后端 `model_3d` 兜底 → B10+B20 双红；合并层改成无条件写空 Key →
+B4 红且打印 `before='sk-onb-integrati' after=''`）。
+
+#### 顺带：B4 原本是一条"永远验不到"的判据
+
+`key_before` 直接取出厂模板里现有的 Key —— 模板里**没有** Key，于是
+`if key_after == key_before and key_before:` 恒 False，永远走 else。二态判据把
+"没有 Key 可擦"压成了"Key 被擦掉了"。改成**先造一个 Key 再验**，现在它是真的在验契约。
+
+#### 闸门侧再补一刀：失败项的完整输出落盘
+
+`壳自愈端到端` 这轮在负载高时失败（118s，空闲时 49s 通过，同一份代码），而闸门只摘
+最后 4 行——那 4 行是它自己的汇总，**看不出是哪一步失败**。现在失败项的完整 stdout/stderr
+写到 `logs/gate_failures/<项名>.log`（已 gitignore），汇总里给出路径。
+这次没复现（重跑 109/109、8m04s），所以不下"是负载导致"的结论，只记下证据与定位手段。
 
 ### 2026-10-21 · 一个 `hasattr` 守卫把「方法名写错了」伪装成「这个版本可能没有」
 
