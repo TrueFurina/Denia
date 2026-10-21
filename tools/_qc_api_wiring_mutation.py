@@ -67,23 +67,57 @@ MUTS = [
 ]
 
 
-def _pick_rename_target() -> tuple[str, bytes]:
-    """从清单里现取一个**在 webapp.py 里真有定义**的方法来改名。
+def _pick_rename_target() -> tuple[str, str, bytes]:
+    """从清单里现取一个**真有定义**的方法来改名，连它定义在哪个文件一起返回。
 
-    【为什么动态取】原来写死 `enable_tray`，而它后来被判定为假接口、已从 `webapp.py`
-    删除 —— 这一刀立刻变成"锚点命中 0 次"（等于变异被静默跳过，闸门照样绿）。
+    【为什么动态取，而且连文件一起找】原来写死 `enable_tray`，而它后来被判定为假
+    接口、已从 `webapp.py` 删除 —— 这一刀立刻变成"锚点命中 0 次"（等于变异被静默
+    跳过，闸门照样绿）。改成从清单现取之后**又失效了一次**（2026-10-21 全量门禁抓到）：
+    清单从 12 条瘦到 3 条，剩下 `clear_pet_cache` / `pet_hit_rect` / `prevent_window_close`
+    全定义在 `api_pet.py` / `api_window.py`，而这里仍然只搜 `webapp.py` → 一个都找不到。
+
     这与 M2 当初写死 `get_version` 是同一个坑：**变异脚本里不许出现"当前清单长什么样"
-    的假设**，清单怎么变这一刀都得成立。
+    / "这个方法定义在哪个文件"的假设**。清单怎么变、方法搬去哪个文件，这一刀都得成立。
+
+    所以这里走 `CharacterAPI` 的 MRO：名字在哪个 mixin 的 `__dict__` 里，就去哪个文件
+    改。`backend_methods()` 用的就是 `dir(CharacterAPI)`，两边口径一致。
+
+    注意是 `CharacterAPI.__mro__` 不是 `type(CharacterAPI).__mro__` —— 后者对普通类
+    只会给出 `['type', 'object']`，一个名字都找不到（第一版就写错了，脚本报
+    "找不到可改名的方法" 才发现）。
     """
+    import inspect  # noqa: E402
+
     from check_api_wiring import KNOWN_UNWIRED  # noqa: E402  同目录
-    data = _read(WEBAPP)
+    from src.ui.webapp import CharacterAPI  # noqa: E402
+
+    seen_files: set[str] = set()
     for n in sorted(KNOWN_UNWIRED):
         if n.startswith("_"):
             continue
-        needle = ("    def " + n + "(self").encode("utf-8")
-        if data.count(needle) == 1:
-            return n, needle
-    raise SystemExit("  FAIL 清单里找不到可在 webapp.py 里改名的方法")
+        for klass in CharacterAPI.__mro__:
+            if n not in klass.__dict__:
+                continue
+            try:
+                path = inspect.getsourcefile(klass)
+            except TypeError:
+                continue
+            if not path or not os.path.isfile(path):
+                continue
+            try:
+                rel = os.path.relpath(path, ROOT).replace("\\", "/")
+            except ValueError:  # 跨盘符（本仓在 doctor.py 上踩过）
+                continue
+            if rel in seen_files:
+                break
+            seen_files.add(rel)
+            data = _read(rel)
+            needle = ("    def " + n + "(self").encode("utf-8")
+            if data.count(needle) == 1:
+                return n, rel, needle
+            break
+    raise SystemExit("  FAIL 清单里找不到可改名的方法（KNOWN_UNWIRED=%d 个）"
+                     % len(KNOWN_UNWIRED))
 
 
 def run_gate() -> tuple[int, str]:
@@ -127,20 +161,20 @@ def main() -> int:
         else:
             print("  PASS %s：报了 %s 分支" % (label, want))
 
-    # M3：把清单里的某个方法改名（目标动态取，见 _pick_rename_target 的说明）
-    name, needle = _pick_rename_target()
-    data = _read(WEBAPP)
+    # M3：把清单里的某个方法改名（目标与所在文件动态取，见 _pick_rename_target 的说明）
+    name, rel, needle = _pick_rename_target()
+    data = _read(rel)
     renamed = needle.replace(b"def " + name.encode("utf-8"),
                              b"def " + name.encode("utf-8") + b"_renamed")
     if data.count(needle) != 1 or renamed == needle:
-        print("  FAIL M3：改名锚点构造失败（%s）" % name)
+        print("  FAIL M3：改名锚点构造失败（%s @ %s）" % (name, rel))
         bad += 1
     else:
-        _write(WEBAPP, data.replace(needle, renamed))
+        _write(rel, data.replace(needle, renamed))
         try:
             code, out = run_gate()
         finally:
-            _write(WEBAPP, data)
+            _write(rel, data)
         if code == 0:
             print("  FAIL M3 把清单里的方法改名：闸门仍然绿（清单失效没被拦）")
             bad += 1
@@ -149,7 +183,7 @@ def main() -> int:
             print(out[-600:])
             bad += 1
         else:
-            print("  PASS M3 把清单里的方法改名：报了 ② %s" % name)
+            print("  PASS M3 把清单里的方法改名：报了 ② %s（%s）" % (name, rel))
 
     # M2：往一个真实加载的 JS 末尾加一句调用，目标是**清单里还在的**某个名字。
     # 【为什么动态取】原来写死 `get_version`，而它已经被接进设置页「关于」并移出清单
