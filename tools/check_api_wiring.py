@@ -64,17 +64,19 @@ from check_bridge_methods import (  # noqa: E402
 #   **假接口**（`return {"ok": True}` 然后什么都没做 / 调一个已不存在的函数 /
 #   写死一份过时清单）。这种不能"接线"：接到界面上等于把谎话搬到用户眼前。
 #   已从 `webapp.py` 删除，理由写在各自的删除位置。
+# 【已删，2026-10-21（第二批）】get_audio_status / ocr_get_regions / ocr_get_anchors /
+#   chat_overlay_state / get_bailian_quota / get_model_3d_options —— 前四个是**同一份数据
+#   的第二个出口**（get_vision_debug 的 ocr / audio / chat_overlay_open 已经全覆盖），
+#   调试台只轮询那一个；get_bailian_quota 是 2026-09-29「额度卡改用内嵌控制台看真实额度」
+#   之后被废弃的本地估算；get_model_3d_options 是与 get_backend_options 同型的写死清单。
+#   删的位置都写了"数据现在从哪来"。
+# 【已接线，2026-10-21（第二批）】probe_vision_model → 适配层补导出 probeVisionModel
+#   （`typeof Backend.x === 'function'` 守卫恒 false → 额度浮层「再试一次」点了没反应）。
+#   这道门催着删的同时，新闸门 `check_bridge_guards.py` 开始守"守卫的目标必须在导出表里"。
 KNOWN_UNWIRED = {
     # —— 后端能力完整、前端从未做过入口（"待接线"）——
-    "get_model_3d_options",     # 3D 模型下拉选项
-    "get_bailian_quota",        # 百炼额度快照
-    "get_audio_status",         # 调试台：音频识别状态
-    "ocr_get_regions",          # 调试台：OCR 区域
-    "ocr_get_anchors",          # 调试台：文字锚点
-    "get_relation_events",      # 关系事件观测日志
-    "set_archetype_manual",     # 关系面板改用 set_relationship_setting 后没人调
-    "chat_overlay_state",       # 对话悬浮层状态
-    "probe_vision_model",       # 额度提醒浮层"再试一次"（该浮层 10-02 已被用户停用）
+    "get_relation_events",      # 关系事件观测日志（关系面板只显示"上次事件"，没有列表）
+    "set_archetype_manual",     # 手动指定原型（面板会显示"·自动"，但没有改的入口）
     "clear_pet_cache",          # 桌宠缓存清理
     "prevent_window_close",     # 关窗拦截（WindowAPI）
     # —— 旧架构残留，建议删（见 AGENTS.md「发现过」那条）——
