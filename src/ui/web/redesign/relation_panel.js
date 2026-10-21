@@ -57,6 +57,75 @@
     if (ev) ev.textContent = state.last_event ? ('最近：' + state.last_event) : '';
   }
 
+  /* ================= 原型下拉（2026-10-21） =================
+     面板一直显示「原型 温柔 ·自动」，但从来没有能改的地方 —— 后端 set_archetype_manual
+     早就写好了、界面没有入口（反向接线闸门记了很久）。那个「·自动」标签本身就在说
+     "手动覆盖是设计里的东西"，只是没建。
+
+     两条规矩：
+       1. 选项**来自后端** `get_relationship_state().archetypes`，不在这里写死枚举 ——
+          写死的话后端加一个原型，界面永远看不到它（本仓吃过 MOODS 白名单的亏）。
+       2. 老后端没有这个字段时**禁用下拉并说明**，不猜一份清单兜底。
+  */
+  function fillArchetypes(state) {
+    var sel = $('#relArchSel');
+    if (!sel) return;
+    var list = (state && state.archetypes) || [];
+    if (!list.length) {
+      sel.disabled = true;
+      sel.title = '这个版本的后端没有提供原型列表';
+      return;
+    }
+    var key = list.join('\u0001');
+    if (sel._optsKey !== key) {          /* 枚举变了才重建，避免每次轮询都闪一下 */
+      sel._optsKey = key;
+      while (sel.firstChild) sel.removeChild(sel.firstChild);
+      for (var i = 0; i < list.length; i++) {
+        var op = document.createElement('option');
+        op.value = list[i];
+        op.textContent = list[i];
+        sel.appendChild(op);
+      }
+    }
+    sel.disabled = false;
+    sel.title = '手动指定她的性格原型；改过之后不再自动推断';
+    if (state.archetype) sel.value = state.archetype;
+  }
+
+  /* ================= 最近事件列表（2026-10-21） =================
+     get_relation_events 返回同一份日志的最近 N 条（旧→新）。这里倒过来渲染，
+     最近的在上；空列表整块隐藏，不留一条空线。 */
+  var EVENT_LIMIT = 6;
+
+  function _hhmm(ts) {
+    try {
+      var d = new Date(Number(ts) * 1000);
+      var h = d.getHours(), m = d.getMinutes();
+      if (isNaN(h) || isNaN(m)) return '';
+      return (h < 10 ? '0' : '') + h + ':' + (m < 10 ? '0' : '') + m;
+    } catch (e) { return ''; }
+  }
+
+  function renderEvents(res) {
+    var box = $('#relEventList');
+    if (!box) return;
+    var items = (res && res.success && res.events) || [];
+    while (box.firstChild) box.removeChild(box.firstChild);
+    if (!items.length) { box.style.display = 'none'; return; }
+    box.style.display = '';
+    for (var i = items.length - 1; i >= 0; i--) {
+      var it = items[i] || {};
+      var row = document.createElement('div');
+      row.className = 'rel-ev-row';
+      var when = _hhmm(it.ts);
+      var line = (when ? when + ' ' : '') + (it.kind || '');
+      if (it.detail) line += ' · ' + it.detail;
+      row.textContent = line;            /* textContent：detail 里可能有尖括号，不走 innerHTML */
+      row.title = line;
+      box.appendChild(row);
+    }
+  }
+
   function api() {
     return (window.pywebview && window.pywebview.api) ? window.pywebview.api : null;
   }
@@ -64,8 +133,15 @@
   async function refresh() {
     try {
       var a = api();
-      if (!a || !a.get_relationship_state) return;
-      render(await a.get_relationship_state());
+      if (!a) return;
+      if (a.get_relationship_state) {
+        var st = await a.get_relationship_state();
+        render(st);
+        fillArchetypes(st);
+      }
+      if (a.get_relation_events) {
+        renderEvents(await a.get_relation_events('', EVENT_LIMIT));
+      }
     } catch (e) { /* 静默 */ }
   }
 
@@ -95,6 +171,19 @@
     if (freq && !freq._bound) {
       freq._bound = true;
       freq.addEventListener('change', function () { setSetting('frequency', freq.value); });
+    }
+    var as = $('#relArchSel');
+    if (as && !as._bound) {
+      as._bound = true;
+      as.addEventListener('change', async function () {
+        var v = as.value;
+        if (!v) return;
+        try {
+          var a = api();
+          if (a && a.set_archetype_manual) await a.set_archetype_manual('', v);
+        } catch (e) { /* 静默 */ }
+        refresh();
+      });
     }
     var rb = $('#relResetBtn');
     if (rb && !rb._bound) {

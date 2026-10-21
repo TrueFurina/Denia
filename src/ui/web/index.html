@@ -523,11 +523,23 @@
               <option value="rare">少</option>
             </select>
           </div>
+          <!-- 原型下拉（2026-10-21）：选项由 relation_panel.js 按后端 ARCHETYPES 渲染，
+               这里**不写死枚举** —— 写死的话后端加一个原型，界面永远看不到它。
+               改这里 = 手动指定；「·自动」标签随之消失（那个值不再是我推断的）。 -->
+          <div class="rel-row">
+            <label>原型</label>
+            <select id="relArchSel" title="手动指定她的性格原型；改过之后不再自动推断">
+              <option value="">读取中…</option>
+            </select>
+          </div>
           <div class="rel-foot">
             <span id="relLast" class="rel-last"></span>
             <button class="rel-reset" id="relResetBtn" type="button" title="归档当前关系并恢复默认">重置关系</button>
           </div>
           <div class="rel-event" id="relEvent"></div>
+          <!-- 最近事件（2026-10-21）：get_relation_events 的最近 N 条，最近的在上。
+               空的时候整块隐藏，不留一条空线。 -->
+          <div class="rel-events" id="relEventList" aria-label="最近的关系事件" style="display:none"></div>
         </div>
       </div>
     </aside>
@@ -560,6 +572,10 @@
   .rel-panel .rel-reset:hover{color:var(--accent-1,#C2557F)}
   .rel-panel .rel-event{margin-top:8px;font-size:11px;color:var(--ink-3,#8A7683);opacity:.9;min-height:14px;
     border-top:1px dashed var(--line,#E9DCE3);padding-top:7px;word-break:break-all}
+  /* 最近事件列表（2026-10-21）：最多 6 条，多了可滚动；行与行之间不用分隔线（信息密度够低） */
+  .rel-panel .rel-events{margin-top:6px;font-size:11px;color:var(--ink-3,#8A7683);opacity:.85;
+    max-height:96px;overflow:auto;line-height:1.6}
+  .rel-panel .rel-events .rel-ev-row{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 
   /* ⭐ 2026-10-15 心情详细折叠：
      - 标题行右侧加折叠箭头；折叠态箭头旋转 180°（指向下 = 可展开）。

@@ -972,7 +972,8 @@ class CharacterAPI(PetAPI, WindowAPI):
         """右栏 UI 拉取关系状态（心情/阶段/原型/设置/上次互动间隔），全程不暴露数字。"""
         try:
             import time as _t
-            from ..companion.relationship import get_relationship_manager, last_relation_event
+            from ..companion.relationship import (
+                ARCHETYPES, get_relationship_manager, last_relation_event)
             cid = self._rel_char_id(char_id)
             mgr = get_relationship_manager()
             st = mgr.get(cid)
@@ -1030,6 +1031,11 @@ class CharacterAPI(PetAPI, WindowAPI):
                 "pending_response": bool(st.get("pending_response")),
                 "last_event": _event_str(last_relation_event()),
                 "milestones": _ms_list,   # 【2026-10-11·P1】关系质变时刻（一次性、不暴露数字）
+                # 【2026-10-21】原型枚举**由后端给**，面板的下拉按它渲染。
+                # 前端不许写死清单：后端加一个原型，写死的界面永远看不到它
+                # （本仓吃过这个亏 —— 白名单抄了一份 v1 的 MOODS，运行时时 v2，
+                # 于是判据凌晨红、白天绿）。
+                "archetypes": list(ARCHETYPES.keys()),
             }
         except Exception as e:  # noqa: BLE001
             logger.exception("get_relationship_state 失败")
@@ -1057,19 +1063,33 @@ class CharacterAPI(PetAPI, WindowAPI):
             return {"success": False, "error": str(e)}
 
     def set_archetype_manual(self, char_id: str, archetype: str) -> dict:
+        """手动指定性格原型（关系面板的下拉）。
+
+        【2026-10-21 接线】这个方法早就写好了，但界面上一直没有入口 —— 面板只显示
+        「原型 温柔 ·自动」，那个「·自动」标签说明"手动覆盖"是设计里的东西，只是没建。
+        现在下拉改它就调这里；改过之后 `archetype_inferred=False`，标签随之消失。
+
+        注意：后台原型反推（relationship_reporter）**只在 archetype 为空时**才跑
+        （`if str(st.get("archetype") or ""): return`），所以手动指定是**粘住的**，
+        不会被下一轮对话悄悄改回去。
+        """
         try:
             from ..companion.relationship import get_relationship_manager, ARCHETYPES
             cid = self._rel_char_id(char_id)
             if archetype not in ARCHETYPES:
                 return {"success": False, "error": f"未知原型：{archetype}"}
             get_relationship_manager().set_archetype(cid, archetype, inferred=False)
-            return {"success": True, "archetype": archetype}
+            return {"success": True, "archetype": archetype, "archetype_inferred": False}
         except Exception as e:  # noqa: BLE001
             logger.exception("set_archetype_manual 失败")
             return {"success": False, "error": str(e)}
 
     def get_relation_events(self, char_id: str = "", limit: int = 50) -> dict:
-        """P6 观测日志：返回最近若干条关系/主动事件（旧→新），供 UI/控制台查看。"""
+        """P6 观测日志：返回最近若干条关系/主动事件（旧→新），供关系面板的「最近事件」列表。
+
+        【2026-10-21 接线】面板原来只显示 `last_event`（一条）。这条接口返回的是
+        同一份日志的**最近 N 条**，现在面板底部把它渲染成一个小列表。
+        """
         try:
             from ..companion.relationship import get_relation_events
             events = get_relation_events(int(limit) if limit else 50)

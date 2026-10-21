@@ -278,6 +278,14 @@ GATES: list[tuple[str, str, list[str], bool]] = [
     ("主动输出分流", PY_VENV, ["tools/test_proactive_chat_routing.py"], False),
     ("关系接线", PY_VENV, ["tools/test_relationship_wiring.py"], False),
     ("关系集成", PY_VENV, ["tools/test_relationship_integration.py"], False),
+    # 关系面板的两个新入口（2026-10-21）：原型下拉 + 最近事件列表。判据是"界面变成
+    # 什么样"，所以**原样加载 relation_panel.js** 在假 DOM + 假 pywebview 里跑（不是
+    # 复刻逻辑）。24 项，含两个对照组：老后端没有 archetypes 时**不许**写死枚举兜底、
+    # 后端没连上时不许把下拉变成空壳。
+    ("关系面板", PY_VENV, ["tools/test_relation_panel.py"], False),
+    # 四刀：调错方法名 / 下拉写死枚举 / 事件行走 innerHTML / 不再拉事件。会改源码再
+    # 还原，标慢项。
+    ("关系面板变异", PY_VENV, ["tools/_qc_relation_panel_mutation.py"], True),
     # ---- 引导页集成（106 项）----
     # 【为什么现在收了】上一轮我判定「不收：5 个 FAIL 是设计稿未落地的产品待办」——
     # 那个判断是**错的**。逐个查下来 5 个里没有一个是"要动产品"的：A1 拿仓库里
