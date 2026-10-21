@@ -62,13 +62,19 @@ def fake_bailian(api_key):
         {"voice_id": "v-clone-1", "target_model": "cosyvoice-v3"}]}
 
 ds = fetch_provider_voices("dashscope_cosy", {"api_key": "k", "model_name": "cosyvoice-v2"}, list_bailian_fn=fake_bailian)
-check("dashscope 预设 6 个恒在", len([v for v in ds if v["type"] == "preset"]) == 6)
+# 【2026-10-21 修·数量断言】原来硬编码 `== 6`。预设清单已从 6 个减到 4 个
+# （Cherry / Serena / Chelsie / Ethan）——那是正常的音色增删，不是回归。
+# 判据改成「非空 + 每项都有 id」：具体集合由 `_PRESETS` 自己守，
+# 这里只守"别被误清空"和"别产出没有 id 的条目（前端选不了）"。
+_ds_presets = [v for v in ds if v["type"] == "preset"]
+check("dashscope 预设非空且每项有 id",
+      len(_ds_presets) >= 3 and all(v.get("id") for v in _ds_presets))
 check("dashscope 克隆出现（fake_bailian）", any(v["id"] == "v-clone-1" for v in ds))
 
 # 无 Key 时不查克隆，但预设仍在
 ds2 = fetch_provider_voices("dashscope_cosy", {}, list_bailian_fn=fake_bailian)
 check("无 Key → 无克隆", not any(v["type"] == "cloned" for v in ds2))
-check("无 Key → 预设仍在", len([v for v in ds2 if v["type"] == "preset"]) == 6)
+check("无 Key → 预设仍在", len([v for v in ds2 if v["type"] == "preset"]) == len(_ds_presets))
 
 # minimax 需要 group_id
 mm_no_group = fetch_provider_voices("minimax", {"api_key": "k"})

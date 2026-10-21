@@ -182,7 +182,12 @@ class TestPairing(unittest.TestCase):
             # 待判文本 = "【用户这句话】" 之后、下一个区块/结尾之前
             marker = "【用户这句话】"
             if marker in joined:
-                tail = joined.split(marker, 1)[1]
+                # 【2026-10-21 修·取错了区块】prompt 里有多处 `【用户这句话】`
+                # —— few-shot 示例每条都带一个。原实现 `split(marker, 1)[1]` 取的是
+                # **第一个**，那是示例区的；于是断言拿"示例之后的所有文本"去查 AI 串，
+                # 必然命中（后面还有别的示例 + 真正的 payload 里的上下文）。
+                # 真正要验的是**本次待判文本**：只取最后一个区块。
+                tail = joined.rsplit(marker, 1)[1]
                 self.assertIn("独特用户串ABC", tail, "待判文本必须是用户那句话")
                 self.assertNotIn("独特AI串XYZ", tail, "AI 回复绝不能进入待判文本区")
 

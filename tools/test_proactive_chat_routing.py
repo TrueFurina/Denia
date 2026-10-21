@@ -92,6 +92,13 @@ def _mk_stub(reply="在想什么呢？"):
     s._llm_generate = True
     s._llm = FakeLLM(reply)
     s._persona = None
+    # 【2026-10-21 修·桩缺 property】`_schedule_duplex_emit` 里有
+    # `if to_chat and not self.chat_initiative`，而 `chat_initiative` 是
+    # ProactiveStrategy 上的 property（读写 `_chat_initiative`）。SimpleNamespace
+    # 没有这个 property → AttributeError。这里按"她能在聊天页主动找你"填 True，
+    # 正对应用例 2 要验的分支。（桩用 SimpleNamespace 冒充带 property 的类，本身
+    # 就是脆的——真实类加了 property 桩就得手动补，见本次踩坑。）
+    s.chat_initiative = True
     s._cfg = types.SimpleNamespace(active_character_id="")
     s._recent_messages = []
     s._last_message = None
