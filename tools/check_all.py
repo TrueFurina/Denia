@@ -290,6 +290,12 @@ GATES: list[tuple[str, str, list[str], bool]] = [
     # 角色名带 `/ : * ?` 也不能炸。四刀变异见 _qc_chat_export_mutation。
     ("导出聊天记录", PY_VENV, ["tools/test_chat_export.py"], False),
     ("导出聊天记录变异", PY_VENV, ["tools/_qc_chat_export_mutation.py"], True),
+    # 拨号引擎解析（2026-10-21 改写）：守 **2026-10-16 用户决策「语音电话恒走云端」**。
+    # 它原来 13/20 红着挂了很久 —— 因为用例守着 10-09 那版「显式选本地就走本地」的契约，
+    # 而那条路已被否决。按 test_quota_alert 的教训：这种测试最坏的下场不是红，而是
+    # "谁把它修绿，谁就把用户停掉的行为加了回来"。现在是改写 + 三把刀。
+    ("拨号引擎解析", PY_VENV, ["tools/test_call_engine_resolve.py"], False),
+    ("拨号引擎变异", PY_VENV, ["tools/_qc_call_engine_mutation.py"], True),
     # 导入冒烟：逐个 import 每个模块（独立子进程，并发 8），抓「导入期就崩」。
     # compileall 只保证语法和名字对得上，保证不了能不能被加载——2026-10-17 实测两例
     # （import 期 mkdir('G:\\')、顶层 argtypes 引用已删的 _u32）compileall 全绿。
