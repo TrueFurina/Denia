@@ -4961,7 +4961,7 @@
     }
     const pickRef = $('pickRef'), recRef = $('recRef');
     if (pickRef) pickRef.addEventListener('click', () => { Backend.pickAudioFile().then(r => { if (r && r.success && r.path) saveRef(r.path); else if (!r || !r.offline) Backend.toast('未选择音频','err'); }); });
-    if (recRef) recRef.addEventListener('click', () => { Backend.recordAudio('reference', 2.5).then(r => { if (r && r.success && r.path) saveRef(r.path); else Backend.toast(r && r.error ? ('录音失败：'+r.error) : '后端未连接','err'); }); });
+    if (recRef) recRef.addEventListener('click', () => { Backend.recordAudio(2.5).then(r => { if (r && r.success && r.path) saveRef(r.path); else Backend.toast(r && r.error ? ('录音失败：'+r.error) : '后端未连接','err'); }); });
 
     /* ---- 本地模型下载（真实后端进度轮询） ---- */
     const fill = $('dlFillLocal'), pct = $('dlPctLocal'), state = $('dlStateLocal'), startBtn = $('dlStartLocal');
@@ -5364,7 +5364,7 @@
     });
     if (pRefRec) pRefRec.addEventListener('click', () => {
       if (pRefName) pRefName.textContent = '录音中…（2.5 秒）';
-      Backend.recordAudio('reference', 2.5).then(r => {
+      Backend.recordAudio(2.5).then(r => {
         if (r && r.success && r.path){ if (pRef) pRef.value = r.path; if (pRefName) pRefName.textContent = '已录音：' + r.path; }
         else { if (pRefName) pRefName.textContent = '未选择'; Backend.toast((r && r.error) || '录音失败', 'err'); }
       }).catch(() => { if (pRefName) pRefName.textContent = '未选择'; Backend.toast('录音失败（后端未连接）', 'err'); });
