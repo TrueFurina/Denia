@@ -13,6 +13,10 @@
 
 | commit | 时间 | 类型 | 一句话 | 验证 |
 |---|---|---|---|---|
+| 待提交 | 19:5x | fix | **设置页「录音」按钮从来没成功过**：它调的 `record_audio_reference` 录的是**系统输出** loopback（给游戏音效用的），而参考音要的是**麦克风**；事件白名单又不认 `'reference'` → 点了必失败。新写 `src/audio/voice_ref_record.py` + 桥方法 `record_voice_reference`，前端两处改成 `Backend.recordAudio(2.5)` | 自测 **38 项**（假设备：时长窗口 / 帧数与格式 / 立体声下混 / 99 秒只录 30 秒 / 失败如实报 / 墓碑：假 `record_audio_reference` 一旦被调即 AssertionError）；三刀变异全红；真机录到 176172 字节（本机麦克风静音，peak=2，不是代码问题） |
+| 待提交 | 19:5x | fix | **`smoke_import` 那 3 个红是并发抢内存，不是缺陷**：8 并发 import numpy/scipy 时 OpenBLAS 分配失败（本机空闲 2.4G），报 `Memory allocation still failed`。只对**这一种错误文案**串行复核一次——不按"失败了几条"放宽（重试会掩盖真缺陷） | 自测 **12 项**（独立假根：`flaky` 首败次过 / `memfail` 永远同样文案 / `real` 真缺陷）；三刀变异全红（放宽复核范围 → 真缺陷被掩盖；一律判过 → 真失败被洗出判决；白名单计数不重算 → 判决对、数字错）；实测救回 1 条、非预期失败 0 |
+| 待提交 | 19:5x | fix | **自测把假文件建在仓库里，被 SIGTERM 打断就留垃圾**：`test_doctor` 的假 sys32 / 假 PE / 坏 YAML 全建在 `tools/` 与仓库根，正常跑完会删，但 **Windows 上 TerminateProcess 不走 finally** → 留下 `ucrtbase.dll` 和 `_broken_cfg_for_test.yaml`。全部改到 `tempfile.mkdtemp()`；顺带修 `check_signature` 的 `os.path.relpath` 跨盘符抛 `ValueError` | doctor 自检 16 组全绿；跑完 `git status` 无残留 |
+| 待提交 | 19:5x | chore | 闸门 120 → **124**：登记「音色录音 / 音色录音变异 / 导入冒烟复核 / 导入冒烟复核变异」 | 全量 124/124 |
 | `0c84238` | 18:2x | fix | **反向接线清单里 5 个不是「缺入口」，是假接口**：`enable_tray` / `restore_from_tray` / `set_minimize_to_tray` 只改一个没人读的布尔字段就 `return {"ok": True}`（前端会被告知"托盘已关闭"，实际什么都没变）；`pop_notify_cmd` 调的 `mode_notify.drain_cmds()` **已经不存在**（通知卡改成原生窗，命令队列整个删了）→ 被 `except: return []` 吞成"永远没有积压"；`get_backend_options` 返回 4 条写死的引擎、`pyttsx3` **出现两次**，而真表 `TTS_ENGINES` 有 10 个。全部删除，顺手删掉 `main.py` 里那个没人读的 `runtime.minimize_to_tray` | 变异刀 M3 原来写死 `enable_tray`（删掉后"锚点命中 0 次"→ 静默跳过）→ 改成从清单现取；全量闸门 120/120（7m41s）；未接线清单 17 → **12** |
 | `8213c43` | 18:0x | fix | **全站 JS 语法闸门原来只查 `index.html` 一个页面** —— 46 个页面里另外 45 个的内联块、以及除两个硬编码文件以外的所有外链 JS 全是盲区（设置页 8 个块、引导页 4 个块、通知页、桌宠 rig 页都不在内）。扩成全站扫描（46 页 / 65 内联块 / 23 个外链 JS = 88 段），扩完第一处就抓到 `probe2.html` 把 `'\n'` 写成**真换行**、那一整块从未执行过 | 三刀变异全红（非首页内联块 / 原名单外的外链 JS / 首页的**非第一块**）；闸门 119→**120**，全量 120/120（8m28s） |
 | `c62ad20` | 18:0x | feat | **设置页新增「关于」分类：版本号 + 开机自启** —— 反向接线闸门抓到的第一批。`get_version` 的 docstring 写着"给**关于页**与排障用"、`get_autostart` 写着"**UI 设置开关**读取"，两处都是**注释承诺了、界面从没建过**。现在设置页多一个分类：版本号（只显示、不另存第二份真值源）+ 开机自启开关（开发环境置灰并说清原因，不假装成功） | node 行为真值表 **20 项**（从页面里原样抽 IIFE 在假 DOM 里跑，含两个"不许假装成功"的对照组）；三刀变异全红；闸门 117→**119**，全量 119/119 |
@@ -98,6 +102,118 @@
 > 代码与测试主体由 `5dbc64c` 收口，**归属以本脚注为准**。
 > 教训：并发会话各自只 `git add` 自己知道的文件，提交前先 `git log` 确认HEAD 没有
 > 在几分钟内被别人推进过。
+
+### 2026-10-21 · 设置页的「录音」按钮，录的是扬声器不是麦克风
+
+设置页有「录一段参考音」按钮，点了永远失败。查下来不是设备问题，是**两个方向相反的
+动作共用了同一个名字**。
+
+#### 问题：`record_audio_reference` 录的是系统输出
+
+```python
+def record_audio_reference(self, seconds: float = 2.0) -> dict:
+    """录制系统输出音频（loopback），供游戏音效采集使用。"""
+```
+
+它要的是「把电脑正在播的声音录下来」（给游戏音效 / 视频观看用的），而设置页要的是
+「用麦克风录下用户的声音」当参考音。两件事的设备方向正好相反。更糟的是后端的事件
+白名单里只认 `'tts'` / `'asr'` 这类来源，前端传的 `'reference'` 不在里面 → 就算设备
+对了也走不通。于是这个按钮的真实行为是：**点了 → 报错 → 用户以为是麦克风坏了**。
+
+#### 改动
+
+- 新模块 `src/audio/voice_ref_record.py`：`pyaudiowpatch` 优先、`pyaudio` 兜底；
+  立体声用 `_downmix_to_mono()` 下混；`exception_on_overflow=False` 读帧（否则缓冲
+  一满就抛，长录音必崩）；时长收进 `1.5~30s` 窗口，`NaN`/0/负/乱字符串一律回默认。
+  **失败不抛异常**，返回 `{"success": False, "error": "录音失败：…（可改用「选择音频
+  文件」上传）"}` —— 设置页有上传兜底，不该让用户卡在一个报错里。
+- 桥方法 `record_voice_reference(seconds)`：写 `data/voice_ref/ref_<时间戳>_<序号>.wav`。
+  序号用模块级 `itertools.count(1)` + `os.path.exists` 兜底 —— 同一毫秒内连点两次
+  原本会撞名（这是变异刀抓出来的**真 bug**，不是测试问题）。
+- 前端：`app_backend.js` 的 `recordAudio` 改调 `record_voice_reference`，并兼容旧的
+  `recordAudio('reference', 2.5)` 两参写法；设置页两处调用改成 `recordAudio(2.5)`。
+
+#### 验证
+
+- `tools/test_voice_ref_record.py` **38 项**，全程假设备（`_FakePa` / `_FakeStream`）：
+  时长窗口 6 组、单声道帧数与格式、立体声下混后字节数 = `44 + 帧数×2`、请求 99 秒
+  实际只录 30 秒、失败如实上报、以及一条**墓碑**：假 `record_audio_reference` 一旦被
+  调到就 `AssertionError`（防止有人"顺手"把旧路径接回来）。
+- 三刀变异全红：去掉时长上限 → 帧数变 99 秒；`if channels == 2:` → `if False:` →
+  下混失效；`if not r.get("success"):` → `if False:` → 失败也报成功。
+- 真机实跑 2 秒：44100Hz / 单声道 / 88064 帧 / 176172 字节，文件正常。但 `peak=2`、
+  `rms=0.2` —— **本机麦克风静音或被占用**，不是代码问题；失败路径会如实报错。
+
+#### 踩过的坑
+
+- **测试往真仓库目录写产物**：第一版假实现照着产品逻辑往 `data/voice_ref/` 写了 4 个
+  真 wav。改成假实现只写临时目录，断言改看"产品想写到哪"（`made["asked_N"]`）。
+- 测试里 `_frames_for` 少乘 `_CHUNK`，断言 39936 帧 vs 实际 39 块，4 项 FAIL —— 错的
+  是判据不是产品。
+
+### 2026-10-21 · 导入冒烟那 3 个红是并发抢内存；修法必须窄到"只认一种错误文案"
+
+全量门禁跑出 3 个红：`src.llm.minicpm_duplex` / `src.perception.process_loopback` /
+`src.voice.tts`，都报 `OpenBLAS error: Memory allocation still failed`。本机空闲内存
+只有 2.4G，`smoke_import` 默认 8 并发 import numpy/scipy，抢不到连续地址空间。
+
+#### 为什么不能"失败就重试"
+
+重试是**最危险的一类修法**：它会让真缺陷变成"偶发红"，而偶发红的下场是被忽略。
+所以允许复核的条件必须窄到「有外部证据的特定错误文案」：
+
+```python
+_MEM_FAIL_MARK = "Memory allocation still failed"
+def is_mem_contention(result) -> bool:
+    return _MEM_FAIL_MARK in (result.get("stderr") or "") + (result.get("stdout") or "")
+```
+
+- 只复核**命中这个文案**的项，其余失败原样计入。
+- 复核**串行**跑（并发才是原因）。
+- 复核后**重算** `fails` / `kinds` —— 不重算就会印出"失败 3 条"而实际 0 条，那是谎话。
+- 打印复核了几条、救回几条，否则下次没人知道这条逻辑有没有在跑。
+
+#### 验证
+
+`tools/test_smoke_import_retry.py` **12 项**，用独立假根 `src/fixturepkg/`：`ok.py`
+（过）、`flaky.py`（首次失败、二次过）、`memfail.py`（永远报同样文案）、`real.py`
+（真缺陷，文案不同）。断言的核心是 `real` **不许**带"串行复核仍失败"标记、`memfail`
+必须带、非预期失败数 = 2；第 6 组把 `flaky` 写进白名单再跑一次，断言「白名单内 N 条」
+在它被救回后是 0（`known` 原本在复核**之前**算，不重算就会印出 1 —— 判决对、数字错）。
+
+三刀变异全红：`is_mem_contention` → `return True`（红"real 没有复核标记"）；
+`if again["status"] == "OK":` → `if True:`（红"非预期失败 2"）—— 这一刀最危险，真失败
+被洗出判决，单看 JSON 完全发现不了；删掉 `known` 的重算（红"「白名单内」是 0"）。
+
+实测：1 条被救回，`非预期失败 0`，退出码 0。
+
+### 2026-10-21 · 自测把假文件建在仓库里；被打断就留下垃圾
+
+`test_doctor` 为了测 WebView2 / UCRT / 代码签名，要在磁盘上造假的 `System32`、假 PE
+文件、假包根，以及一份**故意写坏的** YAML。这些路径原本直接指向 `tools/` 和仓库根。
+
+正常跑完会删（`finally` 里逐个 `os.remove`），但上一轮全量门禁被 SIGTERM 打断后，
+仓库里留下了：
+
+```
+?? _broken_cfg_for_test.yaml
+?? tools/_doctor_tmp_sys32/ucrtbase.dll
+```
+
+**Windows 上 TerminateProcess 不走 finally**，所以"跑完会清"这个假设在被打断时不成立。
+下次跑门禁时它们就成了"来历不明的产物"。
+
+#### 改动
+
+- 三处假根全部改到 `tempfile.mkdtemp()`（坏 YAML 单独一个目录，假 sys32 / 假 PE / 假
+  包根共用一个），末尾 `shutil.rmtree(..., ignore_errors=True)`。中断只脏 `%TEMP%`。
+- 顺带修一个被这次改动暴露的脆弱点：`check_signature` 里 `os.path.relpath(p, ROOT)`
+  在**跨盘符**时抛 `ValueError`（假 exe 现在在 C:，`ROOT` 在 D:）→ 整个 doctor 崩。
+  抽 `_rel()`：异常时退回绝对路径。展示用路径不值得让自检挂掉。
+
+#### 验证
+
+doctor 自检 16 组全绿；跑完 `git status` 无未跟踪产物。
 
 ### 2026-10-21 · 反向接线清单里的 5 个，不是「缺入口」，是假接口
 
