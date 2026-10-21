@@ -64,7 +64,13 @@ FILES = {
     "引导页 first_launch_setup.html": os.path.join(PROJ, "src", "ui", "web", "first_launch_setup.html"),
     "下载器 model_downloader.js": os.path.join(PROJ, "src", "ui", "web", "redesign", "model_downloader.js"),
     "能力槽页 ui_redesign_modelapi.html": os.path.join(PROJ, "src", "ui", "web", "redesign", "ui_redesign_modelapi.html"),
-    "建角色 v8 设计稿": os.path.join(PROJ, "docs", "mockups", "引导页建角色_设计稿_v8_20261012.html"),
+    # 【2026-10-21 移出·它不在仓库里】原来这里还有一条
+    #   "建角色 v8 设计稿": docs/mockups/引导页建角色_设计稿_v8_20261012.html
+    # 而 `git log --all -- "docs/mockups/*"` **零命中**、.gitignore 也没忽略它 ——
+    # 说明它是开发机上的本地过程稿，从没进过库。于是 A1「文件存在」在任何干净克隆上
+    # 都必然红，等于**拿仓库里没有的东西当判据**。
+    # 设计稿是"落地前的过程产物"，落地后就不该再是判据依赖；真正要守的接线由 A8 承担，
+    # 而 A8 已经写了 `if r8:`（存在才验），移出 FILES 后它会自动跳过。
 }
 
 _bridge = open(BRIDGE_JS, encoding="utf-8").read()
@@ -122,12 +128,29 @@ if dl:
         ("callSafe" in s) and ("Promise.race" in s) and ("后端响应超时" in s))
     chk("[A3] 下载器暴露 open/mountInto", ("window.ModelDownloader" in s) and ("mountInto" in s))
 
-# 引导页结构：固定 5 屏 + 退场屏留隐藏池
+# 引导页结构：链路由 buildFlow 动态拼（MODE_SEQ），退场屏留隐藏池
 if fl:
     _, s, _ = fl
-    chk("[A4] FLOW 固定 5 屏（连引擎→下模型→麦克风→建角色→体检）",
-        ("let FLOW = [screenSlots]" in s) and
-        all(x in s for x in ["'screenVisionDl','screenMic','screenRole','screenSummary'"]))
+    # 【2026-10-21 修·判据盯着已不存在的形态】原来断言两件事，现在两件都不成立了：
+    #   ① `let FLOW = [screenSlots]` —— 早改成 `let FLOW = []` + buildFlow() 动态拼
+    #   ② 字面量 `'screenVisionDl','screenMic','screenRole','screenSummary'` 连续出现
+    #      —— MODE_SEQ 里中间插了 screenVoice（2026-09-25 决定：本地双工的出声也是
+    #      TTS 合成，不绑 TTS 就没声音），这个连续串永远不会再出现。
+    # 判据改成守**语义**（谁在哪条链路上），而不是某个具体的字面写法：
+    #   · 至少两条链路（本机 / 云端 / 混合）
+    #   · **每条**链路都必须有「建角色」和「体检」——少一个流程就断了
+    #   · 至少一条链路要下本地模型
+    m_seq = re.search(r"const MODE_SEQ = \{(.*?)\n  \};", s, re.S)
+    seqs = re.findall(r"\[([^\]]*)\]", m_seq.group(1)) if m_seq else []
+    chk("[A4] MODE_SEQ 至少 2 条链路（本机/云端/混合）", len(seqs) >= 2,
+        "实际 %d 条" % len(seqs))
+    chk("[A4] 每条链路都含「建角色 + 体检」",
+        bool(seqs) and all("screenRole" in x and "screenSummary" in x for x in seqs),
+        "缺的链路见上")
+    chk("[A4] 至少一条链路要下本地模型（screenVisionDl）",
+        any("screenVisionDl" in x for x in seqs))
+    chk("[A4] FLOW 由 buildFlow 动态拼（不再写死单条）",
+        ("function buildFlow(" in s) and ("FLOW = [screenMode];" in s))
     for sid in ["screenMode", "screenVoice", "screenProvider", "screenChatApi"]:
         chk("[A5] 退场屏 %s DOM 保留（可回滚）" % sid, ('id="%s"' % sid) in s)
     chk("[A6] 引导页有 iframe 能力槽嵌入", 'id="slotsFrame"' in s and "embed=onboard" in s)
@@ -148,7 +171,16 @@ if r8:
     chk("[A8] v8 稿声明 TTS 厂商来自 TTS_PROVIDERS", "TTS_PROVIDERS" in s)
 
 # SHELL_GUARD 对 iframe 放行
-_app = open(os.path.join(PROJ, "src", "ui", "webapp.py"), encoding="utf-8").read()
+# 【2026-10-21 修·代码搬家没同步搬判据】`_SHELL_GUARD` 已随 UI 拆分搬进
+# `src/ui/main_window.py`（webapp.py 里现在一个字都没有），判据还在 webapp.py 里
+# 找 → 恒红。同型错误：`/local_img` 搬家那次（test_character_card_images）。
+# 改成**多文件拼接**：将来再搬一次也不会假红，而且它本来就该跟着"外壳注入"走。
+_ui_srcs = []
+for _rel in ("src/ui/webapp.py", "src/ui/main_window.py"):
+    _f = os.path.join(PROJ, *_rel.split("/"))
+    if os.path.exists(_f):
+        _ui_srcs.append(open(_f, encoding="utf-8").read())
+_app = "\n".join(_ui_srcs)
 chk("[A9] _SHELL_GUARD 对 iframe 放行（window.top!==window 直接 return）",
     "window.top!==window" in _app or "window.top !== window" in _app)
 
@@ -162,12 +194,14 @@ from src.ui.webapp import CharacterAPI          # noqa: E402
 from src.config import load_config              # noqa: E402
 
 SANDBOX = tempfile.mkdtemp(prefix="onb_int_")
-# config.yaml 被 gitignore（含密钥），新克隆的仓库里没有 → 用出厂模板兜底。
-# 【2026-10-21 修】原实现直接 copy config.yaml：在开发机上永远有，所以这个测试
-# 硬编码 G:\ 旧路径、跑不起来这件事，一直没人发现。
-_CFG_SRC = os.path.join(PROJ, "config.yaml")
+# 【2026-10-21 修·该读出厂模板】原实现优先 copy config.yaml —— 那是**开发机实配**
+# （被 gitignore、含密钥、带本机绝对路径）。引导页要验的恰恰是"新用户装完是什么样"，
+# 拿开发机实配当输入等于在验"我这台机器现在什么样"，而且队友/CI 上根本没有那个文件。
+# 与 `test_config_wiring` 那次同一个坑（读实配 → 验不出出厂状态）。改成优先出厂模板，
+# 只有模板缺失时才退回实配（保住开发机上仍可跑）。
+_CFG_SRC = os.path.join(PROJ, "config.release.yaml")
 if not os.path.exists(_CFG_SRC):
-    _CFG_SRC = os.path.join(PROJ, "config.release.yaml")
+    _CFG_SRC = os.path.join(PROJ, "config.yaml")
 CFG = os.path.join(SANDBOX, "config.yaml")
 shutil.copy2(_CFG_SRC, CFG)
 REAL_CFG = _CFG_SRC
@@ -253,8 +287,20 @@ else:
 # ---- B5/B6 第 2 步：下模型 ----
 cat = api.get_model_catalog()
 chk("[B5] getModelCatalog 成功", bool(cat.get("success")))
-chk("[B5] 含 quants 列表", isinstance(cat.get("quants"), list) and len(cat["quants"]) >= 4,
-    "n=%d" % len(cat.get("quants") or []))
+# 【2026-10-21 修·判据依赖本机显存】原来无条件断言 `len(quants) >= 4`。
+# 但 model_catalog 在显存 <12GB 时返回 cloud_only=True + quants=[]（本地全双工模型
+# 跑不动，如实告诉你选云端）——那是**正确行为**，不是缺数据。这台机器就是 8GB
+# （实测 vram_gb=8.0 / cloud_only=True / warning="检测到显存约 8.0GB（<12GB）…"），
+# 所以这条在任何低显存机器上都必然红。判据改成按 cloud_only 分两路：
+#   · cloud_only → quants 可以为空，但**必须给出 warning**（不能静默空着）
+#   · 否则       → 必须 >= 4 档
+_cat_quants = cat.get("quants") or []
+if cat.get("cloud_only"):
+    chk("[B5] 显存不足 → cloud_only 且给出 warning（不静默空着）",
+        bool(cat.get("warning")), "vram=%.1f" % float(cat.get("vram_gb") or 0))
+else:
+    chk("[B5] 含 quants 列表", isinstance(cat.get("quants"), list) and len(_cat_quants) >= 4,
+        "n=%d" % len(_cat_quants))
 if cat.get("quants"):
     q = cat["quants"][0]
     chk("[B5] quant 卡含 id/size/vram 字段", all(k in q for k in ("id", "size_gb", "vram_gb")))

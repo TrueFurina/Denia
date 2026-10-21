@@ -16,6 +16,7 @@
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 import sys
 import time
@@ -65,7 +66,12 @@ GATES: list[tuple[str, str, list[str], bool]] = [
     ("凭据扫描正反", PY_VENV, ["src/tests/test_package_secrets_scan.py"], False),
     ("凭据日志卫生", PY_RUNTIME, ["tools/check_log_leak.py"], False),
     ("依赖声明", PY_VENV, ["tools/check_requirements.py", "--strict"], True),
-    ("导入冒烟", PY_VENV, ["tools/smoke_import.py", "--strict"], True),
+    # 【2026-10-21 删·重复登记】这里原来还有一行
+    #   ("导入冒烟", PY_VENV, ["tools/smoke_import.py", "--strict"], True)
+    # 而列表末尾**已经有一份带完整注释的**。同一项被登记两次 → 每次全量闸门都白跑
+    # 两遍（各约 28s，全量里占 ~1 分钟），而且**两遍的通过/失败会互相打架**：
+    # 实测本轮第一遍 ✓ 27.9s、第二遍 ✗ 95.0s，最后判 FAIL —— 光看汇总根本分不清
+    # 是"测试本身不稳"还是"跑了两遍"。判据只该有一条真身。
     ("壳层能力", PY_VENV, ["src/tests/test_win_shell.py"], True),
     ("RPC 通道", PY_VENV, ["src/tests/test_rpc_server.py"], False),
     # WS 端口绑定契约（2026-10-20 03:11 启动崩溃的回归）：空闲一次起、被占先重试
@@ -235,13 +241,23 @@ GATES: list[tuple[str, str, list[str], bool]] = [
     ("看屏热生效", PY_VENV, ["tools/test_desktop_watch_hotapply.py"], False),
     ("引导页 TTS 键", PY_VENV, ["tools/test_onboarding_tts_key.py"], False),
     # ---- 第三批普查的第二轮（同日）：又修好 5 个，同样是"判据/桩过时"而非功能坏。
-    #      test_onboarding_integration 仍不收（99 PASS / 5 FAIL 是设计稿未落地的产品
-    #      待办）；test_onboarding_role_backend 退出码 0 但跑 29s，不进闸门。
+    #      test_onboarding_role_backend 退出码 0 但跑 29s，不进闸门。
     ("额度告警", PY_VENV, ["src/channels/tests/test_quota_alert.py"], False),
     ("TTS 多供应商", PY_VENV, ["tools/test_tts_multi_provider.py"], False),
     ("主动输出分流", PY_VENV, ["tools/test_proactive_chat_routing.py"], False),
     ("关系接线", PY_VENV, ["tools/test_relationship_wiring.py"], False),
     ("关系集成", PY_VENV, ["tools/test_relationship_integration.py"], False),
+    # ---- 引导页集成（106 项）----
+    # 【为什么现在收了】上一轮我判定「不收：5 个 FAIL 是设计稿未落地的产品待办」——
+    # 那个判断是**错的**。逐个查下来 5 个里没有一个是"要动产品"的：A1 拿仓库里
+    # 从没进过库的本地设计稿当判据、A4 盯着两种已不存在的代码形态、A9 是
+    # `_SHELL_GUARD` 搬进 main_window.py 后判据没跟着搬、B5 拿本机显存当判据、
+    # B15 则**抓到一处真缺陷**（`_save_config` 里的幽灵调用 `refresh_characters_map`，
+    # 见 webapp.py 该处注释）。这正好说明"红着就挂着"会同时藏住真 bug 和过时判据。
+    # 【代价】约 11s，标慢项，`--fast` 跳过。
+    # 【输入】它把 config.release.yaml 复制到临时目录当沙盒（绝不写真实配置），
+    # 所以验的是**出厂状态**而不是"我这台机器现在什么样"。
+    ("引导页集成", PY_VENV, ["tools/test_onboarding_integration.py"], True),
     # ---- 变异脚本（判据的判据）：验证闸门里的检查器**真的还有牙齿** ----
     # 【为什么必须收进来】2026-10-21 实测：doctor.run_all 里加了一项之后，
     # `_qc_voice_mutation` 的 A/B/C/E 四刀与 `_qc_asr_mutation` 的若干刀
@@ -307,9 +323,16 @@ def main(argv: list[str]) -> int:
         detail = ""
         if not ok:
             out = (p.stdout or "") + (p.stderr or "")
-            # 只留最后几行，避免刷屏
-            tail = [ln for ln in out.strip().splitlines() if ln.strip()][-4:]
-            detail = " | ".join(tail)
+            lines = [ln.strip() for ln in out.strip().splitlines() if ln.strip()]
+            # 【2026-10-21 修·摘错了行】原来一律取"最后 4 行"。对 `smoke_import` 这类
+            # 「先打失败摘要、最后再打一张白名单明细表」的工具，最后 4 行恰好是
+            # **已知可选项**那张表 → 闸门把"本来就允许失败的东西"当成失败原因报出来，
+            # 真正闯祸的那一行被截掉。看到的人只会去查那 4 个没问题的模块，白费一轮。
+            # 现在优先摘"带错误语义"的行，摘不到再退回末尾 4 行。
+            _err_pat = re.compile(
+                r"(非预期|FAIL|FAILED|ERROR|Error|Traceback|异常|失败|not found|No module)")
+            hits = [ln for ln in lines if _err_pat.search(ln)]
+            detail = " | ".join((hits or lines)[-4:])
         results.append((name, ok, cost, detail))
         print(f"  {'✓' if ok else '✗'} {name:14s} {cost:5.1f}s")
 
