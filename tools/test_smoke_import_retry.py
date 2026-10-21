@@ -115,6 +115,13 @@ def main() -> int:
     # 【2026-10-21】known 原本在复核**之前**算：flaky 首次失败、又恰好在白名单里，
     # 于是救回之后仍印「白名单内 1 条」——数字对不上就是谎话。这里把 flaky 写进
     # 白名单再跑一次，断言这一格是 0。
+    #
+    # 坑（第一次写的时候踩了）：flaky 靠 `.seen` 标记决定"第一次失败"，而第一次跑已经
+    # 把标记写下了 → 第二次它直接成功、压根不进复核 → 这条断言**恒真**（白名单里没有
+    # 失败项，印 0 是必然的），而变异刀也抓不到。必须先删标记，让它重新失败。
+    _seen = os.path.join(base, "src", "fixturepkg", ".seen")
+    if os.path.exists(_seen):
+        os.remove(_seen)
     allow = os.path.join(base, "allow.txt")
     io.open(allow, "w", encoding="utf-8", newline="\n").write(
         "src.fixturepkg.flaky  # 自测用：模拟「并发抢不到内存」的白名单条目\n")
@@ -122,8 +129,9 @@ def main() -> int:
                          "--allow", allow, "--jobs", "4", "--timeout", "30"],
                         capture_output=True, text=True, encoding="utf-8", errors="replace")
     out2 = (p2.stdout or "") + (p2.stderr or "")
-    chk("flaky 仍被救回", "[串行复核]" in out2 and "flaky" in out2.split("[串行复核]")[-1],
-        [l for l in out2.splitlines() if "[串行复核]" in l][:1])
+    _rescue = [l for l in out2.splitlines() if "[串行复核]" in l]
+    chk("flaky 确实进了复核（否则下一条是空断言）",
+        bool(_rescue) and "flaky" in _rescue[0], _rescue[:1])
     chk("「白名单内」是 0（不是复核前算的 1）", "白名单内（已知可选）0" in out2,
         [l for l in out2.splitlines() if "白名单内" in l][:1])
 
