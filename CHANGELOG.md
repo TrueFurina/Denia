@@ -13,6 +13,8 @@
 
 | commit | 时间 | 类型 | 一句话 | 验证 |
 |---|---|---|---|---|
+| `b2bc771` | 06:2x | test | **「后端广播 type ↔ 前端分发分支」对账闸门**：后端往前端推消息走 `CoreWebView2.PostWebMessageAsJson`，前端接 `chrome.webview.addEventListener('message')`，两边靠一个字符串 `type` 对上，而**没有任何机制保证它对得上**（`quota_alert` 与 `character_switched` 两起都死在这，症状永远静默：分支不执行、不报错，只是"那个功能不工作"）。只做**单向**（前端 type ⊆ 后端广播全集）——反向会假红：`pet_tip` 就走 `api.pop_pet_bubble()` 1.5s 轮询，桌宠窗的 `chrome.webview` 监听对 `PostWebMessageAsJson` **完全不触发**（rig 页 2026-09-03 实锤：3 次广播 / 0 回执），"广播了但没人用 webview 监听器接"在这里是合法设计。边界必须精确圈定：全仓 `.type === 'x'` 有 25 处以上**不是**消息分发（`dataset.type`、本地事件总线 `ev.type==='asr'`、通知项 `n.type`、骨架 `s.type==='row'`…），一刀切必假红。**顺带补登记两把从没跑过的变异刀**：`_qc_channel_mutation` 与 `_qc_gewechat_mutation` 只在 check_all 的注释里被提到、从没进名单——按项目自己的规矩「加门必须同时加变异」，那两道门**一直是装饰品**；实跑前者，七刀里 **C/D/F/G 四把锚点命中 0 次被静默跳过**（根因：`J()` 写死 CRLF 而 `doctor.py` 早变成 LF，**单行锚点不受影响、刀照跑，所以坏得极隐蔽**） | 七刀变异全过（含"原 bug 原样"与两个"不许误伤"对照组）；渠道探活判级变异修好后**七刀全红**、还原字节一致；微信回调变异五刀全红；闸门 130 → **134**；全量门禁 **134/134**（10m43s） |
+| `ca6cff3` | 06:2x | fix | **切角色后界面名字不跟随**：`app_backend.js` 里 `d.type === 'character_switched'` 这条分支自 2026-10-02 写下起就是**死的**——后端 `EventType.CHARACTER_SWITCHED` 只经 `ws_server.broadcast` 发（`{message_type, payload}` 信封，给 Unity 与旧壳 `app.js` 用），而 `app_backend.js` 里**没有 WebSocket 客户端**；`app.js` 有 ws 却没这个 case、且只被 `index.legacy.html` 加载。于是 `applyCharacterNameBoot`（那段注释原话就是"用户切换角色后这些仍显示旧名…看着像 bug"）**要修的那个 bug 本身就没修好**：点「设为默认角色」toast 说成功了，侧边栏 / 通话页 / 输入框 placeholder 一直是旧名字，直到刷新页面；`window.refreshCharacterName` 全仓零调用者。两端都修：后端 `_broadcast_character_switched()` 在 `switch_character` 的**两处**成功返回前都调（配置级回落路径不发事件，只挂总线会漏），前端 `setDefault()` 成功后显式兜底 | 新闸门 `check_broadcast_types.py` 的变异刀 M1 就是**原 bug 原样**（把那行广播改掉 → 闸门红并点名 `character_switched`），证明闸门在修复前确实是红的；七刀变异全过；全量门禁 **134/134** |
 | `0ab49ab` | 05:3x | fix | **队友包里一直带着 1.1MB 开发残留**：`src/ui/web/redesign/` 下 14 个 `_` 前缀文件（设计稿 / 重构前备份 / 测试台，最大一个是 350KB 的旧设置页）零引用，却按 `git ls-files` 一路进包 —— 队友解包后能在 URL 里打开"能点但没反应"的旧 UI。**不用前缀一刀切**：`_gpu.txt` 同样带 `_`，但它是 `_has_usable_gpu()` 写的运行时数据 | 安全先扫（密钥/绝对路径/token/cookie 全干净）；三层判据（逐个排除 / `_gpu.txt` 必须保留的对照组 / 未登记与 stale 反向催）；四刀变异全红（含"一刀切必须红在 `_gpu.txt`"）；实测 `--dry-run` 排除 14 项、入包 788（跟踪 802）；全量门禁 **130/130** |
 | `f971356` | 02:4x | refactor | **额度浮层整条死链删掉**：`window.__quotaAlert` 不是"不可达"，是**三段各自看着都在工作、合起来是死的**——Router 有回调槽位但 `_fire_quota_alert` 从不调、webapp 注册了但存根只 `logger.info` 从不广播、前端有浮层但后端广播 type 全集里从来没有 `quota_alert`。删三段（浮层 IIFE 141 行 + `.qa-*` CSS 25 行 + 注册点 7 行 + 存根 21 行），**保留** `quota_state()` 作将来「检测额度」的数据源 | 全量门禁 **129/129**（9m14s，新增「额度墓碑变异」）；`test_quota_alert` 13→15 项；三刀变异全过 |
 | `d14b309` | 22:2x | fix | **反向接线变异刀第二次失效**（同一坑）：M3 选目标时只搜 `webapp.py`，而清单瘦到 3 条后剩下三个全在 `api_pet.py` / `api_window.py` →「找不到可改名的方法」。改成走 `CharacterAPI.__mro__` 定位定义所在文件 | 三刀全绿（M3 报「② `clear_pet_cache`（`src/ui/api_pet.py`）」）；全量闸门 **128/128**（上一轮 127/128） |
@@ -1679,6 +1681,115 @@ G: 盘在开发机上早就没了，只是没人去看那张卡。
 - 声明 64KB → 必须等（立刻回 401 就说明它没读 body）；补上 body 后必须回 401；
 - 声明 8MB → 必须**立刻** 401（封顶，不许陪着等）。
 两刀变异各连跑 2 次，4/4 全抓。
+
+---
+
+### 2026-10-22 · 切角色后界面名字不跟随：一条投递通道是死的分支
+
+`applyCharacterNameBoot`（`app_backend.js`，2026-10-02）干的事是：HTML 里给节点打
+`data-char-name` / `data-char-initial` 标记，由 `applyCharacterName(name)` 统一改写，
+名字来源优先 `getChat().active_name`。它自己的注释写着要解决的问题是
+"用户切换角色后这些仍显示旧名，与气泡里真实角色名不一致，看着像 bug"。
+
+**它要修的那个 bug，本身就没修好** —— 触发它的那条事件路径是死的。
+
+#### 链路三段，每段单独看都在工作
+
+| 段 | 状态 |
+|---|---|
+| 前端 `d.type === 'character_switched'` → `refresh()` | ✅ 分支在、逻辑在 |
+| 后端 `EventType.CHARACTER_SWITCHED` | ✅ `dialogue.switch_character()` 正常 publish |
+| **投递到 WebView2 前端** | ❌ **只走 `ws_server.broadcast`（`{message_type, payload}` 信封），而 `app_backend.js` 里没有 WebSocket 客户端** |
+
+三条佐证把这条钉死：
+- `switch_character` 成功后**不广播任何东西**（只清 chat buffer + 重置瞬态指针）。
+- `app.js`（旧壳）有 ws 客户端，但 `switch (env.message_type)` 里**没有**
+  `character_switched` 这一 case；而且 `app.js` 只被 `index.legacy.html` 加载，
+  现壳 `index.html` 加载的是 `app_backend.js`。
+- `window.refreshCharacterName` 全仓**零调用者**（「写了没接线」形态①）。
+
+**为什么三个月没人发现**：聊天内容会靠 800ms 轮询刷上来，所以"换了角色"看着是生效的
+——只有名字不跟随。
+
+#### 修法：两端都修
+
+1. **后端**：新增 `webapp._broadcast_character_switched(char_id)`，在 `switch_character`
+   的**两处**成功返回前都调（runtime 路径 + 配置级回落路径——`Config.switch_character`
+   不发事件，只挂总线会漏掉后者）。
+2. **前端**：`ui_redesign_characters.html` 的 `setDefault()` 成功后显式
+   `window.refreshCharacterName()` 兜底。
+
+**为什么两端都修**：`rig/index.html` 2026-09-03 的实锤——`chrome.webview` 监听对
+`PostWebMessageAsJson` **完全不触发**（3 次广播 / 0 回执）。这条原生通道有静默失败
+前科，不能只依赖它。
+
+---
+
+### 2026-10-22 · 新闸门：后端广播 type 与前端分发分支对账
+
+上面那条死分支的根因是：**两边靠一个字符串 `type` 对上，而没有任何机制保证它对得上。**
+同类已两起（`quota_alert` 10-22 删、`character_switched` 本轮修），症状永远静默
+——分支不执行、不报错、没有空指针，只是"那个功能不工作"。
+
+#### 只做单向，是实测逼出来的
+
+反向（"后端广播了的 type 前端必须接"）会假红：`pet_tip` 就是反例——桌宠窗的
+`chrome.webview` 监听对 `PostWebMessageAsJson` 不触发，早就改成 1.5s 轮询
+`api.pop_pet_bubble()`。**"广播了但没人用 webview 监听器接"在这里是合法设计。**
+
+后端全集只收两处真实发送点（`_wv2_broadcast` 15 处 + `_BROADCASTER` 1 处，共 6 种
+type），**不收 `protocol.MessageType` 枚举**：那 16 种是给 Unity/ws 的，收进来只会让
+全集变大、判据变松。前端真有分支要接枚举里的 type 时，正确做法是在后端显式广播一次
+（`character_switched` 就是这么修的）。
+
+#### 边界必须精确圈定（一刀切必假红）
+
+全仓 `.type === 'x'` 有 **25 处以上不是消息分发**：`btn.dataset.type === "kill"`、
+本地事件总线 `ev.type === 'asr'`、通知项 `n.type === 'ok'`、骨架 `s.type === 'row'`、
+spa 的 `s.type === 'module'`… 圈法是
+**`chrome.webview` → 同文件后续第一个 `addEventListener('message')` → 回调体花括号配对**。
+
+另外每个 `window.addEventListener('message')`（页面内部 postMessage）都必须在
+`PAGE_INTERNAL` 登记原因，**未登记的要红**——否则这道门会悄悄漏掉一整类载体。
+草稿排除后：4 个 host 监听器 / 5 种前端 type / 5 个页面内部文件（含 `live2d/` 两个：
+我第一轮普查把 live2d 整个当 vendor 排除了，**它是一等公民页面**）。
+
+#### 自保（闸门自己坏了要能喊出来）
+
+- 广播调用点数 **必须等于** 取到 type 字面量的调用点数（**不允许动态 type**，
+  否则全集不可知而判据还在跑）
+- 监听器 ≥ 4 / 前端 type ≥ 5 / 广播调用点 ≥ 10 / 后端 type ≥ 4
+- 每个监听器体里至少要有一处 `.type` 比较（花括号配对坏掉 → 体是空的 → 红）
+- `PAGE_INTERNAL` 条目失效要红（催删）
+
+#### 七刀变异
+
+M1 是**原 bug 原样**：把后端那行 `character_switched` 广播改成不广播 → 必须红并点名。
+这一刀证明闸门在**修复之前**确实是红的，不是马后炮。其余：M2 前端多一个后端不广播的
+分支 / M3 对照组·页面内部 postMessage 不许误伤 / M4 对照组·`dataset.type` 不许误伤 /
+M5 少一个监听器 → exit 2 / M6 对照组·注释里提的 type 不算 / M7 动态 type → exit 2。
+
+#### 顺带：补登记两把从没跑过的变异刀
+
+按文件系统反向核对所有 `check_*.py` / `_qc_*.py` / `test_*.py` 时发现：
+`_qc_channel_mutation.py` 与 `_qc_gewechat_mutation.py` **只在 check_all 的注释里被
+提到，从没登记为闸门项**。按项目自己的规矩「加门必须同时加变异」，
+`test_doctor_llm_channel` 与 `test_gewechat_callback` 这两道门**一直是装饰品**。
+
+实跑 `_qc_channel_mutation`：七刀里 **C/D/F/G 四把锚点命中 0 次、被 "[跳过]" 静默
+放过**，也就是说那四组判级断言（断网不判红 / 空 key 不发包 / 5xx 不判红 /
+run_all 必须接线）其实没有牙齿。两个根因：
+
+1. **`J()` 把 CRLF 写死**，而 `tools/doctor.py` 后来变成了 **LF**（实测 0 个 CRLF）
+   → C/F/G 三把多行锚点全落空。**单行锚点（A/B/E）不受影响、刀照跑，所以坏得极其隐蔽。**
+2. D 的锚点还是老文本 `(check_llm_channel, cfg)):`，run_all 那行早变成了
+   `(check_llm_channel, cfg),`
+
+修法：`_eol()` 按目标文件实测换行符；D 改成整行删。修后**七刀全红**、还原字节一致。
+`_qc_gewechat_mutation` 五刀本来全红、还原干净，只是没登记。两把都已补登记。
+
+**教训**：注释里写"变异 N 刀全红"不等于它跑过。反向核对该按**文件系统**做，
+不该按 check_all 的注释做。
 
 ---
 
