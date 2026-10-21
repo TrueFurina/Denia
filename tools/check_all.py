@@ -296,6 +296,14 @@ GATES: list[tuple[str, str, list[str], bool]] = [
     # "谁把它修绿，谁就把用户停掉的行为加了回来"。现在是改写 + 三把刀。
     ("拨号引擎解析", PY_VENV, ["tools/test_call_engine_resolve.py"], False),
     ("拨号引擎变异", PY_VENV, ["tools/_qc_call_engine_mutation.py"], True),
+    # 反向接线（2026-10-21 新增）：check_bridge_methods 守「前端调了 → 后端有」，
+    # 反过来没人守 —— **后端写完了、界面上没有任何地方能触发它**（本仓叫「有实现、
+    # 没出口」，scope=all / pet_hit_rect 都是这么漏的）。这道门守：后端公开方法必须
+    # 有人调（调用点或字符串分发都算），存量 20 个列进 KNOWN_UNWIRED，新增即红；
+    # 清单里的名字**一旦被接线也必须删掉**（否则清单会像「发现」栏一样腐烂）。
+    # 三刀：加没人调的方法→③ / 改名→② / 给清单项加真实调用点→①。约 8s，标慢项。
+    ("反向接线", PY_VENV, ["tools/check_api_wiring.py"], False),
+    ("反向接线变异", PY_VENV, ["tools/_qc_api_wiring_mutation.py"], True),
     # 导入冒烟：逐个 import 每个模块（独立子进程，并发 8），抓「导入期就崩」。
     # compileall 只保证语法和名字对得上，保证不了能不能被加载——2026-10-17 实测两例
     # （import 期 mkdir('G:\\')、顶层 argtypes 引用已删的 _u32）compileall 全绿。

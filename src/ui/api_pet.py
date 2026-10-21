@@ -200,13 +200,22 @@ class PetAPI:
             return {"ok": False, "error": str(e)}
 
     def pet_hit_rect(self, rects: list) -> dict:
-        """前端上报角色命中矩形（窗口客户区物理像素矩形列表）→ 窗体层画矩形提供命中。
+        """【2026-10-21 核实：这个方法是纯 no-op，别信下面的旧结论】
 
-        结论：TransparencyKey 分层窗口命中只认"窗体自绘非 key 像素"（WebView2
-        内容不计入），因此角色矩形(非品红)画到窗体层——被角色像素覆盖视觉不可见、
-        又提供命中；矩形外品红 key 色系统自动挖空+点击穿透。前端 reportPetBody
-        在模型渲染稳定后一次性用 gl.readPixels 算角色包围盒（固定矩形，覆盖整个
-        人物），此后不再计算上报，避免逐像素抠像的计算负担和晃动时卡黑边。
+        原注释描述的是 **TransparencyKey 品红分层窗口** 那套架构（窗体层画非 key 像素
+        提供命中、key 像素自动挖空）。**现在的桌宠窗不是那套**：`transparent=True` +
+        WebView2 alpha 合成（见 `webapp.py` 里通知窗那段"逐字照搬桌宠窗配置"的说明），
+        全仓没有 TransparencyKey / SetLayeredWindowAttributes。
+
+        三处都断了，任何一处成立这个方法都不会生效：
+          1. 前端 `reportPetBody` **从未实现**（`live2d/rig/index.html` 只留了
+             `preserveDrawingBuffer:true` 和一句"要读 readPixels"的注释，没有读的代码）；
+          2. `self._pet_win.native` 恒为 `None`（pywebview 的 Window 没有 `native`；
+             `pet_shell.py:175` 也显式写死 `self.native = None`）；
+          3. `set_pet_hit_rect` **全仓不存在**（AGENTS.md 已把这条记成"发现过"）。
+
+        保留而不删的理由：它是"点击穿透只认角色像素"这个需求的唯一落点，删掉就没有
+        痕迹了。**要真做，得按当前架构重写**（不是补一个 `native` 方法就行）。
         """
         try:
             logger.debug("[PET] 命中形状上报: %d 个矩形", len(rects) if rects else 0)

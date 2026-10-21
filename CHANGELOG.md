@@ -13,6 +13,7 @@
 
 | commit | 时间 | 类型 | 一句话 | 验证 |
 |---|---|---|---|---|
+| 待提交 | 17:4x | feat | **反向接线闸门**：`check_bridge_methods` 只守「前端调了 → 适配层有 → 后端有」，**反过来没人守**——后端写完了、界面上没有任何地方能触发它（本仓叫「有实现、没出口」，`export_chat_history` 的 `scope='all'` 和 `pet_hit_rect` 都是这么漏的）。新门扫全仓（`name(` 调用点 + 字符串分发三种形态），325 个后端公开方法里 **20 个零引用**，列进 `KNOWN_UNWIRED`；**清单里的名字一旦被接线也必须删掉**，否则它会变成第二个「发现」栏。顺带把 `pet_hit_rect` 那段描述着已不存在架构的 docstring 改成「这是纯 no-op」 | 三刀变异全红（加没人调的方法→③ / 改名→② / 给清单项加真实调用点→①）；闸门 115→**117**，全量 117/117（8m00s） |
 | 待提交 | 16:4x | feat | **「导出全部角色」原本是个没人调的参数**：后端 `scope=current / all` 两个范围都实现并测过，前端只有左键（当前角色）——本仓把这种形态算作缺陷。现在右键 = 全部角色，`title` 里写明。同时补上第 11 组「前端入口」断言，它守的是"入口在不在"，最容易假绿：全页搜 `contextmenu` 会命中页面顶部那条**全局** `document.addEventListener('contextmenu', …)`（`index.html:134`，用来禁掉 WebView 右键菜单），于是判据改成在**导出绑定块内**找 `ec.addEventListener('contextmenu'` | 变异 4 刀 → **7 刀**（删右键绑定 / 右键绑着但不传 scope / 左右键载荷对调），三刀全红；测试 33 → **39** 项；闸门 115/115 |
 | `d7784c4` | 16:2x | test | **`test_call_engine_resolve` 红了很久，因为它在守一条已被否决的契约**：13/20 PASS，红的 7 项全是「显式选本地双工 → 走本地」——而 **2026-10-16 用户已拍板「语音电话恒走云端」**（`start_duplex_call` 里无条件 `target = "realtime"`）。这种测试最坏的下场不是红，而是"谁把它修绿，谁就把用户停掉的行为加了回来"。改写为守当前契约：组 1 任何输入组合都必须是 realtime、组 2 没云端就如实拦截、**组 3 给旧契约立墓碑**（`no_cloud_duplex_cfg` / `fallback` / `no_cloud_tts` 在 240 组输入下都不许出现）。顺带把 `start_duplex_call` 里那段自相矛盾的注释（9182 说"显式选本地就走本地"，20 行后被无条件覆盖）标明，并指出 `no_cloud_duplex_cfg` 那段目前**不可达** | 3 刀变异全红（删掉强制云端 → 组 1 红 5 项；错误码改回旧值 → 组 2.3/3.1 红；加回 `fallback` → 组 3.2 红）；22/22 PASS，扫 240 组输入；闸门 113→**115**，全量 115/115 |
 | `97f1fc7` | 16:0x | feat | **新增「导出聊天记录」**：`data/chatlog/<char>.jsonl` 里躺着完整历史，但用户没有任何出口（`export_markdown` 只服务日报/记忆页）——想备份、换机器、把一段对话发给别人只能截屏。现在聊天页工具栏多一个下载按钮 → 桌面「AI桌面伴侣报告」下的 Markdown（按日期分节、`**HH:MM · 谁**` 两段式、附图计数），支持当前角色 / 全部角色。**顺带修好桥接闸门的第三层盲区**：内联 `<script>` 完全没有别名支持，`index.html` 的工具栏块（`var B = (window.Backend && window.Backend) \|\| …`）整段不可见（136→163 个桥方法）。补上后立刻抓到三处真断点 | 4 刀变异全红（`load_all` 退回 200 / 去掉空历史守卫 / 空角色不跳过 / 文件名不过滤 `/ : * ?`）；桥接变异 4 刀（内联+别名 ×2、外链、空集退化）；真机探针真实写盘；闸门 110→**113**，全量 113/113 |
@@ -94,6 +95,81 @@
 > 代码与测试主体由 `5dbc64c` 收口，**归属以本脚注为准**。
 > 教训：并发会话各自只 `git add` 自己知道的文件，提交前先 `git log` 确认HEAD 没有
 > 在几分钟内被别人推进过。
+
+### 2026-10-21 · 反向接线闸门：20 个「后端写完了，界面上碰不到」的方法
+
+#### 起因
+
+`check_bridge_methods` 守的是正向链路：页面调 `Backend.foo` → 适配层导出 foo →
+`call('py')` → 后端有 `py()`。**反过来没人守**：后端写完了、测过了，但界面上没有任何
+地方能触发它。本仓把这种形态叫「有实现、没出口」，今年已经漏过两次：
+
+- `export_chat_history` 的 `scope='all'`（后端两档都实现，前端只绑了左键）；
+- `pet_hit_rect`（`native.set_pet_hit_rect` 全仓不存在，纯 no-op，AGENTS.md 记过）。
+
+它比报错更难发现：读代码时每个函数都有完整实现，**看起来功能都在**。
+
+#### 结论：325 个后端公开方法，20 个零引用
+
+| 分组 | 例子 | 性质 |
+|---|---|---|
+| 开机自启三件套 | `get_autostart` / `set_autostart` | 后端完整，没有开关 |
+| 调试台 | `ocr_get_regions` / `ocr_get_anchors` / `get_audio_status` | 前端从没做过 |
+| 下拉选项 | `get_backend_options` / `get_model_3d_options` | 同上 |
+| 桌宠 | `pop_notify_cmd`（桌宠页只轮询了 `pop_pet_bubble`）/ `clear_pet_cache` | 同上 |
+| 托盘 | `enable_tray` / `restore_from_tray` / `set_minimize_to_tray` | 同上 |
+| 其它 | `get_version` / `get_bailian_quota` / `get_relation_events` / `probe_vision_model` … | 同上 |
+| 旧架构残留 | `pet_hit_rect` | 建议删 |
+
+**大多是"后端能力完整、前端没做过入口"，不是 bug，是待接线。**
+
+#### 清单不腐烂的机制（这条比门本身重要）
+
+`KNOWN_UNWIRED` 里那 20 个名字只是**存量记录**，不是"这样没问题"。两条规矩：
+
+1. 新增未接线方法 → 红（不许悄悄加一个没人调的接口）；
+2. **清单里的名字现在有人调了 → 也红**，必须从清单删掉。
+
+第 2 条是关键。本仓的「发现」栏曾经 F1/F2/F3 三条全部已落地、却一条都没撤下来，
+从"待办"变成"背景噪音"。**清单会自己催你删，才不会变成坟场。**
+
+#### 探针写错三次，每次都往"假阳性"方向错
+
+1. **只扫 `.py`** → `relation_panel.js` 走 `pywebview.api.set_relationship_setting(...)`
+   绕过适配层，被判成没人调；
+2. **只搜名字出现** → `PetAPI.pet_show` 的**定义行**本身就算"被用到"，而
+   `CharacterAPI.pet_show` 其实没人调。必须区分「定义」与「调用」；
+3. **不认字符串分发** → 设置页写的是 `Backend.call('set_proactive_pack_flags', pending)`，
+   只认 `name(` 的话这个**正在用**的方法被当成死代码。本仓字符串分发有三种：
+   `Backend.call('x')`（设置页）/ `call('x')`（`theme_backend_bridge.js` 第二适配层）/
+   `call("x")`（贴纸页自己直连）。
+   **认了字符串，30 个"假死"降到 20 个"真死"。**
+
+#### 闸门自己被自己满足两次
+
+- 第一版：`KNOWN_UNWIRED` 里 20 个名字都是字符串字面量，闸门扫到自己这个文件 →
+  **20 个全部"有人调"**，一上来就全红。修：排除自身路径。
+- 第二版：变异脚本里写了一句 `pywebview.api.get_version()` 当**字符串常量** →
+  `get_version` 被判"已接线"，起点就不绿。修：Python 侧用 `tokenize` 把
+  **COMMENT 与 STRING 都丢掉**再扫，只留代码 token。
+
+一般化：**凡"扫源码找某名字"的判据，先问这个名字会不会出现在字符串或注释里。**
+同族已有两条（`"backup=True" in txt` 被注释满足、`_qc_setup_hint` 的判据被注释满足）。
+
+#### 顺带：一段描述着已不存在架构的 docstring
+
+`api_pet.py: pet_hit_rect` 的注释讲的是 **TransparencyKey 品红分层窗口**那套方案，
+而现在的桌宠窗是 `transparent=True` + WebView2 alpha 合成，全仓没有 TransparencyKey /
+`SetLayeredWindowAttributes`。三处都断：前端 `reportPetBody` **从未实现**（`live2d/rig`
+只留了 `preserveDrawingBuffer:true` 和一句"要读 readPixels"的注释）、`_pet_win.native`
+恒为 `None`、`set_pet_hit_rect` 全仓不存在。已改成"这是纯 no-op，别信旧结论"并写清三处
+断点——**注释自相矛盾比没注释更糟**，AGENTS.md 那条「发现过」正是被这段注释误导了第二次。
+
+#### 验证
+
+- 三刀变异全红：加一个没人调的方法 → ③；把清单里的方法改名 → ②；给清单项加真实调用点
+  → ①（只判退出码不够，三种错都退 1，所以每刀都断言**报的是哪个分支**）
+- 闸门 115 → **117**（反向接线 6.9s / 反向接线变异 35.8s），全量 **117/117**（8m00s）
 
 ### 2026-10-21 · 「导出全部角色」是个没人调的参数；判据差点被页面顶部的全局 `contextmenu` 满足
 
