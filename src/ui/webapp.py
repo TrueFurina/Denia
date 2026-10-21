@@ -1343,18 +1343,10 @@ class CharacterAPI(PetAPI, WindowAPI):
         return {"success": True, "name": name, "on": bool(on)}
 
     # ======== 游戏音效参考音录制（击杀/阵亡/胜负） ========
-    def get_audio_status(self) -> dict:
-        """音频识别状态（参考音模板是否就绪/设备/匹配阈值），供调试台渲染。"""
-        audio = getattr(self, "_audio", None)
-        if audio is None:
-            return {"success": False, "has_audio": False,
-                    "error": "音频识别未注入（请用主程序启动）"}
-        try:
-            return {"success": True, "has_audio": True,
-                    "status": audio.reference_status()}
-        except Exception as e:
-            logger.exception("获取音频状态失败")
-            return {"success": False, "has_audio": True, "error": str(e)}
+    # 【2026-10-21 删】get_audio_status() —— 它返回 audio.reference_status()，而
+    # `get_vision_debug()["audio"]` 里已经有 `"references": reference_status()`
+    # （`game_audio.snapshot()` 带的）。调试台只轮询 get_vision_debug，这个接口零调用。
+    # 同一份数据两个出口，删掉多余的那个；要加新字段就加在 snapshot() 里。
 
     def record_audio_reference(self, event_type: str, seconds: float = 2.5) -> dict:
         """录制一次游戏音效参考音：游戏里触发对应音效时调用，录当前系统输出音频。
@@ -1472,20 +1464,9 @@ class CharacterAPI(PetAPI, WindowAPI):
         return {"success": True}
 
     # ======== OCR 识别区域管理（WebUI 调试台：新增/删除/改用途） ========
-    def ocr_get_regions(self) -> dict:
-        """获取当前 OCR 识别区域列表（含每区域最近扫描文字、玩家名，调试台展示用）。"""
-        ocr = self._ocr
-        if ocr is None:
-            return {"success": False, "error": "OCR 未注入"}
-        try:
-            snap = ocr.snapshot()
-            return {"success": True,
-                    "regions": snap.get("regions", {}),
-                    "region_texts": snap.get("region_texts", {}),
-                    "player_name": snap.get("player_name", "")}
-        except Exception as e:
-            logger.exception("获取 OCR 区域失败")
-            return {"success": False, "error": str(e)}
+    # 【2026-10-21 删】ocr_get_regions() —— 返回的是 `ocr.snapshot()` 里的
+    # regions / region_texts / player_name，全是 `get_vision_debug()["ocr"]` 的子集。
+    # 调试台按 1s 轮询 get_vision_debug，这个接口零调用。
 
     def ocr_set_player_name(self, name: str = "") -> dict:
         """设置游戏玩家名：热生效到 GameOcrMonitor + 写入 config.yaml。
@@ -1558,24 +1539,9 @@ class CharacterAPI(PetAPI, WindowAPI):
         return self._ocr_apply_regions({name: {"purpose": purpose, "rect": rect}})
 
     # ======== 文字锚点训练器（区域文字锚点规则管理） ========
-    def ocr_get_anchors(self) -> dict:
-        """获取当前文字锚点规则列表 + 各区域实时文字 + 最近命中状态。
-
-        训练器用：让用户看到"哪些区域扫到了什么字"→ 对症配置关键词规则。
-        """
-        ocr = self._ocr
-        if ocr is None:
-            return {"success": False, "error": "OCR 未注入"}
-        try:
-            snap = ocr.snapshot()
-            return {"success": True,
-                    "anchors": snap.get("anchors", []),
-                    "region_texts": snap.get("region_texts", {}),
-                    "anchor_state": snap.get("anchor_state", ""),
-                    "regions": snap.get("regions", {})}
-        except Exception as e:
-            logger.exception("获取文字锚点失败")
-            return {"success": False, "error": str(e)}
+    # 【2026-10-21 删】ocr_get_anchors() —— 返回 anchors / region_texts / anchor_state /
+    # regions，同样全是 `get_vision_debug()["ocr"]`（即 ocr.snapshot()）的子集。
+    # 写侧（ocr_set_anchors）保留：它是有真实效果的配置入口。
 
     def ocr_set_anchors(self, anchors: list) -> dict:
         """保存全部文字锚点规则：热生效到 GameOcrMonitor + 写入 config.yaml。
@@ -1767,12 +1733,10 @@ class CharacterAPI(PetAPI, WindowAPI):
         logger.info("对话悬浮层已关闭")
         return {"success": True}
 
-    def chat_overlay_state(self) -> dict:
-        """对话悬浮层状态（供 UI 开关同步）。"""
-        return {
-            "open": self._overlay_open(),
-            "enabled": bool(self._overlay_cfg().get("enabled")),
-        }
+    # 【2026-10-21 删】chat_overlay_state() —— "悬浮层开着没"由
+    # `get_vision_debug()["chat_overlay_open"]` 给（调试台已在用）；`enabled` 是内部
+    # 配置（`_overlay_cfg()` 自己读写，start/stop_chat_overlay 维护），界面上没有第二个
+    # 消费者。同一状态两个出口，删多余的那个。
 
     def _overlay_open(self) -> bool:
         thread = getattr(self, "_overlay_thread", None)
@@ -8170,29 +8134,15 @@ class CharacterAPI(PetAPI, WindowAPI):
         co = (self._cfg.raw.get("cloud_omni") or {}) if self._cfg else {}
         return str((co or {}).get("api_key") or "").strip()
 
-    def get_bailian_quota(self, force: bool = False) -> dict:
-        """设置页读取百炼免费额度·本地记账快照。
+    # 【2026-10-21 删】get_bailian_quota() —— 本地记账估算。2026-09-29 起额度卡已改成
+    # 「应用内嵌浏览器看真实额度，不再本地估算」（设置页 loadBailianConsoleStatus +
+    # get_bailian_real_quota + get_quota_status），这个接口从那以后零调用。
+    # 留着它等于给"本地估算"留一个随时会被误接回界面的入口 —— 而两份数字打架时，
+    # 用户没有能力判断该信哪个。
 
-        force 参数保留兼容前端「立即同步」按钮；本地读 JSON 很快，无需真正强刷。
-        """
-        key = self._bailian_api_key()
-        try:
-            from ..llm.quota_meter import snapshot as _qm_snapshot
-            items = _qm_snapshot()
-        except Exception as e:  # noqa: BLE001
-            return {"enabled": bool(key), "data": [], "updated_at": time.time(),
-                    "error": f"记账模块不可用：{e}", "note": ""}
-        return {"enabled": bool(key), "data": items, "updated_at": time.time(),
-                "error": None,
-                "note": ("本地估算：仅统计本软件经百炼发起的调用；双工实时通话暂不计入、"
-                         "他处用同一 Key 不计入。精确余量以百炼控制台「免费额度」页为准。")}
-
-    def get_model_3d_options(self) -> dict:
-        formats = [
-            {"id": "mmd", "name": "MMD (PMX)", "description": "MikuMikuDance 模型格式"},
-            {"id": "vrm", "name": "VRM", "description": "VRM 虚拟角色模型格式"},
-        ]
-        return {"success": True, "formats": formats}
+    # 【2026-10-21 删】get_model_3d_options() —— 写死 mmd/vrm 两条格式。界面上从来没有
+    # "选 3D 格式"的下拉（旧页 app.js 只是把 `char.model_3d.format` 原样显示出来）。
+    # 与已删的 get_backend_options 同型：一份没人读、也不会跟着后端能力变的清单。
 
     # ======== 游戏陪伴方案（config proactive.game_plans，双工模型按此陪伴） ========
     def get_game_plans(self) -> dict:
