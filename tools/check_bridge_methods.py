@@ -28,6 +28,67 @@ JS = os.path.join(ROOT, "src", "ui", "web", "redesign", "app_backend.js")
 _CALL_RE = re.compile(r"\bcall\(\s*['\"]([A-Za-z_][A-Za-z0-9_]*)['\"]")
 
 
+def js_files() -> list[str]:
+    """外链 JS（`<script src=...>`）—— 这是原来完全没查的盲区。
+
+    【2026-10-21 补】原来只扫 HTML 里的**内联** `<script>`。而引导页把「建角色」整步
+    拆进了 `onboarding_role.js`（2000+ 行，`<script src>` 加载），它的桥调用对闸门
+    完全不可见 —— 实测里面就躺着一处断线（`B.downloadVoiceModel`，导出名其实是
+    `downloadModel`），而闸门一直是绿的。
+
+    排除三类，避免把噪音当断点：
+      - `app_backend.js`：适配层自己（它就是被比对的对象）；
+      - 文件名以 `_` 开头：设计稿/实验稿（与 `html_pages()` 同一约定）；
+      - 第三方打包产物（`*.min.js`、`morphicons/` 之类 hash 命名的 bundle）。
+    """
+    out: list[str] = []
+    web = os.path.join(ROOT, "src", "ui", "web")
+    for dp, dn, fns in os.walk(web):
+        dn[:] = [d for d in dn
+                 if d not in ("node_modules", "__pycache__", "morphicons", "vendor")]
+        for fn in fns:
+            if not fn.endswith(".js"):
+                continue
+            low = fn.lower()
+            if low.startswith("_") or low.endswith(".min.js") or fn == "app_backend.js":
+                continue
+            if "pre_v2" in low or "simplified" in low:
+                continue
+            out.append(os.path.join(dp, fn))
+    return sorted(out)
+
+
+# 外链 JS 里 Backend 的别名。`B` 是最常见的（函数参数名，调用方传 `getB()`）；
+# `Backend` / `window.Backend` / `bk` 也出现过。**只认调用形态** `X.name(`，
+# 属性读取（`X.name`）不报——很多地方是 `if(X.foo)` 的探测，不构成断点证据。
+_ALIAS_CALL_RE = re.compile(
+    r"\b(?:B|bk|Backend|window\s*\.\s*Backend|window\s*\.\s*parent\s*\.\s*Backend)"
+    r"\s*\.\s*([A-Za-z_$][\w$]*)\s*\(")
+# `B` 这个单字母别名太泛，只有在文件里真出现过"取 Backend"的动作时才认它。
+# 三种真实形态（都实测过）：
+#   - `function getB(){...}` + `_b()` 包装（引导页两件套：onboarding_role / model_downloader）
+#   - 直接 `window.Backend` / `parent.Backend`
+#   - **工厂函数参数**：`llm_write.js` 的 `function make(B)`，调用方写
+#     `LlmWrite.make(Backend)` —— 不认这种就会整文件漏扫（它调了 5 个桥方法）
+_ALIAS_HINT_RE = re.compile(
+    r"\bgetB\s*\(|\b_b\s*\(|window\s*\.\s*Backend"
+    r"|function\s+[\w$]*\s*\(\s*B\s*[,)]"
+    r"|\(\s*B\s*\)\s*=>")
+
+
+def used_in_js(path: str) -> set[str]:
+    src = _strip_comments(open(path, encoding="utf-8", errors="replace").read())
+    has_alias = bool(_ALIAS_HINT_RE.search(src))
+    names: set[str] = set()
+    for m in _ALIAS_CALL_RE.finditer(src):
+        whole = m.group(0)
+        # 单字母别名（B/bk）要求文件里确实在取 Backend，否则可能是同名的局部对象
+        if whole[0] in "Bb" and not whole.startswith("Backend") and not has_alias:
+            continue
+        names.add(m.group(1))
+    return names
+
+
 def html_pages() -> list[str]:
     """所有会真正加载的页面。
 
@@ -186,6 +247,16 @@ def main() -> int:
         for n in missing:
             rel = os.path.relpath(p, ROOT)
             problems.append(f"① {rel}: Backend.{n} 未导出（点了没反应/恒走降级）")
+    # ①b 外链 JS 调了、适配层没导出（2026-10-21 补的盲区）
+    js_seen = 0
+    for p in js_files():
+        names = used_in_js(p)
+        js_seen += len(names)
+        for n in sorted(names - exp):
+            rel = os.path.relpath(p, ROOT)
+            problems.append(
+                f"① {rel}: Backend.{n} 未导出（外链 JS，多半是方法名写错；"
+                f"`if(B.{n})` 这类守卫会让它静默降级，不报错）")
     # ② 导出了但找不到 call('…') 目标（且不是纯前端助手）
     for n in sorted(total_used & exp):
         if n in helpers:

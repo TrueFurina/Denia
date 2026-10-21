@@ -9,7 +9,7 @@
      getCharacters / getCapabilitySlots / listVoiceProfiles / listCloneEngines
      testVoice + getVoiceTestStatus / setReferenceAudio / pickAudioFile
      setCapabilitySlot('tts') / setVoiceMode / saveCharacter / switchCharacter / generateCharacter
-     downloadVoiceModel + getVoiceDownloadStatus / scanTtsModelDir / setTtsModelDir
+     downloadModel + getVoiceDownloadStatus / scanTtsModelDir / setTtsModelDir
    红线：桥不可用时保留稿内 mock 行为（设计稿/无桥场景仍可交互），有桥则走真实接口；
          不画假进度（下载/试听进度来自后端）。
    用法：OnboardingRole.mountInto(容器) —— 引导页 screenRole 用；OnboardingRole.open() 弹层预览。
@@ -1868,11 +1868,19 @@ function startDl(id){
   var B = _b();
   var st = dlState(id);
   /* 真实环境：download_voice_model 起后台任务 → 轮询真实进度（不画假进度） */
-  if(B && B.downloadVoiceModel){
+  /* 【2026-10-21 修·桥方法名写错】原来是 `B.downloadVoiceModel` —— 适配层导出的名字是
+     `downloadModel`（app_backend.js → call('download_voice_model')）。于是这个 `if` 恒
+     false，整块跳过、落到下面的「无桥降级：稿内模拟进度」分支：**进度条是假的**（固定
+     "8.2 MB/s" 往上走），走到 100% 还 toast「下载完成，可以开始克隆了」，而一个字节都没下。
+     正是本文件开头那条红线「不画假进度」被绕过 —— 而且是**静默**的：守卫把"名字写错了"
+     伪装成"这个环境没有桥"。
+     `tools/check_bridge_methods.py` 已补上「外链 JS」这一层扫描（原来只扫 HTML 内联
+     script），这类错误现在会直接判红。 */
+  if(B && B.downloadModel){
     st.st = "downloading"; st.pct = st.pct || 0; st.speed = "";
     S.dl[id] = st;
     renderDlList();
-    Promise.resolve(B.downloadVoiceModel({engine:id})).then(function(r){
+    Promise.resolve(B.downloadModel({engine:id})).then(function(r){
       if(r && r.already){ st.st = "installed"; st.pct = 100; S.cloneModel = true; renderDlList(); toast(e.name + " 已就绪，无需下载"); return; }
       var tid = r && r.task_id;
       if(!tid){ st.st = "error"; renderDlList(); toast("下载启动失败：" + ((r && r.error) || "无返回")); return; }

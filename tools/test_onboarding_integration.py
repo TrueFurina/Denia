@@ -44,6 +44,18 @@ def chk(name, cond, extra=""):
 
 
 def finding(code, text):
+    """记一条「已知但还没处理」的发现（不判红）。
+
+    【2026-10-21 · 这个机制会腐烂，慎用】本文件原有三条发现 F1/F2/F3，实测**全部已经
+    落地了**，却一直挂在报告里：
+      · F1「缺 kind/repo/note，需新增克隆引擎清单接口」→ `list_clone_engines()` 早就有；
+      · F2「后端不守非达妮娅 model_3d」→ `save_character` 早就兜底强制 False；
+      · F3「空 api_key 会擦掉已存 Key」→ `merge_cloud_tts_provider` 早就改成"空值不改"。
+    发现栏不红、也不会自己消失，于是它从"待办"变成了"背景噪音"——与"红着的门禁会被
+    训练成噪音"同一个毛病，只是它连红都不红，更隐蔽。
+    所以：**新加发现必须同时写明「复核日期」和「什么条件下该删掉它」**，并且尽量直接
+    写成断言（能守的行为就别只记一条愿望）。
+    """
     FINDINGS.append((code, text))
     print("  ⚠ 发现  %s  %s" % (code, text))
 
@@ -267,22 +279,26 @@ def _tts_key(raw):
     return str(((((raw.get("voice") or {}).get("clone") or {}).get("cloud") or {})
                 .get("dashscope_cosy") or {}).get("api_key") or "")
 
+# 【2026-10-21 修·这条"发现"是假警】原来直接拿出厂模板里现有的 Key 来比：
+#   key_before = _tts_key(...)   # 出厂模板里**没有** Key → 空
+#   ... 传空 api_key ...
+#   if key_after == key_before and key_before:   # ← 恒 False（key_before 是空）
+#       PASS
+#   else: finding("F3", "会把已存 Key 擦成空字符串")   # ← 于是**永远**记一条发现
+# 二态判据把"没有 Key 可擦"压成了"Key 被擦掉了"。实测（手动探针）后端**不擦**：
+# 先写入 sk-fake-1234567890，再传 api_key="" → Key 原样还在，契约成立。
+# 改成先造一个 Key 再验 —— 这样"能不能擦"真的被验到了，而且不再需要发现栏。
+api.set_capability_slot({"cap": "tts", "provider": "dashscope_cosy",
+                         "model": "qwen-audio-3.0-tts-plus",
+                         "api_key": "sk-onb-integration-probe"})
 key_before = _tts_key(api._cfg.raw)
+chk("[B4] 预置 Key 成功（否则下一条无从验证）", key_before == "sk-onb-integration-probe",
+    key_before[:20])
 api.set_capability_slot({"cap": "tts", "provider": "dashscope_cosy",
                          "model": "cosyvoice-v3.5-plus", "api_key": ""})
 key_after = _tts_key(api._cfg.raw)
-if key_after == key_before and key_before:
-    chk("[B4] 空 api_key 不擦除已存 Key（契约成立）", True, key_after[:20])
-else:
-    finding("F3", "setCapabilitySlot('tts') 传空 api_key 会把已存 Key 擦成空字符串 "
-                  "（_set_tts → merge_cloud_tts_provider 无条件写 api_key or \"\"），"
-                  "但 set_capability_slot 文档契约写的是「空字符串=不改」。"
-                  "👉 引导页「已绑定 TTS」模式只回传 provider/model/voice_id ⇒ 会静默清空第 1 步的 Key。"
-                  "落地必须：①已绑定模式不回传 api_key，或 ②后端 merge 层补空值守卫。")
-    chk("[B4] 空 api_key 语义（契约被违反，记发现 F3）", key_before != "", "before=%r after=%r" % (key_before[:16], key_after[:16]))
-    # 恢复 Key，避免影响后续用例
-    api.set_capability_slot({"cap": "tts", "provider": "dashscope_cosy",
-                            "model": "qwen-audio-3.0-tts-plus", "api_key": "sk-onb-integration-fake"})
+chk("[B4] 空 api_key 不擦除已存 Key（契约成立）", key_after == key_before and bool(key_before),
+    "before=%r after=%r" % (key_before[:16], key_after[:16]))
 
 # ---- B5/B6 第 2 步：下模型 ----
 cat = api.get_model_catalog()
@@ -355,16 +371,26 @@ chk("[B10] 同 id 重存=合并（voice 不丢）", (row.get("voice") or {}).get
 n_same = sum(1 for i in ids if i == "_onb_int_test")
 chk("[B10] 重存不产生重复条目", n_same == 1, "n=%d" % n_same)
 
-# model_3d 守卫：后端不强制非达妮娅关闭 → 记录为发现
+# model_3d 守卫：**后端已经守了**（`save_character` 里 `if char_id != "danya": enabled=False`）。
+# 【2026-10-21 修·这条"发现"是过时的】原来这里记一条 F2「后端不守卫非达妮娅 model_3d ——
+# 引导页建角色必须自行施加」。实测：传 enabled:true 存回来是 False，后端**有**兜底。
+# 那条注释多半写在兜底之前，之后没人回头删——发现栏不红也不会消失，只会变成背景噪音。
+# 现在改成两条真断言：①后端兜底还在（谁删了会红）②引导页那行显式声明也还在
+# （双保险，别指望单靠后端）。
+# 注意**先剥注释再断言** —— 否则我自己在注释里复述一遍那串字面量就能满足判据
+# （本仓踩过：`"backup=True" in txt` 被注释满足）。
 m3 = api.save_character({"id": "_onb_int_test", "name": "集成测试角色2",
                          "model_3d": {"enabled": True, "format": "live2d"}})
 row2 = next((c for c in (api.get_characters().get("characters") or []) if c.get("id") == "_onb_int_test"), {})
-if (row2.get("model_3d") or {}).get("enabled") is True:
-    finding("F2", "saveCharacter 后端不守卫非达妮娅 model_3d —— 引导页建角色必须自行施加 "
-                  "「非 danya 强制 {enabled:false}」（角色页是在前端做的）")
-    chk("[B10] 非达妮娅 model_3d 约束（后端未守，记发现）", True)
-else:
-    chk("[B10] 后端已守非达妮娅 model_3d", True)
+chk("[B10] 后端兜底：非达妮娅传 enabled:true 也存成 false",
+    (row2.get("model_3d") or {}).get("enabled") is False,
+    "enabled=%r" % (row2.get("model_3d") or {}).get("enabled"))
+_role_js_path = os.path.join(PROJ, "src", "ui", "web", "onboarding_role.js")
+_role_js = open(_role_js_path, encoding="utf-8").read()
+_role_js_nc = re.sub(r"/\*.*?\*/", "", _role_js, flags=re.S)
+_role_js_nc = re.sub(r"(?m)^\s*//.*$", "", _role_js_nc)
+chk("[B10] 引导页建角色 payload 也显式声明 model_3d.enabled=false（双保险）",
+    re.search(r"model_3d\s*:\s*\{\s*enabled\s*:\s*false\s*\}", _role_js_nc) is not None)
 
 sw = api.switch_character("_onb_int_test")
 chk("[B11] switchCharacter 激活成功", bool(sw.get("success")), str(sw)[:100])
@@ -396,13 +422,17 @@ if va.get("success"):
         ek = engs[0]
         chk("[B12] 引擎含 id/label/disk_gb/device/verdict/need_gb",
             all(k in ek for k in ("id", "label", "disk_gb", "device", "verdict", "need_gb")))
-        # 设计稿要 kind/repo/note 用于 downloader 分类，后端未提供 → 发现
-        miss2 = [k for k in ("kind", "repo", "note") if k not in ek]
-        if miss2:
-            finding("F1", "getVoiceVramAdvice().engines 缺 %s —— 引导页下载器要展示的 5 个引擎"
-                          "（含 cloud/external 两类，来自 _clone_engine_spec）没有对应桥面；"
-                          "落地需新增「克隆引擎清单」接口或扩展本接口（否则第 2 类引擎无数据）" % miss2)
-        chk("[B12] 引擎分类字段存在性（缺则记发现 F1）", True)
+        # 【2026-10-21 撤回 F1】这里原来记一条"发现：缺 kind/repo/note，落地需新增
+        # 「克隆引擎清单」接口"。那个接口**早就有了** —— `list_clone_engines()`
+        # （下方 B19 在逐项验）。也就是说 F1 从落地那天起就是过时的，但它以「⚠ 发现」
+        # 的形式一直挂着：不红、也不会消失，只会训练人忽略「发现」那一栏。
+        # 与"红着的门禁变成噪音"是同一个毛病，只是它连红都不红。
+        # 改成守**职责划分**：显存建议只回答"跑不跑得动"（3 个本地引擎）；
+        # 下载器清单负责"展示与下载"（5 个引擎，带 kind/repo/note）。
+        _dl = api.list_clone_engines()
+        chk("[B12] 下载器清单接口存在且覆盖 5 引擎（F1 已落地，细节见 B19）",
+            bool(_dl.get("success")) and len(_dl.get("engines") or []) == 5,
+            "n=%d" % len(_dl.get("engines") or []))
     chk("[B12] 含 recommend/local_feasible", "recommend" in va and "local_feasible" in va)
 else:
     chk("[B12] 无 GPU 时优雅降级（success False + reason）",
