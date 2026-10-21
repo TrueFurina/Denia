@@ -89,8 +89,17 @@ def _load_screen_capture():
     import importlib
 
     # 桩掉 privacy（避免拉进真实实现）
+    # 【2026-10-21 修·桩缺导出名】只塞 privacy_mode，而 screen_capture.py 用的是
+    # `from .privacy import privacy_mode, sensitive_skip_reason` —— 产品后来加了后者
+    # （敏感窗口整帧不采集），桩没跟上 → 3 项直接 ImportError 连坐。
+    # 正确写法：先复制真模块的公开名字，再覆盖需要替换的那几个。
+    import src.perception.privacy as _real_privacy
     fake_privacy = types.ModuleType("src.perception.privacy")
+    for _n in dir(_real_privacy):
+        if not _n.startswith("__"):
+            setattr(fake_privacy, _n, getattr(_real_privacy, _n))
     fake_privacy.privacy_mode = lambda: False
+    fake_privacy.sensitive_skip_reason = lambda *a, **k: ""
     sys.modules["src.perception.privacy"] = fake_privacy
 
     # 桩掉 vision_analyzer（ScreenCapture 只用它的 analyze）

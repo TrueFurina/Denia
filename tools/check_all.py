@@ -210,6 +210,30 @@ GATES: list[tuple[str, str, list[str], bool]] = [
     ("OneBot 协议", PY_VENV, ["src/channels/tests/test_onebot.py"], True),
     ("OneBot 反连鉴权", PY_VENV, ["src/channels/tests/test_onebot_reverse_auth.py"], True),
     ("命令白名单", PY_VENV, ["src/llm/tests/test_run_command_whitelist.py"], True),
+    # ---- 第三批测试普查（2026-10-21）：27 个没进闸门的测试逐个试跑，修好 7 个，
+    #      连同本来就绿的 13 个一起收进来。修的过程抓到 1 个出厂缺陷
+    #      （模板里三个社交通道默认 enabled: true，新用户装完就去连不存在的本地服务）
+    #      和 3 类「测试与产品脱节」：桩缺导出名、回调签名过时、fire-and-forget 时序。
+    ("通道接线", PY_VENV, ["src/channels/tests/test_config_wiring.py"], False),
+    ("桌面视频", PY_VENV, ["src/channels/tests/test_desktop_video.py"], False),
+    ("桌面视频 e2e", PY_VENV, ["src/channels/tests/test_desktop_video_e2e.py"], False),
+    ("双工链路路由", PY_VENV, ["src/channels/tests/test_duplex_link_routing.py"], False),
+    ("空间说说", PY_VENV, ["src/channels/tests/test_gewechat_qzone.py"], False),
+    ("媒体路由", PY_VENV, ["src/channels/tests/test_media_routing.py"], False),
+    ("视频观看", PY_VENV, ["src/channels/tests/test_video_watch.py"], False),
+    ("视频进度", PY_VENV, ["src/channels/tests/test_video_watch_progress.py"], False),
+    ("双工停止与麦克风", PY_VENV, ["tools/test_duplex_stop_and_mic.py"], False),
+    ("记忆反思", PY_VENV, ["tools/test_memory_reflect.py"], False),
+    ("记忆合成", PY_VENV, ["tools/test_memory_synthesis.py"], False),
+    ("里程碑落盘", PY_VENV, ["tools/test_milestone_persist.py"], False),
+    ("模型下载器", PY_VENV, ["tools/test_model_downloader.py"], False),
+    ("P1 增量", PY_VENV, ["tools/test_p1_incremental.py"], False),
+    ("主动开口空闲", PY_VENV, ["tools/test_proactive_boot_idle.py"], False),
+    ("关系模型", PY_VENV, ["tools/test_relationship.py"], False),
+    ("关系里程碑", PY_VENV, ["tools/test_relationship_milestone.py"], False),
+    ("抓屏性能闸", PY_VENV, ["tools/test_screen_capture_perf_guard.py"], False),
+    ("看屏热生效", PY_VENV, ["tools/test_desktop_watch_hotapply.py"], False),
+    ("引导页 TTS 键", PY_VENV, ["tools/test_onboarding_tts_key.py"], False),
     # 导入冒烟：逐个 import 每个模块（独立子进程，并发 8），抓「导入期就崩」。
     # compileall 只保证语法和名字对得上，保证不了能不能被加载——2026-10-17 实测两例
     # （import 期 mkdir('G:\\')、顶层 argtypes 引用已删的 _u32）compileall 全绿。

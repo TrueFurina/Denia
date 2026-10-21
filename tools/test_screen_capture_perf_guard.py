@@ -95,9 +95,20 @@ def _load_screen_capture():
     """导入 ScreenCapture；桩掉 privacy / vision_analyzer / imagehash / own_window。
 
     own_window 是真实现（要碰 Win32 窗口枚举），测试里没必要跑，桩掉更快更稳。
+
+    【2026-10-21 修·桩缺导出名】原桩只塞了 `privacy_mode`，而 screen_capture.py 的
+    是 `from .privacy import privacy_mode, sensitive_skip_reason` —— 产品后来给 privacy
+    加了 `sensitive_skip_reason`（敏感窗口整帧不采集），桩没跟上，于是整个 C 段
+    （3 项）被一条 ImportError 连坐跳过。桩的正确写法是**先复制真模块的公开名字、
+    再覆盖需要替换的那几个**，这样产品侧新增导出名时桩自动跟上。
     """
+    import src.perception.privacy as _real_privacy
     m = types.ModuleType("src.perception.privacy")
-    m.privacy_mode = lambda: False
+    for _n in dir(_real_privacy):
+        if not _n.startswith("__"):
+            setattr(m, _n, getattr(_real_privacy, _n))
+    m.privacy_mode = lambda: False          # 测试里恒定"不在隐私模式"
+    m.sensitive_skip_reason = lambda *a, **k: ""   # 恒定"不是敏感窗口"
     sys.modules["src.perception.privacy"] = m
 
     va = types.ModuleType("src.perception.vision_analyzer")

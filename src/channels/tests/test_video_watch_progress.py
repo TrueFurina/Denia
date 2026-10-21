@@ -107,7 +107,11 @@ class TestWatchVideoProgress(unittest.TestCase):
             async def run():
                 return await video_watch.watch_video(
                     llm, "https://b23.tv/abc123",
-                    on_progress=lambda s, m, done=False, pct=None: (
+                    # 【2026-10-21 修·签名过时】产品给 on_progress 加了第 5 个参数 meta
+                    # （kind/title/url，供前端气泡显示"在看什么"）。这个 lambda 还停在
+                    # 4 参 → TypeError，而 watch_video 的 _prog 用 `except: pass` 吞掉了
+                    # 回调异常 → 表现为"一个阶段都没收到"，看不出是签名不匹配。
+                    on_progress=lambda s, m, done=False, pct=None, meta=None: (
                         stages.append((s, done)) or pcts.__setitem__(s, pct)))
             out = asyncio.run(run())
 
