@@ -13,6 +13,7 @@
 
 | commit | 时间 | 类型 | 一句话 | 验证 |
 |---|---|---|---|---|
+| `f971356` | 02:4x | refactor | **额度浮层整条死链删掉**：`window.__quotaAlert` 不是"不可达"，是**三段各自看着都在工作、合起来是死的**——Router 有回调槽位但 `_fire_quota_alert` 从不调、webapp 注册了但存根只 `logger.info` 从不广播、前端有浮层但后端广播 type 全集里从来没有 `quota_alert`。删三段（浮层 IIFE 141 行 + `.qa-*` CSS 25 行 + 注册点 7 行 + 存根 21 行），**保留** `quota_state()` 作将来「检测额度」的数据源 | 全量门禁 **129/129**（9m14s，新增「额度墓碑变异」）；`test_quota_alert` 13→15 项；三刀变异全过 |
 | `d14b309` | 22:2x | fix | **反向接线变异刀第二次失效**（同一坑）：M3 选目标时只搜 `webapp.py`，而清单瘦到 3 条后剩下三个全在 `api_pet.py` / `api_window.py` →「找不到可改名的方法」。改成走 `CharacterAPI.__mro__` 定位定义所在文件 | 三刀全绿（M3 报「② `clear_pet_cache`（`src/ui/api_pet.py`）」）；全量闸门 **128/128**（上一轮 127/128） |
 | `b78e5ab` | 20:5x | feat | **关系面板的「原型 温柔 ·自动」原来改不了**：那个「·自动」标签本身就在说"手动覆盖是设计里的东西"，但入口一直没建 —— `set_archetype_manual` 和 `get_relation_events` 都是"有实现、没出口"。补两个入口：**原型下拉**（选项由后端 `ARCHETYPES` 给，JS 不写死枚举）+ 底部**最近事件**列表（最近 6 条，最近的在上） | node 真值表 **24 项**（**原样加载** `relation_panel.js` 在假 DOM + 假 pywebview 里跑，含两个对照组：老后端没有 `archetypes` 时禁用而非写死一份枚举 / 后端没连上时不许把下拉变成空壳）；四刀变异全红（调错方法名 / 下拉写死枚举 / 事件行走 innerHTML / 不再拉事件）；反向接线 312 有人调、未接线 **3**；闸门 126→**128** |
 | `b12dd39` | 20:1x | fix | **额度浮层「再试一次」点了什么都不做**：`app_backend.js` 里 `typeof Backend.probeVisionModel === 'function'` **恒为 false** —— 后端 `probe_vision_model` 一直在，适配层从没导出它。补导出；并新增闸门 `check_bridge_guards.py` 专守「守卫的目标必须在导出表里」（`typeof` + `if (B.x)` + `!B.x` 三种形态，全站 **220 处** / 109 个不同名字 / 导出表 255 个） | 五刀变异全红（导出少了 / 页面出现假守卫 / **正则坏了 → 必须 exit 2** / 对照组：注释里复述守卫名必须仍绿 / `if (B.x)` 形态也要查）；闸门 124→**126** |
@@ -108,7 +109,79 @@
 > 教训：并发会话各自只 `git add` 自己知道的文件，提交前先 `git log` 确认HEAD 没有
 > 在几分钟内被别人推进过。
 
-### 2026-10-21 · 反向接线变异刀第二次失效：清单瘦到 3 条，剩下三个都不在 webapp.py
+### 2026-10-22 · 额度浮层整条死链：三段各自看着都在工作，合起来是死的
+
+**问题**：10-21 留下一条待裁决——`window.__quotaAlert` 浮层"当前不可达"，
+倾向连浮层一起删约 150 行，复核条件是"下次动额度相关代码时一起裁决"。
+本轮动额度代码，逐层查下来发现"不可达"这个词太轻了：
+
+| 层 | 有什么 | 实际 |
+|---|---|---|
+| Router | `set_quota_alert_callback` 槽位 | 有槽位，`_fire_quota_alert` **从不调**（10-02 决策：只记状态） |
+| webapp | 注册回调 + `_on_vision_quota_alert` | 注册了，但存根只 `logger.info`，**从不广播** |
+| 前端 | 浮层 + `quota_alert` 广播分支 | 有 UI，但后端广播 type 全集里**从来没有这个 type** |
+
+后端广播 type 全集（`_wv2_broadcast` 13 个调用点 + `agent_confirm_broker` 注入的
+`agent_confirm` + `ws_server.broadcast` 的 `character_switched`）：
+`chat_push` / `call_push` / `pet_tip` / `video_watch` / `agent_confirm` /
+`character_switched`。**没有 `quota_alert`。**
+
+这就是「假接口」的复合形态：每一段单独看都在工作（槽位在、注册在、UI 在），
+合起来是死的。10-02 停掉主动弹窗时只拆了 Router 那一段的"调用"，另外两段留着，
+于是一个被否决的行为在界面上还留着一座完整的、点不亮的房子。
+
+**改动**：
+
+- 删 `app_backend.js` 浮层 IIFE 141 行 + 广播分支（留"为什么删"的注释）
+- 删 `pages.css` `.qa-*` 25 行
+- 删 `webapp.py` 注册点 7 行 + 存根方法 21 行
+- **保留** `VisionRouter._fire_quota_alert` / `set_quota_alert_callback` /
+  `quota_state()`——墓碑测试指着它们，且 `quota_state()` 是将来"用户显式点
+  检测额度"的唯一数据源（现在零出口，但那是另一件事）
+
+**第二层墓碑**：原来 `test_quota_alert.py` 只有 Router 层墓碑
+（`test_alert_does_not_fire_proactively` 断言"回调不被调用"）。
+**只测 Router 层不够**——注册点写着"主动广播给前端弹询问浮层"，谁把它加回来，
+Router 层那条仍然绿，而主动打扰已经铺回产品里了。补两条：
+
+- `test_product_code_does_not_register_proactive_popup`：webapp 里不许出现
+  `set_quota_alert_callback` / `_on_vision_quota_alert`（`tokenize` 剥注释与字符串）
+- `test_frontend_has_no_quota_alert_branch`：`app_backend.js` 里不许出现 `quota_alert`
+
+**本轮最值钱：剥注释的"顺序" bug**。第一版判据用两条正则剥 JS 注释，先剥行注释：
+
+```python
+txt = re.sub(r"(?<![:\w])//.*$", "", txt, flags=re.M)   # 先剥行注释
+txt = re.sub(r"/\*.*?\*/", "", txt, flags=re.S)          # 再剥块注释
+```
+
+块注释里只要含 `//`（URL 最常见），第一条就从那儿删到行尾，**把同行的 `*/` 一起
+删掉** → 块注释变成"只有 `/*` 没有 `*/`" → 第二条非贪婪匹配错位 → **吃掉后面大段
+真实代码**。变异刀 M2（把 `quota_alert` 分支加回前端）因此**假绿**过一次。
+
+修法：状态机一次性扫描，先判 `/*` 再判 `//`。
+`check_bridge_guards.py` 的顺序本来是对的，但**没有判据守着这个顺序** → 补 M6：
+插一个含 `https://` 的跨行块注释，除"必须绿"之外还断言**守卫总数不变**。
+顺序颠倒时闸门确实还绿，但真实守卫被吃掉、总数会少——M4 抓不到它（行注释在两种
+顺序下都被剥掉、都是绿）。这正是"覆盖数要打印出来看"的又一处用处。
+
+**另外两个刀失效**（都与 10-21 的 `_qc_api_wiring_mutation` M3 同型）：
+
+- `_qc_bridge_guards_mutation` M1 写死删 `probeVisionModel` 导出，而那个 bug 修好后
+  页面里已经没有守卫指向它 → 删掉导出闸门仍然绿、**刀悄悄失效**。改成按
+  `guards_in()` × `exported()` 交集动态取（现在取到 `getQuotaStatus`）。
+- `_qc_quota_tombstone_mutation` M2 第一版锚点选在注释块**中间**一行，注入的代码落在
+  `/* ... */` 内部、被剥注释正确剔除 → 判据绿是**对的**，刀却报 FAIL。插到注释
+  结束之后即可。教训：变异刀要模拟"代码里用"，锚点必须在注释**外**。
+
+**验证**：全量门禁 **129/129**（9m14s，新增「额度墓碑变异」）；
+`test_quota_alert` 13 → 15 项；`_qc_quota_tombstone_mutation` 三刀全过；
+`_qc_bridge_guards_mutation` 六刀全过。
+
+**新发现（待裁决）**：`src/ui/web/redesign/_av_test.html` 1752 行、无人引用、
+却被 git 跟踪进发布包，里面还有孤儿 `.qa-*` CSS。
+**复核条件：下次做出包 / 验包时，一起裁决这个测试页该不该进包。**
+
 
 第一轮全量门禁 **127/128**，红的是「反向接线变异」：
 
