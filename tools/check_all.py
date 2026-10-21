@@ -63,6 +63,10 @@ GATES: list[tuple[str, str, list[str], bool]] = [
     # 2026-10-21 补了「外链 JS」这一层（原来只扫 HTML 内联 script，引导页那个
     # 2000 行的 onboarding_role.js 整个不可见 —— 里面就躺着一处假进度条）。
     ("前端桥接", PY_VENV, ["tools/check_bridge_methods.py"], False),
+    # 桥接闸门自己的变异（2026-10-21）：这道门连着两次"看着绿、其实整文件没被扫"，
+    # 而它没有变异脚本。四把刀各打一条路径：内联+别名（index.html / 另一页面）、
+    # 外链 JS、以及"内联扫描退化成空集"。约 2s，标慢项（会改源码再还原）。
+    ("桥接变异", PY_VENV, ["tools/_qc_bridge_mutation.py"], True),
     # 死引用看门狗：`getElementById('x')` 拿到 null 是**静默**的（JS 不报错，
     # 只是 `if(el)` 恒假、那段逻辑永不执行）。它自带 KNOWN_DEAD 白名单（每条写了原因）。
     # 【2026-10-21 收进闸门】这个工具早就写好了，docstring 也写着"纳入自测后即成为回归
@@ -281,6 +285,11 @@ GATES: list[tuple[str, str, list[str], bool]] = [
     ("语音合成变异", PY_VENV, ["tools/_qc_voice_mutation.py"], True),
     ("语音识别变异", PY_VENV, ["tools/_qc_asr_mutation.py"], True),
     ("配置引用变异", PY_VENV, ["tools/_qc_pathrefs_mutation.py"], True),
+    # 导出聊天记录（2026-10-21 新增功能）：33 项，约 0.6s。
+    # 三条红线：导的是**全部**不是最近 200 条；没记录时**报错而不写空文件**；
+    # 角色名带 `/ : * ?` 也不能炸。四刀变异见 _qc_chat_export_mutation。
+    ("导出聊天记录", PY_VENV, ["tools/test_chat_export.py"], False),
+    ("导出聊天记录变异", PY_VENV, ["tools/_qc_chat_export_mutation.py"], True),
     # 导入冒烟：逐个 import 每个模块（独立子进程，并发 8），抓「导入期就崩」。
     # compileall 只保证语法和名字对得上，保证不了能不能被加载——2026-10-17 实测两例
     # （import 期 mkdir('G:\\')、顶层 argtypes 引用已删的 _u32）compileall 全绿。

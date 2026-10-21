@@ -76,8 +76,17 @@ _ALIAS_HINT_RE = re.compile(
     r"|\(\s*B\s*\)\s*=>")
 
 
-def used_in_js(path: str) -> set[str]:
-    src = _strip_comments(open(path, encoding="utf-8", errors="replace").read())
+def _names_in_src(src: str) -> set[str]:
+    """从一段 JS 里取「被调用的桥方法名」。内联脚本与外链 JS **共用这一份逻辑**。
+
+    【2026-10-21 修·内联脚本没有别名支持】原来 `used_in_page` 只认字面量 `Backend.`，
+    而 `index.html` 的工具栏绑定块写的是 `var B = (window.Backend && window.Backend) || ...`
+    然后 `B.clearChat()` / `B.exportChatHistory({})`。于是**那个文件里的桥调用对闸门
+    完全不可见** —— 实测：把 `exportChatHistory` 从适配层导出里注释掉，闸门照样
+    `exit 0 / 三层全对得上`。而这一块正是历史上"工具栏按钮全部无效"的地方。
+    外链 JS 早就支持别名（`used_in_js`），内联脚本却没跟上，两边各写一套必然漂移。
+    """
+    src = _strip_comments(src)
     has_alias = bool(_ALIAS_HINT_RE.search(src))
     names: set[str] = set()
     for m in _ALIAS_CALL_RE.finditer(src):
@@ -87,6 +96,10 @@ def used_in_js(path: str) -> set[str]:
             continue
         names.add(m.group(1))
     return names
+
+
+def used_in_js(path: str) -> set[str]:
+    return _names_in_src(open(path, encoding="utf-8", errors="replace").read())
 
 
 def html_pages() -> list[str]:
@@ -114,9 +127,9 @@ def used_in_page(path: str) -> set[str]:
     for m in re.finditer(r"<script([^>]*)>(.*?)</script>", html, re.S | re.I):
         if re.search(r"\bsrc\s*=", m.group(1), re.I):
             continue
-        body = _strip_comments(m.group(2))
-        for mm in re.finditer(r"\bBackend\s*\.\s*([A-Za-z_$][A-Za-z0-9_$]*)", body):
-            names.add(mm.group(1))
+        # 与外链 JS 共用别名逻辑（见 _names_in_src 的说明：这里原来只认字面量
+        # `Backend.`，别名写法整个文件都扫不到）
+        names |= _names_in_src(m.group(2))
     return names
 
 

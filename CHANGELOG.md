@@ -13,6 +13,7 @@
 
 | commit | 时间 | 类型 | 一句话 | 验证 |
 |---|---|---|---|---|
+| 待提交 | 16:0x | feat | **新增「导出聊天记录」**：`data/chatlog/<char>.jsonl` 里躺着完整历史，但用户没有任何出口（`export_markdown` 只服务日报/记忆页）——想备份、换机器、把一段对话发给别人只能截屏。现在聊天页工具栏多一个下载按钮 → 桌面「AI桌面伴侣报告」下的 Markdown（按日期分节、`**HH:MM · 谁**` 两段式、附图计数），支持当前角色 / 全部角色。**顺带修好桥接闸门的第三层盲区**：内联 `<script>` 完全没有别名支持，`index.html` 的工具栏块（`var B = (window.Backend && window.Backend) \|\| …`）整段不可见（136→163 个桥方法）。补上后立刻抓到三处真断点 | 4 刀变异全红（`load_all` 退回 200 / 去掉空历史守卫 / 空角色不跳过 / 文件名不过滤 `/ : * ?`）；桥接变异 4 刀（内联+别名 ×2、外链、空集退化）；真机探针真实写盘；闸门 110→**113**，全量 113/113 |
 | 待提交 | 14:4x | fix | **「出厂状态」第 6 起**：`model_catalog` 三处（`_build_cmd` / `download_model_quant` / `download_bundle`）在"用户还没选目录"时都回落到开发机的 `H:\minicpm models\...` —— 新用户没有 H 盘，点下载直接失败、复制出来的"可手动执行命令"也指着 H 盘。改成跟着程序走（`<程序目录>/models/...`）。顺带救活一个**搬家后就跑不了**的死引用看门狗（`ROOT = r"G:\ai对话\11"`），它还把结果写进未忽略的 `docs/` | 变异（默认目录改回 H: 盘）→ `默认目录在程序目录下（可移植）` 红；死引用看门狗变异（塞一个不存在的 id）→ 报 `[DEAD] zzzNotExistProbe 首见于第 6718 行` 退出码 1；闸门 109→**110**，全量 110/110 |
 | 待提交 | 13:1x | fix | **桥接闸门只扫 HTML 内联 `<script>`，外链 JS 全是盲区** —— 补上后发现引导页「下载语音模型」调的是 `B.downloadVoiceModel`，而适配层导出的名字是 `downloadModel`。于是 `if(B.downloadVoiceModel)` 恒 false → 静默落到「无桥降级」分支：**假进度条**（固定 8.2MB/s）走到 100% 还提示"下载完成"，一个字节没下。顺带把三条**早已落地却一直挂着**的「发现」F1/F2/F3 换成真断言 | 变异（塞 `B.zzzNotARealBridgeMethod` / 删后端 model_3d 兜底 / 合并层改成无条件写空 Key）三刀全红；引导页集成 108 PASS / 0 FAIL；全量闸门 109/109 |
 | 待提交 | 10:1x | fix | **`_save_config()` 里一个静默 no-op，让参考音"上传了却没生效"**：`refresh_characters_map() if hasattr(...)` —— `Config` 上只有 `refresh_characters()`，`hasattr` 恒 False，整行恒等于 `None`。于是保存只写 raw、角色表 `_characters_map` 不跟着变，`get_characters()` 回读 `voice.reference_audio` 永远是空 → 用户反复重传。顺带把 `test_onboarding_integration`（106 项）修绿并收进闸门，删掉 `check_all` 里**重复登记**的导入冒烟 | 变异（把幽灵调用放回去）→ `[B15] 参考音已落角色` 红、退出码 1；闸门 109 项全绿（引导页集成 35.4s）；顺带修好「闸门失败摘要只摘最后 4 行、恰好摘到白名单明细表」 |
@@ -91,6 +92,72 @@
 > 代码与测试主体由 `5dbc64c` 收口，**归属以本脚注为准**。
 > 教训：并发会话各自只 `git add` 自己知道的文件，提交前先 `git log` 确认HEAD 没有
 > 在几分钟内被别人推进过。
+
+### 2026-10-21 · 「导出聊天记录」+ 桥接闸门的第三层盲区（内联脚本没有别名支持）
+
+#### 起因是一个「有实现、没出口」的功能
+
+`export_markdown` 这个桥早就有，日报页和记忆页都在用。但**聊天记录本身没有导出**：
+`data/chatlog/<char>.jsonl` 里躺着完整历史，用户想备份、想换机器、想把一段对话发给别人，
+只能截屏。这次补上：聊天页工具栏（挨着「清空」）多一个下载按钮 → 桌面「AI桌面伴侣报告」
+下的 Markdown。
+
+几个不那么显然的取舍：
+
+- **`load_all` 单独开一个口子**，不用 `load_recent(cid, 10**9)`。后者那个魔法数一旦被人
+  当成"写错了的上限"改成 5000，导出就**静默只导最近一段**，用户拿到手才发现少一半。
+  界面恢复仍然用 `load_recent(200)`，两件事语义不同。
+- **没记录时明确报错，不写空文件**。只有标题的 `.md` 用户会当成"导出成功但没内容"，
+  比报错更让人困惑。这条有对照组测试（断言"没写任何文件"）。
+- **文件名过一遍 Windows 非法字符**（`\ / : * ? " < > |`）。角色名是用户随手起的，
+  不处理的话 `open()` 直接抛 OSError，用户看到"导出失败"，真因藏在异常里。
+- 写盘复用 `export_markdown`（它已经处理了 OneDrive 重定向桌面这些坑），
+  渲染放在 `src/companion/chat_export.py` 里做成纯函数——**格式可以纯函数测**，
+  不必为了验格式去动用户的桌面。
+
+#### 验它的时候发现闸门自己瞎了一块
+
+按规矩给新功能加完桥接，顺手做了一次变异：把 `exportChatHistory` 从适配层导出里注释掉
+→ **闸门照样 `exit 0 / 三层全对得上`**。
+
+查下来：`used_in_page`（扫 HTML 内联 `<script>`）只认字面量 `Backend.`，而 `index.html`
+的工具栏绑定块写的是
+
+```js
+var B = (window.Backend && window.Backend) || (window.pywebview && window.pywebview.api);
+...
+B.clearChat() / B.exportChatHistory({})
+```
+
+**整个文件的桥调用对闸门不可见。** 而这一块正是历史上"工具栏按钮全部无效"的地方。
+外链 JS 早就支持别名（上一轮刚补的），内联脚本却没跟上——两边各写一套必然漂移。
+现在合并成 `_names_in_src()` 一份逻辑：桥方法名总数 **136 → 163**。
+
+补上后立刻报出 3 处真断点：
+
+| 断点 | 真因 | 用户看到 |
+|---|---|---|
+| `first_launch_setup.html: Backend.listCameras` | 适配层从没导出过它，`if(B && B.listCameras)` 恒 false | 引导页「视频」屏的摄像头下拉**永远只有「系统默认设备」**，用户以为电脑没摄像头 |
+| `index.html: Backend.setProactivePackFlags` | 名字不存在（`pace/frequency` 也不是 proactive_pack 的键，后端只收 `DEFAULTS` 里的键，传进去被过滤成空对象） | 关系面板改「节奏/频次」→ TypeError 被 `catch(e){}` 吞掉，什么也没发生 |
+| `index.html: Backend.setArchetypeManual` | 守卫恒 false，后端 `set_archetype_manual(char_id, archetype)` 也不接受 `{reset:true}` | 点「重置关系」→ 后端**根本没被调用**，却照样 toast「关系已重置」（**谎报**），紧接着 `relation_panel.js` 的正确实现又弹了第二个 confirm |
+
+后两条的根子是**同一个功能有两份实现**：`relation_panel.js` 早就用 `pywebview.api`
+正确调了 `set_relationship_setting` / `reset_relationship`（还带 refresh），而 `index.html`
+里另有一套平行绑定，名字全错。这次把 `index.html` 那份**删掉**并留了注释说明为什么
+不能"顺手补个导出把它救活"（那会变成双写 + 双 confirm）。`listCameras` 则是真的漏导出，
+补上并顺带导出 `setCameraDevice`。
+
+#### 验证
+
+- 导出功能 4 刀变异全红：`load_all` 退回 200（红 4 项）/ 去掉空历史守卫（红 3 项）/
+  空角色不跳过（红 2 项）/ 文件名不过滤（红 1 项，打印出 `聊天记录_a/b:c*d?e"f<g>h|i_…`）
+- 桥接闸门 4 刀（新增 `tools/_qc_bridge_mutation.py`，这道门之前**没有变异脚本**）：
+  内联+别名漏导出（`index.html`）/ 另一页面的内联漏导出（`first_launch_setup.html`）/
+  外链 JS 名字写错 / 往内联脚本塞不存在的调用（防"内联扫描退化成空集"）
+- **真机探针**：真 `CharacterAPI` + 真 `export_markdown`，把「桌面」指到临时目录后
+  写出 741 字节、含第 1 条与第 12 条、落在 `Desktop/AI桌面伴侣报告/聊天记录_达妮娅_<ts>.md`
+- **无头 Edge 截图**确认工具栏多了下载按钮、右侧「节奏/频次/重置关系」仍在（没有被删坏）
+- 闸门 110 → **113**（导出聊天记录 / 导出聊天记录变异 / 桥接变异），全量 113/113
 
 ### 2026-10-21 · 「出厂状态」第 6 起：模型默认下载目录是别人机器上的 H 盘
 

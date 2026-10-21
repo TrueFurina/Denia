@@ -178,7 +178,21 @@ class ChatLogStore:
             return None
         return rec
 
+    def load_all(self, char_id: str) -> list[dict]:
+        """整份聊天落盘（「导出聊天记录」用）。
+
+        【2026-10-21 加】`load_recent(n)` 是"最近 N 条"语义（界面恢复只要 200 条），
+        导出要的是全部。不给这个口子，调用方就只能写 `load_recent(cid, 10**9)` 这种
+        魔法数——而那种数字一旦被人当成"写错了的上限"改成 5000，导出就会**静默只导
+        最近一段**，用户拿到手才发现少了一半。
+        """
+        return self._read(char_id)
+
     def load_recent(self, char_id: str, n: int = 200) -> list[dict]:
+        out = self._read(char_id)
+        return out[-n:] if n and n > 0 else out
+
+    def _read(self, char_id: str) -> list[dict]:
         p = self.path_for(char_id)
         if not p.exists():
             return []
@@ -196,7 +210,7 @@ class ChatLogStore:
         except Exception as e:  # noqa: BLE001
             print(f"[chatlog] 读取失败：{p}（{e}）")
             return []
-        return out[-n:]
+        return out
 
     def clear(self, char_id: str) -> None:
         """清空某角色的聊天落盘（对应「清空聊天」操作，使清空真正持久）。"""
