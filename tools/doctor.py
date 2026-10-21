@@ -548,6 +548,19 @@ def _signature_targets() -> list[str]:
     return out
 
 
+def _rel(p: str) -> str:
+    """展示用路径：相对 ROOT，跨盘符时退回绝对路径。
+
+    `os.path.relpath` 在 Windows 上遇到不同盘符会抛 ValueError，而报错文案里
+    为了排版好看去 relpath 一下不值得让整个 doctor 崩掉（自测把假 exe 建在
+    %TEMP% 时就是跨盘）。
+    """
+    try:
+        return os.path.relpath(p, ROOT)
+    except ValueError:
+        return p
+
+
 def check_signature() -> tuple[str, str, str, str]:
     """阶段 C4：未签名时要**明确告诉用户**，而不是只在文档里提一句。"""
     if not sys.platform.startswith("win"):
@@ -563,7 +576,7 @@ def check_signature() -> tuple[str, str, str, str]:
     for p in targets:
         ok, why = pe_has_signature(p)
         if not ok:
-            unsigned.append(f"{os.path.relpath(p, ROOT)}（{why}）")
+            unsigned.append(f"{_rel(p)}（{why}）")
     if unsigned:
         return (WARN, "代码签名", "未发现内嵌签名：" + "；".join(unsigned),
                 "未签名时用户会看到「未知发布者」，国内杀软更容易直接拦。"
