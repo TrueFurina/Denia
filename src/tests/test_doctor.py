@@ -160,7 +160,10 @@ def main() -> int:
     # 必须让 load_config 真的抛，cfg 才会是 None。
     # 注意：**文件不存在并不会抛**（会回落默认配置），所以不能拿不存在的路径来测 ——
     # 那样测出来的 cfg 不是 None，这条用例就永远绿，等于没测。
-    broken = os.path.join(ROOT, "_broken_cfg_for_test.yaml")
+    # 坏 YAML 落在系统临时目录（理由同 [9]：被 SIGTERM 打断时 finally 不执行，
+    # 落在仓库根目录就会留下垃圾）。
+    import tempfile as _tf0
+    broken = os.path.join(_tf0.mkdtemp(prefix="doctor_badcfg_"), "_broken_cfg_for_test.yaml")
     try:
         with open(broken, "w", encoding="utf-8") as fh:
             fh.write("app: [unclosed\n  bad: : :\n")
@@ -304,9 +307,16 @@ def main() -> int:
     # 这三项不能在开发机上"实测通过"就算数——开发机装了 WebView2、系统自带 UCRT，
     # 而签名状态与是否签过证书无关。所以全部走注入：既能测 PASS 也能测 FAIL，
     # 不依赖跑测试的这台机器恰好是什么状态。
-    _fake_empty = os.path.join(ROOT, "tools", "_doctor_tmp_sys32")
-    _pe_path = os.path.join(ROOT, "tools", "_doctor_tmp_pe.exe")
-    _signed_pe = os.path.join(ROOT, "tools", "doctor_tmp_signed.exe")
+    # 【2026-10-21】这三个假文件以前直接建在 tools/ 下。测试正常跑完会删，但
+    # **被 SIGTERM 打断就不会**（Windows 上 TerminateProcess 不走 finally）→ 仓库里
+    # 留下 `tools/_doctor_tmp_sys32/ucrtbase.dll` 和 `_broken_cfg_for_test.yaml`，
+    # 下次跑门禁时它们成了"来历不明的产物"。假实现的产物一律放系统临时目录：
+    # 中断也只脏 %TEMP%，不脏仓库。
+    import tempfile as _tf
+    _tmp_base = _tf.mkdtemp(prefix="doctor_tmp_")
+    _fake_empty = os.path.join(_tmp_base, "sys32")
+    _pe_path = os.path.join(_tmp_base, "_doctor_tmp_pe.exe")
+    _signed_pe = os.path.join(_tmp_base, "doctor_tmp_signed.exe")
     _orig_wv2_reg = doctor._wv2_registry_version
     _orig_wv2_exe = doctor._wv2_executable
     _orig_system32 = doctor._system32
@@ -417,7 +427,7 @@ def main() -> int:
     _orig_targets = doctor._signature_targets
     _orig_pe = doctor.pe_has_signature
     _orig_root = doctor.ROOT
-    _fake_root = os.path.join(ROOT, "tools", "_doctor_tmp_root")
+    _fake_root = os.path.join(_tmp_base, "_doctor_tmp_root")
     try:
         # 11.0 只认包根的**自研** exe：把 python/python.exe 算进来，会让
         # 「我们自己什么都没签」显示成 PASS（拿 Python 基金会的签名给自己背书）。
@@ -472,6 +482,10 @@ def main() -> int:
                 os.remove(_p)
         if os.path.isdir(_fake_empty):
             os.rmdir(_fake_empty)
+        # 假根现在在 %TEMP% 下，整棵删掉即可（individual 清理留着是为了让失败时
+        # 仍能看到残留，排查方便）。
+        import shutil as _sh0
+        _sh0.rmtree(_tmp_base, ignore_errors=True)
 
     print("[12] 升级吞配置：出厂默认 + 使用痕迹 = 大概率被覆盖，必须报警")
     # 场景：老用户填过 Key → 解压新版 → config.yaml 变回出厂默认，但 data/
