@@ -234,6 +234,14 @@ GATES: list[tuple[str, str, list[str], bool]] = [
     ("抓屏性能闸", PY_VENV, ["tools/test_screen_capture_perf_guard.py"], False),
     ("看屏热生效", PY_VENV, ["tools/test_desktop_watch_hotapply.py"], False),
     ("引导页 TTS 键", PY_VENV, ["tools/test_onboarding_tts_key.py"], False),
+    # ---- 第三批普查的第二轮（同日）：又修好 5 个，同样是"判据/桩过时"而非功能坏。
+    #      test_onboarding_integration 仍不收（99 PASS / 5 FAIL 是设计稿未落地的产品
+    #      待办）；test_onboarding_role_backend 退出码 0 但跑 29s，不进闸门。
+    ("额度告警", PY_VENV, ["src/channels/tests/test_quota_alert.py"], False),
+    ("TTS 多供应商", PY_VENV, ["tools/test_tts_multi_provider.py"], False),
+    ("主动输出分流", PY_VENV, ["tools/test_proactive_chat_routing.py"], False),
+    ("关系接线", PY_VENV, ["tools/test_relationship_wiring.py"], False),
+    ("关系集成", PY_VENV, ["tools/test_relationship_integration.py"], False),
     # 导入冒烟：逐个 import 每个模块（独立子进程，并发 8），抓「导入期就崩」。
     # compileall 只保证语法和名字对得上，保证不了能不能被加载——2026-10-17 实测两例
     # （import 期 mkdir('G:\\')、顶层 argtypes 引用已删的 _u32）compileall 全绿。

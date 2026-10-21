@@ -115,31 +115,38 @@ class TestQuotaCooldownAndAlert(unittest.TestCase):
         self.assertLessEqual(left, FAIL_COOLDOWN_S + 1, "普通失败仍是 60s 档冷却")
         self.assertNotIn("vl-plus", r._quota_exhausted)
 
-    def test_alert_fires_once_and_lists_candidates(self):
+    def test_alert_does_not_fire_proactively(self):
+        """额度耗尽时**不主动弹窗**（2026-10-02 用户决策）。
+
+        【2026-10-21 修·判据守着已被否决的行为】原用例
+        `test_alert_fires_once_and_lists_candidates` 验的是"主动提醒一次、列出候选"。
+        那个行为已被用户明确停掉，理由写在 `_fire_quota_alert` 的 docstring 里：
+        额度耗尽是**持续状态**，而失败可能发生在桌面看屏 / 陪你看视频 / 聊天发图
+        多条链路上，各自有各自的重试与冷却 → 主动弹窗会①用户什么都没干时突然弹出、
+        ②反复弹、③措辞必然含糊。现在改成随"那次失败消息"一起提示。
+        这里锁住"别再弹回来"：谁把回调重新接上，这条就红。
+        """
         r = _router()
         got = []
         r.set_quota_alert_callback(lambda info: got.append(info))
         r._mark_fail("vl-plus", QUOTA_ERR)
-        r._mark_fail("vl-plus", QUOTA_ERR)   # 第二次不应再提醒
-        self.assertEqual(len(got), 1, "同一模型 30 分钟内只提醒一次（防刷屏）")
-        info = got[0]
-        self.assertEqual(info["model_id"], "vl-plus")
-        ids = [c["id"] for c in info["candidates"]]
-        self.assertIn("vl-max", ids)
-        self.assertNotIn("vl-plus", ids)
-        self.assertIn("AllocationQuota", info["error"])
+        r._mark_fail("vl-plus", QUOTA_ERR)
+        self.assertEqual(got, [], "额度耗尽不应主动弹窗（2026-10-02 决策）")
+        self.assertIn("vl-plus", r._quota_exhausted,
+                      "但状态必须记下来——quota_state() 与冷却都靠它")
 
-    def test_alert_lists_exhausted_candidates_with_flag(self):
-        """所有候选都耗尽时：仍全部列出并标注额度状态（不静默隐藏）。"""
+    def test_quota_state_lists_all_exhausted(self):
+        """所有耗尽的候选都要能被 quota_state() 查到（不静默隐藏）。
+
+        这是"用户主动点『检测额度』"那条路的判据：主动弹窗停了之后，
+        额度信息只能从这里拿到，漏一个就等于那个模型对用户隐身。
+        """
         r = _router()
-        got = []
-        r.set_quota_alert_callback(lambda info: got.append(info))
         r._mark_fail("vl-plus", QUOTA_ERR)
         r._mark_fail("vl-max", QUOTA_ERR)
-        info = got[-1]  # vl-max 的提醒
-        by_id = {c["id"]: c for c in info["candidates"]}
-        self.assertIn("vl-plus", by_id, "被标记的候选也应列出，由用户决定")
-        self.assertTrue(by_id["vl-plus"]["quota_exhausted"])
+        ids = [e["id"] for e in r.quota_state()["exhausted"]]
+        self.assertIn("vl-plus", ids)
+        self.assertIn("vl-max", ids)
 
     def test_no_callback_is_safe(self):
         """未注入回调时不应报错。"""

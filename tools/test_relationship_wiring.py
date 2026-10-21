@@ -128,7 +128,15 @@ async def scenario(tmp: Path) -> None:
           f"聊得好 → 信任上升（{st['affinity']['trust']:.1f} > 50）")
     check(int(st.get("turns", 0)) == 3, f"计数 3 轮真实互动（实际 {st.get('turns')}）")
     check(bool(st.get("last_her_initiative_ts")), "她主动开口已记录")
-    check(st["mood"]["label"] in ("雀跃", "平静", "想你", "闹别扭", "蔫蔫的", "炸毛"),
+    # 【2026-10-21 修·白名单抄的是旧版】原来手写枚举
+    # ("雀跃","平静","想你","闹别扭","蔫蔫的","炸毛") —— 那正是 v1 的
+    # relationship.MOODS，而运行时用的是 relationship_v2（17 种，含「困倦」「心动」
+    # 「安心」「柔软」「感动」「哭笑不得」「委屈」「失落」「不安」「吃醋」「心疼」）。
+    # 于是**凌晨跑出「困倦」就红、早上跑出「雀跃」就绿** —— 判据依赖时间，成了偶发红。
+    # 改为直接取产品侧的权威集合：具体有哪些心情由 MOODS_V2 自己守，这里只守
+    # "产出的 label 必须在合法集合里"。
+    from src.companion.relationship_v2 import MOODS_V2
+    check(st["mood"]["label"] in MOODS_V2,
           f"心情值合法（{st['mood']['label']}）")
 
     other = tmp / "affinity" / "other.json"
