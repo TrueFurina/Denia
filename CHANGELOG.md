@@ -13,6 +13,7 @@
 
 | commit | 时间 | 类型 | 一句话 | 验证 |
 |---|---|---|---|---|
+| `d14b309` | 22:2x | fix | **反向接线变异刀第二次失效**（同一坑）：M3 选目标时只搜 `webapp.py`，而清单瘦到 3 条后剩下三个全在 `api_pet.py` / `api_window.py` →「找不到可改名的方法」。改成走 `CharacterAPI.__mro__` 定位定义所在文件 | 三刀全绿（M3 报「② `clear_pet_cache`（`src/ui/api_pet.py`）」）；全量闸门 **128/128**（上一轮 127/128） |
 | `b78e5ab` | 20:5x | feat | **关系面板的「原型 温柔 ·自动」原来改不了**：那个「·自动」标签本身就在说"手动覆盖是设计里的东西"，但入口一直没建 —— `set_archetype_manual` 和 `get_relation_events` 都是"有实现、没出口"。补两个入口：**原型下拉**（选项由后端 `ARCHETYPES` 给，JS 不写死枚举）+ 底部**最近事件**列表（最近 6 条，最近的在上） | node 真值表 **24 项**（**原样加载** `relation_panel.js` 在假 DOM + 假 pywebview 里跑，含两个对照组：老后端没有 `archetypes` 时禁用而非写死一份枚举 / 后端没连上时不许把下拉变成空壳）；四刀变异全红（调错方法名 / 下拉写死枚举 / 事件行走 innerHTML / 不再拉事件）；反向接线 312 有人调、未接线 **3**；闸门 126→**128** |
 | `b12dd39` | 20:1x | fix | **额度浮层「再试一次」点了什么都不做**：`app_backend.js` 里 `typeof Backend.probeVisionModel === 'function'` **恒为 false** —— 后端 `probe_vision_model` 一直在，适配层从没导出它。补导出；并新增闸门 `check_bridge_guards.py` 专守「守卫的目标必须在导出表里」（`typeof` + `if (B.x)` + `!B.x` 三种形态，全站 **220 处** / 109 个不同名字 / 导出表 255 个） | 五刀变异全红（导出少了 / 页面出现假守卫 / **正则坏了 → 必须 exit 2** / 对照组：注释里复述守卫名必须仍绿 / `if (B.x)` 形态也要查）；闸门 124→**126** |
 | `5d3c02a` | 20:1x | fix | **6 个「同一份数据的第二个出口」删掉**：`get_audio_status` / `ocr_get_regions` / `ocr_get_anchors` / `chat_overlay_state` 返回的全是 `get_vision_debug()` 里 `ocr`/`audio`/`chat_overlay_open` 的子集（调试台只轮询那一个）；`get_bailian_quota` 是 09-29「额度卡改用内嵌控制台看真实额度」后废弃的本地估算；`get_model_3d_options` 是没人读的写死清单。未接线 **12 → 5**，后端公开 325 → **315** | 反向接线闸门 315 / 有人调 310 / 未接线 5 全绿；三刀变异全红；桥接闸门 166 个调用三层全对得上 |
@@ -106,6 +107,49 @@
 > 代码与测试主体由 `5dbc64c` 收口，**归属以本脚注为准**。
 > 教训：并发会话各自只 `git add` 自己知道的文件，提交前先 `git log` 确认HEAD 没有
 > 在几分钟内被别人推进过。
+
+### 2026-10-21 · 反向接线变异刀第二次失效：清单瘦到 3 条，剩下三个都不在 webapp.py
+
+第一轮全量门禁 **127/128**，红的是「反向接线变异」：
+
+```
+FAIL 清单里找不到可在 webapp.py 里改名的方法
+```
+
+#### 根因：同一个坑犯了第二次
+
+M3（把清单里的方法改名 → 闸门必须报「② 后端已没有这个方法」）选目标时**只搜
+`src/ui/webapp.py`**。
+
+第一次失效是把 `enable_tray` 写死——它后来被判定为假接口删掉，锚点命中 0 次。
+改成"从 `KNOWN_UNWIRED` 现取"之后我以为好了，**但文件位置仍然写死**。清单从
+12 → 5 → 3，剩下 `clear_pet_cache` / `pet_hit_rect` / `prevent_window_close`
+全定义在 `api_pet.py` / `api_window.py`，`webapp.py` 里一个都找不到。
+
+值得记的是：**这次是门禁自己抓到的**。`_pick_rename_target` 找不到目标时
+`raise SystemExit` 而不是静默跳过，所以整轮报红——如果当初图省事写成
+`return None` + 上游 `continue`，这把刀就从"能抓错"变成"永远绿"。
+
+#### 修法：按 MRO 找定义所在文件
+
+```python
+for klass in CharacterAPI.__mro__:          # 不是 type(CharacterAPI).__mro__
+    if n not in klass.__dict__: continue
+    path = inspect.getsourcefile(klass)
+    ...
+```
+
+`backend_methods()` 用的就是 `dir(CharacterAPI)`，两边口径一致 —— 方法搬去哪个
+mixin、清单怎么变，这一刀都成立。
+
+#### 两个自己踩的
+
+1. **`type(CharacterAPI).__mro__` 对普通类只给出 `['type', 'object']`**，一个名字
+   都找不到。第一版就这么写的，脚本报错才发现。要的是 `CharacterAPI.__mro__`。
+2. `os.path.relpath` 跨盘符抛 `ValueError` —— 加了 `except`（`doctor.py` 上踩过同款）。
+
+现在三刀全绿，M3 报的是「② `clear_pet_cache`（`src/ui/api_pet.py`）」。
+**全量门禁 128/128。**
 
 ### 2026-10-21 · 关系面板的「原型 温柔 ·自动」原来改不了：两个后端方法早写好了，入口一直没建
 
