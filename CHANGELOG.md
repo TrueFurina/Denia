@@ -13,6 +13,9 @@
 
 | commit | 时间 | 类型 | 一句话 | 验证 |
 |---|---|---|---|---|
+| 待提交 | 20:1x | fix | **额度浮层「再试一次」点了什么都不做**：`app_backend.js` 里 `typeof Backend.probeVisionModel === 'function'` **恒为 false** —— 后端 `probe_vision_model` 一直在，适配层从没导出它。补导出；并新增闸门 `check_bridge_guards.py` 专守「`typeof` 守卫的目标必须在导出表里」（全站 138 处守卫 / 74 个不同名字 / 导出表 255 个） | 四刀变异全红（导出少了 → 报 `probeVisionModel`；页面出现假守卫 → 报名字；**正则坏了 → 必须 exit 2**；对照组：注释里复述守卫名必须仍绿）；闸门 124→**126** |
+| 待提交 | 20:1x | fix | **6 个「同一份数据的第二个出口」删掉**：`get_audio_status` / `ocr_get_regions` / `ocr_get_anchors` / `chat_overlay_state` 返回的全是 `get_vision_debug()` 里 `ocr`/`audio`/`chat_overlay_open` 的子集（调试台只轮询那一个）；`get_bailian_quota` 是 09-29「额度卡改用内嵌控制台看真实额度」后废弃的本地估算；`get_model_3d_options` 是没人读的写死清单。未接线 **12 → 5**，后端公开 325 → **315** | 反向接线闸门 315 / 有人调 310 / 未接线 5 全绿；三刀变异全红；桥接闸门 166 个调用三层全对得上 |
+| 待提交 | 20:1x | fix | **`smoke_import` 的复核范围太窄**（修上一条留下的）：它只遍历「非预期失败」，而白名单里的模块同样会因为抢内存假红，却**永远不进复核** → 印出「白名单内 1 条」而它其实单独跑能过。改成复核全部失败项 | 自测 12 项（新增"确实进了复核"的前置断言，否则后一条是空断言）；三刀变异全红（M2 锚点因缩进变化失效 → 按"命中 0 次"报红而不是静默跳过） |
 | 待提交 | 19:5x | fix | **设置页「录音」按钮从来没成功过**：它调的 `record_audio_reference` 录的是**系统输出** loopback（给游戏音效用的），而参考音要的是**麦克风**；事件白名单又不认 `'reference'` → 点了必失败。新写 `src/audio/voice_ref_record.py` + 桥方法 `record_voice_reference`，前端两处改成 `Backend.recordAudio(2.5)` | 自测 **38 项**（假设备：时长窗口 / 帧数与格式 / 立体声下混 / 99 秒只录 30 秒 / 失败如实报 / 墓碑：假 `record_audio_reference` 一旦被调即 AssertionError）；三刀变异全红；真机录到 176172 字节（本机麦克风静音，peak=2，不是代码问题） |
 | 待提交 | 19:5x | fix | **`smoke_import` 那 3 个红是并发抢内存，不是缺陷**：8 并发 import numpy/scipy 时 OpenBLAS 分配失败（本机空闲 2.4G），报 `Memory allocation still failed`。只对**这一种错误文案**串行复核一次——不按"失败了几条"放宽（重试会掩盖真缺陷） | 自测 **12 项**（独立假根：`flaky` 首败次过 / `memfail` 永远同样文案 / `real` 真缺陷）；三刀变异全红（放宽复核范围 → 真缺陷被掩盖；一律判过 → 真失败被洗出判决；白名单计数不重算 → 判决对、数字错）；实测救回 1 条、非预期失败 0 |
 | 待提交 | 19:5x | fix | **自测把假文件建在仓库里，被 SIGTERM 打断就留垃圾**：`test_doctor` 的假 sys32 / 假 PE / 坏 YAML 全建在 `tools/` 与仓库根，正常跑完会删，但 **Windows 上 TerminateProcess 不走 finally** → 留下 `ucrtbase.dll` 和 `_broken_cfg_for_test.yaml`。全部改到 `tempfile.mkdtemp()`；顺带修 `check_signature` 的 `os.path.relpath` 跨盘符抛 `ValueError` | doctor 自检 16 组全绿；跑完 `git status` 无残留 |
@@ -102,6 +105,132 @@
 > 代码与测试主体由 `5dbc64c` 收口，**归属以本脚注为准**。
 > 教训：并发会话各自只 `git add` 自己知道的文件，提交前先 `git log` 确认HEAD 没有
 > 在几分钟内被别人推进过。
+
+### 2026-10-21 · `typeof Backend.x === 'function'` 这种守卫，没人查过 x 到底在不在
+
+额度提醒浮层有个「再试一次」按钮（用户在控制台充值后点一下，不必等冷却过期）。点它
+**什么都不发生**：按钮把自己恢复成「再试一次」，不发请求、不提示。
+
+#### 问题：守卫把「版本没有」和「名字写错」压成了同一种结果
+
+```js
+if (typeof Backend.probeVisionModel === 'function') {
+  Backend.probeVisionModel(mid).then(done);          // ← 永远不执行
+} else {
+  btn.disabled = false; btn.textContent = '再试一次'; // ← 静默，零反馈
+}
+```
+
+后端 `probe_vision_model` 一直在（返回 `{ok, hint, error}`），`app_backend.js` 里也
+写好了注释"pywebview 自动 snake→camel"，**但从没把它放进导出对象** → `Backend.
+probeVisionModel` 是 `undefined` → 守卫恒 false。
+
+这不是第一次：同一个文件里 `switchVisionModel` 就是这么坏的（注释里留着"那句 typeof
+因漏导出恒 false"），Python 侧也有一模一样的形态（`hasattr(cfg,'refresh_characters_map')`
+—— 方法名写错，`hasattr` 恒 False，见同一天的 CHANGELOG）。规律很清楚：
+**守卫本身没错，错的是"守卫的目标不在导出表里"这件事没人查。**
+
+#### 改动
+
+1. 补导出：`const probeVisionModel = (modelId) => call('probe_vision_model', modelId || '')`
+   + 加进导出对象，并在导出段那条"历史上漏导出"的清单里记一笔。
+2. 新闸门 `tools/check_bridge_guards.py`：解析 `app_backend.js` 的 `return { … }` 得到
+   导出名集合（**复用** `check_bridge_methods.exported()`，不写第二套解析），扫全部真
+   页面/真 JS 的 `typeof (window.)?(Backend|B).<name>`，`<name>` 不在集合里就红。
+
+**为什么只查 `typeof` 不查 `if (B.x)`**：后者可能是数据字段（`if (B.ready)`）或别的
+对象上的方法，误报率高；`typeof … === 'function'` 语义单一（"我要调它"），适合做硬判据。
+
+#### 验证
+
+四刀变异，其中两刀守的是闸门自己：
+
+| 刀 | 内容 | 期望 |
+|---|---|---|
+| M1 | 删掉导出表里的 `probeVisionModel,`（今天这个 bug 的原样） | 红，点名它 |
+| M2 | `notify.html` 里塞 `typeof Backend.zzzNotARealBridge` | 红，点名它 |
+| M3 | 把守卫正则换成永不匹配的模式 | **exit 2**（0 命中不许当成通过） |
+| M4 | 对照组：注释里复述守卫名 | **仍然绿** |
+
+M3 是这类闸门最阴的失效方式：正则坏了 → 0 命中 → 没有违规 → 打印"✓"退出 0。所以
+闸门里有 `MIN_GUARDS`（扫不到 20 处就 exit 2）和 `MIN_EXPORTS`（解析不足 100 个名字就
+exit 2），M3 就是验证这两个兜底真的在。
+
+**M4 第一次跑是红的**，暴露了判据本身的漏洞：我只剥"整行以 `//` 开头"的注释，
+`<script>// typeof Backend.x …` 这种**行尾注释**被当成真守卫 → 误报。改成
+`re.sub(r"(?<![:\w])//.*$", "", line)`（放过 `http://`），M4 才绿。
+**对照组不是走过场 —— 它是唯一能发现"剥注释只剥了一半"的东西。**
+
+#### 仍然待处置（写下来，免得变成第二个「发现」栏）
+
+`window.__quotaAlert` 那个浮层**当前不可达**：`vision_router._fire_quota_alert` 自
+2026-10-02 起只记日志、不再回调（用户明确停掉"额度耗尽主动弹窗"）。所以即使按钮修好，
+浮层也不会自己弹出来。两条路：①连浮层一起删（约 150 行，连同 `_on_vision_quota_alert`
+那个 no-op 存根）；②保留，等"用户主动点『检测额度』"这个入口真做出来。**倾向 ①**，
+但它要动前端一大块，单独一轮做。**复核条件：下次动额度相关代码时一起裁决。**
+
+### 2026-10-21 · 反向接线清单 12 → 5：六个接口是「同一份数据的第二个出口」
+
+上一轮把 5 个**假接口**（说成功、其实什么都没做）删了。这一轮处理的是另一种：**接口
+本身是诚实的，但界面上已经有另一条路能拿到同样的数据** —— 留着就是两个出口，将来两份
+数字打架时用户没有能力判断该信哪个。
+
+#### 四类证据
+
+**① 全是 `get_vision_debug()` 的子集（4 个）**
+
+`get_vision_debug()` 每 1s 被调试台轮询，它已经带了 `ocr: ocr.snapshot()`、
+`audio: audio.snapshot()`（其中 `references` 就是 `reference_status()`）、
+`chat_overlay_open`。于是：
+
+| 删掉的 | 它返回的字段 | 已经在哪 |
+|---|---|---|
+| `ocr_get_regions` | regions / region_texts / player_name | `["ocr"]` |
+| `ocr_get_anchors` | anchors / region_texts / anchor_state / regions | `["ocr"]` |
+| `get_audio_status` | `audio.reference_status()` | `["audio"]["references"]` |
+| `chat_overlay_state` | `open` / `enabled` | `["chat_overlay_open"]`（`enabled` 是内部配置，`_overlay_cfg()` 自己读写） |
+
+**② 被产品决策废弃的（1 个）**
+
+`get_bailian_quota` 返回本地记账估算。2026-09-29 额度卡已改成"应用内嵌浏览器看真实
+额度，不再本地估算"（设置页 `loadBailianConsoleStatus` + `get_bailian_real_quota` +
+`get_quota_status`）。从那以后零调用 —— 留着它等于给"本地估算"留一个随时会被误接回
+界面的入口。
+
+**③ 写死清单（1 个）**
+
+`get_model_3d_options` 写死 mmd / vrm 两条。界面上从来没有"选 3D 格式"的下拉（旧页
+`app.js` 只是把 `char.model_3d.format` 原样显示），与已删的 `get_backend_options` 同型。
+
+#### 留下的 5 个，各自都有明确的"为什么还没接"
+
+- `get_relation_events` / `set_archetype_manual`：关系面板现在只显示"上次事件"和
+  `原型 ·自动` 标签，没有事件列表、也没有手动改原型的入口。**这是真缺口**（标签写着
+  "自动"，说明手动覆盖是设计里的东西），要动面板 UI，单独一轮做。
+- `clear_pet_cache` / `prevent_window_close`：能力存在，但没有对应的用户动作。
+- `pet_hit_rect`：纯 no-op（`native.set_pet_hit_rect` 全仓不存在），倾向删。
+
+#### 验证
+
+反向接线闸门：后端公开 315（原 325）/ 有人调 310 / 未接线 **5**（原 12）；三刀变异
+全红（加没人调的方法 / 改名 / 给清单项加真实调用点）；桥接闸门 46 页 166 个调用三层
+全对得上；前端 JS 语法 88 段 0 错。
+
+### 2026-10-21 · 导入冒烟复核：范围漏了一半，测试还差点变成空断言
+
+上一条修法有个洞：复核只遍历 `unexpected`（非预期失败），而**白名单里的模块同样会因为
+并发抢内存而假红** —— 它永远不会进复核，于是「白名单内 N 条」里的 N 在骗人（它让
+"这条白名单还该不该留着"这个判断失去依据）。改成复核全部失败项。
+
+顺带两个自己踩的坑：
+
+1. **测试差点是空断言**：第 6 组把 `flaky` 写进白名单再跑一次，断言「白名单内 0」。
+   但 `flaky` 靠 `.seen` 标记决定"第一次失败"，而第一次跑已经写下标记 → 第二次它直接
+   成功、压根不进复核 → 那条断言**恒真**。必须先删标记。现在前面加了一条前置断言
+   （"确实进了复核"），它红的时候后面那条才有意义。
+2. **M2 刀失效**：改代码时缩进从 12 空格变 8 空格，锚点命中 0 次。脚本按"命中 0 次
+   → FAIL"报了出来（而不是静默跳过），锚点改成 8 空格后三刀全红。**这正是当初把
+   "锚点命中 0 次"设计成红而不是跳过的价值。**
 
 ### 2026-10-21 · 设置页的「录音」按钮，录的是扬声器不是麦克风
 
