@@ -41,6 +41,11 @@ from . import mode_gates as _mode_gates   # 档位×功能 门槛矩阵（单一
 
 logger = logging.getLogger(__name__)
 
+# 参考音录音的序号（模块级，不是实例级）：设置页连点两次「录音」时文件名必须不同，
+# 否则第二次把第一次的录音覆盖掉。用毫秒时间戳做过一次，**同一毫秒内会撞名** ——
+# 是自测「两次不撞名」抓到的（2026-10-21）。
+_REF_AUDIO_SEQ = itertools.count(1)
+
 
 # ---- 自 webapp.py 抽出的模块（2026-10-17 拆分，逐字迁移、未改逻辑）----
 from .ui_fmt import (  # noqa: E402
@@ -1369,6 +1374,38 @@ class CharacterAPI(PetAPI, WindowAPI):
         except Exception as e:
             logger.exception("录制参考音失败")
             return {"success": False, "error": str(e)}
+
+    def record_voice_reference(self, seconds: float = 2.5) -> dict:
+        """录一小段**麦克风**音频当音色克隆的参考音，返回 wav 绝对路径。
+
+        设置页「录音」按钮用它（另一个入口是「选择音频文件」）。
+
+        【2026-10-21 修】这个接口原来**不存在**：设置页调的是
+        `Backend.recordAudio('reference', 2.5)` → `record_audio_reference('reference')`
+        —— 而上面那个方法录的是**系统输出**（游戏音效识别用），事件类型白名单里没有
+        `'reference'`，于是按钮每一次都返回「不支持的事件类型: reference」。
+        两个方向相反的设备共用一个名字，是这个 bug 的根。
+
+        时长窗口 `[1.5, 30]` 见 `src/audio/voice_ref_record.py` 的说明。
+        """
+        from ..audio.voice_ref_record import record_wav
+
+        base = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        stamp = time.strftime("%Y%m%d_%H%M%S")
+        out_dir = os.path.join(base, "data", "voice_ref")
+        # 取第一个不存在的名字：序号保证同一进程内不撞，存在性检查兜住重启后同秒撞车
+        while True:
+            path = os.path.join(out_dir, "ref_%s_%03d.wav" % (stamp, next(_REF_AUDIO_SEQ)))
+            if not os.path.exists(path):
+                break
+        r = record_wav(path, seconds)
+        if not r.get("success"):
+            logger.warning("录制音色参考音失败: %s", r.get("error"))
+            return {"success": False, "error": r.get("error") or "录音失败"}
+        logger.info("录制音色参考音完成: %s（%.1fs, %s）",
+                    r.get("path"), r.get("seconds") or 0, r.get("device") or "?")
+        return {"success": True, "path": r.get("path") or path,
+                "seconds": r.get("seconds"), "device": r.get("device") or ""}
 
     # ======== OCR 区域校准（悬浮窗拖动调整识别区域） ========
     def _ocr_calib_state(self) -> dict:

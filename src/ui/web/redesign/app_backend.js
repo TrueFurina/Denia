@@ -321,7 +321,14 @@ const Backend = (() => {
   /* 切换前预检：目标克隆引擎的模型是否已下载就绪 */
   const checkCloneEngine = (engine) => call('check_clone_engine_target', { engine: engine || 'qwen3tts' });
   const pickAudioFile = () => call('pick_audio_file');
-  const recordAudio = (type, sec) => call('record_audio_reference', type || 'reference', sec || 2.5);
+  /* 录**麦克风**当音色克隆的参考音（2.5s 左右）。【2026-10-21 修】原来这里调的是
+     `record_audio_reference(type, sec)`，而那个后端方法录的是**系统输出**、事件类型
+     只认 kill/headshot/died/victory/defeat —— 设置页传的 'reference' 被白名单拒掉，
+     于是「录音」按钮每次都以「不支持的事件类型: reference」失败。设备方向相反的两个
+     动作共用一个名字，是这个 bug 的根。新接口 `record_voice_reference(seconds)`。
+     参数做了兼容：旧调用点写 `recordAudio('reference', 2.5)` 时取第二参。 */
+  const recordAudio = (sec, sec2) => call(
+    'record_voice_reference', Number(sec) > 0 ? Number(sec) : (Number(sec2) > 0 ? Number(sec2) : 2.5));
   const testVoice = (cfg, text) => call('test_voice', cfg || {}, text || '');
   /* 试听任务轮询：test_voice 返回 task_id 后，前端轮询真实进度（修「假加载」UI） */
   const getVoiceTestStatus = (taskId) => call('get_voice_test_status', taskId || '');
