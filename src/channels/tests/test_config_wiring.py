@@ -29,13 +29,21 @@ def main() -> int:
         return 0
     from src.channels import build_channels
 
-    cfg_path = os.path.join(ROOT, "config.yaml")
+    # 【2026-10-21 修·读错文件】原来读 config.yaml —— 那是**开发机实配**（被 gitignore）。
+    # 本机把通道启用了，于是这条"出厂默认不建通道"必然红；而它想验的恰恰是**出厂行为**。
+    # 出厂行为只能拿 config.release.yaml 验（那才是新用户装完拿到的那份）。
+    cfg_path = os.path.join(ROOT, "config.release.yaml")
+    if not os.path.exists(cfg_path):
+        print("⚠ 缺 config.release.yaml，跳过 config 接线测试")
+        return 0
     raw = yaml.safe_load(open(cfg_path, encoding="utf-8"))
     ns = _to_ns(raw)
 
-    # 1) 默认 disabled → 不构建任何通道
+    # 1) 出厂默认 disabled → 不构建任何通道
+    #    新用户没有 OneBot(3001) / Gewechat(2531) / QQ 空间 cookie，默认开启等于
+    #    让它们各自去连一个不存在的本地服务：OneBot 每 5s 刷一条 warning 永不停。
     chs = build_channels(None, None, None, ns)
-    assert chs == [], f"默认应无通道，实际 {chs}"
+    assert chs == [], f"出厂默认应无通道，实际构建了 {[c.name for c in chs]}"
 
     # 2) 开启 qq → 构建出 OneBotChannel，且读取到正确 mode
     ns.channels.qq.enabled = True

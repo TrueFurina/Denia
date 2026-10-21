@@ -11,9 +11,18 @@ Bug B：用户发抖音/B站链接，被 agent 的 open_app/browse_web 当成普
 """
 
 import asyncio
+import os
 import sys
 import types
 import unittest
+
+# 【2026-10-21 修·缺 sys.path】这个文件原来直接 `from src.channels... import`，没有
+# 把仓库根加进 sys.path —— 它能跑通全靠调用方设了 PYTHONPATH。闸门里没有那个变量，
+# 于是 `ModuleNotFoundError: No module named 'src'`。教训：**用自己的批量脚本试跑时
+# 顺手设的环境变量，会掩盖测试本身的缺陷**（同型：模拟新用户时必须剥掉 API Key）。
+ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+if ROOT not in sys.path:
+    sys.path.insert(0, ROOT)
 
 # 测试环境未装 ollama（src.llm 包级 import 需要），桩掉避免 ImportError。
 if "ollama" not in sys.modules:

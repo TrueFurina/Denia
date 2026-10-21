@@ -3,18 +3,24 @@
 不启动 GUI：用 node + jsdom 加载 first_launch_setup.html 的那一段逻辑做不到
 （页面依赖大量 DOM / iframe 环境）。改为**行为契约测试**：
   1. 直接从 first_launch_setup.html 抽出三处关键接线，做静态断言
-     （变量声明存在、_finish 第三参存在、payload.tts 回退链包含它）；
-  2. 用 stub 环境「重放」doFinish 的 tts 选择表达式，验证三条回退链的优先级；
+     （变量声明存在、_finish 第三参存在、payload.voice/tts 恒为 null）；
+  2. 锁住旧回退链不再被接回 payload（该机制已随能力槽重构退场）；
   3. 把产出的 tts payload 喂给「真实抽取的」apply_onboarding_voice 分支判定，
      证明 provider='dashscope_cosyvoice' 会走 dashscope 分支而不是 custom_tts
      —— 这正是修复前会踩的坑。
+
+【2026-10-21 更新】第 2 段原来是「回退链优先级重放」，守的是
+`_ttsPayload → BAILIAN_TTS_PAYLOAD → VOICE_PAYLOAD` 三级回退。能力槽重构后
+`set_capability_slot` 成为唯一写入口并立即落盘，收尾再传一遍会覆盖用户刚设好的
+配置，于是 payload.tts 改成恒 null —— 那套回退链整条退场。判据跟着改成守新契约。
+第 3 段不受影响：apply_onboarding_voice 仍被设置页（保存音色档）使用，是活代码。
 """
 import io
 import os
 import re
 import sys
 
-ROOT = r"G:\ai对话\11"
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 HTML = os.path.join(ROOT, "src", "ui", "web", "first_launch_setup.html")
 SRC = os.path.join(ROOT, "src", "ui", "webapp.py")
 OUT = []
@@ -66,43 +72,36 @@ check("构造 _bailianTts 且 backend=provider='dashscope_cosyvoice'",
 check("_finish(...) 第三个实参传了 _bailianTts",
       re.search(r"_finish\(true,\s*'已逐项实测：'\+_parts\.join\('；'\),\s*_bailianTts\)", html) is not None)
 
-# ④ 出向 payload 的回退链
-m_tts = re.search(r"tts:\s*\(([^)]*)\)\s*\|\|\s*null", html)
-check("存在 tts: (...) || null 出向赋值", m_tts is not None)
-if m_tts:
-    chain = m_tts.group(1)
-    check("回退链 = _ttsPayload → BAILIAN_TTS_PAYLOAD → VOICE_PAYLOAD",
-          "_ttsPayload" in chain and "BAILIAN_TTS_PAYLOAD" in chain and "VOICE_PAYLOAD" in chain,
-          "实际: %s" % chain.strip())
-    check("BAILIAN_TTS_PAYLOAD 优先于 VOICE_PAYLOAD",
-          chain.index("BAILIAN_TTS_PAYLOAD") < chain.index("VOICE_PAYLOAD"))
+# ④ 出向 payload 的 voice / tts 字段
+# 【2026-10-21 修·判据过时】原判据守的是 `tts: (_ttsPayload || BAILIAN_TTS_PAYLOAD ||
+# VOICE_PAYLOAD) || null` 三级回退链（2026-10-09 为修「百炼 Key 选了却不生效」建的）。
+# 能力槽重构后这套机制整条退场：`set_capability_slot` 成为引擎/语音/Key 的唯一写入口
+# 并**立即落盘**，收尾时再传一遍就会覆盖用户刚设好的配置。于是 payload 改成恒 null。
+# 判据跟着改，但守的东西更关键：**别被顺手改回去**。一旦有人把 TTS 塞回 payload，
+# 就会静默覆盖能力槽里的选择，而且测试还是绿的（因为原来那条判据已经不成立了）。
+m_null = re.search(r"voice:\s*null\s*,\s*//[^\n]*\n\s*tts:\s*null\s*,", html)
+check("payload.voice / payload.tts 均为 null（能力槽已落盘，收尾不覆盖）", m_null is not None)
+check("null 处留了注释说明原因（否则下一个人会当成漏填补上）",
+      m_null is not None and len(m_null.group(0).split("//")[1].strip()) >= 6)
 
 log("")
 log("=" * 66)
-log("2. 回退链优先级重放（模拟三条分支）")
+log("2. 旧回退链已退场：payload 组装块不许再引用那两个变量")
 log("=" * 66)
 
-
-def pick(ttsPayload, bailian, voice):
-    """重放 payload.tts 表达式。"""
-    return (ttsPayload or bailian or voice) or None
-
-
-B = {"backend": "dashscope_cosyvoice", "provider": "dashscope_cosyvoice",
-     "api_key": "sk-ws-" + "a" * 100, "model": "qwen-audio-3.0-tts-plus"}
-V = {"backend": "edge"}
-T = {"backend": "minimax"}
-
-r = pick(None, B, V)
-check("只有百炼屏 → 用 BAILIAN_TTS_PAYLOAD", r is B)
-r = pick(None, B, None)
-check("百炼屏通过、无声音屏 → 仍用百炼 payload", r is B)
-r = pick(T, B, V)
-check("另开声音屏 → _ttsPayload 优先（不误伤用户显式选择）", r is T)
-r = pick(None, None, V)
-check("百炼未通过 → 回落 VOICE_PAYLOAD", r is V)
-r = pick(None, None, None)
-check("都没有 → null（不改变既有行为）", r is None)
+# 退场后 BAILIAN_TTS_PAYLOAD / VOICE_PAYLOAD 仍被写入（_finish 缓存、语音屏赋值），
+# 但**没有任何读取点**。这是「写了没接线」的形态①，只是这次是前端、而且是成批的。
+# 这里不把它们判红（删前端要走真机验证），只锁住"别再接到 payload 上"。
+# 锚点必须是 `mode: MODE,` —— 文件里有两个 `const payload = {`（另一个是保存 LLM 配置
+# 的函数），只写 `const payload = {` 会让非贪婪匹配一路吞到后文的 `};`（实测吞了 82KB，
+# 于是"块里含 BAILIAN_TTS_PAYLOAD"恒为真 —— 判据自己变成了假绿）。
+m_payload_blk = re.search(r"const payload = \{\s*\n\s*mode: MODE,(.*?)\n    \};", html, re.S)
+check("找到 doFinish 的 payload 组装块", m_payload_blk is not None)
+if m_payload_blk:
+    blk = m_payload_blk.group(1)
+    check("payload 组装块不引用 BAILIAN_TTS_PAYLOAD", "BAILIAN_TTS_PAYLOAD" not in blk)
+    check("payload 组装块不引用 VOICE_PAYLOAD", "VOICE_PAYLOAD" not in blk)
+    check("payload 组装块不引用 _ttsPayload（该变量已不存在）", "_ttsPayload" not in html)
 
 log("")
 log("=" * 66)
@@ -143,6 +142,7 @@ log("=" * 60)
 log("总计: PASS=%d  FAIL=%d" % (PASS, FAIL))
 log("=" * 60)
 
-io.open(os.path.join(ROOT, "docs", "_p1_onboarding_tts.txt"), "w",
-        encoding="utf-8").write("\n".join(OUT))
+# 【2026-10-21 修】原实现把结果写进 docs/_p1_onboarding_tts.txt —— 往真仓库目录写产物，
+# 跑一次就多一个未跟踪文件，进闸门后每轮都污染 git status。改成只打印。
+print("\n".join(OUT))
 sys.exit(1 if FAIL else 0)

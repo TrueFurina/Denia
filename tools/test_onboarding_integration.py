@@ -25,7 +25,7 @@ import tempfile
 import wave
 import struct
 
-PROJ = r"G:\ai对话\11"
+PROJ = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, PROJ)
 
 PASS = 0
@@ -162,9 +162,15 @@ from src.ui.webapp import CharacterAPI          # noqa: E402
 from src.config import load_config              # noqa: E402
 
 SANDBOX = tempfile.mkdtemp(prefix="onb_int_")
+# config.yaml 被 gitignore（含密钥），新克隆的仓库里没有 → 用出厂模板兜底。
+# 【2026-10-21 修】原实现直接 copy config.yaml：在开发机上永远有，所以这个测试
+# 硬编码 G:\ 旧路径、跑不起来这件事，一直没人发现。
+_CFG_SRC = os.path.join(PROJ, "config.yaml")
+if not os.path.exists(_CFG_SRC):
+    _CFG_SRC = os.path.join(PROJ, "config.release.yaml")
 CFG = os.path.join(SANDBOX, "config.yaml")
-shutil.copy2(os.path.join(PROJ, "config.yaml"), CFG)
-REAL_CFG = os.path.join(PROJ, "config.yaml")
+shutil.copy2(_CFG_SRC, CFG)
+REAL_CFG = _CFG_SRC
 REAL_MTIME_BEFORE = os.path.getmtime(REAL_CFG)
 
 api = CharacterAPI(CFG)

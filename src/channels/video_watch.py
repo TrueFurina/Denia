@@ -869,7 +869,11 @@ async def watch_video(
                 meta = {"kind": "video", "title": run.get("title"), "url": url}
                 on_progress(stage, message, done, pct, meta)
             except Exception:  # noqa: BLE001
-                pass
+                # 【2026-10-21 修·静默吞掉回调错误】原来是裸 `pass`：前端回调签名对不上
+                # （实测：测试的 lambda 还停在 4 参，产品已传 5 参）时抛 TypeError，
+                # 被这里吞成"一个阶段都没收到"——现象是进度条不出现，且**零报错**，
+                # 完全看不出是回调写错了。回调失败不该影响观看，但必须留痕。
+                logger.debug("[视频观看] 进度回调异常（不影响观看）", exc_info=True)
 
     if not is_media_url(url):
         return None

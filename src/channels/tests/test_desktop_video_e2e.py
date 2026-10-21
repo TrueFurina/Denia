@@ -67,9 +67,22 @@ class _DialogueHarness:
         self.responded.append(text)
 
     def send(self, text, source):
-        """用 Event 包装后调用 _on_user_text（与真实总线投递一致）。"""
-        return asyncio.run(self.d._on_user_text(
-            Event(EventType.USER_TEXT, {"text": text, "source": source}, "test")))
+        """用 Event 包装后调用 _on_user_text（与真实总线投递一致）。
+
+        【2026-10-21 修·没等后台任务】桌面来源（webui/voice/console/""）在
+        `_on_user_text` 里走的是 `asyncio.create_task(_process_desktop_message)` 的
+        fire-and-forget 分支，函数立刻 return。而 `asyncio.run` 在协程结束时会把
+        还没跑完的任务**取消掉** → 回复永远来不及记录，`responded` 恒为空。
+        真实运行时事件循环一直活着，所以这里是**测试环境**与产品的差异，
+        必须显式 await 那个任务才等价。
+        """
+        async def _go():
+            await self.d._on_user_text(
+                Event(EventType.USER_TEXT, {"text": text, "source": source}, "test"))
+            t = getattr(self.d, "_desktop_msg_task", None)
+            if t is not None:
+                await t
+        return asyncio.run(_go())
 
 
 async def _fake_watch(llm, url, **kw):

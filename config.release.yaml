@@ -1842,8 +1842,13 @@ desktop:
   media:
     watch_videos: true
 channels:
+  # 【2026-10-21 修·出厂状态】三个通道原先都是 enabled: true。新用户没有
+  # OneBot(ws://127.0.0.1:3001) / Gewechat(http://127.0.0.1:2531) / QQ 空间 cookie，
+  # 默认开启等于让它们各自去连一个不存在的本地服务：OneBot 每 5s 刷一条
+  # "连接断开，5s 后重连" 的 warning 且永不停（一天上万条），Gewechat 同理轮询。
+  # 用户真要接 QQ/微信，在设置里开通道时再填服务地址——那时才有服务可连。
   qq:
-    enabled: true
+    enabled: false
     onebot:
       mode: forward
       ws_url: ws://127.0.0.1:3001
@@ -1860,7 +1865,7 @@ channels:
         watch_videos: true
         store_to_memory: true
   wechat:
-    enabled: true
+    enabled: false
     gewechat:
       base_url: http://127.0.0.1:2531
       token: ''
@@ -1877,7 +1882,7 @@ channels:
         watch_videos: true
         store_to_memory: true
   qzone:
-    enabled: true
+    enabled: false
     uin: ''
     cookie: ''
 sticker:
