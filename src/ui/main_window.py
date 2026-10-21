@@ -131,9 +131,16 @@ def _ensure_web_server() -> str:
                     _full = os.path.abspath(_p)
                     if any(_full.startswith(_a + os.sep) and os.path.isfile(_full) for _a in _allowed):
                         _ext = os.path.splitext(_full)[1].lower()
+                        # 【2026-10-22】补音频类型：克隆面板「试听」经本路由播参考
+                        # 音频（data/voice_ref/ 里的 wav/mp3）。原先只认图片扩展名，
+                        # 音频落到 application/octet-stream → <audio> 直接拒绝播放，
+                        # 而播放失败的 catch 是空的 → 按钮点了没声也没报错。
                         _ct = {'.png': 'image/png', '.jpg': 'image/jpeg',
                                '.jpeg': 'image/jpeg', '.gif': 'image/gif',
-                               '.webp': 'image/webp', '.bmp': 'image/bmp'}.get(
+                               '.webp': 'image/webp', '.bmp': 'image/bmp',
+                               '.wav': 'audio/wav', '.mp3': 'audio/mpeg',
+                               '.flac': 'audio/flac', '.ogg': 'audio/ogg',
+                               '.m4a': 'audio/mp4'}.get(
                                    _ext, 'application/octet-stream')
                         with open(_full, 'rb') as _f:
                             _data = _f.read()

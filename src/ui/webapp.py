@@ -15125,8 +15125,62 @@ class CharacterAPI(PetAPI, WindowAPI):
             stored, copied = dst, True
         except Exception:  # noqa: BLE001
             stored, copied = path, False
+        # 【2026-10-22】落盘目录注册进 /local_img 白名单：克隆面板的「试听」用
+        # /local_img?path= 播参考音频，而该路由只放行 char_banners/char_avatars
+        # + 运行时注册目录 —— 不注册的话，试听按钮对任何自选音频都静默 404
+        # （复制失败回退原路径时，注册原文件所在目录同样是为了这个）。
+        try:
+            register_local_img_dir(os.path.dirname(stored))
+        except Exception:  # noqa: BLE001
+            pass
         return {"success": True, "path": path, "stored_path": stored, "copied": copied,
                 "name": os.path.basename(path), "duration_s": dur}
+
+    def use_bundled_ref_audio(self, data: dict = None) -> dict:
+        """把随包参考音频物化成磁盘真实路径（复制到 data/voice_ref/）。
+
+        【2026-10-22 新增】首启克隆面板「预填她的」用：预置角色（温柔女友）的参考
+        音频随包分发（web 相对路径 `_role_assets/ref/xiaowei.wav`），而本地克隆引擎
+        （VoxCPM 等）把 reference_audio 当 prompt_wav_path **直送本地 HTTP 服务**，
+        只认磁盘路径。原来面板预填的是开发机绝对路径（D:/GPT-SoVITS/...），按钮又
+        只读另一份数据 → 试听静默失效、克隆画假进度条还谎报「已完成」。现在随包资产
+        经这里复制一份到 data/voice_ref/，之后与用户自选音频同一套持久化路径
+        （与 pick_reference_audio 同思路；试听播放也由此进 /local_img 白名单）。
+
+        安全（防路径穿越）：只放行 `_role_assets/` 前缀；拒绝 `..`；解析后的绝对
+        路径必须仍在 web 根目录内。
+        """
+        if not self._cfg:
+            return {"success": False, "error": "配置未加载"}
+        d = data or {}
+        url = str(d.get("url") or "").strip().replace("\\", "/").lstrip("/")
+        if not url.startswith("_role_assets/"):
+            return {"success": False, "error": f"只支持随包参考音频（_role_assets/ 前缀）：{url!r}"}
+        parts = [p for p in url.split("/") if p not in ("", ".")]
+        if any(p == ".." for p in parts):
+            return {"success": False, "error": "非法的参考音频路径（含 ..）"}
+        web_root = os.path.join(os.path.dirname(os.path.abspath(__file__)), "web")
+        src = os.path.normpath(os.path.join(web_root, *parts))
+        if not src.startswith(os.path.normpath(web_root) + os.sep):
+            return {"success": False, "error": "非法的参考音频路径（越出 web 根）"}
+        if not os.path.isfile(src):
+            return {"success": False, "error": f"随包参考音频不存在：{url}"}
+        root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        dst_dir = os.path.join(root, "data", "voice_ref")
+        try:
+            os.makedirs(dst_dir, exist_ok=True)
+            import shutil as _sh
+            dst = os.path.join(dst_dir, os.path.basename(src))
+            _sh.copyfile(src, dst)
+        except Exception as e:  # noqa: BLE001
+            return {"success": False, "error": f"复制参考音频失败：{e}"}
+        # 落盘目录注册进 /local_img 白名单（试听经它播音频，见 pick_reference_audio 同款注释）
+        try:
+            register_local_img_dir(dst_dir)
+        except Exception:  # noqa: BLE001
+            pass
+        return {"success": True, "path": dst, "stored_path": dst, "copied": True,
+                "name": os.path.basename(dst), "duration_s": self._audio_duration(dst)}
 
     # ===== 角色卡头图（2026-09-29） =====
     def _char_banner_dir(self) -> str:
