@@ -28,6 +28,24 @@ JS = os.path.join(ROOT, "src", "ui", "web", "redesign", "app_backend.js")
 _CALL_RE = re.compile(r"\bcall\(\s*['\"]([A-Za-z_][A-Za-z0-9_]*)['\"]")
 
 
+def is_draft_js(fn: str) -> bool:
+    """这个 JS 是不是「草稿 / 打包产物」，不该当产品代码查。
+
+    单拎出来是为了**两个闸门共用同一份判据**：`check_web_js_syntax.py` 也按这套
+    规则决定"扫哪些 JS"。两份各写一遍必然漂移（一边加了排除、另一边没加，于是
+    同一个文件在一个闸门里是红的、在另一个里不存在）。
+    """
+    low = fn.lower()
+    return (low.startswith("_") or low.endswith(".min.js")
+            or "pre_v2" in low or "simplified" in low)
+
+
+def is_draft_html(fn: str) -> bool:
+    """历史副本 / 改版存档，不参与运行，查它们只会制造噪音。"""
+    low = fn.lower()
+    return "pre_v2" in low or "simplified" in low or "_pre_" in low
+
+
 def js_files() -> list[str]:
     """外链 JS（`<script src=...>`）—— 这是原来完全没查的盲区。
 
@@ -49,10 +67,11 @@ def js_files() -> list[str]:
         for fn in fns:
             if not fn.endswith(".js"):
                 continue
-            low = fn.lower()
-            if low.startswith("_") or low.endswith(".min.js") or fn == "app_backend.js":
+            if fn == "app_backend.js":
+                # 适配层自己（它就是被比对的对象）。**只在这个闸门里排除**：
+                # 语法闸门必须查它，它语法坏了整个前端全哑。
                 continue
-            if "pre_v2" in low or "simplified" in low:
+            if is_draft_js(fn):
                 continue
             out.append(os.path.join(dp, fn))
     return sorted(out)
@@ -114,8 +133,7 @@ def html_pages() -> list[str]:
         for fn in fns:
             if not fn.endswith(".html"):
                 continue
-            low = fn.lower()
-            if "pre_v2" in low or "simplified" in low or "_pre_" in low:
+            if is_draft_html(fn):
                 continue
             out.append(os.path.join(dp, fn))
     return sorted(out)
