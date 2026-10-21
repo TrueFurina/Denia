@@ -16378,6 +16378,76 @@ class CharacterAPI(PetAPI, WindowAPI):
             return {"success": False, "error": "写入失败，请查看日志"}
         return {"success": True, "files": [dst], "folder": folder}
 
+    # ======== 聊天记录导出 ========
+    @staticmethod
+    def _safe_file_stem(name: str) -> str:
+        """角色名 → 能安全落盘的文件名片段。
+
+        Windows 文件名里 `\\ / : * ? " < > |` 全非法，而角色名是用户随手起的
+        （"达妮娅/小号"、"<3" 都可能）。不处理的话 `open()` 直接抛异常，
+        用户看到的是"导出失败"，但真正的原因藏在一个 OSError 里。
+        """
+        bad = '\\/:*?"<>|'
+        out = "".join("_" if ch in bad else ch for ch in str(name or "")).strip(" .")
+        return out[:40] or "AI"
+
+    def export_chat_history(self, data: dict = None) -> dict:
+        """把聊天记录导出成 Markdown 到桌面「AI桌面伴侣报告」。
+
+        【2026-10-21 加】此前**没有这个功能**：`export_markdown` 只服务日报/记忆页，
+        而 `data/chatlog/<char>.jsonl` 里的完整聊天历史没有任何出口——想备份、想换机器、
+        想把一段对话发给别人，用户只能截屏。
+
+        两个参数：
+          - `character_id`：默认当前角色；
+          - `scope`：`"current"`（默认）或 `"all"`（所有角色合成一份，空角色跳过）。
+
+        写盘复用 `export_markdown`（它已经处理了 OneDrive 重定向桌面这些坑），
+        这里只负责"取记录 → 渲染"。**没有记录时明确报错**，不写一个只有标题的空文件
+        ——那种文件用户会当成"导出成功但内容是空的"，比报错更让人困惑。
+        """
+        d = data or {}
+        if self._chatlog is None:
+            return {"success": False, "error": "聊天记录存储未就绪（本次运行不持久化）"}
+
+        scope = str(d.get("scope") or "current").strip().lower()
+        cid = str(d.get("character_id") or "").strip() or self._active_char_id()
+        names = {}
+        try:
+            for c in self._cfg.list_characters():
+                names[str(getattr(c, "id", "") or "")] = str(getattr(c, "name", "") or "")
+        except Exception:  # noqa: BLE001  角色表读不到不影响导出（用 id 兜底）
+            logger.debug("[导出聊天记录] 角色表读取失败", exc_info=True)
+
+        from ..companion.chat_export import render_bundle, render_markdown
+
+        try:
+            if scope == "all":
+                ids = [i for i in names.keys() if i] or [cid]
+                sections = [(i, names.get(i, i), self._chatlog.load_all(i)) for i in ids]
+                if not any(recs for _, _, recs in sections):
+                    return {"success": False, "error": "还没有任何聊天记录可导出"}
+                md = render_bundle(sections)
+                stem = "聊天记录_全部"
+                total = sum(len(recs) for _, _, recs in sections)
+            else:
+                recs = self._chatlog.load_all(cid)
+                if not recs:
+                    return {"success": False,
+                            "error": "这个角色还没有聊天记录可导出"}
+                md = render_markdown(recs, char_name=names.get(cid, ""), char_id=cid)
+                stem = "聊天记录_%s" % self._safe_file_stem(names.get(cid) or cid)
+                total = len(recs)
+        except Exception:  # noqa: BLE001
+            logger.exception("[导出聊天记录] 读取/渲染失败")
+            return {"success": False, "error": "读取聊天记录失败，请查看日志"}
+
+        ts = time.strftime("%Y%m%d_%H%M")
+        r = self.export_markdown({"name": "%s_%s.md" % (stem, ts), "content": md})
+        if r.get("success"):
+            r["count"] = total
+        return r
+
     # ======== 网课记录：课程列表 + 打开目录 ========
     def _course_repo(self):
         """取课程仓库（注入的 CourseRecorder 优先，否则按配置重建）。"""

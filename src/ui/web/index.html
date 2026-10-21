@@ -211,6 +211,9 @@
         <button class="ctl" id="contToggle" title="持续语音：开=免唤醒随时说，关=需唤醒词" type="button">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5h16v10H9.5L5 19V15H4z M4 4l16 16"/></svg>
         </button>
+        <button class="ctl" id="exportChat" title="导出聊天记录（Markdown，存到桌面「AI桌面伴侣报告」）" type="button">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4v10m0 0l-4-4m4 4l4-4M4 17v2a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-2"/></svg>
+        </button>
         <button class="ctl" id="clearChat" title="清空对话" type="button">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M9 7V5h6v2M6 7l1 13h10l1-13"/></svg>
         </button>
@@ -3670,6 +3673,36 @@
     });
   }
 
+  /* ---- ③b 导出聊天记录（2026-10-21 加）----
+     和「清空」挨着放：用户想"处理聊天记录"时手会伸到这一块。
+     必须走后端写盘（export_chat_history → 桌面「AI桌面伴侣报告」）：
+     WebView2 里 `a.download` 被静默拦截，前端自己下载会弹"已导出"但文件不存在。 */
+  var ec = $('exportChat');
+  if (ec && !ec.dataset.bound) {
+    ec.dataset.bound = '1';
+    ec.addEventListener('click', async function(){
+      if (ec.dataset.busy) return;
+      ec.dataset.busy = '1';
+      ec.style.opacity = '.45';
+      try {
+        /* 不加 typeof 守卫：名字对不对由 tools/check_bridge_methods.py 守（外链/内联都扫）。
+           守卫只会把"名字写错了"伪装成"这个版本不支持"——本仓在这上面栽过好几次。 */
+        var r = await B.exportChatHistory({});
+        if (r && r.success) {
+          if (window.Backend && Backend.toast)
+            Backend.toast('已导出 ' + (r.count || 0) + ' 条 → 桌面/AI桌面伴侣报告');
+        } else if (window.Backend && Backend.toast) {
+          Backend.toast((r && r.error) || '导出失败');
+        }
+      } catch (e) {
+        if (window.Backend && Backend.toast) Backend.toast('导出失败：' + (e && e.message || e));
+      } finally {
+        ec.dataset.busy = '';
+        ec.style.opacity = '';
+      }
+    });
+  }
+
   /* ---- ④ 专注模式（隐藏左右栏）---- */
   var ft = $('focusToggle');
   if (ft && !ft.dataset.bound) {
@@ -3693,35 +3726,19 @@
     });
   }
 
-  /* ---- ⑥ 关系面板：节奏/频次 下拉 → 保存主动设置 ---- */
-  function saveRelSetting(){
-    var pace = $('relPace'), freq = $('relFreq');
-    if (!pace || !freq) return;
-    try {
-      B.setProactivePackFlags({
-        pace: pace.value || '标准',
-        frequency: freq.value || 'standard'
-      });
-    } catch(e){}
-  }
-  var rp1 = $('relPace');
-  if (rp1 && !rp1.dataset.bound) { rp1.dataset.bound = '1'; rp1.addEventListener('change', saveRelSetting); }
-  var rp2 = $('relFreq');
-  if (rp2 && !rp2.dataset.bound) { rp2.dataset.bound = '1'; rp2.addEventListener('change', saveRelSetting); }
+  /* ---- ⑥⑦ 关系面板（节奏/频次 下拉、重置）—— 【2026-10-21 删除，别加回来】----
+     这里原来有一套**平行实现**：`B.setProactivePackFlags({pace, frequency})` 和
+     `if (B.setArchetypeManual) await B.setArchetypeManual({reset:true})`。
+     两个名字适配层都没导出，于是：
+       · ⑥ 抛 TypeError 被 `catch(e){}` 吞掉 → 用户改了下拉框，什么也没发生；
+       · ⑦ 守卫恒 false → 后端根本没被调用，却照样 toast「关系已重置」（**谎报**），
+         紧接着 relation_panel.js 的正确实现又弹了第二个 confirm。
+     而且 `pace/frequency` 不是 proactive_pack 的键（后端只收 DEFAULTS 里的键，
+     传进去会被过滤成空对象），真正的家在 `relationship.set_setting`。
 
-  /* ---- ⑦ 关系重置 ---- */
-  var rr = $('relResetBtn');
-  if (rr && !rr.dataset.bound) {
-    rr.dataset.bound = '1';
-    rr.addEventListener('click', async function(){
-      if (!confirm('归档当前关系并恢复默认？')) return;
-      try {
-        if (B.setArchetypeManual) await B.setArchetypeManual({ reset: true });
-        if (window.Backend && Backend.toast) Backend.toast('关系已重置');
-      } catch(e){}
-    });
-  }
-
+     正确实现只有一处：`redesign/relation_panel.js`（用 pywebview.api 直接调
+     `set_relationship_setting` / `reset_relationship`，改完还会 refresh）。
+     删掉这份重复的，别再"顺手补个导出"把它救活 —— 那会变成双写 + 双 confirm。 */
   /* ---- ⑧ 流畅语音会话「结束」按钮 ---- */
   var sx = $('sxEnd');
   if (sx && !sx.dataset.bound) {

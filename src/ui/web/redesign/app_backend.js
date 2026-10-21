@@ -166,6 +166,11 @@ const Backend = (() => {
   const getTextChatStatus = () => call('get_text_chat_status');
   const setTextChatMode = (mode, manualProvider) => call('set_text_chat_mode', mode, manualProvider || null);
   const clearChat = () => call('clear_chat');
+  /* 导出聊天记录（2026-10-21）：后端读 data/chatlog 渲染成 Markdown，写盘到
+     桌面「AI桌面伴侣报告」并返回**真实路径**。走后端而不是前端 Blob 下载 ——
+     WebView2 里 `a.download` 会被静默拦截（10-08 日报导出踩过：前端弹"已导出"，
+     文件根本没落盘）。 */
+  const exportChatHistory = (data) => call('export_chat_history', data || {});
   /* 聊天页模型切换器（2026-09-27）：拉百炼免费模型快捷列表 + 点选后改某端口模型并热切换 manual */
   const getChatModelPresets = () => call('get_chat_model_presets');
   const setChatProviderModel = (providerId, model) => call('set_chat_provider_model', providerId, model);
@@ -242,6 +247,12 @@ const Backend = (() => {
   /* 电脑操作代理·逐步确认回执：确认框点允许/拒绝后回传后端 */
   const resolveAgentConfirm = (key, allow) => call('resolve_agent_confirm', key, !!allow);
   const cameraFrame = (device) => call('camera_frame', { device: (device === undefined ? 'default' : device) });
+  /* 【2026-10-21 补·漏导出】引导页视频屏（first_launch_setup.html 的 enterVideo）用
+     `if (B && B.listCameras)` 守卫取设备列表 —— 适配层从没导出过它，守卫恒 false，
+     于是摄像头下拉框**永远只有「系统默认设备」一项**，用户以为电脑没摄像头。
+     后端 list_cameras 一直在（还带 current 回显），只是没人接上。 */
+  const listCameras = () => call('list_cameras');
+  const setCameraDevice = (data) => call('set_camera_device', data || {});
   /* 语音/视频双工通话：按需拉起/释放本地双工引擎（懒启动下点击通话即连、挂断即退）。 */
   const startDuplexCall = (data) => call('start_duplex_call', data || {});
   const endDuplexCall = (data) => call('end_duplex_call', data || {});
@@ -719,6 +730,7 @@ const getOnboardingDefaults = (p) => call('get_onboarding_defaults', p || {});
     getSocialChannels, saveSocialChannels,
     getVoice, getVoiceMode, setVoiceMode, setBargeSensitivity, setMicListening, setContinuousVoice, getDesktopTtsEnabled, setDesktopTtsEnabled,
     sendChat, transcribeAndChat, getChat, getTextChatStatus, setTextChatMode, clearChat,
+    exportChatHistory,
     getChatModelPresets, setChatProviderModel, getModelCaps, probeModelCaps, getModelCaps,
     get_model_slots: () => call('get_model_slots'),
     set_model_slot: (data) => call('set_model_slot', data),
@@ -758,7 +770,7 @@ const getOnboardingDefaults = (p) => call('get_onboarding_defaults', p || {});
     openBailianConsole, openBailianConsoleExternal, getBailianConsoleStatus, getBailianRealQuota,
     guardSwitch,
     saveCallInference,
-    getCallSettings, saveCallSettings, cameraFrame,
+    getCallSettings, saveCallSettings, cameraFrame, listCameras, setCameraDevice,
     startDuplexCall, endDuplexCall, cancelDuplexCall, setCallScreenShare,
     getCallStatus, getCallSubtitles, setCallMic, setCallAiAudio, setCallCamera, getCallMicLevel, logCallAv, getTierCallStatus, notifyTierCallBlocked,
     getModeGateTable, checkModeGate, notifyModeGate,
