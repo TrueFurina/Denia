@@ -78,6 +78,23 @@ def main() -> int:
         reason = pk._exclude_reason(rel)
         check(reason is not None, f"排除 {rel}" + (f"（{reason}）" if reason else " ← 漏了"))
 
+    print("\n=== [1b] 开发期残留页面：必须排除 ===")
+    # 2026-10-22 补：`src/ui/web/redesign/` 下 14 个 `_` 前缀文件（设计稿 / 重构前
+    # 备份 / 测试台）合计约 1.1MB，全仓零引用，却按 `git ls-files` 一路进包。
+    # 队友解包后能在 URL 里打开它们，看到的是**能点但没反应**的旧 UI（假接口博物馆）。
+    #
+    # 【先断言清单非空】变异刀 M1 抓到的：下面这个循环是 `for rel in
+    # EXCLUDE_DEAD_WEB.items()`——**清单被清空时循环空转，一条都不报**，看着像全绿。
+    # 与"锚点命中 0 次就静默跳过"是同一种失效：判据的输入没了，它不会喊。
+    check(len(pk.EXCLUDE_DEAD_WEB) >= 10,
+          f"残留页面清单非空（现在 {len(pk.EXCLUDE_DEAD_WEB)} 条）")
+    #
+    # 逐个断言而不是只数数量：数数量的话，清单少一条、包里多一条，数字还是对得上。
+    for rel, why in sorted(pk.EXCLUDE_DEAD_WEB.items()):
+        reason = pk._exclude_reason(rel)
+        check(reason is not None,
+              f"排除 {rel}" + (f"（{reason}）" if reason else " ← 漏了，会进队友包"))
+
     print("\n=== [2] 必须保留：不能误伤 ===")
     keep = [
         "main.py",
@@ -98,6 +115,9 @@ def main() -> int:
         "src/logging_setup.py",          # 以 log 开头的文件名
         "distutils_compat.py",           # 以 dist 开头的根文件
         "tools/daniya_sticker_skill/README.md",
+        # 对照组：同样带 `_` 前缀，但它是**活的**运行时数据，不是残留页面。
+        # 没有这一条，"按前缀一刀切排除"也能让上面 [1b] 全绿。
+        "src/ui/web/_gpu.txt",
     ]
     for rel in keep:
         reason = pk._exclude_reason(rel)
@@ -113,6 +133,29 @@ def main() -> int:
     check(all(os.path.isfile(os.path.join(ROOT, f)) for f in files),
           "清单里每个路径在磁盘上真实存在")
     check(all("\\" not in f for f in files), "清单路径统一用 /（避免 zip 内混用分隔符）")
+    dead_in = [f for f in files if f in pk.EXCLUDE_DEAD_WEB]
+    check(not dead_in, f"入包清单里没有开发期残留页面（违例 {dead_in[:3]}）")
+
+    print("\n=== [3b] 残留页面清单必须自己催：新出现的未登记 _ 页面要报错 ===")
+    # 光有 [1b] 不够——它只证明"清单里的都被排了"，证明不了"没进清单的进不了包"。
+    # 这条反向盯着：`redesign/` 下新出现一个 `_` 前缀文件而清单没登记 → 这里红。
+    # 与"白名单必须会自己催你删"是同一条判据：清单不催人，就会变成背景噪音。
+    scan_dir = os.path.join(ROOT, pk.DEAD_WEB_SCAN_DIR)
+    if os.path.isdir(scan_dir):
+        found = sorted(
+            f"{pk.DEAD_WEB_SCAN_DIR}{n}"
+            for n in os.listdir(scan_dir)
+            if n.startswith("_") and os.path.isfile(os.path.join(scan_dir, n))
+        )
+        unregistered = [f for f in found if f not in pk.EXCLUDE_DEAD_WEB]
+        check(not unregistered,
+              f"{pk.DEAD_WEB_SCAN_DIR} 下没有未登记的 _ 前缀文件"
+              + (f"（未登记：{unregistered}）" if unregistered else ""))
+        # 清单里已不存在的条目 = stale，同样要红（文件删了就该把登记也删掉）
+        stale = [f for f in pk.EXCLUDE_DEAD_WEB if not os.path.isfile(os.path.join(ROOT, f))]
+        check(not stale, f"登记表里没有已消失的条目（stale：{stale}）")
+    else:
+        check(False, f"找不到扫描目录 {pk.DEAD_WEB_SCAN_DIR}（规则失效了）")
 
     print("\n=== [4] verify_zip 能抓住「包不对」 ===")
     scratch = tempfile.mkdtemp(prefix="pk_test_")
