@@ -14,6 +14,5 @@ var I=d.querySelector('#live img').getBoundingClientRect();
 out.push('');
 out.push('溢出检查: 立绘 bottom='+Math.round(I.bottom)+' vs 框 bottom='+Math.round(L.bottom)+'  → '+(I.bottom<=L.bottom+1?'✓ 不溢出':'✗ 溢出'));
 out.push('        立绘 top='+Math.round(I.top)+' vs 框 top='+Math.round(L.top)+'  → '+(I.top>=L.top-1?'✓ 不溢出':'✗ 溢出'));
-document.getElementById('o').textContent=out.join('
-');
+document.getElementById('o').textContent=out.join('\n');
 },2600);</script></body></html>

@@ -53,7 +53,15 @@ GATES: list[tuple[str, str, list[str], bool]] = [
     # 前端 JS 语法：一处语法错误会让整个 <script> 块静默不执行（该块里所有按钮全哑），
     # 而 check_web_js_syntax 原来打印完就 exit 0 —— 是装饰闸门。本机没 node 时
     # 按 77 跳过（单列「未验证」，不计通过）。
+    # 【2026-10-21 扩】原来只查 index.html 一个页面 + 两个硬编码的外链 JS，设置页/
+    # 引导页/通知页全在盲区。现在扫全站（46 页 / 65 内联块 / 23 个 JS = 88 段），
+    # 扩完第一处就抓到 probe2.html 把 '\n' 写成真换行、整块从未执行。
+    # 88 段走一个 node 进程（vm.Script / vm.SourceTextModule 按加载上下文选目标），
+    # 1.9s；逐段起 node --check 要 21s。
     ("前端 JS 语法", PY_RUNTIME, ["tools/check_web_js_syntax.py"], False),
+    # 语法闸门的变异：三把刀各打一种载体（非首页内联块 / 原名单外的外链 JS /
+    # 首页的非第一块）。标慢项：它会改源码再还原，不能与其他闸门并发。
+    ("前端 JS 语法变异", PY_RUNTIME, ["tools/_qc_web_js_syntax_mutation.py"], True),
     # HTML 标签配平：`index.html` 的通话浮层 `#callOverlay` 曾经**从来没被关上**
     # （call-screen 漏一个 </div>），靠浏览器在 </body> 处自动补，运行时毫无症状。
     # 判据用「容错匹配」：只报真漏标签，放过浏览器能确定性恢复的错位嵌套。
