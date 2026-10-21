@@ -73,12 +73,15 @@ from check_bridge_methods import (  # noqa: E402
 # 【已接线，2026-10-21（第二批）】probe_vision_model → 适配层补导出 probeVisionModel
 #   （`typeof Backend.x === 'function'` 守卫恒 false → 额度浮层「再试一次」点了没反应）。
 #   这道门催着删的同时，新闸门 `check_bridge_guards.py` 开始守"守卫的目标必须在导出表里"。
+# 【已接线，2026-10-21（第三批）】get_relation_events / set_archetype_manual →
+#   关系面板补了两个入口：底部「最近事件」列表（get_relation_events，最近 6 条，最近的在上）
+#   和「原型」下拉（选项由 get_relationship_state().archetypes 给，改它调
+#   set_archetype_manual）。那个「·自动」标签本来就在说"手动覆盖是设计里的东西"，
+#   只是入口一直没建。面板的 js 现在也在 `_qc_relation_panel` 的真机/真 JS 判据里。
 KNOWN_UNWIRED = {
     # —— 后端能力完整、前端从未做过入口（"待接线"）——
-    "get_relation_events",      # 关系事件观测日志（关系面板只显示"上次事件"，没有列表）
-    "set_archetype_manual",     # 手动指定原型（面板会显示"·自动"，但没有改的入口）
-    "clear_pet_cache",          # 桌宠缓存清理
-    "prevent_window_close",     # 关窗拦截（WindowAPI）
+    "clear_pet_cache",          # 桌宠缓存清理（没有对应的用户动作）
+    "prevent_window_close",     # 关窗拦截（WindowAPI，能力在、没有入口）
     # —— 已裁决 / 旧架构残留 ——
     # pet_hit_rect：**已裁决保留**（2026-10-21 核实）。它是纯 no-op（前端 reportPetBody
     #   从未实现 / `_pet_win.native` 恒 None / `set_pet_hit_rect` 全仓不存在），但它是
