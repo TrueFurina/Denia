@@ -15,6 +15,7 @@
 这里用鸭子类型的 fake 对象接住（真实实现会写到用户桌面，测试不该碰）。
 """
 import os
+import re
 import sys
 import tempfile
 import time
@@ -178,6 +179,34 @@ def main():
     print("[10] render_bundle 全是空角色时返回空串")
     chk("返回空串（调用方据此报错，不写空文件）",
         render_bundle([("a", "A", []), ("b", "B", [])]) == "")
+
+    print("[11] 前端入口：左键=当前角色，右键=全部角色")
+    # 为什么查源码：`scope="all"` 是后端能力，若前端没有入口，它就是"参数没人调"的半截功能
+    # ——本仓把这种形态算作缺陷。这里守两件事：①右键入口别被删掉；②左键仍走默认（当前角色）。
+    # 必须先剥注释再断言：否则我自己在注释里复述一遍 `scope: 'all'` 就能满足判据
+    # （本仓踩过：`"backup=True" in txt` 被注释满足）。
+    _html_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                              "src", "ui", "web", "index.html")
+    _html = ""
+    if os.path.exists(_html_path):
+        _html = open(_html_path, encoding="utf-8").read()
+    _nc = re.sub(r"/\*.*?\*/", "", _html, flags=re.S)
+    _nc = re.sub(r"<!--.*?-->", "", _nc, flags=re.S)
+    _nc = re.sub(r"(?m)^\s*//.*$", "", _nc)
+    _i = _nc.find("var ec = $('exportChat');")
+    # 块的边界用「下一个绑定块的开头」定位，不用 `_i + 2000` 这种魔法窗口：
+    # 窗口写小了会把判据切在块外（假红），写大了会把隔壁块算进来（假绿），
+    # 而两种错都不会有人发现——只有等某天有人往这里加代码时才突然翻车。
+    _end = _nc.find("var ft = $('focusToggle');", _i + 1) if _i != -1 else -1
+    _blk = _nc[_i:_end] if (_i != -1 and _end != -1) else ""
+    chk("按钮 #exportChat 存在", 'id="exportChat"' in _nc)
+    chk("能定位到导出绑定块（块尾标记 var ft 在它后面）", bool(_blk))
+    chk("按钮 title 写明右键可导出全部", bool(re.search(r'id="exportChat"[^>]*title="[^"]*右键', _nc)))
+    chk("绑了 contextmenu（右键入口，别删）",
+        "ec.addEventListener('contextmenu'" in _blk)
+    chk("右键传 scope: 'all'", "scope: 'all'" in _blk)
+    chk("左键仍走默认（当前角色），不是把两个范围搞反",
+        bool(re.search(r"ec\.addEventListener\('click'.*?doExport\(\{\}", _blk)))
 
     print("\n结果: %d PASS / %d FAIL" % (OK, FAIL))
     return 0 if FAIL == 0 else 1
