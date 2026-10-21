@@ -33,6 +33,22 @@ logger = logging.getLogger(__name__)
 REPO_ID = "OpenBMB/MiniCPM-o-4_5-gguf"
 MODELSCOPE_URL = f"https://modelscope.cn/models/{REPO_ID}"
 
+_APP_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+
+def default_model_dir() -> str:
+    """默认模型目录：`<程序目录>/models/MiniCPM-o-4_5-gguf`（跟着程序走）。
+
+    【2026-10-21 修·出厂缺陷】原来三处（`_build_cmd` / `download_model_quant` /
+    `download_bundle`）在"用户还没选目录"时都回落到开发机的
+    `H:\\minicpm models\\MiniCPM-o-4_5-gguf`。新用户没有 H 盘，于是：
+      · 点下载 → `modelscope download --local_dir "H:\\minicpm models\\..."` → 直接失败；
+      · 复制"可手动执行的命令" → 也是一条指着 H 盘的命令，照着敲必然失败。
+    这与「出厂模板里躺着开发机绝对路径」同一类：开发机上永远是对的，只有新用户才撞。
+    改成按程序所在目录推，谁装在哪就下在哪（不自动建目录，由 modelscope 自己建）。
+    """
+    return os.path.join(_APP_ROOT, "models", "MiniCPM-o-4_5-gguf")
+
 # 各量化档。
 #   file      : GGUF 文件名（下载到 Comni 的 model_dir 后，填进 cpp_backend.llm_model）
 #   size_gb   : 文件体积（GB，约）。Q6_K 为本机实测 6.72GB，其余为估算
@@ -226,7 +242,7 @@ def recommend_quants(total_vram_gb: Optional[float]) -> Dict[str, Any]:
 
 def _build_cmd(file_name: str, model_dir: Optional[str] = None) -> str:
     """生成 modelscope 单文件下载命令（装到 Comni 的 model_dir）。"""
-    d = model_dir or r"H:\minicpm models\MiniCPM-o-4_5-gguf"
+    d = model_dir or default_model_dir()
     d = d.replace('"', '\\"')
     return (
         f'modelscope download --model {REPO_ID} {file_name} '
@@ -682,7 +698,7 @@ def download_model_quant(data: Dict[str, Any]) -> Dict[str, Any]:
     quant_id = str(data.get("quant_id") or "").strip()
     model_dir = data.get("model_dir") or _comni_model_dir()
     if not model_dir:
-        model_dir = r"H:\minicpm models\MiniCPM-o-4_5-gguf"
+        model_dir = default_model_dir()
     quant = next((q for q in QUANTS if q["id"] == quant_id), None)
     if quant is None:
         return {"success": False, "error": f"未知量化档: {quant_id}"}
@@ -1309,7 +1325,7 @@ def download_bundle(data: Dict[str, Any]) -> Dict[str, Any]:
     quant_id = str(data.get("quant_id") or "Q4_K_M").strip() or "Q4_K_M"
     model_dir = data.get("model_dir") or _comni_model_dir()
     if not model_dir:
-        model_dir = r"H:\minicpm models\MiniCPM-o-4_5-gguf"
+        model_dir = default_model_dir()
     if not next((q for q in QUANTS if q["id"] == quant_id), None):
         return {"success": False, "error": f"未知量化档: {quant_id}"}
     # 并发守卫：同一 (quant, dir) 已在下则复用已有任务，避免双进程踩同一文件

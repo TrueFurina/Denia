@@ -60,7 +60,17 @@ GATES: list[tuple[str, str, list[str], bool]] = [
     ("前端 HTML 配平", PY_RUNTIME, ["tools/check_html_balance.py"], False),
     # 桥接三层：index.html 的 Backend.xxx → app_backend.js 的 call('py_name') →
     # CharacterAPI。任一层断掉都是"点了没反应"，控制台之外没有任何痕迹。
+    # 2026-10-21 补了「外链 JS」这一层（原来只扫 HTML 内联 script，引导页那个
+    # 2000 行的 onboarding_role.js 整个不可见 —— 里面就躺着一处假进度条）。
     ("前端桥接", PY_VENV, ["tools/check_bridge_methods.py"], False),
+    # 死引用看门狗：`getElementById('x')` 拿到 null 是**静默**的（JS 不报错，
+    # 只是 `if(el)` 恒假、那段逻辑永不执行）。它自带 KNOWN_DEAD 白名单（每条写了原因）。
+    # 【2026-10-21 收进闸门】这个工具早就写好了，docstring 也写着"纳入自测后即成为回归
+    # 闸门"，但两件事一直没做：①它硬编码 `ROOT = r"G:\ai对话\11"` —— 仓库搬家后**从那天
+    # 起就跑不了**，而它不在闸门里所以没人发现；②它把结果写到 `docs/_audit_dead_ids.txt`，
+    # 而 docs/ 不是忽略目录 → 每跑一次工作区就多一个未跟踪文件。
+    # 现在：ROOT 按文件位置推导、产物写 logs/、收进闸门（约 0.2s）。
+    ("前端死引用", PY_VENV, ["tools/audit_dead_ids.py"], False),
     ("凭据/隐私", PY_RUNTIME, ["tools/check_package_secrets.py"], False),
     # ${ENV} 引用与 dpapi: 密文都不算泄漏（本轮修的两处假警噪点）
     ("凭据扫描正反", PY_VENV, ["src/tests/test_package_secrets_scan.py"], False),
