@@ -211,7 +211,7 @@
         <button class="ctl" id="contToggle" title="持续语音：开=免唤醒随时说，关=需唤醒词" type="button">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5h16v10H9.5L5 19V15H4z M4 4l16 16"/></svg>
         </button>
-        <button class="ctl" id="exportChat" title="导出聊天记录（Markdown，存到桌面「AI桌面伴侣报告」）" type="button">
+        <button class="ctl" id="exportChat" title="导出聊天记录（Markdown，存到桌面「AI桌面伴侣报告」）· 右键 = 导出全部角色" type="button">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4v10m0 0l-4-4m4 4l4-4M4 17v2a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-2"/></svg>
         </button>
         <button class="ctl" id="clearChat" title="清空对话" type="button">
@@ -3680,17 +3680,21 @@
   var ec = $('exportChat');
   if (ec && !ec.dataset.bound) {
     ec.dataset.bound = '1';
-    ec.addEventListener('click', async function(){
+    /* 一个按钮两个范围：左键=当前角色，右键=全部角色。
+       为什么不用下拉菜单：工具栏已经挤了 5 个图标，再加弹层要自己管定位/点外关闭/
+       z-index，成本远大于收益；右键在桌面软件里是常识，title 里也写明了。
+       后端两个范围都实现并测过（scope=current/all），不留"参数没人调"的半截功能。 */
+    var doExport = async function(payload, label){
       if (ec.dataset.busy) return;
       ec.dataset.busy = '1';
       ec.style.opacity = '.45';
       try {
         /* 不加 typeof 守卫：名字对不对由 tools/check_bridge_methods.py 守（外链/内联都扫）。
            守卫只会把"名字写错了"伪装成"这个版本不支持"——本仓在这上面栽过好几次。 */
-        var r = await B.exportChatHistory({});
+        var r = await B.exportChatHistory(payload);
         if (r && r.success) {
           if (window.Backend && Backend.toast)
-            Backend.toast('已导出 ' + (r.count || 0) + ' 条 → 桌面/AI桌面伴侣报告');
+            Backend.toast('已导出' + label + ' ' + (r.count || 0) + ' 条 → 桌面/AI桌面伴侣报告');
         } else if (window.Backend && Backend.toast) {
           Backend.toast((r && r.error) || '导出失败');
         }
@@ -3700,6 +3704,11 @@
         ec.dataset.busy = '';
         ec.style.opacity = '';
       }
+    };
+    ec.addEventListener('click', function(){ doExport({}, '当前角色'); });
+    ec.addEventListener('contextmenu', function(ev){
+      ev.preventDefault();
+      doExport({scope: 'all'}, '全部角色');
     });
   }
 
