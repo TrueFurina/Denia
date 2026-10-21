@@ -13,6 +13,7 @@
 
 | commit | 时间 | 类型 | 一句话 | 验证 |
 |---|---|---|---|---|
+| `6a07e12` | 07:5x | fix | **克隆面板「预填她的」从来是坏的**：预置角色「温柔女友」的参考音频随包分发（`_role_assets/ref/xiaowei.wav`），但面板**预填写一份、按钮读另一份**——卡片预填 `voice.ref || demo.ref`，试听/开始克隆只读 `c.voice.ref`；预置角色只有 demo.ref（`path` 还是开发机绝对路径 `D:/GPT-SoVITS/...`）⇒ 试听按钮每次静默 return，「开始克隆」取到空 refPath 后跳过真实克隆、落到「无桥降级」画一条**假进度条**再 toast「克隆完成」——用户机器上什么都没发生（该文件自己的红线写着"不画假进度"）。顺带查到 `/local_img` 是**图片**路由（Content-Type 只认图片、白名单只放行 `char_banners`/`char_avatars`+注册目录），用户自选音频的试听也一直静默 404。修法：`_clRef` 单一来源（预填/试听/克隆共用）、随包资产经新后端 `use_bundled_ref_audio` 物化到 `data/voice_ref/`（白名单防穿越）、选文件换 `pickReferenceAudio`（B3 持久化）、`/local_img` 补音频类型并注册目录、**假进度条整段删** | jsdom 真值表 **24 项**（原样加载 `onboarding_role.js` 整文件真点真走：S1 随包资产 / S2 用户文件 / S3 无桥 / S4 墓碑，两个对照组）；后端门禁 20 项（物化 + **8 条白名单拒绝** + 目录注册 + 音频类型）；**六刀变异全红**、还原后仍绿；闸门 134 → **137**，全量 **137/137**（11m13s） |
 | `b2bc771` | 06:2x | test | **「后端广播 type ↔ 前端分发分支」对账闸门**：后端往前端推消息走 `CoreWebView2.PostWebMessageAsJson`，前端接 `chrome.webview.addEventListener('message')`，两边靠一个字符串 `type` 对上，而**没有任何机制保证它对得上**（`quota_alert` 与 `character_switched` 两起都死在这，症状永远静默：分支不执行、不报错，只是"那个功能不工作"）。只做**单向**（前端 type ⊆ 后端广播全集）——反向会假红：`pet_tip` 就走 `api.pop_pet_bubble()` 1.5s 轮询，桌宠窗的 `chrome.webview` 监听对 `PostWebMessageAsJson` **完全不触发**（rig 页 2026-09-03 实锤：3 次广播 / 0 回执），"广播了但没人用 webview 监听器接"在这里是合法设计。边界必须精确圈定：全仓 `.type === 'x'` 有 25 处以上**不是**消息分发（`dataset.type`、本地事件总线 `ev.type==='asr'`、通知项 `n.type`、骨架 `s.type==='row'`…），一刀切必假红。**顺带补登记两把从没跑过的变异刀**：`_qc_channel_mutation` 与 `_qc_gewechat_mutation` 只在 check_all 的注释里被提到、从没进名单——按项目自己的规矩「加门必须同时加变异」，那两道门**一直是装饰品**；实跑前者，七刀里 **C/D/F/G 四把锚点命中 0 次被静默跳过**（根因：`J()` 写死 CRLF 而 `doctor.py` 早变成 LF，**单行锚点不受影响、刀照跑，所以坏得极隐蔽**） | 七刀变异全过（含"原 bug 原样"与两个"不许误伤"对照组）；渠道探活判级变异修好后**七刀全红**、还原字节一致；微信回调变异五刀全红；闸门 130 → **134**；全量门禁 **134/134**（10m43s） |
 | `ca6cff3` | 06:2x | fix | **切角色后界面名字不跟随**：`app_backend.js` 里 `d.type === 'character_switched'` 这条分支自 2026-10-02 写下起就是**死的**——后端 `EventType.CHARACTER_SWITCHED` 只经 `ws_server.broadcast` 发（`{message_type, payload}` 信封，给 Unity 与旧壳 `app.js` 用），而 `app_backend.js` 里**没有 WebSocket 客户端**；`app.js` 有 ws 却没这个 case、且只被 `index.legacy.html` 加载。于是 `applyCharacterNameBoot`（那段注释原话就是"用户切换角色后这些仍显示旧名…看着像 bug"）**要修的那个 bug 本身就没修好**：点「设为默认角色」toast 说成功了，侧边栏 / 通话页 / 输入框 placeholder 一直是旧名字，直到刷新页面；`window.refreshCharacterName` 全仓零调用者。两端都修：后端 `_broadcast_character_switched()` 在 `switch_character` 的**两处**成功返回前都调（配置级回落路径不发事件，只挂总线会漏），前端 `setDefault()` 成功后显式兜底 | 新闸门 `check_broadcast_types.py` 的变异刀 M1 就是**原 bug 原样**（把那行广播改掉 → 闸门红并点名 `character_switched`），证明闸门在修复前确实是红的；七刀变异全过；全量门禁 **134/134** |
 | `0ab49ab` | 05:3x | fix | **队友包里一直带着 1.1MB 开发残留**：`src/ui/web/redesign/` 下 14 个 `_` 前缀文件（设计稿 / 重构前备份 / 测试台，最大一个是 350KB 的旧设置页）零引用，却按 `git ls-files` 一路进包 —— 队友解包后能在 URL 里打开"能点但没反应"的旧 UI。**不用前缀一刀切**：`_gpu.txt` 同样带 `_`，但它是 `_has_usable_gpu()` 写的运行时数据 | 安全先扫（密钥/绝对路径/token/cookie 全干净）；三层判据（逐个排除 / `_gpu.txt` 必须保留的对照组 / 未登记与 stale 反向催）；四刀变异全红（含"一刀切必须红在 `_gpu.txt`"）；实测 `--dry-run` 排除 14 项、入包 788（跟踪 802）；全量门禁 **130/130** |
@@ -111,6 +112,46 @@
 > 代码与测试主体由 `5dbc64c` 收口，**归属以本脚注为准**。
 > 教训：并发会话各自只 `git add` 自己知道的文件，提交前先 `git log` 确认HEAD 没有
 > 在几分钟内被别人推进过。
+
+### 2026-10-22 · 克隆面板「预填她的」：试听静默失效 + 克隆画假进度条还谎报「已完成」
+
+**缘起**：收尾「反向核对所有 check/_qc 是否在册」时，顺手把上一轮普查出来的
+`src/` 75 处硬编码路径**逐个定性完**（测试夹具 / docstring 墓碑 / 输入框 placeholder /
+标准系统位 + exists 先验 / 合法跨盘扫描——全部无害，脚本 `tools/_scan_src_paths_once.py`
+留档）。剩下唯一一处真缺陷，在首启建角色的克隆面板：
+
+| 现象 | 根因 |
+|---|---|
+| 预置角色「温柔女友」的**试听**按钮点了没反应 | 卡片预填 `voice.ref \|\| demo.ref`，按钮只读 `c.voice.ref`；预置角色只有 `demo.ref` → 静默 `return` |
+| 「开始克隆」画一条假进度条，然后弹「**克隆完成**」 | 同上：`refPath` 取到空 → 跳过真实克隆，落到「无桥降级」的 `setInterval` 假进度 |
+| 卡片副标题显示 `D:/GPT-SoVITS/ref_audio/xiaowei.wav` | 预置 `demo.ref.path` 是**开发机绝对路径**，用户机器上没这个文件 |
+| 用户自选文件的试听也没声 | `/local_img` 是**图片**路由：Content-Type 只认图片、白名单只放行 `char_banners`/`char_avatars`+注册目录 |
+
+随包的 `xiaowei.wav`（428KB，`_role_assets/ref/`）本来**就是**「她的原始录音」——
+产品意图是预填它、试听它、拿它克隆。坏的只是接线。
+
+**改动**（两端都修，不装饰）：
+- `onboarding_role.js`：`_clRef` 模块级单一来源，预填/试听/开始克隆共用；随包资产
+  `url`（播放）与物化后的 `path`（引擎）分开持有；**假进度条整段删除**，无桥时明确告知；
+  选文件换 `pickReferenceAudio`（校验时长 + 复制到 `data/voice_ref/` 持久，修 B3）
+- `webapp.py`：新方法 `use_bundled_ref_audio()` 把随包资产物化成磁盘真实路径，
+  白名单（只放行 `_role_assets/` 前缀、拒 `..`、解析后必须在 web 根内）；
+  `pick_reference_audio` 补注册 `/local_img` 目录
+- `main_window.py`：`/local_img` 补 wav/mp3/flac/ogg/m4a 的音频 Content-Type
+- `app_backend.js`：导出 `useBundledRefAudio`
+
+**验证**：jsdom 真值表 **24 项**——`test_clone_card_ui.js` **原样加载**
+`onboarding_role.js` 整文件（不抽片段）在假 DOM + 假 `window.Backend` 里真点真走：
+S1 随包资产（物化一次、`testVoice` 带真实路径、失败如实报、**没有**「克隆完成」）/
+S2 用户文件（`/local_img` 播放、**不**物化）/ S3 无桥（明说没有语音桥、假进度条不展开）/
+S4 墓碑（源码里假进度分支与开发机路径都不在）。后端门禁 20 项（物化 + 8 条白名单拒绝 +
+目录注册 + 音频类型）。**六刀变异全红**、还原后两道门仍全绿。
+
+**踩过的坑**：①墓碑断言 `src.indexOf('D:/GPT-SoVITS') < 0` 被**我自己注释里复述的
+字面量**满足（假红）——「源码级断言会被自己的注释满足」的反面同样成立：注释里别复述
+被判断的字面量；②`loadFromBackend` 的 `getCharacters` 会**整体替换** `PRESETS`，
+mock 提供它就测不到预置角色；③`pickAudioFile` 返回 `duration`、`pickReferenceAudio`
+返回 `duration_s`，换调用必须换字段。
 
 ### 2026-10-22 · 队友包里一直带着 1.1MB 开发残留：14 个 `_` 前缀页面
 
