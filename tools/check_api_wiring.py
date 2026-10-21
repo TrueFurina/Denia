@@ -59,9 +59,13 @@ from check_bridge_methods import (  # noqa: E402
 # 【已接线，2026-10-21 从清单移除】get_version / get_autostart / set_autostart
 #   → 设置页新增「关于」分类（版本号 + 开机自启开关）。这三条就是这道门自己催着删的
 #   —— 接线后它们立刻报 ①「现在有人调了」，不删就红。
+# 【已删，2026-10-21】enable_tray / restore_from_tray / set_minimize_to_tray /
+#   pop_notify_cmd / get_backend_options —— 逐个核实过，它们不是"缺入口"，而是
+#   **假接口**（`return {"ok": True}` 然后什么都没做 / 调一个已不存在的函数 /
+#   写死一份过时清单）。这种不能"接线"：接到界面上等于把谎话搬到用户眼前。
+#   已从 `webapp.py` 删除，理由写在各自的删除位置。
 KNOWN_UNWIRED = {
     # —— 后端能力完整、前端从未做过入口（"待接线"）——
-    "get_backend_options",      # 后端下拉选项
     "get_model_3d_options",     # 3D 模型下拉选项
     "get_bailian_quota",        # 百炼额度快照
     "get_audio_status",         # 调试台：音频识别状态
@@ -70,11 +74,7 @@ KNOWN_UNWIRED = {
     "get_relation_events",      # 关系事件观测日志
     "set_archetype_manual",     # 关系面板改用 set_relationship_setting 后没人调
     "chat_overlay_state",       # 对话悬浮层状态
-    "pop_notify_cmd",           # 桌宠通知卡（桌宠页只轮询了 pop_pet_bubble）
-    "probe_vision_model",       # 额度提醒浮层"再试一次"
-    "enable_tray",              # 托盘三件套：没有 UI 开关
-    "restore_from_tray",
-    "set_minimize_to_tray",
+    "probe_vision_model",       # 额度提醒浮层"再试一次"（该浮层 10-02 已被用户停用）
     "clear_pet_cache",          # 桌宠缓存清理
     "prevent_window_close",     # 关窗拦截（WindowAPI）
     # —— 旧架构残留，建议删（见 AGENTS.md「发现过」那条）——

@@ -59,20 +59,31 @@ _M1_NEW = (
     "    def export_markdown(self, data: dict = None) -> dict:"
 )
 
-# M3：把清单里的 enable_tray 改名（只改定义行，调用点本来就没有）
-_M3_OLD = "    def enable_tray(self, enabled: bool = True) -> dict:"
-_M3_NEW = "    def enable_tray_renamed(self, enabled: bool = True) -> dict:"
-
 MUTS = [
     ("M1 加一个没人调的方法", WEBAPP,
      lambda: _block(WEBAPP, [_M1_OLD]),
      lambda: _block(WEBAPP, _M1_NEW.split("\n")),
      "③"),
-    ("M3 把清单里的方法改名", WEBAPP,
-     lambda: _block(WEBAPP, [_M3_OLD]),
-     lambda: _block(WEBAPP, [_M3_NEW]),
-     "②"),
 ]
+
+
+def _pick_rename_target() -> tuple[str, bytes]:
+    """从清单里现取一个**在 webapp.py 里真有定义**的方法来改名。
+
+    【为什么动态取】原来写死 `enable_tray`，而它后来被判定为假接口、已从 `webapp.py`
+    删除 —— 这一刀立刻变成"锚点命中 0 次"（等于变异被静默跳过，闸门照样绿）。
+    这与 M2 当初写死 `get_version` 是同一个坑：**变异脚本里不许出现"当前清单长什么样"
+    的假设**，清单怎么变这一刀都得成立。
+    """
+    from check_api_wiring import KNOWN_UNWIRED  # noqa: E402  同目录
+    data = _read(WEBAPP)
+    for n in sorted(KNOWN_UNWIRED):
+        if n.startswith("_"):
+            continue
+        needle = ("    def " + n + "(self").encode("utf-8")
+        if data.count(needle) == 1:
+            return n, needle
+    raise SystemExit("  FAIL 清单里找不到可在 webapp.py 里改名的方法")
 
 
 def run_gate() -> tuple[int, str]:
@@ -90,7 +101,7 @@ def main() -> int:
         return 1
     print("  PASS 起点绿")
 
-    # M1 / M3：普通替换
+    # M1：加一个没人调的方法
     for label, rel, mk_old, mk_new, want in MUTS:
         if mk_old is None:
             continue
@@ -115,6 +126,30 @@ def main() -> int:
             bad += 1
         else:
             print("  PASS %s：报了 %s 分支" % (label, want))
+
+    # M3：把清单里的某个方法改名（目标动态取，见 _pick_rename_target 的说明）
+    name, needle = _pick_rename_target()
+    data = _read(WEBAPP)
+    renamed = needle.replace(b"def " + name.encode("utf-8"),
+                             b"def " + name.encode("utf-8") + b"_renamed")
+    if data.count(needle) != 1 or renamed == needle:
+        print("  FAIL M3：改名锚点构造失败（%s）" % name)
+        bad += 1
+    else:
+        _write(WEBAPP, data.replace(needle, renamed))
+        try:
+            code, out = run_gate()
+        finally:
+            _write(WEBAPP, data)
+        if code == 0:
+            print("  FAIL M3 把清单里的方法改名：闸门仍然绿（清单失效没被拦）")
+            bad += 1
+        elif "②" not in out or name not in out:
+            print("  FAIL M3：没报 ② %s（清单失效没被拦）" % name)
+            print(out[-600:])
+            bad += 1
+        else:
+            print("  PASS M3 把清单里的方法改名：报了 ② %s" % name)
 
     # M2：往一个真实加载的 JS 末尾加一句调用，目标是**清单里还在的**某个名字。
     # 【为什么动态取】原来写死 `get_version`，而它已经被接进设置页「关于」并移出清单

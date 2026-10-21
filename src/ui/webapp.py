@@ -392,9 +392,9 @@ class CharacterAPI(PetAPI, WindowAPI):
         self._pet_visible: bool = False         # 桌宠可见性（pywebview 无 is_visible，自维护）
         self._main_win_closed: bool = False     # 主窗口是否已关闭（后台模式桌宠接管后，恢复时需重建）
         
-        # 系统托盘管理
+        # 系统托盘管理（只剩一个保守标志：默认 False = 拒绝隐藏窗口。
+        # 真实的托盘在 main.py 里，见本节开头那段说明）
         self._tray_enabled: bool = False        # 是否启用系统托盘
-        self._minimize_to_tray: bool = True     # 是否最小化到托盘
         
         # 桌宠对话上下文管理（保持对话连贯性）
         self._pet_conversation_history: list[dict] = []  # 最近的互动历史
@@ -558,21 +558,21 @@ class CharacterAPI(PetAPI, WindowAPI):
     
     
     # ======== 系统托盘管理 ========
-    def enable_tray(self, enabled: bool = True) -> dict:
-        """启用或禁用系统托盘。
-        
-        Args:
-            enabled: 是否启用系统托盘
-            
-        Returns:
-            操作结果
-        """
-        self._tray_enabled = enabled
-        return {"ok": True, "enabled": enabled}
-    
+    #
+    # 【2026-10-21 清理】原来这里有 `enable_tray` / `set_minimize_to_tray` /
+    # `restore_from_tray` 三个方法，全部是**假接口**：只改一个没人读的布尔字段，
+    # 然后 `return {"ok": True}`。而真正的托盘在 `main.py` 里由 `TrayManager` 无条件
+    # 启动、由 `events.closing` 拦截实现「点 X → 隐藏到托盘」，跟这三个方法毫无关系。
+    # 也就是说前端调 `enable_tray(False)` 会被告知"成功关闭了托盘"，实际什么都没变。
+    # 已删除 —— 要做的是**功能**（关窗行为开关），不是把假接口接到界面上。
+    #
+    # 下面两个保留，因为 `src/ui/web/app.js`（legacy 页）真的在调，而且它们的语义是
+    # **保守方向**的：`_tray_enabled` 默认 False，于是 `minimize_to_tray()` 会拒绝隐藏
+    # 窗口（"系统托盘未启用"）而不是隐藏了找不回来。真要让它跟着真实托盘状态走，得把
+    # TrayManager 注入进来（`set_runtime` 目前不传），属于另一个改动。
     def minimize_to_tray(self) -> dict:
         """最小化到系统托盘。
-        
+
         Returns:
             操作结果
         """
@@ -589,41 +589,13 @@ class CharacterAPI(PetAPI, WindowAPI):
         
         return {"ok": False, "error": "主窗口不存在"}
     
-    def restore_from_tray(self) -> dict:
-        """从系统托盘恢复显示。
-        
-        Returns:
-            操作结果
-        """
-        if self._main_win is not None:
-            try:
-                self._main_win.show()
-                return {"ok": True, "message": "已从托盘恢复"}
-            except Exception as e:
-                logger.error("从托盘恢复失败: %s", e)
-                return {"ok": False, "error": str(e)}
-        
-        return {"ok": False, "error": "主窗口不存在"}
-    
     def is_tray_enabled(self) -> bool:
         """检查系统托盘是否启用。
-        
+
         Returns:
             是否启用系统托盘
         """
         return self._tray_enabled
-    
-    def set_minimize_to_tray(self, enabled: bool) -> dict:
-        """设置是否最小化到托盘。
-        
-        Args:
-            enabled: 是否最小化到托盘
-            
-        Returns:
-            操作结果
-        """
-        self._minimize_to_tray = enabled
-        return {"ok": True, "minimize_to_tray": enabled}
 
     # ======== 看板娘表情特效位置（泪滴/zzz 拖拽定位，供前端保存/读取） ========
 
@@ -3300,18 +3272,13 @@ class CharacterAPI(PetAPI, WindowAPI):
 
 
 
-    def pop_notify_cmd(self) -> list:
-        """桌宠页轮询取走通知卡命令（与 pop_pet_bubble 同款已验证 JS→Python 通道）。
-
-        返回 mode_notify 命令队列全部积压（show/update/dismiss 的 list，可空）。
-        由桌宠页 rig/index.html 每 ~300ms 调用一次，线程安全。
-        """
-        try:
-            from . import mode_notify as _mn
-            return _mn.drain_cmds()
-        except Exception:  # noqa: BLE001
-            return []
-
+    # 【2026-10-21 删】这里原来有 `pop_notify_cmd()`，docstring 写着「由桌宠页
+    # rig/index.html 每 ~300ms 调用一次」—— 实测**没有任何地方调它**（所以它出现在
+    # 反向接线闸门的清单里）。更要紧的是它调 `mode_notify.drain_cmds()`，而那个函数
+    # **根本不存在**：`mode_notify` 的模块注释明确写着"本模块不再有任何 WebView2 /
+    # js_api / 命令队列"（通知卡已改成原生窗 native_notify）。
+    # 于是它被 `except Exception: return []` 吞掉，永远返回空列表 —— 一个"永远没有
+    # 积压"的假接口。命令队列已经不存在了，没有东西可接线，直接删。
 
     async def _on_chat_unity_inbound(self, e: Event) -> None:
         """Unity 点击模型触发的对话。"""
@@ -6552,15 +6519,11 @@ class CharacterAPI(PetAPI, WindowAPI):
         except Exception:
             pass
 
-    def get_backend_options(self) -> dict:
-        backends = [
-            # 【2026-10-16 发布口径】edge-tts 下架：不再出现在可选清单里（用户要求不用它）
-            {"id": "pyttsx3", "name": "系统语音 (本地离线)", "available": True},
-            {"id": "gpt-sovits", "name": "GPT-SoVITS (声音克隆)", "available": True, "note": "需本地部署 GPT-SoVITS 服务"},
-            {"id": "voxcpm", "name": "VoxCPM2 (本地声音克隆)", "available": True, "note": "需先启动 VoxCPM2 本地服务 (voxcpm_server.py)"},
-            {"id": "pyttsx3", "name": "pyttsx3 (离线降级)", "available": True},
-        ]
-        return {"success": True, "backends": backends}
+    # 【2026-10-21 删】这里原来有 `get_backend_options()`，返回 4 条写死的 TTS 引擎：
+    # `pyttsx3` **出现两次**（"系统语音(本地离线)" / "pyttsx3(离线降级)"），而真正的
+    # 引擎表 `src/models/protocols.py: TTS_ENGINES` 有 **10** 个（由 check_models_layer
+    # 守着，10-16 已按发布口径摘掉 edge-tts）。它既不是事实来源、也没人调 —— 把它接到
+    # 下拉框上，用户会看到重复项和缺失项。真要动态选项，从 `TTS_ENGINES` 生成。
 
     # ======== LLM 模型设置（自定义模型） ========
     def get_llm_settings(self) -> dict:
