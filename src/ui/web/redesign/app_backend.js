@@ -176,6 +176,13 @@ const Backend = (() => {
   const setChatProviderModel = (providerId, model) => call('set_chat_provider_model', providerId, model);
   /* 聊天页模型切换器：视觉推理模型（看屏用）热切换 */
   const switchVisionModel = (modelId) => call('switch_vision_model', modelId || '');
+  /* 额度提醒浮层「再试一次」用：最小请求探测某视觉模型是否恢复。
+     【2026-10-21 修】与 switchVisionModel 完全同型的**漏导出**：后端 probe_vision_model
+     一直在，适配层从没导出它 → 本文件额度浮层「再试一次」那段
+     `typeof Backend.probeVisionModel === 'function'` 恒为 false → 点按钮只是把
+     按钮恢复成「再试一次」，**既不发请求也不提示**，用户以为"点了没用"。
+     判据见 tools/check_bridge_guards.py（守卫名必须在导出表里）。 */
+  const probeVisionModel = (modelId) => call('probe_vision_model', modelId || '');
   /* 模型能力：拉取所有模型推断/手填的能力（caps），供选择器悬浮卡 + 设置页能力编辑 */
   const getModelCaps = () => call('get_model_caps');
   /* 模型能力：真实探测（填了 API 后发请求试图片/音频是否被接受）。providerId 或内联 config */
@@ -733,8 +740,11 @@ const getOnboardingDefaults = (p) => call('get_onboarding_defaults', p || {});
                                → 视觉模型切换静默失效）；const 早已定义在 137 行，这里补进导出。
        · exportMarkdown     → 日报/记忆页「导出」按钮（未加守卫，漏了点击即 TypeError）。
        · startSimplexServer → 外壳单工服务自动拉起（有守卫，漏了只是不自动拉起）。
+       · probeVisionModel   → 额度提醒浮层「再试一次」（2026-10-21 补，同 switchVisionModel：
+                              守卫恒 false → 按钮点了什么都不做）。
        · test_model_slot / get_model_diagnose → 设置页旧「模型槽」诊断（该 tier 已下线，兜底保留）。 */
     switchVisionModel,
+    probeVisionModel,
     exportMarkdown: (data) => call('export_markdown', data || {}),
     startSimplexServer: (data) => call('start_simplex_server', data || {}),
     test_model_slot: (data) => call('test_model_slot', data || {}),
