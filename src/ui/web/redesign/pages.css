@@ -216,31 +216,6 @@
   .vod-st{ color: var(--ink-3); margin-top: 2px; font-family: var(--font-mono, ui-monospace, monospace); font-size: 10px; }
   .vod-empty{ color: var(--ink-3); font-size: 11px; padding: 6px 0; }
 
-  /* 免费额度耗尽·询问浮层（2026-10-02）：挂 body 全局可见，只询问不自动切换 */
-  .qa-box{
-    position: fixed; left: 50%; bottom: 18px; z-index: 9100;
-    transform: translateX(-50%) translateY(20px);
-    display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
-    max-width: calc(100vw - 32px);
-    padding: 12px 16px; border-radius: var(--r-md);
-    background: var(--surface-1); border: 1px solid var(--line);
-    border-left: 3px solid var(--warn);
-    box-shadow: var(--shadow-pop);
-    opacity: 0; pointer-events: none;
-    transition: opacity .25s ease, transform .25s ease;
-  }
-  .qa-box.qa-show{ opacity: 1; pointer-events: auto; transform: translateX(-50%) translateY(0); }
-  .qa-ic{ flex: 0 0 auto; display: flex; align-items: center; }
-  .qa-dot{ width: 9px; height: 9px; border-radius: 50%; background: var(--warn); }
-  .qa-main{ flex: 1 1 220px; min-width: 180px; }
-  .qa-t{ font-size: 13px; font-weight: 600; color: var(--ink-1); }
-  .qa-s{ font-size: 11px; color: var(--ink-3); margin-top: 2px; line-height: 1.4; }
-  .qa-ops{ display: flex; align-items: center; gap: 6px; flex: 0 0 auto; }
-  .qa-sel{
-    padding: 5px 8px; border-radius: var(--r-sm); font-size: 12px;
-    border: 1px solid var(--line); background: var(--surface-2); color: var(--ink-1);
-  }
-  .qa-sel:focus{ outline: none; border-color: var(--line-strong); box-shadow: 0 0 0 3px var(--accent-soft-1); }
 
   /* 设置页"需先准备外部桥"等信息条：与 .card / .badge.note 同族，统一用设计令牌 */
   .zone-banner{

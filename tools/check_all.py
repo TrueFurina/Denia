@@ -274,6 +274,10 @@ GATES: list[tuple[str, str, list[str], bool]] = [
     # ---- 第三批普查的第二轮（同日）：又修好 5 个，同样是"判据/桩过时"而非功能坏。
     #      test_onboarding_role_backend 退出码 0 但跑 29s，不进闸门。
     ("额度告警", PY_VENV, ["src/channels/tests/test_quota_alert.py"], False),
+    # 额度墓碑的变异刀（2026-10-22）：test_quota_alert 加了两层墓碑（Router 层 +
+    # 产品层），没有变异就分不清"判据正确"与"恒真"。三刀：注册点加回必须红 /
+    # 前端 quota_alert 分支加回必须红 / 只在注释里提名字必须仍绿。
+    ("额度墓碑变异", PY_VENV, ["tools/_qc_quota_tombstone_mutation.py"], False),
     ("TTS 多供应商", PY_VENV, ["tools/test_tts_multi_provider.py"], False),
     ("主动输出分流", PY_VENV, ["tools/test_proactive_chat_routing.py"], False),
     ("关系接线", PY_VENV, ["tools/test_relationship_wiring.py"], False),
