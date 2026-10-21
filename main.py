@@ -974,7 +974,10 @@ class RuntimeHolder:
     
     # 系统托盘
     tray: Optional[TrayManager] = None
-    minimize_to_tray: bool = False  # 是否最小化到托盘而非退出
+    # 【2026-10-21 删】这里原来有个 `minimize_to_tray: bool = False  # 是否最小化到托盘
+    # 而非退出`，全仓**没有任何地方读它**。而"点 X → 隐藏到托盘"是 `events.closing`
+    # 里无条件做的（见 `_on_main_closing`），跟这个字段无关 —— 留着只会让人以为改它
+    # 能改行为（`webapp.py` 里同名的假接口也是这么来的，已一并删掉）。
 
     # 启动加载进度（加载窗口轮询；asyncio 线程 + 启动监督线程共同更新）
     progress: Optional[StartupProgress] = None
@@ -2597,7 +2600,6 @@ def main() -> None:
 
     # 3. 初始化系统托盘
     runtime.tray = TrayManager()
-    runtime.minimize_to_tray = True  # 默认最小化到托盘
     
     # 设置托盘回调函数
     def on_exit():
