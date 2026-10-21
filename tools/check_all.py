@@ -84,6 +84,20 @@ GATES: list[tuple[str, str, list[str], bool]] = [
     # （0 命中不许当成通过，靠闸门里的 MIN_GUARDS 兜底）④对照组（注释里复述守卫名必须
     # 仍然绿，否则"剥注释"这层判据可能根本没生效）。会改源码再还原，标慢项。
     ("桥接守卫变异", PY_VENV, ["tools/_qc_bridge_guards_mutation.py"], True),
+    # 广播 type 对账（2026-10-22）：前端 host message 监听器里分发的 type，后端必须真的
+    # 会广播。两边靠一个字符串 type 对上，而**没有任何机制保证它对得上**：
+    # `d.type === 'character_switched'` 这条分支自 2026-10-02 写下起就是死的（后端只经
+    # ws_server 广播 {message_type, payload}，而 app_backend.js 没有 WebSocket 客户端）
+    # → 切角色后界面里写死的名字不跟随，三个月没人发现。症状永远静默：不执行、不报错。
+    # 只做**单向**（前端 ⊆ 后端全集）：反向会假红——pet_tip 就走 api.pop_pet_bubble 轮询，
+    # 桌宠窗的 chrome.webview 监听对 PostWebMessageAsJson 完全不触发（rig 页 2026-09-03 实锤）。
+    ("广播 type 对账", PY_RUNTIME, ["tools/check_broadcast_types.py"], False),
+    # 七把刀：①**原 bug 原样**（后端不广播 character_switched → 必须红，证明闸门在修复前
+    # 确实是红的）②前端多一个后端不广播的分支 ③④对照组（页面内部 postMessage /
+    # dataset.type 不许误伤——全仓库 25 处以上非消息 .type 比较，一刀切必假红）
+    # ⑤少一个 host message 监听器 → exit 2（0 命中不许当成通过）⑥监听器注释里提的
+    # type 不算分发分支 ⑦广播的 type 不是字面量 → exit 2。会改源码再还原，标慢项。
+    ("广播对账变异", PY_RUNTIME, ["tools/_qc_broadcast_types_mutation.py"], True),
     # 死引用看门狗：`getElementById('x')` 拿到 null 是**静默**的（JS 不报错，
     # 只是 `if(el)` 恒假、那段逻辑永不执行）。它自带 KNOWN_DEAD 白名单（每条写了原因）。
     # 【2026-10-21 收进闸门】这个工具早就写好了，docstring 也写着"纳入自测后即成为回归
@@ -237,6 +251,12 @@ GATES: list[tuple[str, str, list[str], bool]] = [
     # 模型渠道探活的判级（本轮事故的直接教训：百炼账户 400 欠费，配置里却"填好了"）。
     # 测试 ⑦ 组 + 变异 7 刀全红（tools/_qc_channel_mutation.py）。
     ("渠道探活判级", PY_VENV, ["src/tests/test_doctor_llm_channel.py"], False),
+    # 【2026-10-22 补登记】上面那条的变异刀**一直没进闸门**，注释里写着"变异 7 刀全红"
+    # 却从没在这里跑过 —— 而它已经烂了：七刀里 C/D/F/G 四把锚点命中 0 次被静默跳过
+    # （根因：`J()` 写死 CRLF，而 doctor.py 早变成了 LF）。也就是说那四组判级断言
+    # （断网不判红 / 空 key 不发包 / 5xx 不判红 / run_all 必须接线）其实没有牙齿。
+    # 现已修好锚点（_eol() 实测换行符）并登记，锚点再失效会直接让全量门禁变红。
+    ("渠道探活判级变异", PY_VENV, ["tools/_qc_channel_mutation.py"], True),
     # 配置里的 ${ENV} 引用：展开、缺失告警、保存不把明文 key 落盘。
     ("配置环境变量引用", PY_VENV, ["src/tests/test_config_env_refs.py"], False),
     ("打包依赖分级", PY_VENV, ["src/tests/test_make_dist_deps.py"], False),
@@ -246,6 +266,10 @@ GATES: list[tuple[str, str, list[str], bool]] = [
     # 微信回调：无签名 POST 的鉴权边界 + AI 决策回发（曾因 `await 同步函数`
     # 导致回复一条都发不出去）。变异 5 刀全红，见 tools/_qc_gewechat_mutation.py。
     ("微信回调边界", PY_VENV, ["src/channels/tests/test_gewechat_callback.py"], False),
+    # 【2026-10-22 补登记】同上的"写了没进闸门"：五刀（同步 def / 同步调用阻塞循环 /
+    # 鉴权恒放行 / 去掉 fail-closed / 默认回 0.0.0.0）实测全红、还原字节一致，
+    # 但注释里提过它、名单里没有它 → 那把刀从没被跑过。会改源码再还原，标慢项。
+    ("微信回调变异", PY_VENV, ["tools/_qc_gewechat_mutation.py"], True),
     # 空间发布：publish 是同步 urllib（超时 15s），在事件循环线程里直接调会卡住
     # TTS/对话/桌宠。变异：改回同步调用 → "卡住 406ms" 被抓住。
     ("空间发布不阻塞", PY_VENV, ["src/channels/tests/test_qzone_nonblocking.py"], False),
