@@ -75,6 +75,15 @@ GATES: list[tuple[str, str, list[str], bool]] = [
     # 而它没有变异脚本。四把刀各打一条路径：内联+别名（index.html / 另一页面）、
     # 外链 JS、以及"内联扫描退化成空集"。约 2s，标慢项（会改源码再还原）。
     ("桥接变异", PY_VENV, ["tools/_qc_bridge_mutation.py"], True),
+    # 桥接**守卫**（2026-10-21）：`typeof Backend.x === 'function'` 这种形态上面那道门
+    # 看不见 —— 它长得像"能力探测"，不像调用。而它会把「这个版本确实没有」和「名字写错 /
+    # 适配层漏导出」压成同一种结果：静默什么都不做。实测就抓到一处（probeVisionModel →
+    # 额度提醒浮层「再试一次」点了只是把按钮恢复原样）。判据：守卫名必须在导出表里。
+    ("桥接守卫", PY_VENV, ["tools/check_bridge_guards.py"], False),
+    # 四把刀：①导出少了（今天这个 bug 原样）②页面出现不存在的守卫 ③**正则坏了**
+    # （0 命中不许当成通过，靠闸门里的 MIN_GUARDS 兜底）④对照组（注释里复述守卫名必须
+    # 仍然绿，否则"剥注释"这层判据可能根本没生效）。会改源码再还原，标慢项。
+    ("桥接守卫变异", PY_VENV, ["tools/_qc_bridge_guards_mutation.py"], True),
     # 死引用看门狗：`getElementById('x')` 拿到 null 是**静默**的（JS 不报错，
     # 只是 `if(el)` 恒假、那段逻辑永不执行）。它自带 KNOWN_DEAD 白名单（每条写了原因）。
     # 【2026-10-21 收进闸门】这个工具早就写好了，docstring 也写着"纳入自测后即成为回归
