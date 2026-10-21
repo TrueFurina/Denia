@@ -13,6 +13,7 @@
 
 | commit | 时间 | 类型 | 一句话 | 验证 |
 |---|---|---|---|---|
+| 待提交 | 10:1x | fix | **`_save_config()` 里一个静默 no-op，让参考音"上传了却没生效"**：`refresh_characters_map() if hasattr(...)` —— `Config` 上只有 `refresh_characters()`，`hasattr` 恒 False，整行恒等于 `None`。于是保存只写 raw、角色表 `_characters_map` 不跟着变，`get_characters()` 回读 `voice.reference_audio` 永远是空 → 用户反复重传。顺带把 `test_onboarding_integration`（106 项）修绿并收进闸门，删掉 `check_all` 里**重复登记**的导入冒烟 | 变异（把幽灵调用放回去）→ `[B15] 参考音已落角色` 红、退出码 1；闸门 109 项全绿（引导页集成 35.4s）；顺带修好「闸门失败摘要只摘最后 4 行、恰好摘到白名单明细表」 |
 | `55484a3` | 03:5x | fix | **变异脚本的锚点全失效**：26 个 `_qc_*` 里只有 2 个在闸门，另有 4 个变异脚本不在——而它们验证的检查器**全在闸门里**（等于 4 个判据可能早已没牙齿却没人验证）。2 个红的真因是 `run_all` 加了 `check_wake_words`，锚点原假定 `check_asr` 是列表最后一项。顺带查清一个更隐蔽的坑：**我自己用 `io.open(p,"w")` 改源码，把 1398 行全写成 CRLF**，于是所有 `\n` 锚点静默失效 | 两处锚点改成不依赖位置 → 0 跳过、七刀全红；加 `.gitattributes` 固定 LF（实测 checkout 能把 CRLF 纠正回 LF）；4 个变异脚本进闸门 105→109，全量 109/109 |
 | `7108ce8` | 03:3x | test | **第三批普查第二轮**：剩下 5 个红全修好，无一需要改产品行为。最值钱的两条：`test_relationship_wiring` 的白名单抄的是 **v1** 的 `MOODS`（6 种），运行时用 **v2**（17 种含「困倦」）→ **凌晨红、白天绿**，一条依赖时间的判据；`test_quota_alert` 验的是「额度耗尽主动弹窗」，而该行为 **2026-10-02 已被用户停掉** | 5 刀变异全红（清空预设 / 清空 MOODS_V2 / 把弹窗接回去）；闸门 100→105，全量 105/105 |
 | `6e7bf7c` | 03:0x | fix | **出厂缺陷第 5 起**：模板里 qq/wechat/qzone 三个通道默认 `enabled: true`，新用户装完就去连不存在的本地服务（OneBot 每 5s 刷一条 warning 永不停）；顺带修好 7 个"测试与产品脱节"（桩缺导出名 ×2、判据过时、回调签名过时、fire-and-forget 时序、硬编码旧路径 ×2） | 变异（模板改回 true）→ 报 `实际构建了 ['qq']` 退出码 1；闸门 80→100 |
@@ -88,6 +89,81 @@
 > 代码与测试主体由 `5dbc64c` 收口，**归属以本脚注为准**。
 > 教训：并发会话各自只 `git add` 自己知道的文件，提交前先 `git log` 确认HEAD 没有
 > 在几分钟内被别人推进过。
+
+### 2026-10-21 · 一个 `hasattr` 守卫把「方法名写错了」伪装成「这个版本可能没有」
+
+上一轮我判定 `test_onboarding_integration` **不收进闸门**，理由是「5 个 FAIL 是引导页
+设计稿未落地的产品待办，要等你拍板」。这轮逐个查下来，5 个里**没有一个是"要动产品"的** ——
+判断错了。
+
+四个是判据自己的毛病：
+
+- **A1「建角色 v8 设计稿存在」**：`git log --all -- "docs/mockups/*"` **零命中**、
+  `.gitignore` 也没忽略它 → 那是开发机上的本地过程稿，从没进过库。判据等于
+  「拿仓库里没有的东西当判据」，任何干净克隆上都必然红。
+- **A4「FLOW 固定 5 屏」**：盯着两种已不存在的形态（`let FLOW = [screenSlots]` 早改成
+  `let FLOW = []` + `buildFlow()` 动态拼）。改成守语义：MODE_SEQ 至少 2 条链路、
+  每条含 `screenRole`+`screenSummary`、至少一条含 `screenVisionDl`。
+- **A9「`_SHELL_GUARD` 对 iframe 放行」**：守卫已随 UI 拆分搬进 `src/ui/main_window.py`，
+  判据还在 `webapp.py` 里找。**同型错误第二次**（上次是 `/local_img` 搬家）。
+- **B5「含 quants 列表」**：判据依赖本机显存。这台 8GB < 12GB，`cloud_only=True` +
+  `quants=[]` + `warning` 是**正确行为**，改成按 `cloud_only` 分两路。
+
+第五个是真缺陷。
+
+**症状**：`set_reference_audio()` 返回 `success: true`、`proactive.duplex_local_omni_ref_audio`
+也同步了，但紧接着 `get_characters()` 读回来 `voice.reference_audio` 是空。
+
+**根因**：`get_characters()` 读的是 `Config.list_characters()` → `_characters_map`，
+那是 `Config.__init__` 时单独 `_to_ns()` 解析出来的**另一份**，不跟着 `raw` 变。
+`set_reference_audio()` 只写了 raw 和 `ns`。本该由 `_save_config()` 末尾那句
+「重解析角色表/音色档表」兜住 —— 而那一行是：
+
+```python
+self._cfg.refresh_characters_map() if hasattr(self._cfg, 'refresh_characters_map') else None
+```
+
+`Config` 上**只有 `refresh_characters()`**，没有 `refresh_characters_map`。
+`hasattr` 恒 False，整行恒等于 `None`，一个静默 no-op。它上面还压着一段注释写着
+「现统一为：永不替换 `self._cfg`，只重解析角色表/音色档表」—— 也就是说这个"统一"
+从写下来那天起，角色表那一半**从来没生效过**。
+
+这是「`typeof` 守卫伪装接线漏洞」的 Python 版：守卫把"方法名写错了"包装成
+"这个版本可能没有"，看不出错。真名 + 真 `try/except` 就够，`hasattr` 在这里只是遮羞布。
+
+**修在哪儿**：修 `_save_config()` 这一处，而不是在每个写 `raw.characters` 的调用点各补一次。
+语义上「保存后角色表就是新的」是保存的职责；调用点各补一遍，下一个写角色的地方还会漏
+—— `save_character` / `delete_character` 当时就是各补了一次，`set_reference_audio` 漏了。
+
+我先确实在 `set_reference_audio()` 里加了一行 `refresh_characters()`，**变异一跑发现
+去掉它测试照样绿** —— 追下来才知道真因在 `_save_config`，那行是多余的。多余的一行不只是
+浪费，它会把下一个人引到错误的因果上。已删。
+
+**副作用核对**：`refresh_characters()` 会从 raw 恢复 `_active_character_id`。
+全仓 `_active_character_id` 只在 `config.py` 里被赋值，且 `switch_character()` 同时写 raw
+→ 重解析不会把内存里的激活角色改回旧值。
+
+**验证**：变异（把幽灵调用放回去）→ `[B15] 参考音已落角色` 红、105 PASS / 1 FAIL、
+退出码 1；还原后 106 PASS / 0 FAIL；全量闸门 **109 项全绿**。
+
+**顺带修的两处，都是"闸门自己不说人话"**：
+
+1. `check_all` 里 `("导入冒烟", …)` **登记了两次**（末尾一处带完整注释，前面还有一处是我
+   上一轮加的裸行）。于是每轮全量都白跑两遍，而且两遍结果会打架：实测第一遍 ✓ 27.9s、
+   第二遍 ✗ 95.0s，汇总只报「1/110 项未通过」，光看输出分不清是"测试不稳"还是"跑了两遍"。
+   **判据只该有一条真身。**
+2. 失败摘要原来一律取"最后 4 行"。对 `smoke_import` 这种「先打失败摘要、最后再打一张
+   白名单明细表」的工具，最后 4 行恰好是**已知可选项**那张表 → 闸门把"本来就允许失败的
+   东西"当成失败原因报出来，真正闯祸的那一行被截掉。改成优先摘"带错误语义"的行
+   （非预期/FAIL/ERROR/Traceback/异常…），摘不到才退回末尾 4 行。
+
+**关于那次 ✗ 导入冒烟**：删掉重复后单跑 59.7s 通过。它到底是不是"重复跑导致的"我没能
+证明（当时机器上还压着别的负载），所以**不写成结论**——现在的摘录逻辑会在复现时直接
+点出是哪个模块。
+
+**测试输入也改了**：它原先优先复制 `config.yaml`（开发机实配、被 gitignore、含本机绝对
+路径）。引导页要验的恰恰是"新用户装完是什么样"，改成优先 `config.release.yaml` ——
+与 `test_config_wiring` 那次同一个坑。
 
 ### 2026-10-21 · 变异脚本的锚点全失效了，而根因是我自己写文件的方式
 

@@ -17074,7 +17074,23 @@ class CharacterAPI(PetAPI, WindowAPI):
         #   从磁盘重读不仅多余，还会丢掉"只改了内存还没来得及落盘"的任何修改。
         # 现统一为：永不替换 self._cfg，只重解析角色表/音色档表（纯内存操作）。
         try:
-            self._cfg.refresh_characters_map() if hasattr(self._cfg, 'refresh_characters_map') else None
+            # 【2026-10-21 修·幽灵调用】原来是
+            #   `self._cfg.refresh_characters_map() if hasattr(self._cfg, 'refresh_characters_map') else None`
+            # —— `Config` 上只有 `refresh_characters()`，**没有** `refresh_characters_map`，
+            # 于是 hasattr 恒 False、整行恒等于 `None`，一个静默 no-op。上面那段注释
+            # 明明写着"只重解析角色表/音色档表"，实际角色表这一半**从来没生效过**。
+            # 这是「`typeof` 守卫伪装接线漏洞」的 Python 版：守卫把"方法名写错了"包装成
+            # "这个版本可能没有"，看不出错。真名 + 真 try/except 就够，不需要 hasattr。
+            #
+            # 症状（`test_onboarding_integration` 的 [B15] 实测）：`set_reference_audio()`
+            # 把参考音写进 `raw.characters[].voice.reference_audio` 并落盘，而
+            # `get_characters()` 读的是 `_characters_map`（加载时单独 `_to_ns` 出来的一份，
+            # 不跟着 raw 变）→ 界面回读为空 → 用户以为没传上去、反复重传。
+            # 修在 `_save_config()` 这一处（而不是在每个写 raw.characters 的调用点各补一次）：
+            # **凡是改完角色表就保存的路径，保存后角色表就该是新的**，这是保存的语义。
+            # 已核对：`_active_character_id` 只在 config.py 里被赋值，且 `switch_character`
+            # 同时写 raw，重解析不会把内存里的激活角色改回旧值。
+            self._cfg.refresh_characters()
         except Exception:  # noqa: BLE001
             pass
         try:
