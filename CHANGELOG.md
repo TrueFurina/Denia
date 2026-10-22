@@ -13,6 +13,7 @@
 
 | commit | 时间 | 类型 | 一句话 | 验证 |
 |---|---|---|---|---|
+| `b34d7a7` | 21:2x | fix | **第七处静默失效·她听到却不回答**：桌面来源（voice/webui/console）的 USER_TEXT 在 `_on_user_text` 走 `asyncio.create_task` 后台任务，而 respond 尾段（剥 markdown / 拟人化 / 记历史 / 发 AI_DECISION，dialogue.py 1186~1251）在 respond 内部 try/except **之外** → 尾段一崩，异常落到无人 await、也无 done_callback 的 fire-and-forget 任务，静默吞掉 → 用户全程无感知。修法：给 create_task 补 done_callback——取异常（消除 "Task exception was never retrieved" 警告）→ 记日志 → `publish_threadsafe` 补发 failed AI_DECISION（红字失败气泡），不再对着静音桌宠 | 新单测守「正常链有回复 + 尾段崩有失败气泡兜底」含对照组；变异一刀（摘 add_done_callback）→ 失败气泡消失=翻回静默（证明承重非空转）；harness 单测/变异共用；闸门 +2（137→139）；工作区另有并发「闸门登记对账」+2，合并实测 **141/141** 全绿 |
 | `6a07e12` | 07:5x | fix | **克隆面板「预填她的」从来是坏的**：预置角色「温柔女友」的参考音频随包分发（`_role_assets/ref/xiaowei.wav`），但面板**预填写一份、按钮读另一份**——卡片预填 `voice.ref || demo.ref`，试听/开始克隆只读 `c.voice.ref`；预置角色只有 demo.ref（`path` 还是开发机绝对路径 `D:/GPT-SoVITS/...`）⇒ 试听按钮每次静默 return，「开始克隆」取到空 refPath 后跳过真实克隆、落到「无桥降级」画一条**假进度条**再 toast「克隆完成」——用户机器上什么都没发生（该文件自己的红线写着"不画假进度"）。顺带查到 `/local_img` 是**图片**路由（Content-Type 只认图片、白名单只放行 `char_banners`/`char_avatars`+注册目录），用户自选音频的试听也一直静默 404。修法：`_clRef` 单一来源（预填/试听/克隆共用）、随包资产经新后端 `use_bundled_ref_audio` 物化到 `data/voice_ref/`（白名单防穿越）、选文件换 `pickReferenceAudio`（B3 持久化）、`/local_img` 补音频类型并注册目录、**假进度条整段删** | jsdom 真值表 **24 项**（原样加载 `onboarding_role.js` 整文件真点真走：S1 随包资产 / S2 用户文件 / S3 无桥 / S4 墓碑，两个对照组）；后端门禁 20 项（物化 + **8 条白名单拒绝** + 目录注册 + 音频类型）；**六刀变异全红**、还原后仍绿；闸门 134 → **137**，全量 **137/137**（11m13s） |
 | `b2bc771` | 06:2x | test | **「后端广播 type ↔ 前端分发分支」对账闸门**：后端往前端推消息走 `CoreWebView2.PostWebMessageAsJson`，前端接 `chrome.webview.addEventListener('message')`，两边靠一个字符串 `type` 对上，而**没有任何机制保证它对得上**（`quota_alert` 与 `character_switched` 两起都死在这，症状永远静默：分支不执行、不报错，只是"那个功能不工作"）。只做**单向**（前端 type ⊆ 后端广播全集）——反向会假红：`pet_tip` 就走 `api.pop_pet_bubble()` 1.5s 轮询，桌宠窗的 `chrome.webview` 监听对 `PostWebMessageAsJson` **完全不触发**（rig 页 2026-09-03 实锤：3 次广播 / 0 回执），"广播了但没人用 webview 监听器接"在这里是合法设计。边界必须精确圈定：全仓 `.type === 'x'` 有 25 处以上**不是**消息分发（`dataset.type`、本地事件总线 `ev.type==='asr'`、通知项 `n.type`、骨架 `s.type==='row'`…），一刀切必假红。**顺带补登记两把从没跑过的变异刀**：`_qc_channel_mutation` 与 `_qc_gewechat_mutation` 只在 check_all 的注释里被提到、从没进名单——按项目自己的规矩「加门必须同时加变异」，那两道门**一直是装饰品**；实跑前者，七刀里 **C/D/F/G 四把锚点命中 0 次被静默跳过**（根因：`J()` 写死 CRLF 而 `doctor.py` 早变成 LF，**单行锚点不受影响、刀照跑，所以坏得极隐蔽**） | 七刀变异全过（含"原 bug 原样"与两个"不许误伤"对照组）；渠道探活判级变异修好后**七刀全红**、还原字节一致；微信回调变异五刀全红；闸门 130 → **134**；全量门禁 **134/134**（10m43s） |
 | `ca6cff3` | 06:2x | fix | **切角色后界面名字不跟随**：`app_backend.js` 里 `d.type === 'character_switched'` 这条分支自 2026-10-02 写下起就是**死的**——后端 `EventType.CHARACTER_SWITCHED` 只经 `ws_server.broadcast` 发（`{message_type, payload}` 信封，给 Unity 与旧壳 `app.js` 用），而 `app_backend.js` 里**没有 WebSocket 客户端**；`app.js` 有 ws 却没这个 case、且只被 `index.legacy.html` 加载。于是 `applyCharacterNameBoot`（那段注释原话就是"用户切换角色后这些仍显示旧名…看着像 bug"）**要修的那个 bug 本身就没修好**：点「设为默认角色」toast 说成功了，侧边栏 / 通话页 / 输入框 placeholder 一直是旧名字，直到刷新页面；`window.refreshCharacterName` 全仓零调用者。两端都修：后端 `_broadcast_character_switched()` 在 `switch_character` 的**两处**成功返回前都调（配置级回落路径不发事件，只挂总线会漏），前端 `setDefault()` 成功后显式兜底 | 新闸门 `check_broadcast_types.py` 的变异刀 M1 就是**原 bug 原样**（把那行广播改掉 → 闸门红并点名 `character_switched`），证明闸门在修复前确实是红的；七刀变异全过；全量门禁 **134/134** |
@@ -112,6 +113,49 @@
 > 代码与测试主体由 `5dbc64c` 收口，**归属以本脚注为准**。
 > 教训：并发会话各自只 `git add` 自己知道的文件，提交前先 `git log` 确认HEAD 没有
 > 在几分钟内被别人推进过。
+
+### 2026-10-22 · 第七处静默失效：桌面消息后台任务吞掉 respond 尾段异常（她听到却不回答）
+
+**这一处守的是「听到→想→说」主链的收口。** ASR 唤醒后发 USER_TEXT 已由
+`test_asr_event_flow.py` 证明（efad34e）；本轮补上后半段——USER_TEXT 被 Dialogue
+消费后，真的产出一条可播放的 AI_DECISION。
+
+**风险点**：桌面来源（`_DESKTOP_SOURCES = ("webui","voice","console","")`）的
+USER_TEXT 在 `_on_user_text`（dialogue.py:840）走 `asyncio.create_task` 后台任务
+（2026-10-04 为修「UI 卡片后出」刻意为之，不能在这里 await）。而 respond 的尾段——
+`parse_decision` 之后的剥 markdown（1186）/ 拟人化（1190）/ JSON 兜底 /
+`shared_history` 记录（1237）/ 发 AI_DECISION（1241）——**在 respond 内部那个
+try/except（1119~1161）之外**。LLM 调用本身有 75s 超时兜底，但尾段没有：一旦这里抛
+异常（或 `_respond_vision_chat` / 媒体摄入崩），异常落到无人 await、也无 done_callback
+的后台任务上 → 静默吞掉 → 用户「说了话没人应」，且连失败气泡都没有。这正是 §5/§6 那类：
+链路看着在跑，其实断了。
+
+**修法**（dialogue.py:843~874）：给 create_task 补一个 done_callback——
+`t.result()` 取出异常（消除 asyncio 的 "Task exception was never retrieved" 警告，
+`CancelledError` 单独放过）→ `logger.exception` 落日志 → `publish_threadsafe` 补发一条
+`failed=True` 的 AI_DECISION（前端红字失败气泡）。用 `publish_threadsafe` 而非再
+`create_task` 去 publish：它同步入队，不依赖调用方是否 await 这个本就是 fire-and-forget
+的任务。
+
+**验证**：
+- `src/tests/test_dialogue_voice_chain.py`：①正常链 voice USER_TEXT → 一条 text 非空、
+  非 failed 的 AI_DECISION（且文本来自模型决策、不是失败兜底话术——对照组区分「判据
+  正确」与「判据恒真」）；②尾段崩（`_strip_markdown` 抛异常）→ 仍补发 failed 失败
+  气泡，且后台任务异常被 done_callback 接住（不静默）。
+- `tools/_qc_dialogue_voice_chain_mutation.py`：摘掉 `task.add_done_callback(...)` →
+  失败气泡消失（got=0），翻回静默；基线（带回调）有气泡。一刀证明兜底承重、非空转。
+- 夹具 `src/tests/_dlg_voice_harness.py`：单测与变异共用同一驱动（口径单一事实源）；
+  `drive_voice` 刻意**不 await 后台任务取异常**（那正是被测的静默点），改轮询 done +
+  `task.exception()` 断言。FakeLLM 显式覆写全部抽象成员（ABC 否则拒绝实例化）。
+- 全量门禁：本轮 +2（137→139）；跑门禁时工作区另有并发的「闸门登记对账」+2，合并实测
+  **141/141** 全绿、无跳过。
+
+**并发纪律**：本轮提交只 `git add` 自己的 5 个文件（dialogue.py + 3 新文件 +
+check_all.py 里**自己那一 hunk**，用 `git add -p` 精确摘选），把并发的「闸门登记对账」
+工作树原样留下（check_all.py 的 hunk1 + 8 个改动的 check_*.py + 2 个未跟踪工具）——
+又一次印证「只 add 自己知道的文件，别让收口提交吞掉别人的改动」。
+
+---
 
 ### 2026-10-22 · 克隆面板「预填她的」：试听静默失效 + 克隆画假进度条还谎报「已完成」
 
