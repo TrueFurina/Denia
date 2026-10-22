@@ -244,6 +244,13 @@ GATES: list[tuple[str, str, list[str], bool]] = [
     # 变异 3 刀（断模式切换 / 吞 sherpa 文本 / 吞 vosk 文本）全红。
     ("ASR 事件流", PY_VENV, ["src/tests/test_asr_event_flow.py"], False),
     ("ASR 事件流变异", PY_VENV, ["tools/_qc_asr_event_flow_mutation.py"], False),
+    # 「听到却不回答」：USER_TEXT(source=voice) 被 Dialogue 消费后，必须真的产出一条可
+    # 播放的 AI_DECISION。桌面来源走 create_task 后台任务，而 respond 尾段（剥 markdown /
+    # 记历史 / 发决策）在 respond 内部 try/except 之外 → 一旦崩，异常落无人接的 fire-and-
+    # forget 任务，静默吞掉。单测守「正常链有回复 + 尾段崩有失败气泡兜底」；
+    # 变异一刀（摘掉 create_task 的 done_callback）必须让失败气泡消失（翻回静默）。
+    ("语音消费链", PY_VENV, ["src/tests/test_dialogue_voice_chain.py"], False),
+    ("语音消费链变异", PY_VENV, ["tools/_qc_dialogue_voice_chain_mutation.py"], False),
     # 配置引用体检：路径指错 / 角色没绑引擎 → 红；可选功能（auto_start:false）
     # 与端口未就绪 → 只提示。扫进仓模板，CI 上也能跑。
     ("配置引用体检", PY_VENV, ["tools/_qc_path_refs.py", "config.release.yaml"], False),

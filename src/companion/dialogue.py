@@ -837,8 +837,41 @@ class Dialogue:
         _DESKTOP_SOURCES = ("webui", "voice", "console", "")
         if source in _DESKTOP_SOURCES:
             images = self._extract_images(d)
-            self._desktop_msg_task = asyncio.create_task(
+            task = asyncio.create_task(
                 self._process_desktop_message(d, source, text, images))
+            self._desktop_msg_task = task
+            # 【2026-10-19 修复·第七处静默失效】后台任务里若 respond 的"无 try 包裹尾段"
+            # （剥 markdown / 拟人化 / shared_history 记录 / 发 AI_DECISION）或
+            # _respond_vision_chat / 媒体摄入抛异常，原本因 create_task 没有 done_callback
+            # → 异常既不会被 await 者取出、也没有回调取出 → asyncio 在任务 GC 时打印
+            # "Task exception was never retrieved"，而用户全程无感知：典型"她听到却不回答"。
+            # 这里补一个兜底回调：取出异常（消除警告）→ 记日志 → 补发一条 failed
+            # AI_DECISION（前端红字失败气泡），让用户至少看到"出错了"而非对着静音的桌宠。
+            def _on_desktop_msg_done(t: asyncio.Task) -> None:
+                try:
+                    t.result()  # 正常完成返回 None；异常在此抛出并被下方捕获
+                except asyncio.CancelledError:
+                    return  # 主动取消（退出时）不算失败
+                except Exception:  # noqa: BLE001
+                    logger.exception(
+                        "[桌面消息] 处理失败（source=%s），降级为失败气泡", source)
+                    try:
+                        # publish_threadsafe 同步入队、不依赖调用方是否 await 本任务
+                        # （本任务本就是 fire-and-forget）。failed=True：TTS 不合成播放、
+                        # 前端用红字失败气泡提示，而不是让用户对着沉默的桌宠。
+                        self._bus.publish_threadsafe(Event(EventType.AI_DECISION, {
+                            "emotion": "neutral",
+                            "action": "talk",
+                            "text": "消息处理失败了，请稍后再试～",
+                            "failed": True,
+                            "channel": "",
+                            "reply_target": None,
+                            "user_activity": self._activity_payload(),
+                            "voice": self._current_voice(),
+                        }, "dialogue"))
+                    except Exception:  # noqa: BLE001
+                        logger.exception("[桌面消息] 补发失败气泡也失败了（总线异常）")
+            task.add_done_callback(_on_desktop_msg_done)
             return
         # 非桌面来源（QQ/微信等社交通道）：保持原有同步路径（通道内已自行摄入媒体）
         await self.respond(text, source=source)
