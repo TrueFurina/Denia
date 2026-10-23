@@ -194,58 +194,67 @@ class ASR:
                         sherpa.reset()
                 continue
 
-            # 免唤醒持续识别：说话即识别、随时对话（无需喊唤醒词）。
-            # 识别器按静音自动切分一句话，识别到就发 USER_TEXT。
-            if self._continuous_event.is_set():
-                if sherpa is not None:
-                    text = sherpa.feed(data)
-                    if text:
-                        logger.info("持续识别: %s", text)
-                        self._bus.publish_threadsafe(Event(
-                            EventType.USER_TEXT, {"text": text, "source": "voice"}, "asr"))
-                else:  # vosk 回退
-                    if free_rec is None:
-                        free_rec = KaldiRecognizer(model, self._sample_rate)
-                        free_rec.SetWords(True)
-                    if free_rec.AcceptWaveform(data):
-                        text = json.loads(free_rec.Result()).get("text", "")
+            # 单帧识别可能因畸形/边界音频抛异常（如奇数长度 PCM 让
+            # sherpa.feed 内部 np.frombuffer 抛 ValueError）。ASR 是 daemon
+            # 线程、无 supervisor 重启，任一次未捕获异常会永久杀死循环
+            #（"她听了却再也听不见"）。这里只兜住这一帧：记日志、跳过、
+            # 继续循环，下一帧正常音频仍能识别、USER_TEXT 照常发出。
+            try:
+                # 免唤醒持续识别：说话即识别、随时对话（无需喊唤醒词）。
+                # 识别器按静音自动切分一句话，识别到就发 USER_TEXT。
+                if self._continuous_event.is_set():
+                    if sherpa is not None:
+                        text = sherpa.feed(data)
                         if text:
                             logger.info("持续识别: %s", text)
                             self._bus.publish_threadsafe(Event(
                                 EventType.USER_TEXT, {"text": text, "source": "voice"}, "asr"))
-                continue
+                    else:  # vosk 回退
+                        if free_rec is None:
+                            free_rec = KaldiRecognizer(model, self._sample_rate)
+                            free_rec.SetWords(True)
+                        if free_rec.AcceptWaveform(data):
+                            text = json.loads(free_rec.Result()).get("text", "")
+                            if text:
+                                logger.info("持续识别: %s", text)
+                                self._bus.publish_threadsafe(Event(
+                                    EventType.USER_TEXT, {"text": text, "source": "voice"}, "asr"))
+                    continue
 
-            if mode == "wake":
-                word = wake_det.detect(data)
-                if word:
-                    logger.info("唤醒词命中: %s", word)
-                    self._bus.publish_threadsafe(Event(
-                        EventType.WAKE_WORD, {"word": word}, "asr"))
-                    mode = "cmd"
-                    cmd_start = time.time()
-                    if sherpa is not None:
-                        sherpa.reset()
-            else:  # cmd
-                if sherpa is not None:
-                    text = sherpa.feed(data)
-                    if text:
-                        logger.info("识别指令: %s", text)
+                if mode == "wake":
+                    word = wake_det.detect(data)
+                    if word:
+                        logger.info("唤醒词命中: %s", word)
                         self._bus.publish_threadsafe(Event(
-                            EventType.USER_TEXT, {"text": text, "source": "voice"}, "asr"))
-                        mode = "wake"
-                    elif time.time() - cmd_start > self._cmd_timeout:
-                        mode = "wake"
-                        sherpa.reset()
-                else:  # vosk 回退
-                    if cmd_rec.AcceptWaveform(data):
-                        text = json.loads(cmd_rec.Result()).get("text", "")
+                            EventType.WAKE_WORD, {"word": word}, "asr"))
+                        mode = "cmd"
+                        cmd_start = time.time()
+                        if sherpa is not None:
+                            sherpa.reset()
+                else:  # cmd
+                    if sherpa is not None:
+                        text = sherpa.feed(data)
                         if text:
                             logger.info("识别指令: %s", text)
                             self._bus.publish_threadsafe(Event(
                                 EventType.USER_TEXT, {"text": text, "source": "voice"}, "asr"))
-                        mode = "wake"
-                    elif time.time() - cmd_start > self._cmd_timeout:
-                        mode = "wake"
+                            mode = "wake"
+                        elif time.time() - cmd_start > self._cmd_timeout:
+                            mode = "wake"
+                            sherpa.reset()
+                    else:  # vosk 回退
+                        if cmd_rec.AcceptWaveform(data):
+                            text = json.loads(cmd_rec.Result()).get("text", "")
+                            if text:
+                                logger.info("识别指令: %s", text)
+                                self._bus.publish_threadsafe(Event(
+                                    EventType.USER_TEXT, {"text": text, "source": "voice"}, "asr"))
+                            mode = "wake"
+                        elif time.time() - cmd_start > self._cmd_timeout:
+                            mode = "wake"
+            except Exception as e:  # noqa: BLE001
+                logger.error("识别帧异常（已跳过该帧，循环继续）: %s", e)
+                continue
 
         audio.stop()
         logger.info("ASR 循环结束")
