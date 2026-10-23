@@ -36,8 +36,11 @@ APPD = os.path.join(ROOT, "src", "ui", "web", "redesign", "app_backend.js")
 TEST = os.path.join(ROOT, "src", "channels", "tests", "test_quota_alert.py")
 PY = os.path.join(ROOT, ".venv", "Scripts", "python.exe")
 
-# 本仓这三个文件工作区里都是 CRLF（.gitattributes 固定 eol=lf 是入库时的事）
-EOL = b"\r\n"
+# 【2026-10-24 修】原来这里写死 EOL = b"\r\n"（当时三个文件的工作副本都是 CRLF）。
+# 把 webapp.py 转回 LF 后 M1/M3 锚点全部 0 命中——写死的换行符又一次静默失效。
+# 现在逐文件实测：工作副本是 CRLF 还是 LF 都能跑（.gitattributes 的 eol=lf 只管入库）。
+def _eol(b: bytes) -> bytes:
+    return b"\r\n" if b"\r\n" in b else b"\n"
 
 CASE_PY = "test_product_code_does_not_register_proactive_popup"
 CASE_JS = "test_frontend_has_no_quota_alert_branch"
@@ -85,6 +88,8 @@ def main():
     bad = 0
     base_web = _read(WEBAPP)
     base_js = _read(APPD)
+    eol_web = _eol(base_web)
+    eol_js = _eol(base_js)
 
     # 基线必须自己是绿的，否则后面三刀的结论都不可信
     code, out = run_test()
@@ -96,13 +101,13 @@ def main():
     print("  基线全绿")
 
     # ---------------- M1：注册点加回 ----------------
-    anchor = b"            self._activity_reporter = activity_reporter" + EOL
+    anchor = b"            self._activity_reporter = activity_reporter" + eol_web
     inject = (
-        b"            try:" + EOL
-        + b'                if vision_router is not None and hasattr(vision_router, "set_quota_alert_callback"):' + EOL
-        + b"                    vision_router.set_quota_alert_callback(self._on_vision_quota_alert)" + EOL
-        + b"            except Exception:  # noqa: BLE001" + EOL
-        + b'                logger.debug("x", exc_info=True)' + EOL
+        b"            try:" + eol_web
+        + b'                if vision_router is not None and hasattr(vision_router, "set_quota_alert_callback"):' + eol_web
+        + b"                    vision_router.set_quota_alert_callback(self._on_vision_quota_alert)" + eol_web
+        + b"            except Exception:  # noqa: BLE001" + eol_web
+        + b'                logger.debug("x", exc_info=True)' + eol_web
     ) + anchor
     if base_web.count(anchor) != 1:
         print("  FAIL M1：锚点命中 %d 次（应为 1）" % base_web.count(anchor))
@@ -128,9 +133,9 @@ def main():
     # 锚点必须选在**块注释结束之后**：第一版选的是注释块中间那一行，注入的代码
     # 落在了 /* ... */ 内部，被剥注释正确剔除 → 判据绿是**对的**，刀却报 FAIL。
     # 变异刀要模拟的是"代码里用"，不是"注释里提"（后者由 M3 对照组负责）。
-    anchor_js = _enc('             一起成了死代码。额度信息改随"那次失败消息"给出，见 test_quota_alert。 */') + EOL
+    anchor_js = _enc('             一起成了死代码。额度信息改随"那次失败消息"给出，见 test_quota_alert。 */') + eol_js
     inject_js = anchor_js + (
-        b"          else if (d.type === 'quota_alert') { if (window.__quotaAlert) window.__quotaAlert(d); }" + EOL
+        b"          else if (d.type === 'quota_alert') { if (window.__quotaAlert) window.__quotaAlert(d); }" + eol_js
     )
     if base_js.count(anchor_js) != 1:
         print("  FAIL M2：锚点命中 %d 次（应为 1）" % base_js.count(anchor_js))
@@ -153,13 +158,13 @@ def main():
             print("  PASS M2 quota_alert 分支加回：%s 红了" % CASE_JS)
 
     # ---------------- M3：对照组——只在注释里提名字 ----------------
-    anchor_c = _enc("            # 判据：src/channels/tests/test_quota_alert.py 的两层墓碑。") + EOL
+    anchor_c = _enc("            # 判据：src/channels/tests/test_quota_alert.py 的两层墓碑。") + eol_web
     inject_c = anchor_c + (
-        _enc("            # 对照组：注释里提 set_quota_alert_callback / _on_vision_quota_alert") + EOL
-        + _enc("            # 与 quota_alert 都不算违规——判据剥掉了注释与字符串。") + EOL
+        _enc("            # 对照组：注释里提 set_quota_alert_callback / _on_vision_quota_alert") + eol_web
+        + _enc("            # 与 quota_alert 都不算违规——判据剥掉了注释与字符串。") + eol_web
     )
-    anchor_js2 = _enc('             一起成了死代码。额度信息改随"那次失败消息"给出，见 test_quota_alert。 */') + EOL
-    inject_js2 = anchor_js2 + _enc("          /* 对照组：注释里提 quota_alert 不算违规。 */") + EOL
+    anchor_js2 = _enc('             一起成了死代码。额度信息改随"那次失败消息"给出，见 test_quota_alert。 */') + eol_js
+    inject_js2 = anchor_js2 + _enc("          /* 对照组：注释里提 quota_alert 不算违规。 */") + eol_js
     ok3 = True
     if base_web.count(anchor_c) != 1:
         print("  FAIL M3：webapp 锚点命中 %d 次" % base_web.count(anchor_c))

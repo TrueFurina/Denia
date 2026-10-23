@@ -167,7 +167,10 @@ GATES: list[tuple[str, str, list[str], bool]] = [
     # 修的时候 check_all 正被锁着，测试先留在树上没接线——正是「写了没进闸门」的形态，
     # 也被 check_gate_registry 判了待定。现在补登：守 WebUI 直调是唯一真路径、
     # 死 handler 不复活、总线上不再有该订阅。
-    ("玩家名接线", PY_VENV, ["src/tests/test_set_player_name_wiring.py"], False),
+    # 【2026-10-24】经串行复核包装器跑：这两个测试 import numpy，全量门禁连跑时
+    # 间歇撞 OpenBLAS "Memory allocation still failed"（单独跑就过，产品无问题）。
+    # 包装器只认这一种文案、只串行复核一次、真缺陷绝不重试（自测守着这三条）。
+    ("玩家名接线", PY_VENV, ["tools/run_test_with_mem_retry.py", "src/tests/test_set_player_name_wiring.py"], False),
     # 「没配大脑」承接浮层：首启不拿填表拦人，代价是第一次点发送只会得到「未发送」。
     # 这条守四件事：①只在失败那一刻亮（进页面就亮=顶部条换个位置）②判据是能力槽
     # 状态不是 error 文案 ③判据三态——后端没就绪是「问不出来」，不是「没配」
@@ -186,7 +189,10 @@ GATES: list[tuple[str, str, list[str], bool]] = [
     # `test_write_layer` 还额外缺退出码（FAIL 也返回 0），是典型「装饰闸门」，一并修了。
     # 剩下的 42 个仍在待评估清单里（多数是一次性诊断脚本或需要真机/网络），不要盲加。
     ("io 安全三态", PY_VENV, ["src/tests/test_io_safe.py"], False),
-    ("感知哈希", PY_VENV, ["src/tests/test_phash.py"], False),
+    # 【2026-10-24】同上：经 run_test_with_mem_retry 跑，免疫 OpenBLAS 并发抢内存抖动。
+    ("感知哈希", PY_VENV, ["tools/run_test_with_mem_retry.py", "src/tests/test_phash.py"], False),
+    # 串行复核包装器本身的自测：救得回来的必须救、真缺陷绝不重试、救不回来的仍红。
+    ("内存抖动复核自测", PY_VENV, ["tools/test_mem_retry_wrapper.py"], False),
     ("密钥盒加密", PY_VENV, ["src/tests/test_secret_box.py"], False),
     ("开机自启", PY_VENV, ["src/tests/test_autostart.py"], False),
     ("裁判确认条款", PY_VENV, ["tools/test_judge_confirm_clause.py"], False),

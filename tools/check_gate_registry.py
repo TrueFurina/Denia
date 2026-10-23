@@ -43,13 +43,19 @@ MARKER = "不进闸门"
 MARKER_RE = re.compile(r"^\s*" + MARKER + r"[：:]\s*(\S.*)$")
 
 
-def _load_gates() -> tuple[list[str], list[str]]:
-    """从 check_all.py 用 AST 取登记的脚本路径。返回 (argv0 列表, 结构错误列表)。"""
+def _load_gates() -> tuple[list[str], list[str], list[tuple]]:
+    """从 check_all.py 用 AST 取登记信息。
+
+    返回 (脚本路径列表, 结构错误列表, 整条 argv 签名列表)。argv 签名只用于去重——
+    同一 argv 登记两次才是 10-21 那种有害重复（白跑两遍还互相打架）；共用同一个
+    包装器跑不同测试（run_test_with_mem_retry + 两个测试）是合法设计。
+    """
     with io.open(CHECK_ALL, "r", encoding="utf-8") as f:
         src = f.read()
     tree = ast.parse(src)  # 解析失败直接抛，由 main 记 error 判红
     errors: list[str] = []
     paths: list[str] = []
+    sigs: list[tuple] = []
     found = False
     for node in ast.walk(tree):
         targets = []
@@ -71,18 +77,27 @@ def _load_gates() -> tuple[list[str], list[str]]:
             if not isinstance(argv, ast.List) or not argv.elts:
                 errors.append("GATES[%d] 的 argv 为空或不是列表" % i)
                 continue
+            # 【2026-10-24 修】登记身份取 argv 里**所有**脚本路径，不只 argv[0]：
+            # 包装器式登记（["tools/run_test_with_mem_retry.py", "src/tests/test_x.py"]）
+            # 把真测试放在 argv[1]，只认 argv[0] 会把它误判成"未登记"。
+            # 只认 .py/.js 结尾：`-m` 式条目的解释器路径（python/python.exe）不是脚本，
+            # 收进来会撞出假重复。
             try:
-                first = ast.literal_eval(argv.elts[0])
+                items = [ast.literal_eval(e) for e in argv.elts]
             except Exception as exc:  # noqa: BLE001
-                errors.append("GATES[%d] argv[0] 不是字面量: %s" % (i, exc))
+                errors.append("GATES[%d] argv 含非字面量: %s" % (i, exc))
                 continue
-            if not isinstance(first, str):
-                errors.append("GATES[%d] argv[0] 不是字符串" % i)
-                continue
-            paths.append(first)
+            sigs.append(tuple(str(x) for x in items))
+            got = False
+            for it in items:
+                if isinstance(it, str) and it.endswith((".py", ".js")):
+                    paths.append(it)
+                    got = True
+            if not got:
+                errors.append("GATES[%d] argv 里没有脚本路径" % i)
     if not found:
         errors.append("check_all.py 里找不到 GATES 定义")
-    return paths, errors
+    return paths, errors, sigs
 
 
 def _docstring(path: str) -> tuple[str | None, str | None]:
@@ -104,7 +119,7 @@ def main() -> int:
     problems: list[str] = []
 
     try:
-        registered, errors = _load_gates()
+        registered, errors, sigs = _load_gates()
     except Exception as exc:  # noqa: BLE001
         print("✗ 闸门自身坏：解析 check_all.py 失败: %s" % exc)
         return 2
@@ -113,21 +128,17 @@ def main() -> int:
             print("✗ 登记表结构错误: %s" % e)
         return 1
 
-    # 判据 3：去重。只认「仓库相对路径」形态的 argv[0]；`-m` 之类的调用跳过
-    # （那种项的脚本身份在 -m 后面，形态不定，混进来只会误报）。
-    seen: dict[str, int] = {}
-    skipped = 0
-    for p in registered:
-        if "/" not in p or p.startswith("-"):
-            skipped += 1
-            continue
-        seen[p] = seen.get(p, 0) + 1
-    for p, n in sorted(seen.items()):
+    # 判据 3：去重。比对的是**整条 argv**——同一 argv 登记两次才是 10-21 那种有害
+    # 重复（白跑两遍、通过/失败互相打架）；共用同一个包装器跑不同测试是合法设计。
+    sig_seen: dict[tuple, int] = {}
+    for s in sigs:
+        sig_seen[s] = sig_seen.get(s, 0) + 1
+    for s, n in sorted(sig_seen.items()):
         if n > 1:
-            problems.append("重复登记 x%d: %s" % (n, p))
+            problems.append("重复登记 x%d: %s" % (n, " ".join(s)))
 
     # 判据 2：反向——登记的脚本都真实存在
-    reg_set = set(seen)
+    reg_set = {p for p in registered if "/" in p and not p.startswith("-")}
     for p in sorted(reg_set):
         if not os.path.isfile(os.path.join(ROOT, p.replace("/", os.sep))):
             problems.append("登记了但不存在的脚本: %s" % p)
@@ -171,8 +182,9 @@ def main() -> int:
         problems.append("长得像闸门但既未登记也未写明免登原因: %s" % rel)
 
     # 覆盖数（必须打印出来看）
+    n_dash_m = sum(1 for s in sigs if "-m" in s)
     print("登记 %d 项脚本 / 免登 %d 个 / 待定 %d 个（另有 %d 个 -m 式调用不参与对账）"
-          % (len(reg_set), len(exempt), len(pending), skipped))
+          % (len(reg_set), len(exempt), len(pending), n_dash_m))
     for rel, reason in exempt:
         print("  免登 %s —— %s" % (rel, reason[:80]))
     if problems:
