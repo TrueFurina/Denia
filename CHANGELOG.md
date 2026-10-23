@@ -302,6 +302,40 @@ channel/reply_target。
 **验证**：场景 10 增加第三条路——直接发一条带 channel/reply_target 的 USER_TEXT 事件，
 断言决策带上这两个键（67 项断言）；变异**八刀 → 九刀**（T8 把那一跳改回不传 → 判红）。
 
+### 同日六续：一句纯聊天，永久抹掉她"看懂游戏"的能力
+
+顺着上一轮查"想"这一层（`_decide_search` / `_build_messages`）。`_decide_search` 引用的三个
+类属性正则都在、能编译（docstring 里记的那次 NameError 已修）；`build_user_turn` 六个参数
+全用上了（搜索链在提示词层没断）。**但 `_build_messages` 里抓到一个真的**：
+
+它用 `self._game_knowledge = None` 来表达"本轮不注入画面信息"（10-04 治"纯聊天也看屏幕"）。
+问题是 `_game_knowledge` 是 **main.py 两处启动路径传进来、且被 `VisionAnalyzer`
+（`bind_game_knowledge`）持续更新 OCR/画面文字/锚点状态的同一个活对象**，而**全仓没有任何
+地方能恢复它**——没有 setter，`set_runtime` 只注入 `_vision_router`。
+
+实测（`type(dlg)._build_messages` 真身 + 假知识库）：
+
+```
+初始        : _game_knowledge 是 FakeGK
+一句"你觉得什么相机好"（纯聊天）之后 : _game_knowledge is None   ← 永久
+再问"这局打得怎么样"（游戏相关）      : 背景常识/画面文字/锚点/游戏名校正 四项全无
+```
+
+症状：**"她一开始看得懂我在玩什么、能读屏幕；聊了几句别的之后再也不会了，重启才好"**
+——静默、永久、进程级。而且 `knowledge` 对象本身还在被分析器更新，数据一直在，只是
+`dialogue` 把引用丢了。
+
+**修法**：改用**局部变量** `_gk`。本轮照样压掉画面信息（原意图完整保住），但不碰实例状态。
+
+**验证**：新增场景 11（`keep_build_messages=True` 让 harness 不打桩，直接测"想"这一层），
+正反两路 + 对照组：纯聊天后引用必须还在、画面必须仍被压掉、背景常识仍注入；紧随的游戏
+问句四项必须全回来；首轮就是游戏问句时四项也齐（证明判据不是恒真）。**76 项断言**；
+变异**九刀 → 十刀**（T9 把局部变量改回抹实例引用 → 场景 11 判红）。
+
+> 顺带修了自己测试里的一个坑：场景 11 第一版用 `from src.companion.dialogue import Dialogue`
+> 直接取真类，导致变异工具换 `harness.Dialogue` 对它无效、T9 判"没鉴别力"。
+> 改成 `type(dlg)._build_messages` 从实例取类——**测试里取被测类必须走注入点，不能直接 import**。
+
 ---
 
 ### 2026-10-22 · 克隆面板「预填她的」：试听静默失效 + 克隆画假进度条还谎报「已完成」

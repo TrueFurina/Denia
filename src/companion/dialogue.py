@@ -1846,15 +1846,24 @@ class Dialogue:
         if not _screen_related and activity_summary:
             logger.debug("纯聊天意图：不注入活动摘要/画面文字（避免她莫名说\"我看了下屏幕\"）")
             activity_summary = ""
-        if not _screen_related and self._game_knowledge is not None:
+        # 【2026-10-23 修·构建函数抹掉共享引用】这里原来写 `self._game_knowledge = None`
+        # 来"本轮不注入画面"——而 `_game_knowledge` 是 main.py 两处启动路径传进来、
+        # 且被 VisionAnalyzer（bind_game_knowledge）持续更新 OCR/画面文字/锚点的**同一个
+        # 活对象**。于是**第一句纯聊天就把它永久置 None**，之后连游戏相关问题也再也拿不到
+        # 背景常识/画面文字/锚点状态/游戏名校正（全仓没有任何地方能恢复它：没有 setter，
+        # set_runtime 只注入 _vision_router）⇒ 症状是"她一开始看得懂我在玩什么，聊了几句
+        # 别的之后再也不会了，重启才好"——静默、永久、进程级。
+        # 改成局部变量：本轮照样压掉画面信息，但不碰实例状态。
+        _gk = self._game_knowledge
+        if not _screen_related and _gk is not None:
             # 保留 game_knowledge 的"背景常识"(knowledge_text)，只压掉"当前画面/当前页面"
-            kt_only = (getattr(self._game_knowledge, "knowledge_text", "") or "").strip()
-            self._game_knowledge = None
-            game_knowledge = kt_only  # 后面 if self._game_knowledge is None 分支不会再加画面
-        if self._game_knowledge is not None:
-            kt = self._game_knowledge.knowledge_text
-            st = self._game_knowledge.screen_text
-            age = self._game_knowledge.screen_text_age()
+            kt_only = (getattr(_gk, "knowledge_text", "") or "").strip()
+            _gk = None
+            game_knowledge = kt_only  # 后面 if _gk is None 分支不会再加画面
+        if _gk is not None:
+            kt = _gk.knowledge_text
+            st = _gk.screen_text
+            age = _gk.screen_text_age()
             if kt:
                 game_knowledge += kt
             if st:
@@ -1872,7 +1881,7 @@ class Dialogue:
             # 渲染的文字得出的强判定，比视觉模型猜当前页面可靠——明确告诉 AI
             # 当前页面是什么，视觉摘要的页面猜测作废（看字不猜，治"乱猜页面"）。
             try:
-                anchor = self._game_knowledge.anchor_state()
+                anchor = _gk.anchor_state()
                 if anchor:
                     game_knowledge += (
                         f"\n【当前页面（OCR文字锚点确认）】{anchor}"

@@ -377,6 +377,73 @@ async def _scenario_channel_relayed_through_tools():
               f"[USER_TEXT 路径] reply_target 也从载荷透传={via_event[0].get('reply_target')!r}")
 
 
+class _FakeGameKnowledge:
+    """最小游戏知识库桩：背景常识 + 当前画面 OCR 文字 + 锚点页面状态。
+
+    main.py 两处启动路径把 `knowledge` 传给 Dialogue，同时
+    `analyzer.bind_game_knowledge(knowledge)` 让 VisionAnalyzer 持续更新它——
+    所以它是**被多方共享、持续更新的活对象**，不是一次性的数据包。
+    """
+
+    knowledge_text = "GK-BG-背景常识"
+    screen_text = "SCR-TEXT-正在进行对局"
+
+    def screen_text_age(self):
+        return 2.0
+
+    def correct_summary(self, s):
+        return s + "(corr)"
+
+    def anchor_state(self):
+        return "ANCHOR-大厅"
+
+
+async def _scenario_game_knowledge_not_dropped():
+    """场景 11：一句纯聊天不能把共享的游戏知识库引用永久抹掉。
+
+    【2026-10-23】`_build_messages` 原来用 `self._game_knowledge = None` 来表达
+    "本轮不注入画面"。而 `_game_knowledge` 是 main.py 传进来、VisionAnalyzer 持续
+    更新的**同一个活对象**，且全仓没有任何地方能恢复它（没有 setter，set_runtime 只
+    注入 _vision_router）⇒ 第一句纯聊天之后，连游戏相关问题也再也拿不到背景常识 /
+    画面文字 / 锚点状态 / 游戏名校正。症状："她一开始看得懂我在玩什么，聊了几句别的
+    之后再也不会了，重启才好"——静默、永久、进程级。
+
+    正反两路：纯聊天要压掉画面（原意图必须保住），但引用必须在；游戏问句要全带上。
+    """
+    print("=== 场景 11 · 纯聊天不抹掉共享的游戏知识库（正反两路） ===")
+    bus, dlg = build_dialogue(keep_build_messages=True)
+    gk = _FakeGameKnowledge()
+    dlg._game_knowledge = gk
+    # 从**实例**取类，不要用模块顶部 import 的 Dialogue：变异工具是靠换
+    # `harness.Dialogue` 注入变异体的，直接 import 会让这把刀永远打在真身上。
+    build = type(dlg)._build_messages
+
+    # 反路：纯聊天 → 压掉画面信息（原意图），但**不许动引用**，背景常识仍应注入
+    b_chat = build(dlg, "你觉得什么相机好", "SUM-用户在对比相机", "")[-1]["content"]
+    check(dlg._game_knowledge is gk,
+          "纯聊天后 _game_knowledge 仍是同一个对象（没被永久抹掉）")
+    check("SCR-TEXT" not in b_chat and "ANCHOR" not in b_chat,
+          "纯聊天不注入当前画面/锚点（原意图保住）")
+    check("GK-BG" in b_chat,
+          "纯聊天仍注入背景常识（原来也只保留这一部分）")
+
+    # 正路：紧随其后的游戏问句 → 四项必须全回来
+    b_game = build(dlg, "这局打得怎么样", "SUM-用户在玩某游戏", "")[-1]["content"]
+    check(dlg._game_knowledge is gk,
+          "游戏问句后 _game_knowledge 仍是同一个对象")
+    check("GK-BG" in b_game, "游戏问句注入背景常识")
+    check("SCR-TEXT" in b_game, "游戏问句注入当前画面文字")
+    check("ANCHOR" in b_game, "游戏问句注入 OCR 锚点确认的页面状态")
+    check("corr" in b_game, "游戏问句仍走游戏名校正（correct_summary）")
+
+    # 对照组：一上来就是游戏问句（没有前面的纯聊天）→ 同样四项齐全
+    bus2, dlg2 = build_dialogue(keep_build_messages=True)
+    dlg2._game_knowledge = _FakeGameKnowledge()
+    b_first = build(dlg2, "这局打得怎么样", "SUM-x", "")[-1]["content"]
+    check(all(k in b_first for k in ("GK-BG", "SCR-TEXT", "ANCHOR", "corr")),
+          "对照组：首轮就是游戏问句时四项也齐全（证明判据不是恒真）")
+
+
 async def _run():
     await _scenario_positive()
     await _scenario_crash_after_streamed()
@@ -387,6 +454,7 @@ async def _run():
     await _scenario_empty_text_from_model()
     await _scenario_vision_and_tools_paths()
     await _scenario_channel_relayed_through_tools()
+    await _scenario_game_knowledge_not_dropped()
 
 
 def main():
