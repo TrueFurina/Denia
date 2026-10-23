@@ -1196,7 +1196,6 @@ perception:
     evidence_window_s: 8.0
     game_cadence: 4
     game_interval_s: 5.0
-    game_stagger: true
     gpu_interval_s: 1.0
     gpu_log_interval_s: 5.0
     interval_jitter: 0.1
@@ -1336,7 +1335,6 @@ perception:
     timeout_fail_limit: 3
     desktop_watch_enabled: true
 proactive:
-  accumulate_screen: true
   batch_interval_s: 300
   batch_max_entries: 12
   duplex_capture_audio: true
@@ -1363,7 +1361,6 @@ proactive:
   duplex_local_omni_unload_on_game: true
   force_kill_omni_on_unload: true
   duplex_max_width: 768
-  duplex_mic_vad: true
   duplex_mic_gain: 1.0
   duplex_result_trace: false
   duplex_call_trace: true
@@ -1406,9 +1403,7 @@ proactive:
   duplex_vision_source: screen
   duplex_mode_lock: true
   duplex_mode_lock_ext_mb: 1024
-  duplex_mode_lock_mem_pct: 70
   duplex_mode_lock_silent: true
-  duplex_mode_lock_util_pct: 60
   duplex_native_audio: false
   duplex_hf_eq: false
   duplex_hf_eq_trim_db: 0.0
@@ -1420,7 +1415,6 @@ proactive:
   duplex_tts_cache_max_mb: 8
   duplex_tts_prefetch: true
   duplex_tts_warmup: true
-  duplex_ocr_frame_overlay: true
   duplex_pubjavis_options:
     allow_pure_desc: false
     fix_you_attribution: true
@@ -1443,24 +1437,17 @@ proactive:
     speak_when_uncertain: true
   duplex_report_s: 15
   duplex_test_mode: false
-  duplex_timing_pressure: false
   enabled: false
   focus_aware: true
   force_snapshot_games:
   - 三角洲行动
   game_ai_interaction: true
-  game_immersive: false
   game_plans:
   - keywords: []
     name: 三角洲行动
     prompt: 你是小薇，用户正在玩《三角洲行动》烽火地带。把他当一起摸金的开黑搭子：他搜物资/打架时夸两句带感的话，阵亡丢装备就心疼地安慰（别幸灾乐祸、别念攻略），撤离成功跟着一起开心；用词贴三角洲玩家的说法（摸金/撤离/干员/人机/这波肥了），别说吃鸡圈的进圈跑毒；别报击杀数字、别念游戏机制、别提醒威胁，画面平静就安静陪着。
-  heavy_apps_cloud_sync: false
-  heavy_apps_cloud_url: ''
-  heavy_apps_promote_threshold: 1
   idle_threshold_s: 180
-  immersive_interval_s: 0
   llm_generate: true
-  llm_timeout_s: 5
   local_omni_engine:
     auto_start: false
     # 【2026-10-20】下面三个原值是开发机的 H: 盘路径。留空 = 「本机没装这套引擎」，
@@ -1480,12 +1467,9 @@ proactive:
   duplex_vram_budget_gb: 12
   duplex_comni_patch_disable_tts: true
   duplex_comni_patch_reuse_model: false
-  max_per_day: 0
-  max_per_type_per_day: 99999
   min_interval_s: 0
   moment_cooldown_s: 0
   moment_priority_cooldown_s: 0
-  react_to_screen: true
   type_cooldown_s: 0
   duplex_local_omni_quant: Q4_K_M
   duplex_snapshot_enabled: false
@@ -1891,15 +1875,6 @@ sticker:
   api_key: ''
   text_model: glm-4-flash
   vision_model: glm-4v-flash
-  timing_mode: random
-  random_seed: 20261015
-  random_cooldown: 2
-  random_probs:
-    with: 0.5
-    before: 0.25
-    after: 0.25
-  warmth_high: 0.7
-  warmth_override: null
 relationship:
   enabled: true
   newbie_turns: 0
