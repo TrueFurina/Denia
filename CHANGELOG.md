@@ -336,6 +336,49 @@ channel/reply_target。
 > 直接取真类，导致变异工具换 `harness.Dialogue` 对它无效、T9 判"没鉴别力"。
 > 改成 `type(dlg)._build_messages` 从实例取类——**测试里取被测类必须走注入点，不能直接 import**。
 
+### 同日七续：`inject_context=false` 是"只存不用"，两条写路径却做成"不记"
+
+顺着查"看"这一层（`_shrink_images` / `VisionRouter.vision_chat` / `_extract_images`）。
+前三个查过没大问题（压缩失败一律原样返回、三种图片输入都覆盖、单张坏图不连坐），
+**但顺着"她看到且记住了"这个承诺查到 `_remember_seen_images` / `_remember_pending_promise`**：
+
+两个**写**路径都多闸了一道 `_memory_inject_enabled()`（`inject_context`）。而这与三处相矛盾：
+`_memory_inject_enabled` 自己的 docstring、`_build_messages` 的注释、以及其它**所有**写路径
+（提炼 / 纠正 / 情节——它们只看 `store is None`）。该开关的语义是"**只存不用**"。
+
+实测（`inject_context=false` + 假记忆库）：
+
+```
+看图记忆写入: False | store.added = []
+承诺记忆写入: False | store.added = []
+```
+
+后果：按建议关注入的小模型用户（docstring 里正是这么建议的），**silently 丢掉全部**
+"她看过这张图" 和 "用户说过要给我看照片"——后两者分别是 10-04 两个修复的目标
+（"她压根不知道有过这张图" / 注释自己写的"最该记住的一类，忘了就是失约"）。
+
+**修法**：删掉这两道闸。关记忆的正闸门是 `memory.enabled`（`_make_memory_store` 会因此
+返回 None，由既有的 `store is None` 挡住）；`inject_context` 只管注不注入，不管记不记。
+
+**验证**：新增场景 12，正反两路——注入关 → 照常记录**且**不注入；注入开 → 记录且注入
+（证明"不注入"那一半不是恒真）。测试扩到 **82 项断言**；变异**十刀 → 十二刀**
+（T10/T11 分别把两道闸加回去 → 场景 12 判红）。
+
+顺带清掉这一路查到的两个死代码：
+- `vision_router.py` 的 `_vm = ...`——10-04 注释写"改为动态取值"，但算出来后**从未被使用**，
+  抛出的仍是写死那句（目前恰好是对的，因为 `_perception_enabled()` 只读一个键）。
+  删掉死变量并把"只有这一个条件"写成显式说明。
+- `dialogue.py` 的 `_vision_enabled_for_chat()`——**全仓零调用者**，只在解释"旧门槛已删"
+  的注释里被提到。留着会让人以为发图前有可用性预检（其实没有）。删掉并留墓碑注释。
+
+### 工程坑：又一次踩了自己的 MSYS heredoc 坑
+
+给变异工具补 T10/T11 时用 `python - <<'PY'` 写补丁，heredoc 里的 `\\n` 被 **MSYS 路径转换
+改成 `//n`** → 生成的两把刀锚点 0 命中、变异体还 SyntaxError。**这条 memory 里明明写着**
+（"heredoc 会改字节字面量里的 \n，锚点用 bytes([10]) 拼或把变异脚本落成 .py"），还是踩了。
+改用 Edit 工具（不过 shell）重写才对。教训升级：**只要内容里出现反斜杠，就不要用 heredoc**，
+不管它是字节字面量还是普通字符串转义。
+
 ---
 
 ### 2026-10-22 · 克隆面板「预填她的」：试听静默失效 + 克隆画假进度条还谎报「已完成」

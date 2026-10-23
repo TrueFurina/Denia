@@ -47,7 +47,7 @@ from src.tests._dlg_voice_harness import (  # noqa: E402
     VALID_DECISION_RAW,
     STAGE_DIRECTION_ONLY_RAW, MARKDOWN_SCAFFOLD_ONLY_RAW,
 )
-from src.companion.dialogue import EMPTY_REPLY_TEXT  # noqa: E402
+from src.companion.dialogue import Dialogue, EMPTY_REPLY_TEXT  # noqa: E402
 from src.event_bus import Event, EventType  # noqa: E402
 
 FAIL = 0
@@ -444,6 +444,50 @@ async def _scenario_game_knowledge_not_dropped():
           "对照组：首轮就是游戏问句时四项也齐全（证明判据不是恒真）")
 
 
+async def _scenario_memory_stored_when_injection_off():
+    """场景 12：`memory.inject_context=false` 是"只存不用"，不是"不记"。
+
+    【2026-10-23】`_remember_seen_images`（看图记忆）和 `_remember_pending_promise`
+    （承诺/待办记忆）原来都多闸了一道 `_memory_inject_enabled()` ⇒ 关注入时**两条都不写库」。
+    这与三处相矛盾：`_memory_inject_enabled` 自己的 docstring、`_build_messages` 的注释、
+    以及其它所有写路径（提炼/纠正/情节，它们只看 `store is None`）。
+    后果：按建议关注入的小模型用户，silently 丢掉全部"她看过这张图"和"用户说过要给我看
+    照片"——后两者正是 10-04 两个修复的目标（"她压根不知道有过这张图"/"忘了就是失约"）。
+
+    正反两路：注入关 → 照常记录但不注入；注入开 → 记录且注入。
+    """
+    print("=== 场景 12 · 关注入时照常记录、但不注入（正反两路） ===")
+    from src.tests._dlg_voice_harness import FakeMemoryStore
+
+    # 反路：注入关闭
+    bus, dlg = build_dialogue(keep_build_messages=True)
+    st = FakeMemoryStore()
+    dlg._memory_store = st
+    dlg._cfg.ns.memory.inject_context = False
+    r_img = dlg._remember_seen_images("图中是一只橘猫在窗台上晒太阳", "这是什么", 1)
+    r_pr = dlg._remember_pending_promise("我等会发给你看照片")
+    check(r_img and any("发给我看过" in f for f in st.added),
+          f"注入关：看图记忆仍写入库（got={st.added}）")
+    check(r_pr and any("用户说过" in f for f in st.added),
+          f"注入关：承诺记忆仍写入库（got={st.added}）")
+    body_off = Dialogue._build_messages(dlg, "你好", "", "")[-1]["content"]
+    check("发给我看过" not in body_off and "用户说过" not in body_off,
+          "注入关：记忆**不**进对话上下文（只存不用的另一半）")
+
+    # 正路：注入开启
+    bus2, dlg2 = build_dialogue(keep_build_messages=True)
+    st2 = FakeMemoryStore()
+    dlg2._memory_store = st2
+    dlg2._cfg.ns.memory.inject_context = True
+    check(dlg2._remember_seen_images("图中是一只橘猫", "这是什么", 1),
+          "注入开：看图记忆写入")
+    check(dlg2._remember_pending_promise("我等会发给你看照片"),
+          "注入开：承诺记忆写入")
+    body_on = Dialogue._build_messages(dlg2, "你好", "", "")[-1]["content"]
+    check("发给我看过" in body_on,
+          "注入开：记忆进对话上下文（证明上一半不是恒真）")
+
+
 async def _run():
     await _scenario_positive()
     await _scenario_crash_after_streamed()
@@ -455,6 +499,7 @@ async def _run():
     await _scenario_vision_and_tools_paths()
     await _scenario_channel_relayed_through_tools()
     await _scenario_game_knowledge_not_dropped()
+    await _scenario_memory_stored_when_injection_off()
 
 
 def main():

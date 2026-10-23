@@ -496,15 +496,13 @@ class Dialogue:
                 logger.debug("聊天图片解码失败，跳过")
         return out
 
-    def _vision_enabled_for_chat(self) -> bool:
-        """视觉路由可用（已配置 + 视觉总闸开 + 有未冷却候选）。"""
-        vr = self._vision_router
-        if vr is None:
-            return False
-        try:
-            return bool(vr.vision_available)
-        except Exception:  # noqa: BLE001
-            return False
+    # 【2026-10-23 删·有实现没出口】这里原来有一个 `_vision_enabled_for_chat()`
+    # （"视觉路由可用"预检）。10-04 修"发图被静默丢弃"时把它的**调用点**删了——
+    # 视觉不可用时整个分支被跳过、图片字节直接丢。修好之后预检不再需要（不可用时由
+    # `_respond_vision_chat` 内部抛错 → 降级回文本或失败气泡），但方法本体一直留着，
+    # 全仓零调用者（只在下方 916 行那段解释旧门槛的注释里被提到）。
+    # 留着会误导：读代码的人以为发图前有可用性预检，其实没有。故删。
+    # 若将来又要"发送前先告诉用户看图功能关着"，该在这里重建调用点，而不是留个死方法。
 
     def _vision_chat_system_prompt(self) -> str:
         """看图聊天用的轻量人设系统提示（自然语言对话，不走决策 JSON）。"""
@@ -584,11 +582,13 @@ class Dialogue:
         store = self._memory_store
         if store is None or not vlm_answer:
             return False
-        try:
-            if not self._memory_inject_enabled():
-                return False
-        except Exception:  # noqa: BLE001
-            return False
+        # 【2026-10-23 修】这里原来还闸了一道 `_memory_inject_enabled()`（inject_context），
+        # 与 `_memory_inject_enabled` 自己的 docstring、_build_messages 的注释、以及其它所有
+        # 写路径（提炼/纠正/情节）相矛盾：那个开关的语义是"**只存不用**"——关闭后照常记录，
+        # 只是不注入上下文。写成闸门之后，按建议关注入的小模型用户会** silently 丢掉全部看图
+        # 记忆**（10-04 修"她压根不知道有过这张图"的那个修复被反向关掉）。
+        # 关记忆的正闸门是 `memory.enabled`（_make_memory_store 会因此返回 None，
+        # 由上面的 `store is None` 挡住）；inject_context 只管注不注入，不管记不记。
         desc = (vlm_answer or "").strip()
         # 取第一句（VLM 通常先给整体描述）
         first = re.split(r"[。！？\n]", desc)[0].strip() or desc
@@ -913,7 +913,8 @@ class Dialogue:
             _DESKTOP_SOURCES = ("webui", "voice", "console", "")
             # —— 聊天发图 / 看图（自动适配器：图片 → 视觉模型）——
             # 【2026-10-04 19:40 关键修复·发图被静默丢弃 → 模型跑去截屏】
-            # 旧门槛是 `if images and ... and self._vision_enabled_for_chat()`：
+            # 旧门槛是 `if images and ... and self._vision_enabled_for_chat()`
+            # （该方法已于 2026-10-23 删除，见上方说明）：
             # 视觉不可用时**整个分支被跳过**，图片字节直接丢弃、只剩纯文本进 LLM。
             # 实锤（19:20 用户发达妮娅立绘 +「你认识这是谁吗」）：
             #   [发送诊断] send_chat: text_len=7   ← 只传了 7 个字，图片没了
@@ -2138,11 +2139,10 @@ class Dialogue:
             return False
         if not self._PROMISE_RE.search(t):
             return False
-        try:
-            if not self._memory_inject_enabled():
-                return False
-        except Exception:  # noqa: BLE001
-            return False
+        # 【2026-10-23 修】同 _remember_seen_images：这里原来也闸了
+        # `_memory_inject_enabled()`，与"只存不用"的语义相反。承诺/待办是注释里自己写的
+        # "最该记住的一类，忘了就是失约"——关注入的用户不该连带丢掉它。
+        # 关记忆的正闸门是 memory.enabled（_make_memory_store 返回 None，上面已挡）。
         # 只取第一句，避免长句灌进记忆库
         first = re.split(r"[。！？\n；]", t)[0].strip() or t
         if len(first) < 4 or len(first) > 60:
