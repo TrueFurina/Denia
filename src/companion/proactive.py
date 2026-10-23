@@ -13,7 +13,6 @@
 
 去重机制：
   - 同类活动（app_hint）冷却 type_cooldown_s 内不重复触发
-  - 同类活动每日最多 max_per_type_per_day 次
   - 同类型游戏时刻（victory/defeat…）moment_cooldown_s 内不重复触发
   - 死亡/失败等高优先时刻不受最小间隔限制，用更短的 moment_priority_cooldown_s
   - 击杀 AI 人机（kill_bot）不鼓励不发声
@@ -4247,7 +4246,11 @@ class ProactiveStrategy:
             _user_mute_apps = set()
         logger.info('双工屏蔽软件列表: %s', sorted(_user_mute_apps) or '(仅内置)')
         _mic_hvd = None
-        _use_mic = getattr(self, '_duplex_mode', None) != 'local' and getattr(self, '_duplex_mic_vad', True)
+        # 【2026-10-24】麦克风 VAD 恒开：配置键 duplex_mic_vad 已从出厂模板删除——
+        # 它自 09-08 写下起就没接过线（self._duplex_mic_vad 全仓只有这一处读取、
+        # 没有任何赋值点），getattr 永远落默认 True。删键而不是补接线：VAD 是双工
+        # 采集的既有行为，没有"关掉它"的产品需求，留一个改不动的键只是误导。
+        _use_mic = getattr(self, '_duplex_mode', None) != 'local'
         if _use_mic:
             try:
                 from ..voice.human_voice_detector import HumanVoiceDetector

@@ -271,6 +271,13 @@ GATES: list[tuple[str, str, list[str], bool]] = [
     # 与端口未就绪 → 只提示。扫进仓模板，CI 上也能跑。
     ("配置引用体检", PY_VENV, ["tools/_qc_path_refs.py", "config.release.yaml"], False),
     ("配置引用判级", PY_VENV, ["src/tests/test_config_path_refs.py"], False),
+    # 出厂模板对账（2026-10-24）：模板里每个键都必须有代码读取点（tokenize 丢注释——
+    # 注释提一句不算，那正是 max_per_type_per_day docstring 谎言的形态）。本轮删掉
+    # 24 个死键（用户照着配了什么都没发生）。例外清单带原因：_release_note 元键、
+    # ollama.options.* 泛型透传。已知盲区：常见词叶名（with/after/mode）假通过，靠人工。
+    # 两刀变异全红（插死键 / 抽豁免条目）。
+    ("模板键有着落", PY_VENV, ["tools/check_config_keys.py"], False),
+    ("模板键对账变异", PY_VENV, ["tools/_qc_config_keys_mutation.py"], True),
     # 模型渠道探活的判级（本轮事故的直接教训：百炼账户 400 欠费，配置里却"填好了"）。
     # 测试 ⑦ 组 + 变异 7 刀全红（tools/_qc_channel_mutation.py）。
     ("渠道探活判级", PY_VENV, ["src/tests/test_doctor_llm_channel.py"], False),
