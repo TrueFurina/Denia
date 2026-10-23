@@ -812,6 +812,7 @@ class Pyttsx3Backend(TTSBackend):
                 else:
                     engine.setProperty("rate", int(float(rate)))
             except Exception:
+                # 语速微调失败不致命：按默认语速合成（用户听感差异，不出声才是事故）
                 pass
             engine.save_to_file(text, output_path)
             engine.runAndWait()
@@ -1063,6 +1064,7 @@ class DashScopeCosyBackend(TTSBackend):
                     try:
                         await ws.close()
                     except Exception:
+                        # 关闭失败的残留连接由超时/GC 回收（上面已 warning 并回退新握手）
                         pass
 
         try:
@@ -1081,6 +1083,7 @@ class DashScopeCosyBackend(TTSBackend):
             try:
                 await hot["ws"].close()
             except Exception:
+                # 关旧热备失败不影响下面的全新握手（照常重建）
                 pass
             logger.info("百炼 TTS 热备连接闲置过久（>%ds），弃用", int(self._HOT_MAX_AGE_S))
             return None
@@ -1201,6 +1204,7 @@ class DashScopeCosyBackend(TTSBackend):
                 try:
                     await ws.close()
                 except Exception:
+                    # 关掉这条失效连接失败就让它留在原地超时（已 warning 并走新握手）
                     pass
                 ws = None
                 via_hot = False
@@ -1255,6 +1259,7 @@ class DashScopeCosyBackend(TTSBackend):
                 try:
                     await ws.close()
                 except Exception:
+                    # 收尾关闭失败不改变任务结果（音频已播出），残留连接会超时
                     pass
             try:
                 self._spawn_hot_standby()

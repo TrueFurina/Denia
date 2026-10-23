@@ -441,6 +441,7 @@ class LocalOmniDuplexClient:
             src.encode("ascii")
             return src  # 已是 ASCII 路径，直接使用
         except UnicodeEncodeError:
+            # 含非 ASCII 字符 → 走下面的临时副本转换（这是探测，不是错误）
             pass
         try:
             ext = os.path.splitext(src)[1] or ".wav"
@@ -841,6 +842,7 @@ class LocalOmniDuplexClient:
         try:
             new_val = float(scale)
         except (TypeError, ValueError):
+            # 入参非法（None/非数字）就安静返回：旋钮调用方传错时不炸调用链
             return
         if new_val == self._listen_prob_scale:
             return
@@ -901,6 +903,7 @@ class LocalOmniDuplexClient:
         try:
             new_val = float(val)
         except (TypeError, ValueError):
+            # 入参非法就安静返回（旋钮容错，见 set_listen_prob_scale 同款）
             return
         new_val = new_val if new_val > 0 else 0.0
         # 【2026-09-17 安全下限】<0.95 会把每轮输出压到 3~4 字，撞上「过短残渣」闸门
@@ -925,6 +928,7 @@ class LocalOmniDuplexClient:
         try:
             new_val = max(0, int(n))
         except (TypeError, ValueError):
+            # 入参非法就安静返回（旋钮容错，见 set_listen_prob_scale 同款）
             return
         if new_val == self._max_new_speak_tokens_per_chunk:
             return
@@ -1670,6 +1674,7 @@ class LocalOmniDuplexClient:
                                 if len(self._frame_hist) > 3:
                                     del self._frame_hist[:-3]
                             except Exception:
+                                # 补推缓存失败不影响本帧推送（帧已编码完，照常发）
                                 pass
                         except Exception:  # noqa: BLE001
                             frame_b64 = None
@@ -1836,6 +1841,7 @@ class LocalOmniDuplexClient:
             old = self._mic_gain
             self._mic_gain = max(0.1, min(16.0, float(v)))
         except (TypeError, ValueError):
+            # 入参非法就安静返回（旋钮容错，见 set_listen_prob_scale 同款）
             return
         if self._mic_gain != old:
             logger.info("本地全双工: 麦克风增益 %s → %s（下一块音频生效）",
@@ -2198,6 +2204,7 @@ class LocalOmniDuplexClient:
             await brain.stream_reply(user_text, on_sentence=_on_sentence,
                                      should_abort=lambda: bool(self._turn_aborted))
         except asyncio.CancelledError:
+            # 任务取消是正常退出路径（finally 会复位 _cascade_busy）
             pass
         except Exception:  # noqa: BLE001
             logger.warning("本地全双工: 级联回复异常", exc_info=True)

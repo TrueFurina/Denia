@@ -56,6 +56,7 @@ def _open_log():
         cands.append(os.path.join(os.path.dirname(os.path.abspath(__file__)),
                                   'mic_proc.log'))
     except Exception:
+        # 取不到自身路径就跳过这个候选（后面还有 TEMP 等候选）
         pass
     for p in cands:
         try:
@@ -66,6 +67,7 @@ def _open_log():
             _LOGFH = open(p, 'a', encoding='utf-8', errors='replace', buffering=1)
             return _LOGFH
         except Exception:
+            # 这个候选路径开不了（被占/只读），试下一个
             continue
     return None
 
@@ -80,11 +82,13 @@ def log(msg):
             fh.write(line + '\n')
             return
         except Exception:
+            # 日志文件写着失败（被截断/磁盘满），落如下面 stderr 兜底
             pass
     try:
         sys.stderr.write(line + '\n')
         sys.stderr.flush()
     except Exception:
+        # stderr 也没了（句柄关闭）：日志丢失不影响采集主流程
         pass
 
 
@@ -195,6 +199,7 @@ def main():
                     hn = str(p.get_host_api_info_by_index(ha).get('name') or '?')
                     log('  可用输入设备 idx=%d name=%r host=%s' % (i, d.get('name'), hn))
         except Exception:
+            # 单个设备信息拿不到就跳过它（列设备是诊断路径，不影响采集）
             pass
         return
     cands.sort()
@@ -352,6 +357,7 @@ def main():
                 if apk == 0:
                     win_zero += 1
         except Exception:
+            # 这个窗口的峰值统计失败就跳过（统计是诊断，不影响采集/推流）
             pass
 
         # 死数据检测：连续相同块 → 退出让主进程重启（本机 DirectSound 偶发）
@@ -370,6 +376,7 @@ def main():
                 try:
                     st.close()
                 except Exception:
+                    # 句柄关闭失败不拦退出路径（进程马上结束了）
                     pass
                 return
         else:
