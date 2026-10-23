@@ -110,6 +110,7 @@ class TTS:
             # 用户只感到"变卡、变慢"，日志里一条线索都没有。至少留一条 debug 供排查。
             logger.debug("双工 TTS 配置解析失败，全部使用默认值", exc_info=True)
         self._ffplay_proc = None
+        self._worker_task = None  # 播放 worker 任务句柄（start_worker 赋值；done_callback 兜底重启用）
         os.makedirs(WEB_ASSETS_DIR, exist_ok=True)
 
     def _create_backend_from_config(self) -> TTSBackend:
@@ -195,7 +196,12 @@ class TTS:
         self._bus.subscribe(EventType.TTS_INTERRUPT, self._on_interrupt)
 
     async def start_worker(self) -> None:
-        asyncio.create_task(self._worker())
+        # 【2026-10-23 修复·fire-and-forget 吞异常】原实现 asyncio.create_task(self._worker())
+        # 既没存任务句柄也没加 done_callback → _worker 一旦因未被内层兜住的异常退出，
+        # 异常永远无人 await（"Task exception was never retrieved"），队列永久停止排空 →
+        # 之后所有 TTS 静默失效（"她说了却后面没声"）。这里存句柄 + 加回调作为最后防线。
+        self._worker_task = asyncio.ensure_future(self._worker())
+        self._worker_task.add_done_callback(self._on_worker_done)
 
     def switch_character(self, char_id: str) -> bool:
         """运行时切换角色对应的 TTS 后端。"""
@@ -505,59 +511,92 @@ class TTS:
 
     async def _worker(self) -> None:
         while True:
-            kind, payload = await self._queue.get()
-            # 【2026-09-18 TTS 链路优化】过期丢弃：播放串行，排队越久这句越"过期"。
-            # 03:55 实测出现排队 4.56s / 9.21s 才轮到 —— 播出来是 9 秒前的旧回应，
-            # 既答非所问又造成音文不同步。超过阈值直接丢（宁可不说，也别说旧话）。
-            if kind == "full" and isinstance(payload, dict) and self._tts_stale_s > 0:
-                _enq = float(payload.get("_enq_ts") or 0.0)
-                if _enq and (time.monotonic() - _enq) > self._tts_stale_s:
-                    _ctrace("tts_drop", reason="stale", kind=kind,
-                            waited=round(time.monotonic() - _enq, 2))
-                    logger.info("TTS 丢弃过期任务(已等待 %.2fs): %r",
-                                time.monotonic() - _enq,
-                                str(payload.get("text") or "")[:30])
+            try:
+                kind, payload = await self._queue.get()
+                # 【2026-09-18 TTS 链路优化】过期丢弃：播放串行，排队越久这句越"过期"。
+                # 03:55 实测出现排队 4.56s / 9.21s 才轮到 —— 播出来是 9 秒前的旧回应，
+                # 既答非所问又造成音文不同步。超过阈值直接丢（宁可不说，也别说旧话）。
+                if kind == "full" and isinstance(payload, dict) and self._tts_stale_s > 0:
+                    _enq = float(payload.get("_enq_ts") or 0.0)
+                    if _enq and (time.monotonic() - _enq) > self._tts_stale_s:
+                        _ctrace("tts_drop", reason="stale", kind=kind,
+                                waited=round(time.monotonic() - _enq, 2))
+                        logger.info("TTS 丢弃过期任务(已等待 %.2fs): %r",
+                                    time.monotonic() - _enq,
+                                    str(payload.get("text") or "")[:30])
+                        try:
+                            await self._state.to_idle("tts:stale")
+                        except Exception:  # noqa: BLE001
+                            # 复位失败不能连累"继续丢过期句"，但必须留痕：
+                            # 状态卡在 speaking 时，用户看到的是"她不说话了"且日志无异常。
+                            logger.debug("TTS 状态复位失败（过期句已丢弃，继续）", exc_info=True)
+                        continue
+                # 【2026-09-18 修复】只丢弃「打断瞬间」的残留任务，判据必须是**时间窗口**
+                # 而非布尔闩锁。队列已被 interrupt() 取空，能在这里 get() 到的基本都是打断
+                # 之后才入队的新句——原闩锁版本会把这第一句正常回复整句吃掉：get() 一直
+                # 阻塞到新句到达，恰好命中闩锁 → continue（无声），而后闩锁才复位。
+                if self._interrupt_until:
+                    if time.monotonic() < self._interrupt_until:
+                        logger.info("TTS 丢弃打断残留任务: kind=%s", kind)
+                        _ctrace("tts_drop", reason="interrupt_residue", kind=kind)
+                        continue
+                    self._interrupt_until = 0.0
+                # 播放中断标志只对"打断时那一次播放"有效：取到被接受的新任务即复位
+                # （原实现是在**丢弃时**复位，于是标志被下一次 get() 消费掉，正常回复陪葬）
+                self._interrupted = False
+                _ctrace("tts_pick", kind=kind)
+                # 无声模式：丢弃所有播放任务（含云端原生 audio_pcm / edge-tts 兜底），
+                # 仅确保状态回落 idle，文字由聊天页独立事件上屏。这样即便本地克隆服务
+                # 已卸载、掉到 edge-tts，mute 也绝不会出声——"选了无声就是真没声"。
+                if self.is_muted():
+                    self._streaming = False
+                    self._decision_seen = False
+                    self._pending_sentences = 0
                     try:
-                        await self._state.to_idle("tts:stale")
+                        await self._state.to_idle("tts:muted")
                     except Exception:  # noqa: BLE001
-                        # 复位失败不能连累"继续丢过期句"，但必须留痕：
-                        # 状态卡在 speaking 时，用户看到的是"她不说话了"且日志无异常。
-                        logger.debug("TTS 状态复位失败（过期句已丢弃，继续）", exc_info=True)
+                        pass
                     continue
-            # 【2026-09-18 修复】只丢弃「打断瞬间」的残留任务，判据必须是**时间窗口**
-            # 而非布尔闩锁。队列已被 interrupt() 取空，能在这里 get() 到的基本都是打断
-            # 之后才入队的新句——原闩锁版本会把这第一句正常回复整句吃掉：get() 一直
-            # 阻塞到新句到达，恰好命中闩锁 → continue（无声），而后闩锁才复位。
-            if self._interrupt_until:
-                if time.monotonic() < self._interrupt_until:
-                    logger.info("TTS 丢弃打断残留任务: kind=%s", kind)
-                    _ctrace("tts_drop", reason="interrupt_residue", kind=kind)
-                    continue
-                self._interrupt_until = 0.0
-            # 播放中断标志只对"打断时那一次播放"有效：取到被接受的新任务即复位
-            # （原实现是在**丢弃时**复位，于是标志被下一次 get() 消费掉，正常回复陪葬）
-            self._interrupted = False
-            _ctrace("tts_pick", kind=kind)
-            # 无声模式：丢弃所有播放任务（含云端原生 audio_pcm / edge-tts 兜底），
-            # 仅确保状态回落 idle，文字由聊天页独立事件上屏。这样即便本地克隆服务
-            # 已卸载、掉到 edge-tts，mute 也绝不会出声——"选了无声就是真没声"。
-            if self.is_muted():
-                self._streaming = False
-                self._decision_seen = False
-                self._pending_sentences = 0
+                if kind == "full":
+                    await self._speak_flow(payload)  # payload 现在为决策 dict（含 emotion）
+                elif kind == "partial":
+                    await self._play_stream_sentence(payload)
+                elif kind == "decision":
+                    await self._finish_stream()
+                elif kind == "audio":
+                    await self._speak_audio(payload)
+            except Exception:  # noqa: BLE001
+                # 【2026-10-23 修复·fire-and-forget 吞异常】原 worker 循环体无顶层守卫，
+                # 且任务经 start_worker 以 asyncio.create_task 启动、既没存任务也没加回调 →
+                # 任一条任务里的未捕获异常（如 _state.transition / _bus.publish 在异常态抛错、
+                # 或 _speak_flow 逃逸出的异常）会直接杀死 worker 协程，队列停止排空，之后所有
+                # TTS 静默失效（"她说了却后面没声"）。这里把单条任务的异常兜住、记日志后
+                # 继续处理下一条，不让一条坏任务拖垮整条播放链路；未被兜住的逃逸异常由
+                # _on_worker_done 兜底重启。
+                logger.exception("TTS worker 单条任务异常（已跳过，继续处理队列）")
                 try:
-                    await self._state.to_idle("tts:muted")
+                    await self._state.to_idle("tts:worker-guard")
                 except Exception:  # noqa: BLE001
                     pass
                 continue
-            if kind == "full":
-                await self._speak_flow(payload)  # payload 现在为决策 dict（含 emotion）
-            elif kind == "partial":
-                await self._play_stream_sentence(payload)
-            elif kind == "decision":
-                await self._finish_stream()
-            elif kind == "audio":
-                await self._speak_audio(payload)
+
+    def _on_worker_done(self, task: "asyncio.Task") -> None:
+        # 【2026-10-23 修复·fire-and-forget 吞异常】_worker 若因任何未被内层守卫兜住的
+        # 异常退出（如状态机/事件总线在异常态抛错），原实现既没存任务也没加回调 → 异常永远
+        # 无人 await（"Task exception was never retrieved"），队列永久停止排空 → 之后所有 TTS
+        # 静默失效。这里：① 取出异常出声（记日志）；② 只要事件循环仍可用就重启 worker，
+        # 让队列里剩余待播句子仍能出声，而不是永久失声。
+        try:
+            exc = task.exception()
+        except Exception:  # noqa: BLE001
+            exc = None  # 任务被取消等：无需重启
+        if exc is not None:
+            logger.error("TTS worker 异常退出（重启以恢复播放）: %r", exc)
+            try:
+                self._worker_task = asyncio.ensure_future(self._worker())
+                self._worker_task.add_done_callback(self._on_worker_done)
+            except Exception:  # noqa: BLE001
+                logger.exception("TTS worker 重启失败（事件循环可能已关闭）")
 
     async def _play_stream_sentence(self, text: str) -> None:
         """播放一句流式句子：第一句切 SPEAKING 并发 TTS_STARTED，全部播完统一收尾。"""
