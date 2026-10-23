@@ -13,6 +13,7 @@
 
 | commit | 时间 | 类型 | 一句话 | 验证 |
 |---|---|---|---|---|
+| `ec7c53b` | 21:3x | fix | **听链·双工采集卡死看门狗（静默失效）**：`cloud_omni_realtime._subproc_capture_loop` 阻塞在 `proc.stdout.read(4)`，无超时；注释承诺的「卡死看门狗线程」全文件 grep 证实**根本不存在** → 子进程活着却不再写（设备热插拔 / AGC 卡死 / 回调冻结）时 `read` 永久阻塞 → 采集冻结、既不重启也不报错（"她听了却卡死"的静默永久失聪）。抽 `_capture_stalled`/`_kill_capture_proc`/`_watchdog_tick`/`_capture_watchdog_loop` 四纯方法，每轮启动 daemon 看门狗线程周期检测（距最后一块音频 >2s）并 kill 子进程 → read EOF → 内层 break → `restarts<5` 自动重启；看门狗读 `self._last_blk_ts`（原为局部变量，跨线程恒读默认 0.0 → 会误杀健康流，已改实例属性并开局置 `_cap_t0`）。 | 全量门禁 141/141（含场景 D 8 断言 + 判据恒 False 反向对照）；测试 19/19 |
 | `d5e1433` | 21:0x | fix | **听链·坏帧杀守护线程（静默失效）**：ASR 识别循环体无 try/except，单帧畸形音频（如奇数长度 PCM 让 sherpa.feed 的 np.frombuffer 抛 ValueError）冒泡杀死 daemon 线程、且无 supervisor 重启 → 永久失聪（"她听了却再也听不见"）。循环体外层包一层 try/except，坏帧只记日志+跳过+continue，下一帧正常音频仍识别、USER_TEXT 照常发出 | 全量门禁 141/141（含场景 C 畸形帧 + 变异刀 C）；测试三场景 + 四刀变异全过 |
 | `ba5eebc` | — | fix | **双工通话内容不进桌面聊天页/活动日志**：duplex 来源 USER_TEXT 漏过 webapp `_on_chat_user_text` 与 activity_reporter `_on_user_text` 两道闸，既污染桌面聊天页、又误记 direction=user | 测试 13 场景/95 断言 + 15 刀变异；全量门禁 141/141 |
 | `3bb6581` | — | fix | inject_context=false 是"只存不用"——两条记忆写路径却做成"不记" | —（未在本轮复核） |
