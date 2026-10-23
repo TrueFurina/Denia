@@ -1196,7 +1196,7 @@ class Dialogue:
             try:
                 _tools_done = await self._respond_with_tools(
                     user_text, activity_summary, events_str, search_results,
-                    source=source)
+                    source=source, channel=channel, reply_target=reply_target)
             except Exception:  # noqa: BLE001
                 logger.exception("聊天工具分支异常，降级为普通聊天")
                 _tools_done = False
@@ -1466,13 +1466,24 @@ class Dialogue:
 
     async def _respond_with_tools(self, user_text: str, activity_summary: str,
                                  events_str: str, search_results: list[dict],
-                                 source: str = "") -> bool:
+                                 source: str = "",
+                                 channel: str = "",
+                                 reply_target: Optional[dict] = None) -> bool:
         """聊天中允许调用工具：模型自己决定调不调工具（tool_choice=auto）。
 
         闲聊就只返回文本；操作电脑类指令才调 open_app / media_control 等。
         工具集默认是安全子集（agent_tools.chat_tool_specs）；当 config agent.require_confirm
         开启时，额外暴露破坏性工具（click_at / type_text / key_press / run_command 等），
         且每次执行前弹确认框（见 agent_confirm_broker）——聊天场景仍走确认闸，不静默操作。
+
+        【2026-10-23】channel / reply_target 必须从 respond 透传进来，并带在**每一个**
+        AI_DECISION / PARTIAL_TEXT 上。此前这里一个都不带：社交通道（base._feed_brain →
+        respond(channel=self.name)）的消息一旦进工具链，发布的决策 channel 为空 →
+        ① 通道侧 `_on_decision` 判 `d.get("channel") != self.name` 直接忽略
+           ⇒ **发消息的人完全收不到回复**；
+        ② 桌面侧（ws_server）把 channel 为空当桌面决策 ⇒ **桌宠替那条 QQ 消息开口念出来**。
+        一头没接到、另一头接错了，两头都是静默的（没有报错，只是"她不回"+"桌宠自言自语"）。
+        默认 `allow_tools_in_chat: false`，所以这是潜伏缺陷——一开开关就发作。
 
         返回 True=本分支已产出回复（含失败气泡）；False=未产出任何回复，
         调用方应降级走普通聊天决策链路（2026-09-29 修"聊天不理人"：
@@ -1536,6 +1547,7 @@ class Dialogue:
             try:
                 await self._bus.publish(Event(EventType.PARTIAL_TEXT, {
                     "text": seg,
+                    "channel": channel,
                     "granularity": "sentence",
                     "seg_limit": _rb_sent,
                 }, "dialogue"))
@@ -1587,6 +1599,8 @@ class Dialogue:
                         f"（多为网络慢或服务端忙；已经做过的步骤在执行卡片里能看到），请稍后再试",
                 "failed": True,
                 "streamed": _stream_for,
+                "channel": channel,
+                "reply_target": reply_target,
                 "user_activity": self._activity_payload(),
                 "voice": self._current_voice(),
             }, "dialogue"))
@@ -1603,6 +1617,8 @@ class Dialogue:
                     "text": self._fail_text(e),
                     "failed": True,
                     "streamed": _stream_for,
+                    "channel": channel,
+                    "reply_target": reply_target,
                     "user_activity": self._activity_payload(),
                     "voice": self._current_voice(),
                 }, "dialogue"))
@@ -1641,9 +1657,10 @@ class Dialogue:
         # 【2026-10-23】工具链这条终稿也要过同一道闸。此前它 strip+humanize 之后
         # **不判空**：模型/工具只返回"（翻个白眼）"这类纯舞台动作时 _text_out 为 ""，
         # 发出去被前端静默丢弃 → "问了话、工具也跑了，她却不说话"。
-        # channel/reply_target 传 ("", None)：工具链本就未接入外部通道（见下方发布），
-        # 这个通道缺口另案记录，不在本条里混着改。
-        if not await self._guard_speakable(_text_out, "", None):
+        # channel/reply_target 从 respond 透传（2026-10-23 修：此前整个丢掉，
+        # 导致通道侧收不到、桌面侧替它播）。工具链本就未自己解析外部通道语义，
+        # 现在至少把"这条回复该给谁"原样带出去。
+        if not await self._guard_speakable(_text_out, channel, reply_target):
             return True
         # 记录文本历史（不掺工具调用痕迹，保持多轮自然）
         shared_history().add_turn("user", user_text, source="chat")
@@ -1655,6 +1672,10 @@ class Dialogue:
             # 【10-12】纯聊天回复按本轮口径截长（见上），真调工具才不截。
             "text": _text_out,
             "streamed": _stream_for,
+            # 【2026-10-23】channel/reply_target 必须带上（见函数 docstring）：
+            # 少了它们，通道侧判 channel 不匹配直接忽略、桌面侧当成桌面决策播放。
+            "channel": channel,
+            "reply_target": reply_target,
             "user_activity": self._activity_payload(),
             "voice": self._current_voice(),
         }, "dialogue"))

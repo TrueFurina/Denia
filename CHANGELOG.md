@@ -253,6 +253,36 @@ channel/reply_target**（写死桌面语义），而它是从 `respond` 的 `cha
 ⇒ QQ 等外部通道的消息若命中工具链，回复会串到桌面播。这是"她在错的地方说话"类缺陷，
 与本轮"她不说话"类不同，需单独查通道语义后再改。
 
+### 同日四续：那个"另案"查下来是真 bug——一头没接到、另一头接错
+
+顺着上面那条另案查通道语义，链路是这样的：
+
+```
+base._feed_brain(text, reply_target)                      # 通道侧，正确带上
+  → dialogue.respond(text, source, channel=self.name, reply_target=<peer>)
+      → _respond_with_tools(...)                          # ← 这里把两个参数丢了
+          → publish(AI_DECISION)  ×4 个发布点，一个都不带 channel/reply_target
+```
+
+而两端的判据是：通道侧 `_on_decision` 判 `d.get("channel") != self.name` 就忽略；
+桌面侧（ws_server）只播 channel 为空的。所以工具链发出的决策 **channel 为空**：
+
+- 通道侧判不匹配 → **直接忽略 ⇒ 发消息的人完全收不到回复**；
+- 桌面侧当成桌面决策 → **桌宠替那条 QQ 消息念出来**。
+
+一头没接到、另一头接错了，而且**两头都是静默的**（没有报错，只是"她不回"+"桌宠自言自语"）。
+默认 `allow_tools_in_chat: false`，所以这是潜伏缺陷——用户一开"聊天中允许调用工具"就发作。
+
+**修法**：`_respond_with_tools` 增加 `channel` / `reply_target` 形参，从 `respond` 透传；
+**4 个发布点全部带上**（终稿 AI_DECISION、超时失败气泡、确定性失败气泡、PARTIAL_TEXT）。
+PARTIAL_TEXT 那个是与 `_chat_decision._emit` 对齐（它本来就带 channel）。
+
+**验证**：测试扩到**十场景 / 64 项断言**（新增场景 10：端到端跑
+`respond(..., channel="onebot", reply_target=<peer>)`，断言决策带上这两个键，并**照
+`_on_decision` 的过滤逻辑直接验两头**——通道侧会认领、桌面侧不会播；反路对照桌面来源
+channel 必须留空，否则桌宠会把 QQ 的回复也念一遍）；变异**七刀 → 八刀**（T7 丢掉终稿的
+channel/reply_target → 场景 10 判红）。基线十场景全绿、八刀全红。
+
 ---
 
 ### 2026-10-22 · 克隆面板「预填她的」：试听静默失效 + 克隆画假进度条还谎报「已完成」
