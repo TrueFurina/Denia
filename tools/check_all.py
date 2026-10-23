@@ -106,6 +106,17 @@ GATES: list[tuple[str, str, list[str], bool]] = [
     # 而 docs/ 不是忽略目录 → 每跑一次工作区就多一个未跟踪文件。
     # 现在：ROOT 按文件位置推导、产物写 logs/、收进闸门（约 0.2s）。
     ("前端死引用", PY_VENV, ["tools/audit_dead_ids.py"], False),
+    # 闸门登记对账：长得像闸门的脚本，必须要么登记、要么写明为什么不用。
+    # 【2026-10-22】tools/ 下 8 个 check_*/test_* 从未登记进 GATES——4 个硬编码开发机
+    # G:/H: 路径（换机即废）、1 个要真实 Key 和声卡的外放探针。名字长得像闸门，新人
+    # 跑了报红还会以为产品坏了，而它们验证的行为没有任何自动判据在守（「写了没进闸门」
+    # 第四次复发）。三条判据：正向（lookalike 要么在 GATES 里、要么 docstring 带免登
+    # 标记且必须带原因）、反向（登记的脚本都真实存在，防改名后登记项变哑）、去重
+    # （同脚本不许登记两次）。用 AST 解析 check_all：登记表注释里躺着已删重复登记的
+    # 墓碑（smoke_import 在注释里出现第二次），正则扫源码会把自己注释满足。
+    # 变异五刀全红 + 双对照（未登记新文件 / 撕免登标记 / 登记项指向不存在 / 重复登记）。
+    ("闸门登记对账", PY_VENV, ["tools/check_gate_registry.py"], False),
+    ("闸门登记对账变异", PY_VENV, ["tools/_qc_gate_registry_mutation.py"], True),
     ("凭据/隐私", PY_RUNTIME, ["tools/check_package_secrets.py"], False),
     # ${ENV} 引用与 dpapi: 密文都不算泄漏（本轮修的两处假警噪点）
     ("凭据扫描正反", PY_VENV, ["src/tests/test_package_secrets_scan.py"], False),
@@ -152,6 +163,11 @@ GATES: list[tuple[str, str, list[str], bool]] = [
     # ①亮灭由后端真实状态决定（写死 class=on 就是骗人）②走页面轮询而不是
     # 跨线程 evaluate_js（main_window.py:454 有自锁实锤）。
     ("感知指示器", PY_VENV, ["src/tests/test_perception_indicator.py"], False),
+    # 【2026-10-23 补登记】SET_PLAYER_NAME 死订阅清理（539406e）的回归测试：并发会话
+    # 修的时候 check_all 正被锁着，测试先留在树上没接线——正是「写了没进闸门」的形态，
+    # 也被 check_gate_registry 判了待定。现在补登：守 WebUI 直调是唯一真路径、
+    # 死 handler 不复活、总线上不再有该订阅。
+    ("玩家名接线", PY_VENV, ["src/tests/test_set_player_name_wiring.py"], False),
     # 「没配大脑」承接浮层：首启不拿填表拦人，代价是第一次点发送只会得到「未发送」。
     # 这条守四件事：①只在失败那一刻亮（进页面就亮=顶部条换个位置）②判据是能力槽
     # 状态不是 error 文案 ③判据三态——后端没就绪是「问不出来」，不是「没配」

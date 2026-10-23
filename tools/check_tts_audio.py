@@ -1,5 +1,7 @@
 # -*- coding: utf-8 -*-
 """TTS 音频合格体检器 —— 交付任何合成音频之前必须跑这道闸门。
+不进闸门：人工体检仪器——要喂待测音频文件、交付前手动跑，不是自动闸门
+（2026-10-22 普查定性，见 tools/check_gate_registry.py）。
 
 判据（帧长1024 / hop256 / Hann）：
     flat = median( exp(mean(log P)) / mean(P) )    谱平坦度

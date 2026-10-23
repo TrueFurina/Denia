@@ -1,5 +1,7 @@
 # -*- coding: utf-8 -*-
 """检验「她说了多少字，就放出多少声音」——抓「说一半没了」。
+不进闸门：人工诊断——读真实通话 trace 按需跑，不是通过/失败式自动闸门
+（2026-10-22 普查定性，见 tools/check_gate_registry.py）。
 
 背景（2026-09-22 实测）：
   `config.yaml` 里 `duplex_call_max_new_speak_tokens_per_chunk` 限制引擎**每个发言块**

@@ -1,5 +1,7 @@
 # -*- coding: utf-8 -*-
 """核验：daniya_dataset\ww.wav (16kHz, 26.97s) 是否就是那份 48kHz 录屏的音轨？
+不进闸门：一次性研究脚本——sys.path 与两份数据全写死开发机目录，换机即废
+（2026-10-22 普查定性，见 tools/check_gate_registry.py）。
 （两份都是 26.97s，时长完全相同，很可疑）"""
 import os, sys, time
 import numpy as np
