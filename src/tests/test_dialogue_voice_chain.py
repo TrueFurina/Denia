@@ -48,6 +48,7 @@ from src.tests._dlg_voice_harness import (  # noqa: E402
     STAGE_DIRECTION_ONLY_RAW, MARKDOWN_SCAFFOLD_ONLY_RAW,
 )
 from src.companion.dialogue import EMPTY_REPLY_TEXT  # noqa: E402
+from src.event_bus import Event, EventType  # noqa: E402
 
 FAIL = 0
 
@@ -356,6 +357,24 @@ async def _scenario_channel_relayed_through_tools():
               "[onebot] 通道侧 _on_decision 会认领（不再被忽略）")
         check(bool(d0.get("channel")),
               "[桌面] 桌面侧不会播这条（channel 非空）→ 桌宠不替 QQ 答话")
+
+    # 第三条路：走 USER_TEXT 事件喂一条带 channel 的消息（当前生产不用这条路，
+    # 但 _on_user_text 那一跳以前也是断的——补齐后载荷里带了就生效）
+    bus, dlg = build_dialogue()
+    dlg._tools_in_chat_enabled = lambda: True
+    dlg._build_tool_messages = lambda *a, **k: [{"role": "user", "content": "x"}]
+    make_tool_llm(dlg, "已经帮你打开播放器了")
+    ai, partials = await drive_direct(dlg, lambda: dlg._on_user_text(Event(
+        EventType.USER_TEXT,
+        {"text": "帮我开播放器", "source": "onebot",
+         "channel": "onebot", "reply_target": tgt}, "test")))
+    via_event = [d for d in ai if not d.get("failed")]
+    check(len(via_event) == 1, f"[USER_TEXT 路径] 播出一条（got={len(via_event)}）")
+    if via_event:
+        check(via_event[0].get("channel") == "onebot",
+              f"[USER_TEXT 路径] channel 也从载荷透传={via_event[0].get('channel')!r}")
+        check(via_event[0].get("reply_target") == tgt,
+              f"[USER_TEXT 路径] reply_target 也从载荷透传={via_event[0].get('reply_target')!r}")
 
 
 async def _run():

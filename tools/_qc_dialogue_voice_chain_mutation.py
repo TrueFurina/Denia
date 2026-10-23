@@ -10,7 +10,7 @@
 `build_dialogue` 对 Dialogue **延迟绑定**（模块全局），故把 `harness.Dialogue` 换成
 变异体的类，就能原样跑测试里的场景函数——断言口径单一事实源，不另抄一套。
 
-八把刀（改完必须让对应场景判红）：
+九把刀（改完必须让对应场景判红）：
   CB  摘掉 `task.add_done_callback(_on_desktop_msg_done)`
       → 场景 5（崩在 respond 之外）失败气泡消失 = 静默失声。第一层防线失效。
   T1  尾段守卫 `if not _partial:` → `if True:`（一律向上抛、不降级续发）
@@ -26,7 +26,7 @@
 先跑「基线」（干净 dialogue.py，五个场景）：必须全绿，否则说明 harness/测试本身坏了。
 
 用法：.venv/Scripts/python.exe tools/_qc_dialogue_voice_chain_mutation.py
-退出码 0=八把刀都有鉴别力；1=有刀没鉴别力或基线异常。
+退出码 0=九把刀都有鉴别力；1=有刀没鉴别力或基线异常。
 """
 import asyncio
 import importlib
@@ -148,6 +148,14 @@ async def _run():
          "            \"reply_target\": reply_target,\n",
          "            # 变异：丢掉 channel/reply_target\n",
          ["_scenario_channel_relayed_through_tools"]),
+        # _on_user_text 那一跳丢掉载荷里的 channel/reply_target → 从 USER_TEXT 喂进来的
+        # 通道消息又变成"通道侧收不到、桌面侧替它播"
+        ("T8_user_text_drops_channel",
+         "        await self.respond(text, source=source,\n"
+         "                           channel=str(d.get(\"channel\") or \"\"),\n"
+         "                           reply_target=d.get(\"reply_target\"))\n",
+         "        await self.respond(text, source=source)  # 变异：丢掉载荷里的两个键\n",
+         ["_scenario_channel_relayed_through_tools"]),
     ]
 
     written = []
@@ -173,7 +181,8 @@ async def _run():
         for _n in ("CB_no_done_callback", "T1_guard_always_raise",
                    "T2_guard_drops_raw_fallback", "T3_no_empty_check_after_clean",
                    "T4_empty_reply_text_drift", "T5_vision_guard_removed",
-                   "T6_tools_guard_removed", "T7_tools_drops_channel"):
+                   "T6_tools_guard_removed", "T7_tools_drops_channel",
+                   "T8_user_text_drops_channel"):
             sys.modules.pop(f"src.companion._mut_dialogue_voice_chain_{_n}", None)
 
 
@@ -183,9 +192,9 @@ def main():
     if FAIL:
         print(f"共 {FAIL} 处不符")
         sys.exit(1)
-    print("全部通过：八把刀都有鉴别力（done_callback 兜底 + 尾段守卫判据 + 非流式兜底"
+    print("全部通过：九把刀都有鉴别力（done_callback 兜底 + 尾段守卫判据 + 非流式兜底"
           " + 主链清洗后判空 + 空响应出口文案不漂移 + 视觉链闸门 + 工具链闸门"
-          " + 工具链透传 channel/reply_target）")
+          " + 工具链透传 channel/reply_target + USER_TEXT 那一跳）")
 
 
 if __name__ == "__main__":

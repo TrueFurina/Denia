@@ -67,8 +67,13 @@ class _DialogueHarness:
         self.responded = []
         self.d.respond = self._respond
 
-    async def _respond(self, text, source=""):
+    async def _respond(self, text, source="", channel="", reply_target=None):
+        # 【2026-10-23】签名跟着生产 respond 长齐（_on_user_text 现在会把载荷里的
+        # channel/reply_target 一起传下来）。桩停在旧签名会 TypeError——**这正是要的**：
+        # 签名漂移要炸得响亮，不要被吞掉。
         self.responded.append(text)
+        self.last_channel = channel
+        self.last_reply_target = reply_target
 
     def send(self, text, source):
         return asyncio.run(self.d._on_user_text(
