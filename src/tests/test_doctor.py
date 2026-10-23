@@ -82,8 +82,14 @@ def main() -> int:
               "每项都有名字")
         check(all(isinstance(r[2], str) for r in rows), "每项都有明细")
         check(all(isinstance(r[3], str) for r in rows), "每项都有提示字段")
-        check(sum(1 for r in rows if r[0] == doctor.FAIL) == 0,
-              "当前开发机不应有 FAIL（否则说明 doctor 自检查出真问题）")
+        # 【2026-10-24】断言要"摘错在哪"：跑闸负载下这一条间歇红过三次，而旧断言
+        # 只说"不应有 FAIL"不说是哪项 → 每次都得重跑半小时才能定位。现在把 FAIL 行
+        # 直接写进消息里（下次红了一行定位）。
+        _fails = [r for r in rows if r[0] == doctor.FAIL]
+        check(not _fails,
+              "当前开发机不应有 FAIL（否则说明 doctor 自检查出真问题）"
+              + ("；实际 FAIL: " + " | ".join(
+                  "%s：%s" % (r[1], (r[2] or "")[:100]) for r in _fails) if _fails else ""))
 
         print("[4] 桌宠状态：握手文件残留要报 WARN（那是令牌，不该留在盘上）")
         try:

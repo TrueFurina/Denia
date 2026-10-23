@@ -2538,6 +2538,7 @@ class CharacterAPI(PetAPI, WindowAPI):
             try:
                 os.remove(path)
             except OSError:
+                # 临时视频删不掉就留着（系统临时目录会回收），失败已告知用户
                 pass
             return
 
@@ -2569,6 +2570,7 @@ class CharacterAPI(PetAPI, WindowAPI):
             try:
                 os.remove(path)
             except OSError:
+                # 临时视频删不掉就留着（系统临时目录会回收），失败已告知用户
                 pass
             return
 
@@ -2580,6 +2582,7 @@ class CharacterAPI(PetAPI, WindowAPI):
         try:
             os.remove(path)
         except OSError:
+            # 看完之后的清理，删不掉不影响结果（已成功告知用户）
             pass
 
     def _next_chat_id(self) -> int:
@@ -5917,6 +5920,7 @@ class CharacterAPI(PetAPI, WindowAPI):
             try:
                 os.unlink(tmp.name)
             except OSError:
+                # 清理失败不影响主路径（失败已设 _last_tts_error 并告警）
                 pass
             logger.warning("试听合成失败: %s", e)
             self._last_tts_error = str(e)
@@ -5929,6 +5933,7 @@ class CharacterAPI(PetAPI, WindowAPI):
                 try:
                     os.unlink(tmp.name)
                 except OSError:
+                    # 空文件删不掉也会被后续临时目录回收，错误已记录
                     pass
                 return None
         except OSError:
@@ -5945,6 +5950,7 @@ class CharacterAPI(PetAPI, WindowAPI):
             try:
                 os.unlink(tmp.name)
             except OSError:
+                # 读不出音频时的清理，删不掉不影响错误上报
                 pass
             return None
 
@@ -5956,6 +5962,7 @@ class CharacterAPI(PetAPI, WindowAPI):
             try:
                 os.unlink(tmp.name)
             except OSError:
+                # 不外播时删临时文件，删不掉由临时目录回收（结果已拿到）
                 pass
         return {"b64": b64, "ext": ext}
 
@@ -6013,6 +6020,7 @@ class CharacterAPI(PetAPI, WindowAPI):
                     try:
                         os.unlink(wf.name)
                     except OSError:
+                        # 空 wav 删不掉由临时目录回收，失败已 _log
                         pass
                     return
             except Exception as e:  # noqa: BLE001
@@ -6157,6 +6165,7 @@ class CharacterAPI(PetAPI, WindowAPI):
                 try:
                     os.unlink(p)
                 except OSError:
+                    # 延迟清理：文件正被播放器占用是常态，删不掉不报错
                     pass
 
         threading.Thread(target=_clean, daemon=True).start()
@@ -6361,6 +6370,7 @@ class CharacterAPI(PetAPI, WindowAPI):
                 try:
                     os.unlink(tmp_path)
                 except OSError:
+                    # 克隆成功/失败的清理都走 finally，删不掉不影响结果（外层有日志）
                     pass
         except Exception as e:
             logger.exception("MiniMax 克隆失败")
@@ -6443,6 +6453,7 @@ class CharacterAPI(PetAPI, WindowAPI):
             )
             return float(r.stdout.strip())
         except Exception:
+            # ffprobe 不在 PATH / 文件读不了 → 时长未知（调用方按无时长处理）
             return None
 
     def trim_audio(self, path: str) -> dict:
@@ -6552,6 +6563,7 @@ class CharacterAPI(PetAPI, WindowAPI):
 
                 STATE.wv2_bc_executor.submit(_do)
         except Exception:
+            # 跨线程推 JS 失败（窗口已关/序列化失败）不影响主流程
             pass
 
     # 【2026-10-21 删】这里原来有 `get_backend_options()`，返回 4 条写死的 TTS 引擎：
@@ -9840,6 +9852,7 @@ class CharacterAPI(PetAPI, WindowAPI):
                 _s.close()
                 return {"success": True, "already_running": True}
             except Exception:
+                # 连不上=没在运行，继续往下起服务（这是探针，不是错误路径）
                 pass
             # 项目根目录（webapp.py 在 src/ui 下，根 = 上两级）
             _here = os.path.dirname(os.path.abspath(__file__))
@@ -11031,6 +11044,7 @@ class CharacterAPI(PetAPI, WindowAPI):
                     if got < float(exp) * 0.8:
                         return False
                 except Exception:
+                    # 体积读不到就跳过完整性校验（下面 return True 按"已就绪"）
                     pass
             return True
         except Exception:  # noqa: BLE001
@@ -12364,6 +12378,7 @@ class CharacterAPI(PetAPI, WindowAPI):
             try:
                 root.attributes("-topmost", True)
             except Exception:
+                # 某些窗口管理器不允许置顶，对话框照常弹
                 pass
             try:
                 path = filedialog.askdirectory(title="选择模型保存目录", mustexist=False)
@@ -12462,6 +12477,7 @@ class CharacterAPI(PetAPI, WindowAPI):
                             "path": full,
                         })
             except (PermissionError, OSError):
+                # 这个安装目录读不了（权限/占用），跳过它
                 continue
 
         # ── 补充：从 Start Menu 快捷方式提取 exe（覆盖非标准盘符安装，如 E:\douyin） ──
@@ -12509,8 +12525,10 @@ class CharacterAPI(PetAPI, WindowAPI):
                                     "path": _candidate,
                                 })
                         except (OSError, ValueError):
+                            # 这个 .lnk 读不了/解析不了，跳过它
                             continue
             except (PermissionError, OSError):
+                # 这个 Start Menu 目录读不了，换下一个
                 continue
 
         # 按友好名称排序，去重，限制数量
@@ -13305,6 +13323,7 @@ class CharacterAPI(PetAPI, WindowAPI):
                     if dt == 3:  # 只收本地固定盘
                         drives.append(d if d.endswith("\\") else d + "\\")
         except Exception:
+            # 降级：枚举失败走下面的 A-Z 逐盘兜底，两种方式都瞎了才回落 C:\
             pass
         # 兜底：A-Z 字母盘直接探测（覆盖 GetLogicalDriveStringsW 漏报的挂载盘）
         import string
@@ -13316,6 +13335,7 @@ class CharacterAPI(PetAPI, WindowAPI):
                 if os.path.isdir(d):
                     drives.append(d)
             except Exception:
+                # 这个盘符当前不可访问（未挂载/拒绝访问），跳过
                 continue
         if not drives:
             drives = ["C:\\"]
@@ -13389,15 +13409,17 @@ class CharacterAPI(PetAPI, WindowAPI):
                 if pn in names and p.get("exe_path") and os.path.isfile(p["exe_path"]):
                     return p["exe_path"]
         except Exception:
+            # 降级：进程缓存这条路读不到，继续走下面的安装目录扫描
             pass
         # 2) 安装目录扫描
-        for c in candidates:
-            try:
-                hit = self._resolve_exe_path(c)
-                if hit:
-                    return hit
-            except Exception:
-                continue
+            for c in candidates:
+                try:
+                    hit = self._resolve_exe_path(c)
+                    if hit:
+                        return hit
+                except Exception:
+                    # 这个候选目录解析失败，试下一个
+                    continue
         return None
 
     def check_knowledge_detection(self) -> dict:
@@ -13468,6 +13490,7 @@ class CharacterAPI(PetAPI, WindowAPI):
                         if fl.endswith(".exe") and fl not in index:
                             index[fl] = os.path.join(root, f)
             except (PermissionError, OSError):
+                # 这个目录读不了（权限/占用），换下一个
                 continue
         # Start Menu .lnk 作为补充（覆盖非标准盘符安装）
         try:
@@ -13494,8 +13517,10 @@ class CharacterAPI(PetAPI, WindowAPI):
                                 if _base.endswith(".exe") and _base not in index and os.path.isfile(_candidate):
                                     index[_base] = _candidate
                         except (OSError, ValueError):
+                            # 这个 .lnk 读不了/解析不了，跳过它
                             continue
         except Exception:
+            # Start Menu 补充源整体失败不影响已建好的索引（主扫描已完成）
             pass
         self._exe_index_cache = {"_t": now, "data": index}
         return index
@@ -13545,6 +13570,7 @@ class CharacterAPI(PetAPI, WindowAPI):
             if icon and len(icon) > 2000:
                 return icon
         except Exception:
+            # 第1步失败还有后面 4 步兜底（候选 exe / .ico / 同目录 exe / 任意尺寸）
             pass
 
         # 2) 同条目其他候选 exe（如 df_helper_main.exe 失败 → 试 DeltaForceClient.exe）
@@ -13560,6 +13586,7 @@ class CharacterAPI(PetAPI, WindowAPI):
                     if icon and len(icon) > 2000:
                         return icon
                 except Exception:
+                    # 这个候选 exe 提不出图标，试下一个候选
                     pass
 
         # 3) 同目录树 .ico 文件——仅作为回退（WeGame app.ico 等平台高清图标在这里）
@@ -13581,6 +13608,7 @@ class CharacterAPI(PetAPI, WindowAPI):
                         try:
                             fsz = os.path.getsize(fp)
                         except Exception:
+                            # 文件在读之前没了/不可访问，跳过这个 .ico
                             continue
                         if fsz < _ICO_MIN_BYTES:
                             continue
@@ -13593,6 +13621,7 @@ class CharacterAPI(PetAPI, WindowAPI):
                     if ico_png:
                         return ico_png
             except Exception:
+                # 第3步（.ico 遍历）失败还有第 4/5 步
                 pass
 
         # 4) 同目录其他非垃圾 exe（launcher 等常有比 helper 更好的图标）
@@ -13619,8 +13648,10 @@ class CharacterAPI(PetAPI, WindowAPI):
                             if icon and len(icon) > 2000:
                                 return icon
                         except Exception:
+                            # 这个 exe 提不出图标，换同目录下一个
                             continue
             except Exception:
+                # 第4步失败还有第 5 步兜底
                 pass
 
         # 5) 兜底：任意尺寸的 exe 图标（总比 📦 好）
@@ -13629,6 +13660,7 @@ class CharacterAPI(PetAPI, WindowAPI):
             if icon:
                 return icon
         except Exception:
+            # 五步全败→返回空串，调用方显示默认 📦（图标本就可选）
             pass
         return ""
 
@@ -13748,6 +13780,7 @@ class CharacterAPI(PetAPI, WindowAPI):
                 if cdir and os.path.isdir(cdir):
                     return cdir
         except Exception:
+            # 读不到/解析不了 config.json → 返回 None，调用方走手动选择
             pass
         return None
 
@@ -13774,6 +13807,7 @@ class CharacterAPI(PetAPI, WindowAPI):
                     if os.path.isfile(os.path.join(d, "config.json")):
                         return d
         except Exception:
+            # 定位不到 server_dir → 返回 ""（调用方回退，不强行写错路径）
             pass
         return ""
 
@@ -13805,6 +13839,7 @@ class CharacterAPI(PetAPI, WindowAPI):
                 p = os.path.join(server_dir, "config.json")
                 return p if os.path.isfile(p) else ""
         except Exception:
+            # 配置结构异常/读不了 → 按"未定位到"处理，调用方回退手动选择
             pass
         return ""
 
@@ -13827,6 +13862,7 @@ class CharacterAPI(PetAPI, WindowAPI):
                 out.append({"drive": d, "free_gb": round(u.free / (1024 ** 3), 1),
                             "total_gb": round(u.total / (1024 ** 3), 1)})
             except Exception:
+                # 这个盘当前不可用（光盘/未挂载），不出现在选项里
                 continue
         return out
 
@@ -13838,17 +13874,20 @@ class CharacterAPI(PetAPI, WindowAPI):
         try:
             from src.companion.model_catalog import QUANTS as _Q
         except Exception:
+            # 量化表拿不到不影响扫描（只是没有 quant_id/完整度标注）
             _Q = []
         dirs = [d]
         try:
             dirs += [os.path.join(d, n) for n in os.listdir(d)
                      if os.path.isdir(os.path.join(d, n))][:20]
         except Exception:
+            # 子目录列不出来就只扫根目录（ Model 文件常直接在根下）
             pass
         for td in dirs:
             try:
                 names = os.listdir(td)
             except Exception:
+                # 这个子目录读不了，换下一个
                 continue
             for n in names:
                 low = n.lower()
@@ -13860,6 +13899,7 @@ class CharacterAPI(PetAPI, WindowAPI):
                 try:
                     size_gb = round(os.path.getsize(fp) / (1024 ** 3), 2)
                 except Exception:
+                    # 文件在读之前没了，跳过
                     continue
                 entry = next((q for q in _Q if str(q.get("file", "")).lower() == low), None)
                 complete = True
@@ -13868,6 +13908,7 @@ class CharacterAPI(PetAPI, WindowAPI):
                         # 低于目录标注体积的 80% 视为下载中断（防半包被认成完整）
                         complete = size_gb >= float(entry["size_gb"]) * 0.8
                     except Exception:
+                        # 标注体积不是数字时按完整处理（宁可认领后由下载器校验）
                         complete = True
                 out.append({"file": n, "path": fp, "dir": td, "size_gb": size_gb,
                             "quant_id": (entry or {}).get("id") or None, "complete": complete})
@@ -13915,6 +13956,7 @@ class CharacterAPI(PetAPI, WindowAPI):
                     free_gb = round(shutil.disk_usage(d).free / (1024 ** 3), 1)
                     writable = os.access(d, os.W_OK)
                 except Exception:
+                    # 查不了空间/权限就报"未知"（字段留空），不猜
                     pass
             return {"success": True, "dir": d, "exists": exists, "writable": writable,
                     "free_gb": free_gb, "found": self._scan_dir_for_models(d)}
@@ -14014,6 +14056,7 @@ class CharacterAPI(PetAPI, WindowAPI):
                 if mon is not None and mon.is_game_process_foreground():
                     return {"success": True, "warm": False, "loaded": False, "reason": "检测到正在玩游戏，跳过加载"}
             except Exception:
+                # 游戏探测失败就继续加载（预热是可选优化，不该被探测失败挡住）
                 pass
             # 【2026-09-29 黑屏修复】把"引擎创建 + 加载"整体丢到守护线程执行，
             # 绝不在 GUI 线程同步创建本地引擎：create_local_omni_engine 会 import 重型
@@ -17057,6 +17100,7 @@ class CharacterAPI(PetAPI, WindowAPI):
                 try:
                     os.remove(tmp)
                 except OSError:
+                    # 临时文件删不掉由临时目录回收（成败已由 info.error 上报）
                     pass
             if not info or info.get("error"):
                 return {"success": False, "error": (info or {}).get("error") or "落盘失败"}
@@ -17184,6 +17228,7 @@ class CharacterAPI(PetAPI, WindowAPI):
                 try:
                     os.unlink(_tmp)
                 except OSError:
+                    # 临时文件已被消费/删过，无需再清（真失败走 raise 上报）
                     pass
                 raise
         # 【2026-10-19 修复·"apply 成功但盘上丢失"的最终根因】

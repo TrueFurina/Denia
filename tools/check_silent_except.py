@@ -33,11 +33,15 @@ import os
 # 档位同步全在这，普查时发现它有 43 处真空吞（记忆持久化、话术 LLM、引擎停止…
 # 全静默）。已全部处理（承重路径 logger.debug(exc_info=True)，有意降级带理由注释），
 # 从此新来的真空吞在这条链上直接红。
+# 【2026-10-24 再扩】纳入 src/ui/webapp.py——UI↔后端的桥，按钮点了没反应全落在这；
+# 43 处真空吞已同样处理（多为探针/枚举/清理，带理由注释；承重的试听/克隆/保存
+# 路径本就有 _last_tts_error/logger.exception 上报，补的是清理点注释）。
 MAIN_CHAIN = [
     "src/llm/cloud_omni_realtime.py",
     "src/companion/dialogue.py",
     "src/voice/tts.py",
     "src/companion/proactive.py",
+    "src/ui/webapp.py",
 ]
 
 

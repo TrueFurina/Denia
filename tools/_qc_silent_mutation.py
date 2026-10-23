@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """变异验证：主链路静默异常闸门（check_silent_except --main --strict）。
 
-四刀：
+五刀：
   A 注入一个新的"真空吞"（except: pass 且块内无注释）到 tts.py → 必须 FAIL 并点名
   B 把主链路文件改成语法错误 → 必须 FAIL（历史缺陷：解析失败会被静默跳过，
     闸门反而更绿）
@@ -9,9 +9,10 @@
   D 【2026-10-24 新增】往 proactive.py 注入真空吞 → 必须 FAIL 并点名
     （proactive.py 本轮刚纳入主链，证明确实有牙齿；不验的话"扩了范围"和
     "没扩"在汇总里长得一模一样）
+  E 【2026-10-24 新增】往 webapp.py 注入真空吞 → 必须 FAIL 并点名（同上）
 
 用法：python tools/_qc_silent_mutation.py
-退出码：0 = 四刀全被抓住且还原成功。
+退出码：0 = 五刀全被抓住且还原成功。
 """
 from __future__ import annotations
 
@@ -23,6 +24,7 @@ import sys
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 TARGET = os.path.join(ROOT, "src", "voice", "tts.py")
 TARGET_D = os.path.join(ROOT, "src", "companion", "proactive.py")
+TARGET_E = os.path.join(ROOT, "src", "ui", "webapp.py")
 TOOL = os.path.join(ROOT, "tools", "check_silent_except.py")
 PY = os.path.join(ROOT, ".venv", "Scripts", "python.exe")
 if not os.path.exists(PY):
@@ -114,7 +116,32 @@ def main() -> int:
             "D 还原后字节不一致！"
         print("D 还原校验：字节一致 ✓")
 
-    print("PASS：四刀全被抓住" if not bad else f"FAIL：{bad} 刀未抓住")
+    # E：往 webapp.py 注入真空吞（验证 10-24 新纳入的主链文件确实有牙齿）
+    orig_e = open(TARGET_E, "rb").read()
+    h0_e = hashlib.sha256(orig_e).hexdigest()
+    anchor_e = "    def _next_chat_id(self) -> int:".encode("utf-8")
+    injected_e = ("    def _next_chat_id(self) -> int:" + NL +
+                  "        try:" + NL +
+                  "            _ = 1 / 0" + NL +
+                  "        except Exception:" + NL +
+                  "            pass" + NL).encode("utf-8")
+    if orig_e.count(anchor_e) != 1:
+        print("E 锚点命中 %d 次（期望 1）❌" % orig_e.count(anchor_e))
+        bad += 1
+    else:
+        open(TARGET_E, "wb").write(orig_e.replace(anchor_e, injected_e))
+        rc, out = run_tool()
+        hit = "webapp.py" in out and "真静默" in out
+        print(f"E webapp.py 注入真空吞 -> rc={rc} {'✓ 抓住' if rc == 1 and hit else '❌ 未抓住'}")
+        if rc != 1 or not hit:
+            bad += 1
+            print(out[-400:])
+        open(TARGET_E, "wb").write(orig_e)
+        assert hashlib.sha256(open(TARGET_E, "rb").read()).hexdigest() == h0_e, \
+            "E 还原后字节不一致！"
+        print("E 还原校验：字节一致 ✓")
+
+    print("PASS：五刀全被抓住" if not bad else f"FAIL：{bad} 刀未抓住")
     return 1 if bad else 0
 
 
