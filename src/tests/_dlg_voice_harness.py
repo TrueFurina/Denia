@@ -40,6 +40,23 @@ from src.config import Config
 from src.companion.persona import Persona
 from src.llm.base import LLMClient
 from src.companion.dialogue import Dialogue
+from src.ui.webapp import CharacterAPI
+from src.companion.activity_reporter import ActivityReporter
+
+
+def chat_sink_cls():
+    """返回被测的"聊天页 USER_TEXT handler"宿主类。
+
+    【2026-10-23】测试必须经这个函数取类，不能 `from ... import CharacterAPI`——
+    变异工具是靠替换它来注入变异体的（同 `build_dialogue` 的 DialogueCls 延迟绑定）。
+    直接 import 会让刀永远打在真身上（T9 已经这么栽过一次）。
+    """
+    return CharacterAPI
+
+
+def activity_reporter_cls():
+    """返回被测的活动日志 reporter 类（同上，变异工具可换）。"""
+    return ActivityReporter
 
 # 一条含合法 JSON 外壳的决策：emotion/action/intensity/text 齐全、text 非空。
 # decision_had_json(raw) 为 True → 不触发 JSON 兜底重试（省一次 LLM.chat）。

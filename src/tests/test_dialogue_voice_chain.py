@@ -488,6 +488,97 @@ async def _scenario_memory_stored_when_injection_off():
           "注入开：记忆进对话上下文（证明上一半不是恒真）")
 
 
+class _StubChatSink:
+    """驱动 `CharacterAPI._on_chat_user_text` 真身所需的最小 self。
+
+    只实现它摸到的那几个成员（_chat_buffer / _next_chat_id / _save_chat_images /
+    _persist_chat / _overlay_push / _wv2_broadcast），并记录落盘次数——
+    "进没进聊天页"和"有没有被持久化"正是本轮要守的两件事。
+    """
+
+    def __init__(self):
+        self._chat_buffer = []
+        self._n = 0
+        self.persisted = []
+
+    def _next_chat_id(self):
+        self._n += 1
+        return self._n
+
+    def _save_chat_images(self, imgs):
+        return []
+
+    def _persist_chat(self, entry):
+        self.persisted.append(entry)
+
+    def _overlay_push(self, *a):
+        pass
+
+    def _wv2_broadcast(self, *a):
+        pass
+
+
+class _StubActivityLogger:
+    def __init__(self):
+        self.chats = []
+
+    def handle_chat(self, text, direction="user"):
+        self.chats.append((text, direction))
+
+
+async def _scenario_duplex_not_in_chat_page():
+    """场景 13：双工通话里用户说的话不进桌面聊天页、不进活动日志。
+
+    【2026-10-23】proactive 发 `USER_TEXT{source:"duplex"}` 只是为了驱动关系事件
+    （dialogue 已对 duplex 早退），而通话文本本来就由 `_publish_call_record` 发
+    CALL_SPEECH 进独立的"通话记录"通道——那个函数的 docstring 原话：
+    "通话记录与聊天流彻底分离…不进聊天页"。
+
+    但 `webapp._on_chat_user_text` 只判 is_proactive、漏了 duplex ⇒ 通话中用户说的
+    每句话都被当成打字消息追加进 `_chat_buffer` **并 `_persist_chat` 落盘**，
+    正是 10-02 建 CALL_SPEECH 要消除的那种"混进聊天页"（用户没打过的字出现在聊天流里，
+    且污染持久的聊天日志）。`activity_reporter` 同漏，会让日报把通话原话当打字聊天。
+
+    正反两路：打字/语音转写要照常进；双工与主动搭话要挡住。
+    """
+    print("=== 场景 13 · 双工通话内容不进聊天页/活动日志（正反两路） ===")
+    from src.tests._dlg_voice_harness import (
+        chat_sink_cls, activity_reporter_cls)
+    ChatSink = chat_sink_cls()
+    ActivityReporter = activity_reporter_cls()
+
+    cases = (
+        ("打字消息", {"text": "你好呀", "source": "webui"}, True),
+        ("语音转写", {"text": "达妮娅你好", "source": "voice"}, True),
+        ("双工通话·用户说的话", {"text": "我现在去打局游戏", "source": "duplex"}, False),
+        ("主动搭话", {"text": "该休息啦", "source": "proactive", "is_proactive": True}, False),
+    )
+    for label, data, want_in in cases:
+        sink = _StubChatSink()
+        await ChatSink._on_chat_user_text(
+            sink, Event(EventType.USER_TEXT, data, "t"))
+        got_in = len(sink._chat_buffer) == 1
+        check(got_in == want_in,
+              f"[聊天页·{label}] {'进' if want_in else '不进'}聊天页（got={len(sink._chat_buffer)}）")
+        # 落盘必须与上屏同构——进了页面就必须落盘，没进就一条都不该落
+        check((len(sink.persisted) == 1) == want_in,
+              f"[聊天页·{label}] 落盘数与上屏一致（got={len(sink.persisted)}）")
+
+        act = _StubActivityLogger()
+        stub_act = type("S", (), {"_logger": act})()
+        await ActivityReporter._on_user_text(stub_act, Event(EventType.USER_TEXT, data, "t"))
+        check((len(act.chats) == 1) == want_in,
+              f"[活动日志·{label}] {'记' if want_in else '不记'}一条聊天（got={len(act.chats)}）")
+
+    # 直接验"双工那条确实被 CALL_SPEECH 覆盖"——否则滤掉就成了丢数据。
+    # _publish_call_record 是唯一发布点，且本地双工用户侧/达妮娅侧/云端都调它。
+    import inspect
+    import src.companion.proactive as _pro
+    src_txt = inspect.getsource(_pro)
+    check(src_txt.count("_publish_call_record(") >= 4,
+          "通话记录发布点仍在（本地用户侧/达妮娅侧/云端）——滤掉聊天页不会丢数据")
+
+
 async def _run():
     await _scenario_positive()
     await _scenario_crash_after_streamed()
@@ -500,6 +591,7 @@ async def _run():
     await _scenario_channel_relayed_through_tools()
     await _scenario_game_knowledge_not_dropped()
     await _scenario_memory_stored_when_injection_off()
+    await _scenario_duplex_not_in_chat_page()
 
 
 def main():
