@@ -13,6 +13,7 @@
 
 | commit | 时间 | 类型 | 一句话 | 验证 |
 |---|---|---|---|---|
+| `8fab483` | 03:2x | fix | **webapp.py 43 处真空吞清零 + 纳入主链静默闸门；OpenBLAS 抖动有了串行复核包装器**：① `check_silent_except` 主链再扩——UI↔后端的桥 webapp.py（143 处 except-pass 里 43 处块内无注释无日志）全部处理：探针/枚举/清理类补理由注释，承重的试听/克隆/保存路径本就有 `_last_tts_error`/`logger.exception` 上报（补的是清理点注释）；主链现五文件 300 处静默全有着落、0 真静默。② 全量门禁连跑时 `test_phash`/`test_set_player_name_wiring` 间歇撞 OpenBLAS「Memory allocation still failed」（单独跑就过、产品无问题）——新增 `run_test_with_mem_retry.py` 包装器：**只认这一种文案、只串行复核一次、真缺陷绝不重试**（自测三用例守着），两个抖动测试改走包装器。③ 登记对账闸门修两处误判：包装器式登记（argv[1] 是真测试）曾被误判未登记 → 登记身份改取 argv 里全部 .py/.js；共用包装器的两个条目曾被误判重复 → 去重改比对整条 argv。④ `test_doctor` 的「不应有 FAIL」断言补上 FAIL 行明细（跑闸负载下间歇红过两次而旧断言不说是哪项）。 | 主链闸门 0 真静默；变异刀五刀全过（新增 E 刀：webapp 注入）；包装器自测 7/7；额度墓碑刀因 webapp 转 LF 锚点失效→改逐文件实测 EOL 后三刀全过；全量门禁 **147/147**（12m48s） |
 | `404a849` | 02:1x | fix | **proactive.py 43 处真空吞清零 + 纳入主链静默闸门**：`check_silent_except` 的主链原先只有 cloud_omni_realtime/dialogue/tts 三个文件，而**主动搭话/双工控制/看屏互动/档位同步全在 proactive.py**——普查发现它有 **43 处 `except: pass` 且块内无注释无日志**，其中承重路径包括：双工对话写长期记忆失败（通话后她不记得说过什么）、打字侧接语音上下文的历史桥失败、主动搭话筒术 LLM 失败、看屏批量循环启动失败、taskkill 杀不掉引擎进程、配置档位同步失败。处理口径：**承重路径 `logger.debug(..., exc_info=True)`**（行为不变、失败可诊断），**有意降级补理由注释**（探针失败/任务取消/兼容垫/清理路径）。随后把 proactive.py 纳入 MAIN_CHAIN（现四文件 158 处静默全有注释/日志、0 真静默）。全仓其余 159 处真静默在非主链文件，记录待逐文件推进。 | 闸门 `--main --strict` 0 真静默；变异刀**加第四刀**（往 proactive.py 注入真空吞 → 红并点名，证明新覆盖有牙齿）；四刀全过 + 双还原字节一致；全量门禁 **146/146**（12m29s） |
 | `873ee58` | 01:0x | chore | **出厂模板 24 个死键删掉 + 模板对账闸门**：普查发现 `config.release.yaml` 424 个叶子键里 **24 个没有任何代码读取点**——用户/队友照着模板配了，什么都没发生（`voice`/`voice_id` 同型的放大版）。三个最恶劣的：`proactive.duplex_mic_vad` 有一处读（`getattr(self,'_duplex_mic_vad',True)`）但**全仓没有赋值点**，永远落默认值；`max_per_type_per_day` 被 docstring 承诺为"同类活动每日上限"而真实机制是 `type_cooldown_s`；`sticker.random_probs.*` 整子树死（sticker_bridge 用裸 `random.choice`，参数全硬编码）。删除：`game_stagger`（08-25 已被节奏门禁取代的残留）/ `accumulate_screen` / `duplex_mic_vad` / `duplex_mode_lock_mem_pct`+`util_pct`（兄弟键 ext_mb/silent 都活着）/ `duplex_ocr_frame_overlay` / `duplex_timing_pressure` / `game_immersive` / `heavy_apps_cloud_*`×3 / `immersive_interval_s` / `llm_timeout_s` / `max_per_day` / `max_per_type_per_day` / `react_to_screen` / `sticker.timing_mode`+`random_seed`+`random_cooldown`+`random_probs.*`+`warmth_*`。新闸门 `check_config_keys.py`：模板每个键必须出现在代码 NAME/STRING token 里（**tokenize 丢注释**——注释里提一句不算读取点，那正是 docstring 谎言形态）；例外清单带原因（`_release_note` 元键 / `ollama.options.*` 泛型透传）。 | 两刀变异全红（插死键 / 抽豁免条目——证明清单不是装饰品）；全量门禁 **146/146**（12m25s）；`test_release_template` 无损；模板工作副本 CRLF→LF 还原 |
 | `8e68ed1` | 00:0x | fix | **双工过渡看门狗从来没启动过——重连卡死时她会永久静默**：`_duplex_in_transition` 禁言闸门会把 `_on_duplex_speak` 的开口全丢弃（2001/3336），正常出口只有 connected/prepared（2989/3047）；重连卡在"正在重连"类状态、prepared 永不到达时，闸门**永不起下课** → 她永久静默且零报错。看门狗方法 `_duplex_force_clear_transition`（20s 强制解除禁言）09-08 就写好了，但**全仓零启动点**——2912 的注释却一直承诺"配合看门狗兜底"。修法：闸门拉起处记 `_duplex_transition_since` 时间戳；方法补 20s elapsed 守卫（没到窗口不动、没记时间戳不动）；挂 5s 双工诊断 tick（与哑火看门狗同 tick）。顺带删 `cloud_omni_realtime._reopen_stream` 死包装（锁不可重入，真调用方都在持锁状态直接调 `_reopen_stream_locked`，包装零调用）+ 修三处提到它的注释。 | 回归 **14 项**（两对照组：闸门没起 / 20s 窗口内都不许误清）；**四刀变异全红**（阈值失效→卡死也不清 / 抽 raise 时间戳 / 抽 tick 调用 / 死包装复活）；全量门禁 **144/144**（12m39s） |
@@ -4901,3 +4902,51 @@ ollama.options 豁免 → 4 个透传键红，证明清单 load-bearing）+ 双�
 **验证**：`check_silent_except --main --strict` 0 真静默；变异四刀全过
 （A tts 注入 / B 语法错 / C 文件缺失 / D proactive 注入）+ 双还原字节一致；
 全量门禁 **146/146**（12m29s，变异刀 3.5s）。
+
+---
+
+### `8fab483` · webapp.py 真空吞清零 + OpenBLAS 抖动复核 + 登记对账两处误判修复
+
+**① webapp.py 43 处真空吞清零**：主链静默闸门（用户能直接感知「没反应」的路径）
+再扩到 UI↔后端之桥。143 处 except-pass 里 43 处块内无注释无日志，全部处理：
+- 探针/枚举/清理类（盘符枚举、exe 索引、Start Menu、图标五步提取链、模型目录
+  扫描、临时文件清理）→ 补一句理由注释，与其余四文件同标准；
+- 承重路径本就上报（试听合成 `_last_tts_error` + `logger.warning`、克隆
+  `logger.exception`、配置保存 re-raise）——补的是失败处理里的清理点注释。
+主链现状：五文件 300 处静默全部有注释或日志、**0 真静默**。变异刀加第五刀
+（往 webapp 注入真空吞 → 红并点名）。
+
+**② OpenBLAS 抖动：串行复核包装器**（`tools/run_test_with_mem_retry.py`）：
+全量门禁连跑时 `test_phash` / `test_set_player_name_wiring` 间歇报
+`OpenBLAS error: Memory allocation still failed`——单独跑就过、产品无问题，
+但红成噪音之后真红就没人看了（smoke_import 2026-10-21 的原话）。修法完全同构：
+只认这一种文案（有外部证据：文案来自 OpenBLAS 而非产品代码）、只串行复核一次、
+复核仍失败照样红。自测 `tools/test_mem_retry_wrapper.py` 三用例：救得回来的必须救、
+真缺陷绝不重试（整个修法最大的失败模式）、救不回来的仍红且留痕。
+
+**③ 登记对账闸门两处误判修复**（都是本轮自己触发、当场抓到的）：
+- 包装器式登记（`["tools/run_test_with_mem_retry.py", "src/tests/test_x.py"]`）把
+  真测试放在 argv[1]，而闸门只认 argv[0] 为登记身份 → 两个测试被误判「未登记」。
+  改：登记身份取 argv 里全部 `.py/.js`（只认脚本后缀——`-m` 式条目的解释器路径
+  `python/python.exe` 不是脚本，收进来会撞出假重复）。
+- 共用同一个包装器的两个条目被误判「重复登记」。改：去重比对**整条 argv**——
+  同一 argv 登记两次才是 10-21 那种有害重复（白跑两遍还互相打架），共用包装器
+  跑不同测试是合法设计。
+
+**④ 两处换行符债**：webapp.py 工作副本是 CRLF（`autocrlf` + `eol=lf` 下 git 状态
+显示干净，隐患一直挂着）→ 二进制转回 LF；`_qc_quota_tombstone_mutation` 的锚点
+写死 `EOL=b"\r\n"`（注释还写着"这三个文件都是 CRLF"）→ 转 LF 后 M1/M3 锚点 0
+命中。改成逐文件实测 EOL 后三刀全过。**全仓尚有 174 个跟踪文件是 CRLF 工作副本**
+（含 main.py），记录为后续项：转换会响亮地打破写死 CRLF 的刀（闸门抓得到），
+但批量转换宜避开并发会话活跃期。
+
+**⑤ doctor 抖动（未决，已加自诊断）**：`test_doctor` 的「当前开发机不应有 FAIL」
+在跑闸负载下 4 轮红 2 轮、单跑稳定过。FAIL 条件枚举后排除了端口（占用只 WARN）、
+Electron（auto 模式失败只 WARN）、网络（超时只 WARN）；剩 语音合成（真调 SAPI5）
+与 核心依赖（doctor 自己 import numpy，可能同根 OpenBLAS）两个候选，但核心依赖
+检查把异常文本吞了（行里只有「缺少：numpy」）没法按文案精准重试。处置：断言补上
+FAIL 行明细（下次红一行定位），**不猜根因就不加宽泛重试**（会掩盖真 FAIL）。
+
+**验证**：全量门禁 **147/147**（12m48s，新登记「内存抖动复核自测」4.5s、
+两个抖动测试走包装器后 1.5s/2.0s、doctor 78.8s）；主链闸门 0 真静默；登记对账
+147 登记/8 免登/0 待定，其变异刀四刀仍全红；额度墓碑刀三刀全过。
