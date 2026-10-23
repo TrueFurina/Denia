@@ -74,10 +74,12 @@ def _load() -> None:
                     d = json.loads(line)
                     _probes.append(MemProbe(**{k: d.get(k, 0 if k in ("prompt_tokens",) else (0.0 if k == "latency_ms" else (False if k == "recall_hit" else ""))) for k in ("ts", "tier", "model", "event", "prompt_tokens", "latency_ms", "recalled_facts", "recall_hit", "note")}))
                 except Exception:
+                    # 这一行探针记录解析不了 → 跳过（历史文件容错）
                     continue
                 if len(_probes) > _RING_CAP:
                     _probes.pop(0)
     except Exception:
+        # 整个探针文件读不了 → 当空历史（剖析器是诊断工具）
         pass
 
 

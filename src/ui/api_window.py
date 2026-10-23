@@ -109,6 +109,7 @@ class WindowAPI:
         try:
             wv2 = len(STATE.wv2_controls)
         except Exception:
+            # STATE 还没初始化完全 → 控件数按 0
             pass
         return {
             "success": True,
@@ -161,6 +162,7 @@ class WindowAPI:
                 try:
                     logger.error("[UI心跳] 看门狗异常: %s", exc)
                 except Exception:
+                    # 看门狗连报错都失败（日志系统坏）→ 绝不能让看门狗自己崩
                     pass
                 time.sleep(self.UI_PING_INTERVAL)
 

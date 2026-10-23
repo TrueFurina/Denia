@@ -514,6 +514,7 @@ def _parse_anchor(v: Any, index: int = 0) -> Optional[dict]:
         try:
             re.compile(ps)  # 仅校验语法，编译对象不入字典
         except re.error:
+            # 这条锚点正则语法错误 → 跳过（其余锚点照常编译）
             continue
         patterns.append(ps)
     return {
@@ -1290,6 +1291,7 @@ class GameOcrMonitor:
             try:
                 nv = [max(0.0, min(1.0, float(x))) for x in rect]
             except (TypeError, ValueError):
+                # 这个矩形坐标不是数字 → 跳过该区域
                 continue
             new_regions[key] = {"purpose": purpose, "rect": nv}
         if new_regions and new_regions != self._regions:
@@ -1398,6 +1400,7 @@ class GameOcrMonitor:
                         try:
                             pat = re.compile(pstr)
                         except re.error:
+                            # 这条锚点正则编译不了 → 跳过（不参与匹配）
                             continue
                         _COMPILED_PATTERNS[pstr] = pat
                     if pat.search(full_text):

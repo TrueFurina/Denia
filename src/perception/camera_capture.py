@@ -25,6 +25,7 @@ def _resolve_index(device) -> Optional[int]:
     try:
         return int(device)
     except (TypeError, ValueError):
+        # 设备号不是整数 → 按未指定处理（用默认摄像头）
         return None
 
 

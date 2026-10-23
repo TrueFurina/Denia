@@ -190,4 +190,5 @@ def pick_path(title: str = "选择文件",
             import shutil
             shutil.rmtree(tmpdir, ignore_errors=True)
         except Exception:
+            # 临时目录删不掉由系统回收（对话框结果已拿到）
             pass

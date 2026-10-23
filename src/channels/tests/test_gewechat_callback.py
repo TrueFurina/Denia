@@ -134,6 +134,7 @@ def _recv_or_none(s: socket.socket, wait: float):
     try:
         return s.recv(4096)
     except socket.timeout:
+        # 等待超时=对端还没回 → 按没有数据处理
         return None
 
 

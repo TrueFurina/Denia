@@ -142,6 +142,7 @@ class GewechatChannel(Channel):
             try:
                 item = await asyncio.wait_for(self._queue.get(), timeout=1.0)
             except asyncio.TimeoutError:
+                # 队列等待超时=本轮没有待发消息，继续等（循环的正常心跳）
                 continue
             await self._handle_inbound(item)
 

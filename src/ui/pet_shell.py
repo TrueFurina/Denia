@@ -107,6 +107,7 @@ def _remove_handshake() -> None:
     try:
         os.remove(HANDSHAKE_PATH)
     except FileNotFoundError:
+        # 没有握手文件是常态（上次干净退出过），不是错误
         pass
     except OSError as _e:  # noqa: BLE001
         logger.debug("[壳] 握手文件清理失败（忽略）：%s", _e)
@@ -202,7 +203,8 @@ class PetShellClient:
         try:
             os.makedirs(self._profile, exist_ok=True)
         except OSError:
-            pass
+            # 建不了 profile 目录（磁盘满/权限）→ 下面 Popen 会失败并走既有报错路径
+            logger.debug("[壳] profile 目录创建失败：%s", self._profile, exc_info=True)
         args = [
             exe, SHELL_MAIN,
             "--user-data-dir=" + self._profile,
@@ -286,6 +288,7 @@ class PetShellClient:
             try:
                 self._lines.get_nowait()
             except queue.Empty:
+                # 队列空了 = 排干完成，这是循环的正常终止条件
                 return
 
     def _wait(self, marker: str, timeout: float) -> str:
@@ -324,6 +327,7 @@ class PetShellClient:
                 try:
                     chunk = self._sock.recv(65536).decode("utf-8", errors="replace")
                 except socket.timeout:
+                    # 等壳回话的超时→继续等（外层有总超时），不是错误
                     continue
                 except OSError:
                     return ""
@@ -431,6 +435,7 @@ class PetShellClient:
                 self._x, self._y = int(b["x"]), int(b["y"])
                 self._w, self._h = int(b["width"]), int(b["height"])
             except (ValueError, KeyError, TypeError):
+                # 壳报来的 POS 行解析失败 → 本轮位置不刷新（桌宠位置记忆是可选的）
                 pass
 
     @property
@@ -569,6 +574,7 @@ class PetShellClient:
             try:
                 t.join(timeout=3)
             except RuntimeError:
+                # 看门狗线程停自己时 join 会抛 RuntimeError——守卫已防，兜底忽略
                 pass
 
     def _watchdog_loop(self) -> None:
@@ -644,6 +650,7 @@ class PetShellClient:
             try:
                 self._sock.close()
             except OSError:
+                # 关socket失败不拦清理流程（进程退出会回收句柄）
                 pass
             self._sock = None
         self._buf = ""
@@ -653,6 +660,7 @@ class PetShellClient:
             while True:
                 self._lines.get_nowait()
         except queue.Empty:
+            # 排干即停：这是清理路径，队列空是预期终止
             pass
         proc, self._proc = self._proc, None
         if proc is None:
@@ -682,6 +690,7 @@ class PetShellClient:
             try:
                 self._sock.sendall(b"quit\n")   # 先礼后兵：给壳一个干净退出的机会
             except OSError:
+                # 壳已经不在了（socket 断）→ 直接走下面的强杀流程
                 pass
         self._cleanup_proc(force=True)
         _remove_handshake()

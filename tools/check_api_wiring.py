@@ -152,6 +152,7 @@ def referenced_names(have: set[str]) -> tuple[set[str], dict[str, list[str]]]:
         try:
             src = open(path, encoding="utf-8", errors="replace").read()
         except OSError:
+            # 这个文件读不了（权限/被占）→ 跳过（语法错误会直接抛出，不会被吞）
             continue
         src = (_strip_py_comments(src) if path.endswith(".py")
                else _strip_comments(src))

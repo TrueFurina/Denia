@@ -187,6 +187,7 @@ def _backoff_seconds(attempt: int, headers=None) -> float:
         try:
             return max(0.5, float(ra))
         except (ValueError, TypeError):
+            # Retry-After 不是数字 → 落到下面的指数退避
             pass
     return _BACKOFF[min(attempt - 1, len(_BACKOFF) - 1)]
 
@@ -504,6 +505,7 @@ class OpenAIClient(LLMClient):
                                     if fn.get("arguments"):
                                         acc_tcs[idx]["function"]["arguments"] += fn["arguments"]
                             except (KeyError, IndexError, TypeError, json.JSONDecodeError):
+                                # 这个流式分片的 tool_calls 结构不完整 → 跳过它（等完整分片）
                                 continue
                     return acc_content, acc_tcs
                 # 非流式兜底（无 on_token）：原逻辑
@@ -753,6 +755,7 @@ class OpenAIClient(LLMClient):
                                     _qm_record(self._model, _u["total_tokens"], self._base_url)
                                 delta = chunk["choices"][0]["delta"].get("content") or ""
                             except (KeyError, IndexError, TypeError, json.JSONDecodeError):
+                                # 同上：流式 usage 分片结构不完整 → 跳过
                                 continue
                             if delta:
                                 yield delta

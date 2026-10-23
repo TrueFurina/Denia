@@ -96,12 +96,14 @@ def _ensure_dpi_aware() -> str:
                 _dpi_state = "已提升为 per-monitor v2（此前 UNAWARE）"
                 return _dpi_state
         except Exception:
+            # 这条 DPI 提升路径不可用（老系统），试下一种方式
             pass
         try:
             if int(ctypes.windll.shcore.SetProcessDpiAwareness(2)) == 0:
                 _dpi_state = "已提升为 per-monitor（此前 UNAWARE）"
                 return _dpi_state
         except Exception:
+            # shcore 方式也不可用 → 保持原状（截图仍可用，只是坐标可能偏移）
             pass
         try:
             if ctypes.windll.user32.SetProcessDPIAware():

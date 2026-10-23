@@ -236,6 +236,7 @@ finally:
         try:
             os.unlink(_p)
         except OSError:
+            # 测试收尾清理：文件不存在就不用删
             pass
 
 print()

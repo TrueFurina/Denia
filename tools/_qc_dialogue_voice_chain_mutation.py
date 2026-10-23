@@ -68,6 +68,7 @@ def load_patched(knife_name, source, pkg_dir="companion", pkg="src.companion"):
         try:
             os.remove(fpath)
         except OSError:
+            # 变异还原时临时文件已不在 → 无需再删
             pass
         raise
 
@@ -278,6 +279,7 @@ async def _run():
             try:
                 os.remove(fpath)
             except OSError:
+                # 同上：运行残留的临时文件清理
                 pass
         for _n in ("CB_no_done_callback", "T1_guard_always_raise",
                    "T2_guard_drops_raw_fallback", "T3_no_empty_check_after_clean",

@@ -122,6 +122,7 @@ def normalize_vram_gb(detected: Optional[float]) -> Optional[float]:
     try:
         v = float(detected)
     except (TypeError, ValueError):
+        # 探测返回值不是数字（驱动异常文案等）→ 按"未知显存"处理
         return None
     for n in _NOMINAL_VRAM_GB:
         if 0 < (n - v) <= 1.0:
@@ -143,6 +144,7 @@ def detect_total_vram_gb() -> Optional[float]:
         if g and g.get("total_mb"):
             return normalize_vram_gb(round(g["total_mb"] / 1024.0, 1))
     except Exception:
+        # 第一条路（gpu_load）失败 → 走下面的 nvidia-smi 兜底
         pass
     # 兜底：直接调 nvidia-smi
     try:
@@ -154,6 +156,7 @@ def detect_total_vram_gb() -> Optional[float]:
         val = float(str(out).split("\\n")[0].strip().split(".")[0])
         return normalize_vram_gb(round(val / 1024.0, 1))
     except Exception:
+        # 两条路都失败（无 N 卡/smi 不在 PATH）→ 显存未知，调用方按"不推荐档"处理
         return None
 
 
@@ -652,6 +655,7 @@ def _run_download(quant_id: str, model_dir: str, task_id: str) -> None:
         try:
             proc.stdout.read(1) if proc.stdout else None
         except Exception:
+            # 读 1 字节失败（管道已断=进程刚退出）→ 下循环由 rc 判结束
             pass
         time.sleep(1.2)
 
@@ -663,6 +667,7 @@ def _run_download(quant_id: str, model_dir: str, task_id: str) -> None:
         if proc.stderr:
             err = proc.stderr.read() or ""
     except Exception:
+        # 读剩余输出失败只丢错误文案（成败由 rc + 目标文件存在性判定）
         pass
 
     if finished_normally and os.path.isfile(target):

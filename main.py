@@ -43,6 +43,7 @@ def _bootstrap_bundle_dlls() -> None:
     try:
         _DLL_DIR_HANDLES.append(add(d))
     except OSError:
+        # 这个 DLL 目录加不了（不存在/权限）→ 跳过，其余目录照常加
         pass
 
 
@@ -1653,6 +1654,7 @@ def _cleanup_asyncio(runtime: RuntimeHolder, loop: asyncio.AbstractEventLoop) ->
             try:
                 loop.run_until_complete(runtime.ws.stop())
             except Exception:
+                # 关闭时 ws.stop() 失败不拦后续清理（尽力而为）
                 pass
         # 等待任务取消
         if runtime._tasks:
@@ -1661,6 +1663,7 @@ def _cleanup_asyncio(runtime: RuntimeHolder, loop: asyncio.AbstractEventLoop) ->
                     asyncio.gather(*runtime._tasks, return_exceptions=True)
                 )
             except Exception:
+                # 关闭时 gather 失败不拦退出（各任务的异常已由自身记录）
                 pass
         console.print("[dim]已退出，下次见~[/]")
     except Exception:
@@ -1774,6 +1777,7 @@ def _kill_comni_engine_tree(runtime: RuntimeHolder) -> None:
                     try:
                         pid = int(parts[1])
                     except ValueError:
+                        # tasklist 这一行 PID 解析不了，跳过
                         continue
                     if pid in killed:
                         continue
@@ -2402,6 +2406,7 @@ def main() -> None:
             import faulthandler as _fh2
             _fh2.enable()
         except Exception:
+            # faulthandler 起不来（调试用）→ 不影响主流程
             pass
 
     parser = argparse.ArgumentParser(description="AI 桌面伴侣")
@@ -2592,8 +2597,10 @@ def main() -> None:
                 try:
                     window.destroy()
                 except Exception:
+                    # 关窗时单个窗口 destroy 失败 → 继续关其余的
                     pass
         except Exception:
+            # 整体关窗失败 → 进程马上退出，句柄由 OS 回收
             pass
 
     threading.Thread(target=_auto_close_when_stop_requested, daemon=True, name="gui_closer").start()
@@ -2619,6 +2626,7 @@ def main() -> None:
             try:
                 runtime.loop.call_soon_threadsafe(runtime.loop.stop)
             except Exception:
+                # loop 已经停了/不可用 → call_soon 失败无需处理
                 pass
         if runtime.tray:
             runtime.tray.stop()
@@ -2803,6 +2811,7 @@ def main() -> None:
             try:
                 runtime.loop.call_soon_threadsafe(runtime.loop.stop)
             except Exception:
+                # 同上：停机路径上的 loop 停止失败不影响退出
                 pass
         async_thread = getattr(runtime, "async_thread", None)
         if async_thread is not None:
@@ -3097,6 +3106,7 @@ async def bootstrap_legacy(cfg: Config, video_path: str | None = None,
                 try:
                     await stop_evt.wait()
                 except (asyncio.CancelledError, KeyboardInterrupt):
+                    # 取消/中断 = 正常停机路径
                     pass
     finally:
         logger.info("正在关闭...")
@@ -3131,6 +3141,7 @@ async def bootstrap_legacy(cfg: Config, video_path: str | None = None,
             try:
                 await t
             except (asyncio.CancelledError, Exception):
+                # 取消后台任务时的 await 异常是预期（正在停它们）
                 pass
         console.print("[dim]已退出，下次见~[/]")
 

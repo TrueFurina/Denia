@@ -122,6 +122,10 @@ GATES: list[tuple[str, str, list[str], bool]] = [
     ("凭据扫描正反", PY_VENV, ["src/tests/test_package_secrets_scan.py"], False),
     ("凭据日志卫生", PY_RUNTIME, ["tools/check_log_leak.py"], False),
     ("依赖声明", PY_VENV, ["tools/check_requirements.py", "--strict"], True),
+    # 【2026-10-24 新增】依赖声明闸门的变异：它原来遇 SyntaxError 静默跳过文件
+    # （漏声明静默发生、退出码仍 0——闸门沉默）。修法是解析失败记 error 并判红；
+    # 本刀验：放坏文件必须红且点名「解析失败」，无坏文件必须绿。
+    ("依赖声明变异", PY_VENV, ["tools/_qc_requirements_syntax_mutation.py"], False),
     # 【2026-10-21 删·重复登记】这里原来还有一行
     #   ("导入冒烟", PY_VENV, ["tools/smoke_import.py", "--strict"], True)
     # 而列表末尾**已经有一份带完整注释的**。同一项被登记两次 → 每次全量闸门都白跑

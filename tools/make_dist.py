@@ -126,6 +126,7 @@ def _tree_size(path: str) -> tuple[int, int]:
                 total += os.path.getsize(fp)
                 count += 1
             except OSError:
+                # 单个文件取不到体积（被占/符号链接）→ 跳过（统计用途）
                 pass
     return total, count
 
@@ -317,6 +318,7 @@ def build_wheelhouse(out_dir: str, python_exe: str, upto: str) -> bool:
         try:
             os.remove(tmp)
         except OSError:
+            # 构建用的临时 requirements 删不掉由临时目录回收
             pass
     if rc != 0:
         for line in out[-25:]:
@@ -329,6 +331,7 @@ def build_wheelhouse(out_dir: str, python_exe: str, upto: str) -> bool:
         try:
             os.remove(os.path.join(dest, f))
         except OSError:
+            # 多余的 wheel 删不掉 → 留给下次构建覆盖
             pass
     if leftovers:
         print(f"  ! 清掉 {len(leftovers)} 个非 wheel 产物（离线安装无法构建它们）："
@@ -573,6 +576,7 @@ def _dir_size(path: str) -> tuple[int, int]:
                 total += os.path.getsize(os.path.join(r, n))
                 count += 1
             except OSError:
+                # 同 _tree_size：单个文件取不到体积就跳过
                 pass
     return total, count
 
@@ -595,6 +599,7 @@ def size_report(root: str, top_files: int = 12, top_pkgs: int = 12) -> None:
             try:
                 sz, n = os.path.getsize(p), 1
             except OSError:
+                # 这个文件取不到体积 → 跳过该行统计
                 continue
         rows.append((name, sz, n))
     total = sum(r[1] for r in rows) or 1
@@ -613,6 +618,7 @@ def size_report(root: str, top_files: int = 12, top_pkgs: int = 12) -> None:
             try:
                 files.append((os.path.relpath(fp, root), os.path.getsize(fp)))
             except OSError:
+                # 单个文件列不全也继续（体积报告是汇总参考）
                 pass
     files.sort(key=lambda x: -x[1])
     print(f"\n最大的 {top_files} 个文件：")
@@ -631,6 +637,7 @@ def size_report(root: str, top_files: int = 12, top_pkgs: int = 12) -> None:
                 try:
                     loose += os.path.getsize(p)
                 except OSError:
+                    # 散文件取不到体积 → 该项不计入
                     pass
         pkgs.sort(key=lambda x: -x[1])
         sp_total = sum(p[1] for p in pkgs) + loose
@@ -750,6 +757,7 @@ def purge_stale_caches(out_dir: str) -> list[str]:
                     os.remove(p)
                     killed.append(os.path.relpath(p, out_dir))
                 except OSError:
+                    # 陈旧缓存删不掉（被占用）→ 记入 killed 的照报，下轮再清
                     pass
     return killed
 
@@ -923,6 +931,7 @@ def _read_version_file(path: str) -> str | None:
             m = re.search(r'^APP_VERSION\s*=\s*"([^"]+)"', fh.read(), re.M)
         return m.group(1) if m else None
     except OSError:
+        # 版本文件读不了 → 返回 None（调用方用兜底版本号）
         return None
 
 

@@ -141,6 +141,7 @@ def _registry_uninstall() -> list[dict]:
         try:
             key = winreg.OpenKey(hive, sub)
         except OSError:
+            # 这个注册表分支读不了（不存在/权限），换下一个
             continue
         with key:
             i = 0
@@ -177,6 +178,7 @@ def _registry_uninstall() -> list[dict]:
                                             p2 = os.path.join(loc, f)
                                             cands.append(p2)
                                 except OSError:
+                                    # 这个安装目录列不了，候选就空着（后面还有别的来源）
                                     pass
                                 for c in cands:
                                     if normalize(Path(c).stem) == stem:
@@ -188,6 +190,7 @@ def _registry_uninstall() -> list[dict]:
                             out.append({"name": disp, "exe": exe, "source": "uninstall",
                                         "token": {"type": "exe", "value": exe}})
                 except OSError:
+                    # 这条卸载信息读不了，换下一条
                     continue
     return out
 
@@ -215,6 +218,7 @@ def _app_paths() -> list[dict]:
                     out.append({"name": Path(child).stem, "exe": exe, "source": "apppaths",
                                 "token": {"type": "exe", "value": exe}})
             except OSError:
+                # 这条 App Paths 条目读不了，换下一条
                 continue
     return out
 
@@ -299,6 +303,7 @@ def _system_gui_apps() -> list[dict]:
         try:
             names = os.listdir(d)
         except OSError:
+            # 这个系统目录列不了（权限/不存在），换下一个
             continue
         for f in names:
             if not f.lower().endswith(".exe"):

@@ -431,6 +431,7 @@ def save_sticker_image(theme_id: str, src_path: str, sticker_id: str = "") -> Di
         if os.path.getsize(src_path) > STICKER_MAX_BYTES:
             return {"error": "这张贴纸超过 48MB，先压缩一下再贴"}
     except OSError:
+        # 贴纸源文件读不了 → 交给下面的保存逻辑报错
         pass
     d = sticker_dir(tid)
     try:

@@ -90,6 +90,7 @@ def log_call_av(event: str, **fields) -> None:
                 # with 块退出时关闭，IO 次数下降一个量级。
                 f.write(line + "\n")
         except Exception:
+            # 通话音视频日志写不出去（磁盘满/句柄坏）→ 丢这条，不拦通话
             pass
 
     # 人类可读文本日志

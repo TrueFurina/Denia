@@ -59,6 +59,7 @@ def _load_cfg() -> dict:
                 try:
                     return float(m.group(1))
                 except ValueError:
+                    # 配置里这个值不是数字 → 按未设置处理
                     return None
             return None
 
@@ -90,6 +91,7 @@ def _load_cfg() -> dict:
                 try:
                     cfg[key] = float(raw)
                 except ValueError:
+                    # 裸值不是数字 → 该项用默认值
                     pass
     return cfg
 
@@ -116,6 +118,7 @@ def _rotate(path: str, backups: int) -> bool:
         if os.path.exists(stale):
             os.remove(stale)
     except OSError:
+        # 最旧的备份删不掉（被占用）→ 由下次轮转再试
         pass
     for i in range(backups, 0, -1):
         src = path if i == 1 else (path + ".%d" % (i - 1))

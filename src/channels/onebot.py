@@ -183,6 +183,7 @@ class OneBotChannel(Channel):
         try:
             data = json.loads(raw)
         except Exception:
+            # 不是合法 JSON 的帧 → 丢弃（协议容错，不拦连接）
             return
         if not isinstance(data, dict):
             return

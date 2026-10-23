@@ -153,6 +153,7 @@ def extract_icon_from_exe(exe_path: str, size: int = 128) -> Optional[str]:
             user32.DestroyIcon.argtypes = [VOIDP]
             user32.DestroyIcon.restype = INT
         except Exception:
+            # ctypes 声明失败（老系统缺符号）→ 后续调用按默认约定走，图标可能提不出
             pass
         try:
             gdi32.PatBlt.argtypes = [VOIDP, INT, INT, INT, INT, ctypes.c_uint32]
@@ -173,6 +174,7 @@ def extract_icon_from_exe(exe_path: str, size: int = 128) -> Optional[str]:
             gdi32.DeleteObject.argtypes = [ctypes.c_void_p]
             gdi32.DeleteObject.restype = ctypes.c_int
         except Exception:
+            # ctypes 声明失败（老系统缺符号）→ 同上，图标提取降级但不崩
             pass
 
         hicon = None
@@ -278,11 +280,13 @@ def extract_icon_from_exe(exe_path: str, size: int = 128) -> Optional[str]:
                 try:
                     _os.unlink(tmp_path)
                 except OSError:
+                    # 临时 ico→png 中间文件删不掉由临时目录回收
                     pass
         finally:
             try:
                 user32.DestroyIcon(hicon)
             except Exception:
+                # 图标句柄释放失败不拦返回（句柄泄漏由进程退出回收）
                 pass
     except Exception as e:
         logger.warning("[软件档案] 提取图标失败 %s: %s", exe_path, e)
@@ -409,6 +413,7 @@ def enumerate_running_processes() -> List[Dict[str, Any]]:
             except Exception:
                 r["icon_b64"] = ""
     except Exception:
+        # 枚举整体失败（进程列表拿不到）→ 返回空列表，调用方按"无数据"渲染
         pass
 
     # 按 name 排序，去重（同名保留第一个）

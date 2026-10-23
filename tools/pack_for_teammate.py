@@ -368,6 +368,7 @@ def main() -> int:
         try:
             total += os.path.getsize(os.path.join(ROOT, rel))
         except OSError:
+            # 这个文件取不到体积（符号链接/被占）→ 体积统计跳过它
             pass
     print(f"    未压缩合计：{total / 1048576:.1f} MB")
 

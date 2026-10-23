@@ -46,6 +46,7 @@ def atomic_write_bytes(path: Path, data: bytes) -> None:
         try:
             os.unlink(temporary)
         except FileNotFoundError:
+            # 临时文件已被消费/不存在，无需再删
             pass
         raise
 

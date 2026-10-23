@@ -144,6 +144,7 @@ def stop() -> None:
         trace("ctl", action="trace_stop",
               dur_s=round(time.time() - _T0, 1), counts=dict(_COUNTS))
     except Exception:
+        # 收尾记录写不出去（trace 已停）不影响真正要做的 flush/close
         pass
     with _LOCK:
         _flush_locked()
@@ -153,6 +154,7 @@ def stop() -> None:
         try:
             fh.close()
         except Exception:
+            # 关文件失败由 OS 回收句柄；数据已在上面 flush 过
             pass
 
 
@@ -223,6 +225,7 @@ def _write(rec: dict) -> None:
     try:
         line = json.dumps(rec, ensure_ascii=False)
     except Exception:
+        # 记录里有不可序列化的东西 → 丢这一条（trace 是诊断，不能反咬主流程）
         return
     with _LOCK:
         if not _ACTIVE:
@@ -242,6 +245,7 @@ def _flush_locked() -> None:
         _FH.write("\n".join(_BUF) + "\n")
         _FH.flush()
     except Exception:
+        # 落盘失败（磁盘满/句柄坏）→ 丢这一批（上限约 1s 数据），trace 不拦主流程
         pass
     _BUF = []
     _LAST_FLUSH = time.time()
@@ -275,6 +279,7 @@ def _gpu_loop(stop_ev: threading.Event) -> None:
                                    "mem_free": _num(parts[2]), "power": _num(parts[3]),
                                    "temp": _num(parts[4])})
         except Exception:
+            # nvidia-smi 这一项查不动（无 N 卡/驱动异常）→ 该字段留空，继续记 trace
             pass
         # 每 5 秒带一次分进程显存（llama-server 就是 Comni）
         if n % 5 == 0:
@@ -288,6 +293,7 @@ def _gpu_loop(stop_ev: threading.Event) -> None:
                     fields["procs"] = [p.strip().replace(", ", ":")
                                        for p in out2.strip().split("\n") if p.strip()][:6]
             except Exception:
+                # 分进程显存查询失败 → 少一个诊断字段，不影响心跳
                 pass
         trace("gpu", **fields)
         with _LOCK:

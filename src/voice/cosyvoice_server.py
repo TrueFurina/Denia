@@ -216,6 +216,7 @@ def tts(req: dict):
             try:
                 os.unlink(converted)
             except OSError:
+                # 转换后的临时文件删不掉由临时目录回收
                 pass
 
 

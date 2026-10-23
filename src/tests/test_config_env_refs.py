@@ -76,6 +76,7 @@ for q in (p, p2, p3):
     try:
         os.unlink(q)
     except OSError:
+        # 测试收尾清理：文件不存在就不用删
         pass
 
 print()

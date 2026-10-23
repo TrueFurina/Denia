@@ -113,6 +113,7 @@ async def _end2end() -> None:
     try:
         await bt
     except asyncio.CancelledError:
+        # 取消后台任务 = 场景正常收尾
         pass
 
     s = snapshot("danya", tmp)

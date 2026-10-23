@@ -153,6 +153,7 @@ def merge_call_audio(items: list[dict], out_path: str,
             try:
                 progress_cb(i, len(items or []))
             except Exception:
+                # 进度回调自己出错不该中断合并（它只是汇报）
                 pass
         data, sr = _read_wav(p) if p else (None, 0)
         if data is None or not len(data):

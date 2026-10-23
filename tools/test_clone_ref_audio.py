@@ -117,6 +117,7 @@ def main() -> int:
         if os.path.isfile(stored):
             os.remove(stored)
     except OSError:
+        # 测试收尾清理：文件不存在就不用删
         pass
     shutil.rmtree(tmp, ignore_errors=True)
 

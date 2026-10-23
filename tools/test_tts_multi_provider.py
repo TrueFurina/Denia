@@ -263,6 +263,7 @@ async def _run_guard():
     try:
         await task
     except asyncio.CancelledError:
+        # 取消后台任务 = 用例正常收尾
         pass
     return seen, alive
 
@@ -291,6 +292,7 @@ async def _run_cb():
         try:
             await new_task
         except asyncio.CancelledError:
+            # 同上：取消是预期路径
             pass
     return restarted
 

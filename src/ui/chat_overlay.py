@@ -303,6 +303,7 @@ class ChatOverlay:
                 self._msgs.append((kind, text, time.time()))
                 changed = True
         except queue.Empty:
+            # 队列空 = 没有新消息，轮询的正常路径
             pass
         # 定期刷新（清过期消息）
         now = time.time()

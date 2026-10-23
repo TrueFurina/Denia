@@ -271,6 +271,7 @@ async def drive_voice(bus: EventBus, dlg: Dialogue,
         try:
             await bus_run
         except asyncio.CancelledError:
+            # 取消后台总线任务 = 驱动器正常收尾
             pass
 
 
@@ -308,6 +309,7 @@ async def drive_direct(dlg: Dialogue, coro_factory):
         try:
             await bus_run
         except asyncio.CancelledError:
+            # 同上：取消是预期路径
             pass
 
 
