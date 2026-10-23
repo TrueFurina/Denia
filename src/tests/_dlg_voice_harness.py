@@ -130,6 +130,7 @@ def build_dialogue(*, strip_markdown_raise: bool = False,
                    desktop_media_raise: bool = False,
                    stream_support: bool = True,
                    llm_raw: str = VALID_DECISION_RAW,
+                   keep_build_messages: bool = False,
                    DialogueCls=None):
     """构造一个跑得通 respond 全链路的 Dialogue，并接好订阅。
 
@@ -138,6 +139,10 @@ def build_dialogue(*, strip_markdown_raise: bool = False,
     DialogueCls 默认 None → 用模块全局 `Dialogue`（**延迟绑定**：变异工具通过
     `harness.Dialogue = mutant.Dialogue` 换掉被测类，测试里的断言就能原样复用在
     变异体上，不必再抄一遍——断言口径单一事实源）。
+
+    `keep_build_messages=True`：**不桩 `_build_messages`**，保留真身。只有要直接测
+    "想"这一层（上下文拼装）时才用——`respond` 全链路测试仍然打桩，把话题聚焦到
+    "决策→发布"那一段。
 
     `llm_raw`：模型这一轮吐出的原始文本，用来喂各种真实会出现的输入（纯舞台动作
     描写 / 纯 markdown 骨架 / 无 JSON 外壳的纯台词）。
@@ -163,8 +168,9 @@ def build_dialogue(*, strip_markdown_raise: bool = False,
 
     dlg._decide_search = _fake_decide_search
     dlg._tools_in_chat_enabled = lambda: False
-    dlg._build_messages = (
-        lambda *a, **k: [{"role": "user", "content": (a[0] if a else "")}])
+    if not keep_build_messages:
+        dlg._build_messages = (
+            lambda *a, **k: [{"role": "user", "content": (a[0] if a else "")}])
     dlg._maybe_synthesize_memory = lambda: asyncio.sleep(0)
 
     dlg._inject_hits = 0
