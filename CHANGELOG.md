@@ -283,6 +283,25 @@ PARTIAL_TEXT 那个是与 `_chat_decision._emit` 对齐（它本来就带 channe
 channel 必须留空，否则桌宠会把 QQ 的回复也念一遍）；变异**七刀 → 八刀**（T7 丢掉终稿的
 channel/reply_target → 场景 10 判红）。基线十场景全绿、八刀全红。
 
+### 同日五续：把 respond 的每个调用点对一遍，又抓到一个同型断点
+
+上一轮的教训是"中间层丢参数最难发现——两头都看着对"。所以把这家族**从头到尾对一遍**：
+`base._feed_brain` 对；`_respond_vision_chat` / `_process_desktop_message` / unity 三条
+只可能桌面来源，`channel=""` 是正确语义；**只有 `_on_user_text` 的社交通道那一跳
+（dialogue.py:893）也是断的**——`await self.respond(text, source=source)`，同样不带
+channel/reply_target。
+
+当前生产里社交通道并不走 USER_TEXT（它们由 `_feed_brain` 直接调 respond），所以这一跳
+还没爆。但它是同一类的断点：谁若从 USER_TEXT 喂一条通道消息进来，回复就会因 channel 为空
+被通道侧忽略、同时被桌面播走——正是上一轮刚修好的那个形态。
+
+**修法**：从事件载荷取着往下传（`channel=str(d.get("channel") or "")`、
+`reply_target=d.get("reply_target")`）。载荷里没带时缺省空、**行为与改动前完全一致**；
+带了就生效。不预填假值，也不改 `_DESKTOP_SOURCES` 的路由。
+
+**验证**：场景 10 增加第三条路——直接发一条带 channel/reply_target 的 USER_TEXT 事件，
+断言决策带上这两个键（67 项断言）；变异**八刀 → 九刀**（T8 把那一跳改回不传 → 判红）。
+
 ---
 
 ### 2026-10-22 · 克隆面板「预填她的」：试听静默失效 + 克隆画假进度条还谎报「已完成」

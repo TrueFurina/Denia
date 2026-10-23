@@ -890,7 +890,14 @@ class Dialogue:
             task.add_done_callback(_on_desktop_msg_done)
             return
         # 非桌面来源（QQ/微信等社交通道）：保持原有同步路径（通道内已自行摄入媒体）
-        await self.respond(text, source=source)
+        # 【2026-10-23】channel / reply_target 从事件载荷里取着往下传。
+        # 当前生产里社交通道并不走 USER_TEXT（它们由 base._feed_brain 直接调
+        # respond(channel=self.name)），所以这两个键现在是缺省空、行为不变。但**这一跳
+        # 曾经和工具链一样是断的**：谁若从 USER_TEXT 喂一条通道消息进来，回复会因为
+        # channel 为空而被通道侧忽略、同时被桌面播走。补齐之后，载荷里带了就生效。
+        await self.respond(text, source=source,
+                           channel=str(d.get("channel") or ""),
+                           reply_target=d.get("reply_target"))
 
     async def _process_desktop_message(self, d: dict, source: str, text: str, images) -> None:
         """后台执行桌面消息全链路：图片聊天 / 媒体摄入（陪看视频）/ LLM 回复。
