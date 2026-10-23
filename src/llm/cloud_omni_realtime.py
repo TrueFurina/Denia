@@ -1803,15 +1803,24 @@ class CloudOmniRealtime:
                 _blk_voice = 0
                 _blk_q = 0               # 队列/管道积压估算（读取后剩余）
                 _sent_n = 0
-                _last_blk_ts = 0.0
+                # 看门狗起点：设为回合起点，给首块完整超时宽限（避免开局即误判停滞）。
+                # 必须用实例属性 self._last_blk_ts：后台看门狗线程读的是 self，而非本循环局部变量。
+                self._last_blk_ts = _cap_t0
                 _last_report_ts = time.time()
                 _stall_warned = False
+                # —— 启动采集卡死看门狗（后台线程，周期检查距最后一块音频超时）——
+                _watchdog = threading.Thread(
+                    target=self._capture_watchdog_loop, args=(proc,), daemon=True)
+                _watchdog.start()
                 try:
                     while self.running:
                         if getattr(self, '_mic_reopen_requested', False):
                             logger.info('双工采集：设备切换 → 重启子进程')
                             break
-                        # 卡死看门狗：主线程阻塞在 read 时也能靠超时线程发现
+                        # 注意：read(4) 本身无超时。若子进程活着却不再写（设备热插拔/
+                        # AGC 卡死/回调冻结），read 会永久阻塞。此停滞由后台
+                        # _capture_watchdog_loop 周期检测（距最后一块音频 >2s）并 kill 子进程
+                        # → 此处 read 随即 EOF/异常 → 内层 break → 自动重启子进程。
                         hdr = proc.stdout.read(4)
                         if len(hdr) < 4:
                             logger.warning('双工采集：子进程流断开（本轮收到 %d 块 / %.1fs）',
@@ -1827,7 +1836,7 @@ class CloudOmniRealtime:
                             break
                         _blk_n += 1
                         _blk_bytes += len(d)
-                        _last_blk_ts = time.time()
+                        self._last_blk_ts = time.time()
                         if _blk_n == 1:
                             logger.info('双工采集：首个音频块已到达（%d 字节 ≈ %.0fms）'
                                         '，采集链路打通', len(d),
@@ -1902,6 +1911,11 @@ class CloudOmniRealtime:
                                 '双工采集：已采到 %d 块但未连接云端（send_audio 静默丢弃）'
                                 '——声音采到了却传不上去', _blk_n)
                 finally:
+                    # 先停看门狗线程（proc 即将被 kill，循环条件 self._mic_proc is proc 亦会退出）
+                    try:
+                        _watchdog.join(timeout=0.5)
+                    except Exception:  # noqa: BLE001
+                        pass
                     # —— 每轮采集汇总：这一轮到底采到了什么、有没有上行 ——
                     try:
                         _dur = max(1e-6, time.time() - _cap_t0)
@@ -1951,6 +1965,48 @@ class CloudOmniRealtime:
                     _p.kill()
             except Exception:  # noqa: BLE001
                 pass
+
+    # —— 采集卡死看门狗（2026-10-23 补齐）——
+    # _subproc_capture_loop 阻塞在 proc.stdout.read(4)；若 mic_proc 子进程活着却不再写
+    #（设备热插拔 / AGC 卡死 / 回调模式冻结），read 会永久阻塞 → 采集冻结、既不重启也不
+    # 报错（"她听了却卡死"）。下面这三件套让卡死可被后台线程超时发现并杀掉子进程
+    #（read 随即 EOF → 内层 break → 重启），对齐 MEMORY §6「调用方兜住」。
+    MIC_STALL_TIMEOUT_S = 2.0   # 距最后一块音频超过此值即判定停滞
+    MIC_STALL_POLL_S = 0.2      # 看门狗轮询间隔
+
+    def _capture_stalled(self, now) -> bool:
+        """看门狗判据：运行态 + 子进程存活 + 距最后一块音频超过阈值 = 采集停滞。
+        _last_blk_ts 在每轮开局设为回合起点（_cap_t0），给首块完整超时宽限。"""
+        return bool(self.running) and self._mic_proc is not None and \
+            (now - float(getattr(self, '_last_blk_ts', 0.0))) > self.MIC_STALL_TIMEOUT_S
+
+    def _kill_capture_proc(self, proc=None) -> None:
+        """杀掉指定（或当前）采集子进程并清空引用（幂等、可安全重复调用）。"""
+        target = proc if proc is not None else self._mic_proc
+        if target is not None:
+            try:
+                target.kill()
+            except Exception:  # noqa: BLE001
+                pass  # 子进程已退出则忽略
+        if self._mic_proc is target:
+            self._mic_proc = None
+
+    def _watchdog_tick(self, proc) -> None:
+        """看门狗单次检查：采集停滞 → 杀该子进程（read 随后 EOF → 内层 break → 重启）。"""
+        if self._capture_stalled(time.time()) and self._mic_proc is proc:
+            logger.warning('双工采集：看门狗检测到采集停滞（>%.1fs 无音频块），杀子进程重启',
+                           self.MIC_STALL_TIMEOUT_S)
+            self._kill_capture_proc(proc)
+
+    def _capture_watchdog_loop(self, proc) -> None:
+        """看门狗后台线程：子进程存活且仍是本回合 proc 时，周期性调用 _watchdog_tick。
+        proc 被 kill/EOF/stop 置空或换轮即退出（避免误杀下一轮的新 proc）。"""
+        while self.running and self._mic_proc is proc:
+            time.sleep(self.MIC_STALL_POLL_S)
+            try:
+                self._watchdog_tick(proc)
+            except Exception:  # noqa: BLE001
+                logger.exception('双工采集：看门狗异常')
 
     def _track_mic_level(self, chunk) -> None:
         """按音频块算 RMS → 平滑 → 归一化电平（0..1），并做简易人声判定。

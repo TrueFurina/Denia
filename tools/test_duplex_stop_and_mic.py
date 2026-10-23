@@ -198,6 +198,119 @@ ok("C4 off 语义正确", resolve_engine_ui("local_omni", False) == "off")
 
 
 # ---------------------------------------------------------------------------
+# BUG-4: 采集卡死看门狗（2026-10-23）
+#   真实缺陷：_subproc_capture_loop 阻塞在 proc.stdout.read(4)，若 mic_proc 子进程
+#   活着却不再写（设备热插拔 / AGC 卡死 / 回调冻结），read 永久阻塞 → 采集冻结、
+#   既不重启也不报错（"她听了却卡死"）。修复：后台看门狗线程周期检测（距最后一块
+#   音频 >2s）并 kill 子进程 → read EOF → 内层 break → 自动重启。
+#   本场景直接对真实 CloudOmniRealtime 的看门狗方法做确定性断言（不复制逻辑，
+#   避免"假绿"——复刻逻辑两次写得一样不算测试）。
+# ---------------------------------------------------------------------------
+print()
+print("=" * 66)
+print("D. 采集卡死看门狗（真实 CloudOmniRealtime 方法）")
+print("=" * 66)
+
+
+class _FakeProc:
+    """替代真实子进程对象：记录是否被 kill，便于确定性断言（不真杀进程）。"""
+    def __init__(self):
+        self.killed = False
+
+    def kill(self):
+        self.killed = True
+
+
+def _make_o():
+    """绕过 __init__ 构造实例（__init__ 会拉起一堆资源），仅注入看门狗所需字段。"""
+    o = CloudOmniRealtime.__new__(CloudOmniRealtime)
+    o.running = True
+    return o
+
+
+try:
+    from src.llm.cloud_omni_realtime import CloudOmniRealtime  # noqa: E402
+    D_IMPORT_OK = True
+except Exception as _e:  # noqa: BLE001
+    D_IMPORT_OK = False
+    print("  [WARN] 无法导入 CloudOmniRealtime：%r（场景 D 判红）" % _e)
+
+if D_IMPORT_OK:
+    import time as _t
+
+    # D1: 运行态 + 子进程存活 + 距最后一块超时 → 判定停滞（应触发重启）
+    o = _make_o()
+    proc = _FakeProc()
+    o._mic_proc = proc
+    o._last_blk_ts = _t.time() - 5.0
+    ok("D1 停滞判据：超时无音频块 → _capture_stalled=True",
+       o._capture_stalled(_t.time()) is True)
+
+    # D2: 刚收到块 → 非停滞（健康流不被误杀）
+    o = _make_o()
+    o._mic_proc = _FakeProc()
+    o._last_blk_ts = _t.time()
+    ok("D2 健康判据：刚收到块 → _capture_stalled=False",
+       o._capture_stalled(_t.time()) is False)
+
+    # D3: 已 stop（running=False）→ 不误判（看门狗线程此时已退出，不应再动）
+    o = _make_o()
+    o.running = False
+    o._mic_proc = _FakeProc()
+    o._last_blk_ts = _t.time() - 5.0
+    ok("D3 已停止：running=False → _capture_stalled=False（不误杀）",
+       o._capture_stalled(_t.time()) is False)
+
+    # D4: 子进程未启动（_mic_proc=None）→ 不误判
+    o = _make_o()
+    o._mic_proc = None
+    o._last_blk_ts = _t.time() - 5.0
+    ok("D4 未启动：_mic_proc=None → _capture_stalled=False",
+       o._capture_stalled(_t.time()) is False)
+
+    # D5: 停滞 → _watchdog_tick 杀掉该子进程
+    o = _make_o()
+    proc = _FakeProc()
+    o._mic_proc = proc
+    o._last_blk_ts = _t.time() - 5.0
+    o._watchdog_tick(proc)
+    ok("D5 停滞触发：_watchdog_tick 杀掉停滞子进程",
+       proc.killed is True, "(kill 已调用)")
+
+    # D6: 杀掉后清空引用（避免对同一个已死进程重复 kill / 误杀下一轮新 proc）
+    ok("D6 停滞触发：清空 _mic_proc 引用",
+       o._mic_proc is None)
+
+    # D7（鉴别力 / 反向对照）：若停滞判据被回归成恒 False（典型"假绿"陷阱），
+    #    看门狗绝不该杀进程。此断言证明 kill 动作确实由真实判据驱动，测试有咬合力。
+    o = _make_o()
+    proc = _FakeProc()
+    o._mic_proc = proc
+    o._last_blk_ts = _t.time() - 5.0
+    o._capture_stalled = lambda now: False  # 模拟回归：判据失效
+    o._watchdog_tick(proc)
+    ok("D7 鉴别力：判据恒 False → 看门狗不杀进程（捕获'假绿'回归）",
+       proc.killed is False and o._mic_proc is proc)
+
+    # D8: _kill_capture_proc 幂等（重复调用安全，第二次不应抛异常）
+    o = _make_o()
+    proc = _FakeProc()
+    o._mic_proc = proc
+    o._kill_capture_proc(proc)
+    _after_first = proc.killed
+    o._mic_proc = proc  # 模拟极端竞态下引用仍在
+    try:
+        o._kill_capture_proc(proc)
+        _second_ok = True
+    except Exception:  # noqa: BLE001
+        _second_ok = False
+    ok("D8 _kill_capture_proc 幂等：两次调用均安全",
+       _after_first is True and _second_ok is True)
+else:
+    ok("D0 真实模块导入", False, "（导入失败，场景 D 无法执行）")
+
+
+# ---------------------------------------------------------------------------
 print()
 print("=" * 66)
 print("汇总：PASS=%d  FAIL=%d" % (PASS, FAIL))
