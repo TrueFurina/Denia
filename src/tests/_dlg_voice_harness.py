@@ -48,16 +48,23 @@ VALID_DECISION_RAW = (
     '"text":"今天天气不错呀，要一起出去走走吗？"}'
 )
 
-# 真流式时把 raw 切成几块吐（逼真：生产是一个个 chunk 到达的）
-_RAW_CHUNKS = [
-    VALID_DECISION_RAW[:20],
-    VALID_DECISION_RAW[20:45],
-    VALID_DECISION_RAW[45:],
-]
+# 纯舞台动作描写 / 纯 markdown 骨架：弱模型真的会只吐这些。清洗后会被清空，
+# 必须走"空响应"失败出口，而不能把"（翻个白眼）"当台词播出去、也不能发 text=""。
+STAGE_DIRECTION_ONLY_RAW = (
+    '{"emotion":"neutral","action":"idle","intensity":3,'
+    '"text":"（翻个白眼）"}'
+)
+MARKDOWN_SCAFFOLD_ONLY_RAW = (
+    '{"emotion":"neutral","action":"idle","intensity":3,'
+    '"text":"****"}'
+)
 
 
 class FakeLLM(LLMClient):
     """最小可用 LLM 桩。**支持真流式**，让生产的 _chat_decision 原样跑。
+
+    `raw` 可覆盖，用来喂各种"模型吐了什么"的输入（纯舞台动作描写、纯 markdown
+    骨架、无 JSON 外壳的纯台词…）——生产里弱模型真的会吐这些。
 
     必须显式覆写 LLMClient 的全部抽象成员（available / vision_available / chat /
     vision_describe），否则 ABCMeta 拒绝实例化。
@@ -65,9 +72,11 @@ class FakeLLM(LLMClient):
 
     name = "fake"
 
-    def __init__(self, available: bool = True, stream_support: bool = True) -> None:
+    def __init__(self, available: bool = True, stream_support: bool = True,
+                 raw: str = VALID_DECISION_RAW) -> None:
         self._available = available
         self._stream_support = stream_support
+        self._raw = raw
 
     @property
     def available(self) -> bool:
@@ -82,14 +91,18 @@ class FakeLLM(LLMClient):
 
     async def chat(self, messages, options=None):
         # 非流式路径（后端不支持流式）与 JSON 兜底重试都走这里
-        return VALID_DECISION_RAW
+        return self._raw
 
     async def vision_describe(self, image_bytes, prompt):
         return ""
 
     async def chat_stream(self, messages, options=None):
-        for ch in _RAW_CHUNKS:
-            yield ch
+        # 按 text 值切几块吐（逼真：生产是一个个 chunk 到达的）。切成 3 块，
+        # 短 raw 时退化成 1~2 块，都不影响 _SentenceStreamer 切句。
+        r = self._raw
+        n = max(1, len(r) // 3)
+        for i in range(0, len(r), n):
+            yield r[i:i + n]
 
 
 def _minimal_config() -> Config:
@@ -116,6 +129,7 @@ def _minimal_config() -> Config:
 def build_dialogue(*, strip_markdown_raise: bool = False,
                    desktop_media_raise: bool = False,
                    stream_support: bool = True,
+                   llm_raw: str = VALID_DECISION_RAW,
                    DialogueCls=None):
     """构造一个跑得通 respond 全链路的 Dialogue，并接好订阅。
 
@@ -124,6 +138,9 @@ def build_dialogue(*, strip_markdown_raise: bool = False,
     DialogueCls 默认 None → 用模块全局 `Dialogue`（**延迟绑定**：变异工具通过
     `harness.Dialogue = mutant.Dialogue` 换掉被测类，测试里的断言就能原样复用在
     变异体上，不必再抄一遍——断言口径单一事实源）。
+
+    `llm_raw`：模型这一轮吐出的原始文本，用来喂各种真实会出现的输入（纯舞台动作
+    描写 / 纯 markdown 骨架 / 无 JSON 外壳的纯台词）。
 
     两个注入点（各自把命中次数记到 dlg._inject_hits，供测试证明
     "这一步确实执行到了"，而不是空跑）：
@@ -136,7 +153,7 @@ def build_dialogue(*, strip_markdown_raise: bool = False,
     cfg = _minimal_config()
     state = StateMachine(bus)
     persona = Persona.from_config(cfg)
-    llm = FakeLLM(available=True, stream_support=stream_support)
+    llm = FakeLLM(available=True, stream_support=stream_support, raw=llm_raw)
     cls = DialogueCls if DialogueCls is not None else Dialogue
     dlg = cls(bus, llm, state, persona, cfg)
 

@@ -43,6 +43,11 @@ logger = logging.getLogger(__name__)
 # 注入取最近 80 条），超出部分自然淘汰、不会无限增长。
 MAX_HISTORY = 40  # 保留最近 40 轮 (user+assistant 各算 1 条) → 实际注入 80 条
 
+# 【2026-10-23】「她没有可说的内容」失败气泡的文案。提成常量是因为有**两个**调用点
+# （parse 后就是空 / 清洗后被清空）必须逐字一致——本仓最忌"同一件事两份实现"。
+# 测试按这个常量断言，改动它必须同时被测试发现（否则两个出口悄无声息地漂移）。
+EMPTY_REPLY_TEXT = "消息发送失败（模型没有给出可说的内容，请稍后再试）"
+
 # 【2026-10-04】聊天工具循环的整体超时（秒）。原为 75s，对「打开 App → 搜歌 → 点播 →
 # 复核」这类多步链路太紧：光多轮 LLM 往返就吃掉大半，表现为只完成第一步就被砍
 # （用户看到的就是「只打开没播放」）。放宽到 120s；工具侧已改为异步等待，
@@ -1035,6 +1040,32 @@ class Dialogue:
             "voice": self._current_voice(),
         }, "dialogue"))
 
+    async def _publish_empty_reply(self, channel: str,
+                                   reply_target: Optional[dict]) -> None:
+        """「她没有可说的内容」的统一出口：发 failed 失败气泡 + 回 idle。
+
+        【2026-10-23】抽出这个出口是因为有**两个**必须走它的地方，而它们的文案/载荷
+        必须逐字一致（本仓最忌"同一件事两份实现"）：
+          ① parse 之后 decision["text"] 本来就是空（模型返回空 / 被网关兜底吞掉）；
+          ② **清洗之后被清空**——纯 markdown 骨架（"**"/"__"）被 _strip_markdown 剥成
+             ""；或纯舞台动作描写（"（翻个白眼）"）被 _humanize_reply 清空。
+        不走这个出口的两种坏结果：
+          · text="" → webapp 静默丢弃 → 用户"说了话没人应"；
+          · 未清洗的舞台指示当台词播出去 → 非流式路径下 TTS 念"翻个白眼"。
+        """
+        logger.warning("LLM 没有给出可说的内容，按失败处理（避免打字无回复/念舞台指示）")
+        await self._bus.publish(Event(EventType.AI_DECISION, {
+            "emotion": "neutral",
+            "action": "talk",
+            "text": EMPTY_REPLY_TEXT,
+            "failed": True,
+            "channel": channel,
+            "reply_target": reply_target,
+            "user_activity": self._activity_payload(),
+            "voice": self._current_voice(),
+        }, "dialogue"))
+        await self._state.to_idle("dialogue")
+
     async def _on_unity_inbound(self, e: Event) -> None:
         d = e.data or {}
         msg_type = d.get("message_type")
@@ -1206,18 +1237,7 @@ class Dialogue:
             if not (decision.get("text") or "").strip():
                 # 空响应（模型返回空/被网关兜底吞掉）：与异常同待遇，发失败气泡，
                 # 否则 webapp.py 会静默丢弃，用户体验"说了话没人应"。
-                logger.warning("LLM 返回空响应，按失败处理（避免打字无回复）")
-                await self._bus.publish(Event(EventType.AI_DECISION, {
-                    "emotion": "neutral",
-                    "action": "talk",
-                    "text": "消息发送失败（模型返回空，请稍后再试）",
-                    "failed": True,
-                    "channel": channel,
-                    "reply_target": reply_target,
-                    "user_activity": self._activity_payload(),
-                    "voice": self._current_voice(),
-                }, "dialogue"))
-                await self._state.to_idle("dialogue")
+                await self._publish_empty_reply(channel, reply_target)
                 return
             logger.info("决策: emotion=%s action=%s text=%r", decision["emotion"], decision["action"], decision["text"])
 
@@ -1231,8 +1251,20 @@ class Dialogue:
             # 口径与本轮流式分句一致（_rb_sent/_rb_chars），确保上屏句数 == 记录句数。
             _hum = self._humanize_reply(decision["text"],
                                         max_sentences=_rb_sent, trim_min_chars=_rb_chars)
-            if _hum:
-                decision["text"] = _hum
+            # 【2026-10-23】清洗之后**可能被清空**，必须判空，否则两种坏结果：
+            #   ① 纯 markdown 骨架（"**" / "__" / "****"）被 _strip_markdown 剥成 ""
+            #      → 发一条 text="" 的决策，前端静默丢弃 → "说了话没人应"；
+            #   ② 纯舞台动作描写（"（翻个白眼）" / "（ Action ）"）被 _humanize_reply
+            #      清空 → 原代码 `if _hum:` 不成立会**留着未清洗的舞台指示** → 非流式
+            #      路径下 TTS 把它当台词念出来（"翻个白眼"）——正是 10-11/10-14 两次要治的。
+            # `_humanize_reply` 只在"输入本身就是空 / 全是舞台动作 / 全是空白"时返空
+            # （实测"好呀/嗯/啊？/呜呜……"都不返空），所以这一查同时覆盖 ① ②。
+            # 两种都按"空响应"走同一个出口（见 _publish_empty_reply）。
+            if not (_hum or "").strip():
+                logger.warning("清洗后无可说内容（纯 markdown 骨架或纯舞台动作描写）")
+                await self._publish_empty_reply(channel, reply_target)
+                return
+            decision["text"] = _hum
 
             # 【2026-10-14 JSON 兜底（A1c 配套）】长对话里模型偶尔"忘了套 JSON 外壳"、
             #   只吐纯台词 → parse 回退成 neutral/idle，桌面表情/动作不跟随（静止不动）。
@@ -1294,7 +1326,8 @@ class Dialogue:
         except Exception as e:  # noqa: BLE001
             # 尾段崩（剥 markdown / 拟人化 / 记历史 / 发决策 任一步）。判据与上方
             # LLM 失败分支同构：**她有没有已经说出口的话**。有 → 非 failed 续发；
-            # 一句话都没有 → 才 failed。绝不在"已回答"之后补一句"失败"。
+            # 一句话都没有 → 向上抛，交给任务级 done_callback 发失败气泡。
+            # 绝不在"已回答"之后补一句"失败"。
             # streamed 保持原值：流式播过就标 True（TTS 别整段重播），非流式标 False
             # （TTS 把整段念出来）——两条路她都确实把话说出口了。
             # 取文本用 streamer.raw or raw：流式路径两者同一个串；非流式路径
@@ -1303,30 +1336,23 @@ class Dialogue:
             logger.exception("决策尾段处理失败（按已有产出降级）")
             _partial = (parse_decision(streamer.raw).get("text", "")
                         or parse_decision(raw).get("text", ""))
-            if _partial:
-                await self._bus.publish(Event(EventType.AI_DECISION, {
-                    "emotion": "neutral",
-                    "action": "talk",
-                    "text": _partial,
-                    "streamed": streamed,
-                    "channel": channel,
-                    "reply_target": reply_target,
-                    "user_activity": self._activity_payload(),
-                    "voice": self._current_voice(),
-                }, "dialogue"))
-            else:
-                # 上方"空响应"检查已挡掉无文本的情形，此分支正常情况下不可达；
-                # 保留是为了万一上游判据变化也绝不静默（宁发失败气泡也不无声）。
-                await self._bus.publish(Event(EventType.AI_DECISION, {
-                    "emotion": "neutral",
-                    "action": "talk",
-                    "text": self._fail_text(e),
-                    "failed": True,
-                    "channel": channel,
-                    "reply_target": reply_target,
-                    "user_activity": self._activity_payload(),
-                    "voice": self._current_voice(),
-                }, "dialogue"))
+            if not _partial:
+                # 走到这里说明"她一句话都没说出口"，而上面的空响应检查（含
+                # 2026-10-23 补的"清洗后再判空"）本已挡掉这种情形 → 正常不可达。
+                # **不在这里复制一份 failed 气泡**（那会是没人跑过的死代码，还会和
+                # 任务级兜底形成两份实现）：直接向上抛，让 done_callback 用同一条
+                # 兜底路径发失败气泡。宁可达不到，也不写没人验证的分支。
+                raise
+            await self._bus.publish(Event(EventType.AI_DECISION, {
+                "emotion": "neutral",
+                "action": "talk",
+                "text": _partial,
+                "streamed": streamed,
+                "channel": channel,
+                "reply_target": reply_target,
+                "user_activity": self._activity_payload(),
+                "voice": self._current_voice(),
+            }, "dialogue"))
             await self._state.to_idle("dialogue")
             return
 
