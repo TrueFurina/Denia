@@ -200,7 +200,9 @@ async def engine_tests():
     await asyncio.sleep(0.5)
     task.cancel()
     try: await task
-    except asyncio.CancelledError: pass
+    except asyncio.CancelledError:
+        # 取消后台任务 = 场景正常收尾
+        pass
     check("E1 真实总线派发 USER_TEXT 不抛错 & 写入 _last_input_ts", s._last_input_ts is not None, f"val={s._last_input_ts}")
 
 asyncio.run(engine_tests())

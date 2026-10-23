@@ -84,8 +84,15 @@ def notpip_names(path: str) -> set[str]:
     return out
 
 
-def collect_imports(root: str) -> dict[str, list[str]]:
+def collect_imports(root: str) -> tuple[dict[str, list[str]], list[str]]:
+    """收集第三方 import。返回 (imports, 解析失败文件列表)。
+
+    【2026-10-24 修·闸门沉默】原来遇 SyntaxError 直接 continue——那个文件的 import
+    全都扫不到，漏声明会静默发生（正是本闸门存在的理由）。现在解析失败一律记下来，
+    由 main 报错并在 --strict 下判红。读不了（OSError）同理。
+    """
     mods: dict[str, list[str]] = {}
+    broken: list[str] = []
     for base in ("src", "main.py"):
         p = os.path.join(root, base)
         paths = [p] if os.path.isfile(p) else []
@@ -96,7 +103,11 @@ def collect_imports(root: str) -> dict[str, list[str]]:
         for f in paths:
             try:
                 tree = ast.parse(open(f, encoding="utf-8", errors="replace").read())
-            except SyntaxError:
+            except SyntaxError as e:
+                broken.append(f"{os.path.relpath(f, root)}: SyntaxError: {e}")
+                continue
+            except OSError as e:
+                broken.append(f"{os.path.relpath(f, root)}: 读不了: {e}")
                 continue
             for n in ast.walk(tree):
                 names: list[str] = []
@@ -106,7 +117,7 @@ def collect_imports(root: str) -> dict[str, list[str]]:
                     names = [n.module.split(".")[0]]
                 for m in names:
                     mods.setdefault(m, []).append(f"{os.path.relpath(f, root)}:{n.lineno}")
-    return mods
+    return mods, broken
 
 
 def excluded_names(path: str) -> set[str]:
@@ -158,7 +169,7 @@ def main() -> int:
     excluded = excluded_names(os.path.join(root, "requirements.txt"))
     local = local_modules(root)
 
-    imports = collect_imports(root)
+    imports, broken = collect_imports(root)
     builtin_names = set(dir(__builtins__)) if isinstance(__builtins__, dict) is False else set(__builtins__)
 
     installed_missing: list[tuple[str, str, str]] = []
@@ -206,7 +217,14 @@ def main() -> int:
     if not (installed_missing or optional_missing):
         print("✓ 依赖声明完整")
 
-    if strict and (installed_missing or optional_missing):
+    # 【2026-10-24】解析失败必须显式报出来：这些文件的 import 没被扫到，
+    # 不报就等于"少扫一个文件但退出码仍 0"（闸门沉默）。
+    if broken:
+        print("\n=== 解析失败（这些文件的 import 没进本次统计，--strict 下判红）===")
+        for b in broken:
+            print("  " + b)
+
+    if strict and (installed_missing or optional_missing or broken):
         return 1
     return 0
 

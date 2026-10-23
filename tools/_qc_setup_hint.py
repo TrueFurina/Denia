@@ -181,6 +181,7 @@ def main() -> int:
             try:
                 os.unlink(os.path.join(WEB, n))
             except OSError:
+                # 变异还原时临时文件已不在 → 无需再删
                 pass
 
 

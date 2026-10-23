@@ -192,5 +192,6 @@ def dump_config_atomic(path: str, data: dict, *, seal: bool = True,
             try:
                 os.unlink(tmp)
             except OSError:
+                # 原子写失败后的临时文件清理，删不掉由临时目录回收
                 pass
         return False

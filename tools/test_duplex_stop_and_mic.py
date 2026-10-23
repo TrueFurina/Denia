@@ -84,6 +84,7 @@ async def _dispatch(client):
         if inspect.isawaitable(ret):
             await ret
     except Exception:
+        # 复刻生产派发的容错（stop() 抛错时不炸链路）；各用例用 stopped 标志断言真实效果
         pass
 
 

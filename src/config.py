@@ -125,6 +125,7 @@ def _restore_env_templates(data: Any, templates: dict) -> None:
             if cur[path[-1]] == expanded:
                 cur[path[-1]] = tpl
         except (KeyError, IndexError, TypeError):
+            # 这个路径在配置里不存在（模板已删的段）→ 跳过它
             continue
 
 
@@ -487,6 +488,7 @@ class Config:
                     try:
                         _os.unlink(_tmp)
                     except OSError:
+                        # 保存失败后的临时文件清理，删不掉由临时目录回收
                         pass
                     raise
             except Exception:  # noqa: BLE001

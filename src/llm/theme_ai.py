@@ -58,6 +58,7 @@ def image_size(path: str) -> Tuple[int, int]:
         if w and h:
             return int(w), int(h)
     except Exception:
+        # theme_store 读不了尺寸就继续下面的探测方式
         pass
     try:
         from PIL import Image
@@ -197,6 +198,7 @@ def _pil_pixels(path: str, size: int = 64):
     try:
         from PIL import Image
     except Exception:
+        # Pillow 没装 → 像素级判据不可用，调用方回落到文件级判据
         return None
     try:
         with Image.open(path) as im:
@@ -204,6 +206,7 @@ def _pil_pixels(path: str, size: int = 64):
             # 不用 getdata()（Pillow 14 起移除）；tobytes() 直接拿 RGBA 平铺字节
             raw = im.tobytes()
     except Exception:
+        # 这张图读不了/解不了 → 像素判据不可用（None 由调用方处理）
         return None
     return [raw[i:i + 4] for i in range(0, len(raw), 4)]
 
@@ -400,6 +403,7 @@ def parse_vlm_json(text: str) -> Optional[Dict[str, Any]]:
     try:
         obj = json.loads(s[i:j + 1])
     except Exception:
+        # 抠出来的片段不是合法 JSON → 按解析失败处理
         return None
     return obj if isinstance(obj, dict) else None
 
@@ -549,6 +553,7 @@ def _contact_sheet(items: List[Tuple[str, str]], height: int = 320) -> Optional[
     try:
         from PIL import Image, ImageDraw
     except Exception:
+        # Pillow 没装 → 拼不了素材板，调用方回落单图
         return None
     imgs: List[Tuple[str, Any]] = []
     for slot, p in items:
@@ -557,6 +562,7 @@ def _contact_sheet(items: List[Tuple[str, str]], height: int = 320) -> Optional[
                 w = max(1, int(im.width * height / max(1, im.height)))
                 imgs.append((slot, im.convert("RGB").resize((w, height))))
         except Exception:
+            # 这一张读不了就跳过（素材板少一张，其余照常拼）
             continue
     if not imgs:
         return None
@@ -574,6 +580,7 @@ def _contact_sheet(items: List[Tuple[str, str]], height: int = 320) -> Optional[
         sheet.save(buf, format="JPEG", quality=88)
         return buf.getvalue()
     except Exception:
+        # 编码失败（极端尺寸/内存不足）→ 回落单图
         return None
 
 
@@ -720,6 +727,7 @@ def resolve_slot_path(theme_id: str, slot: str, page: str = "") -> str:
             if _os.path.splitext(fn)[1].lower() in _ts.IMG_EXT:
                 return _os.path.join(d, fn)
     except Exception:
+        # 槽位目录列不了 → 当没有图片，调用方用默认图
         pass
     return ""
 
@@ -783,6 +791,7 @@ def _try_router(config_path: str = "config.yaml"):
         cfg = load_config(path)
         return create_vision_router(cfg)
     except Exception:
+        # 这个候选配置起不来视觉路由，试下一个候选
         return None
 
 

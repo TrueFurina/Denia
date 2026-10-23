@@ -101,6 +101,7 @@ def _pick_rename_target() -> tuple[str, str, bytes]:
             try:
                 path = inspect.getsourcefile(klass)
             except TypeError:
+                # 这个类取不到源文件（内建/C 扩展）→ 跳过它
                 continue
             if not path or not os.path.isfile(path):
                 continue

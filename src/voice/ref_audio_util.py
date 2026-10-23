@@ -85,6 +85,7 @@ def _maybe_gain(tmp_path: str) -> str:
         try:
             os.unlink(out2)
         except OSError:
+            # 增益后的临时文件删不掉由临时目录回收（失败信息已在 last_err 里）
             pass
     raise RuntimeError(
         f"参考音频音量过低（RMS {rms:.0f}/32767），自动增益失败：{last_err}")
@@ -99,6 +100,7 @@ def ensure_usable_wav(path: str) -> str:
         try:
             os.unlink(tmp.name)
         except OSError:
+            # 上一个 ffmpeg 候选留下的临时文件，删不掉会被下面重写覆盖
             pass
         cmd = [ff, "-y", "-v", "error", "-i", path,
                "-ar", "16000", "-ac", "1", "-c:a", "pcm_s16le", tmp.name]
@@ -114,12 +116,14 @@ def ensure_usable_wav(path: str) -> str:
                 try:
                     os.unlink(tmp.name)
                 except OSError:
+                    # 清理失败不拦截 raise（错误信息比临时文件重要）
                     pass
                 raise
         last_err = f"{ff}: {proc.stderr.decode('utf-8', 'replace')[-200:].strip()}"
     try:
         os.unlink(tmp.name)
     except OSError:
+        # 全部候选失败后的清理，删不掉由临时目录回收
         pass
     raise RuntimeError(
         f"参考音频无效或已损坏，无法解码：{path}（{last_err}）。请换成有效的 wav/mp3 音频")

@@ -90,6 +90,7 @@ def app_gpu_mem_mb(pid: Optional[int] = None) -> Optional[float]:
                 if int(parts[0]) == target:
                     return float(parts[1])
             except ValueError:
+                # nvidia-smi 这一行解析不了（表头/异常行），跳过
                 continue
         return None  # 本进程不在计算应用列表（无 GPU 上下文）
     except Exception as e:  # noqa: BLE001
@@ -126,6 +127,7 @@ def compute_apps_vram_list() -> Optional[list]:
                 pid = int(parts[0])
                 mb = _parse_nvidia_mem(parts[1])   # [N/A] → None（不再静默当成"没占"）
             except ValueError:
+                # 这一行 pid/显存解析不了，跳过该进程
                 continue
             if mb is None:
                 continue
@@ -144,6 +146,7 @@ def _parse_nvidia_mem(tok: str) -> Optional[float]:
     try:
         return float(t)
     except ValueError:
+        # "[N/A]" 之外的非数字文案 → 按未知处理（调用方区分"没占"与"查不到"）
         return None
 
 
@@ -219,6 +222,7 @@ def per_pid_vram_mb_map(use_cache: bool = True) -> Optional[dict]:
             try:
                 data[int(m.group(1))] = round(float(val) / (1024.0 * 1024.0), 1)
             except ValueError:
+                # 这一行显存数值解析不了，跳过该进程
                 continue
         _stamp(data, True)
         return data

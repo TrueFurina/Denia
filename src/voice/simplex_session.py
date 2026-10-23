@@ -205,6 +205,7 @@ class SimplexSession:
                 try:
                     os.remove(path)
                 except OSError:
+                    # 合成用的临时文件删不掉由临时目录回收
                     pass
         except Exception as e:  # noqa: BLE001
             logger.exception("单工轮询 TTS 失败: %s", e)

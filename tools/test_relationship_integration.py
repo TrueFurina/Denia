@@ -85,6 +85,7 @@ class TestPairing(unittest.TestCase):
             try:
                 await task
             except (asyncio.CancelledError, Exception):
+                # 取消后台总线任务 = 场景正常收尾
                 pass
 
     def test_01_basic_pair_updates_state(self):

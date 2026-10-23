@@ -55,6 +55,7 @@ class SessionClock:
         try:
             self.cur_path.unlink()
         except FileNotFoundError:
+            # 会话文件已经不在了（被外部清掉）→ 当已关闭
             pass
 
     def touch(self, ts: Optional[float] = None, force_new: bool = False) -> None:
@@ -82,6 +83,7 @@ class SessionClock:
         try:
             self.cur_path.unlink()
         except FileNotFoundError:
+            # 同上：停止时文件可能已被删
             pass
 
     # ---- 统计 ----

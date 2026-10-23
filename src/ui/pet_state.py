@@ -133,6 +133,7 @@ def load() -> dict | None:
             data = json.load(fh)
         return data if isinstance(data, dict) else None
     except FileNotFoundError:
+        # 没有状态文件（首次运行/被清）→ 用默认位置
         return None
     except Exception as _e:  # noqa: BLE001
         logger.warning("[桌宠] 位置存档损坏，按默认位置处理：%s", _e)

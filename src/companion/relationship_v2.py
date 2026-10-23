@@ -160,6 +160,7 @@ def semantic_from_text(sig: dict) -> dict:
             v = float(s2.get(k, 0.0) or 0.0)
             cur = float(out.get(k, 0.0) or 0.0)
         except (TypeError, ValueError):
+            # 这一维的值不是数字 → 跳过该维（其余维照常累计）
             continue
         if v > cur:
             out[k] = v

@@ -132,6 +132,7 @@ class MiniCPMClient(LLMClient):
         try:
             self._probe_task = asyncio.create_task(self._probe_loop())
         except RuntimeError:
+            # 没有运行中的事件循环（同步上下文调用）→ 探询轮不启动，状态保持未知
             pass
 
     async def _probe_loop(self) -> None:
@@ -196,6 +197,7 @@ class MiniCPMClient(LLMClient):
             with urllib.request.urlopen(req, timeout=8, context=_SSL_CTX) as resp:
                 return json.loads(resp.read().decode("utf-8", "replace"))
         except (urllib.error.URLError, OSError, ValueError):
+            # 服务没起/网络不通/返回不是 JSON → 状态未知（None），上层按未就绪处理
             return None
 
     # ==================== 排队票管理 ====================
@@ -208,6 +210,7 @@ class MiniCPMClient(LLMClient):
         try:
             loop = asyncio.get_running_loop()
         except RuntimeError:
+            # 同步上下文里没有 loop → 退票任务挂不上，由后台重试探路
             return
         task = loop.create_task(self._release_ticket(ticket_id))
         self._bg_tasks.add(task)
@@ -233,6 +236,7 @@ class MiniCPMClient(LLMClient):
                 resp.read()
             logger.debug("MiniCPM 已退票 ticket=%s", ticket_id)
         except (urllib.error.URLError, OSError, ValueError):
+            # 退票请求失败（服务已下线/网络抖）→ 票由服务端超时回收，不重试轰炸
             pass
 
     def _note_failure(self) -> None:
@@ -370,6 +374,7 @@ class MiniCPMClient(LLMClient):
                 try:
                     await ws.send(json.dumps({"type": "session.close", "reason": "turn_done"}))
                 except Exception:
+                    # 连接已经断了也要继续走下面的退票（不能因为关不了会话就留僵尸票）
                     pass
                 if ticket_id:
                     self._spawn_release(ticket_id)

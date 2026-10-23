@@ -117,6 +117,7 @@ def walk(node, trail: str = "", optional: bool = False) -> None:
                                 try:
                                     port = int(seg.rsplit(":", 1)[1])
                                 except ValueError:
+                                    # 这一段不像 host:port → 跳过
                                     pass
                         _checked[0] += 1
                         try:

@@ -105,6 +105,7 @@ def had_json(raw: str) -> bool:
         try:
             obj = json.loads(cand)
         except json.JSONDecodeError:
+            # 这个候选片段不是 JSON，试下一个
             continue
         if isinstance(obj, dict):
             return True
@@ -136,6 +137,7 @@ def parse(raw: str) -> dict:
         try:
             obj = json.loads(cand)
         except json.JSONDecodeError:
+            # 同上：候选逐个试，直到解析出合法 JSON
             continue
         if isinstance(obj, dict):
             return _normalize(obj)

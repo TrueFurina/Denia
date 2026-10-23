@@ -85,6 +85,7 @@ class EngineChatClient:
             try:
                 gen["temperature"] = float(opts["temperature"])
             except (TypeError, ValueError):
+                # temperature 不是数字 → 用引擎默认温度
                 pass
         body_d = {
             "messages": msgs,

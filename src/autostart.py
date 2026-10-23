@@ -64,6 +64,7 @@ def read_command(root: str, value_name: str = VALUE_NAME) -> str | None:
             cmd, _typ = winreg.QueryValueEx(k, value_name)
             return cmd if cmd else None
     except FileNotFoundError:
+        # 没设过开机自启（值不存在）→ 按未启用处理
         return None
     except OSError as e:  # noqa: PERF203
         logger.debug("读自启命令失败: %s", e)
@@ -91,6 +92,7 @@ def disable(root: str, value_name: str = VALUE_NAME) -> None:
             winreg.DeleteValue(k, value_name)
         logger.debug("开机自启已关闭")
     except FileNotFoundError:
+        # 本来就没设过开机自启，无需删（目标态已达）
         pass
 
 

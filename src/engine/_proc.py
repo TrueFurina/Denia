@@ -101,6 +101,7 @@ def find_pid_on_port(port: int) -> Optional[int]:
         try:
             return int(toks[-1])
         except (ValueError, IndexError):
+            # netstat 这一行解析不了（表头/空行），跳过
             pass
     return None
 
@@ -164,6 +165,7 @@ def find_pids_by_exe_substr(substr: str) -> Set[int]:
                 try:
                     pids.add(int(p["ProcessId"]))
                 except (ValueError, KeyError):
+                    # 这个进程条目缺 ProcessId → 跳过
                     pass
         return pids
     except Exception:  # noqa: BLE001

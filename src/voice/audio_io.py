@@ -58,6 +58,7 @@ class AudioIO:
                 self._stream.stop()
                 self._stream.close()
             except Exception:
+                # 音频流停止/关闭失败 → 句柄由 GC 回收（采集已停）
                 pass
             self._stream = None
 
@@ -65,4 +66,5 @@ class AudioIO:
         try:
             return self._queue.get(timeout=timeout)
         except queue.Empty:
+            # 队列空 = 当前没有音频块，正常轮询路径
             return None

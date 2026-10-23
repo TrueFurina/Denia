@@ -167,6 +167,7 @@ async def _load_image(m: dict) -> Optional[bytes]:
         try:
             return base64.b64decode(f[len("base64://"):])
         except Exception:
+            # base64 数据损坏 → 当没有图（None 由调用方处理）
             return None
     if u:
         return await _http_get_bytes(u)
@@ -179,6 +180,7 @@ async def _load_image(m: dict) -> Optional[bytes]:
             with open(path, "rb") as fh:
                 return fh.read()
         except Exception:
+            # 本地图片读不了（不存在/权限）→ 当没有图
             return None
     return None
 
@@ -192,6 +194,7 @@ async def _fetch_page(url: str) -> Optional[str]:
             try:
                 return raw.decode(enc)
             except Exception:
+                # 这种编码解不了，试下一种（utf-8→gbk→latin-1）
                 continue
         return raw.decode("utf-8", "replace")
     try:

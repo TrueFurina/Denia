@@ -106,6 +106,7 @@ console.log(JSON.stringify(out));
         try:
             os.unlink(path)
         except OSError:
+            # 测试收尾清理：文件不存在就不用删
             pass
 
 

@@ -274,6 +274,7 @@ def main():
             try:
                 os.remove(fpath)
             except OSError:
+                # 变异还原时临时文件已不在 → 无需再删
                 pass
 
     print()

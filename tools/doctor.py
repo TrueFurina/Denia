@@ -409,6 +409,7 @@ def _wv2_registry_version() -> str:
             with winreg.OpenKey(hive, sub) as key:
                 pv = str(winreg.QueryValueEx(key, "pv")[0] or "").strip()
         except OSError:
+            # 这个注册表 hive 读不了 → 换下一个（WebView2 版本探测）
             continue
         if pv:
             return pv
@@ -428,6 +429,7 @@ def _wv2_executable() -> str:
         try:
             versions = sorted(os.listdir(base), reverse=True)
         except OSError:
+            # 这个目录列不了（权限/不存在）→ 换下一个基目录
             continue
         for v in versions:
             exe = os.path.join(base, v, "msedgewebview2.exe")
@@ -544,6 +546,7 @@ def _signature_targets() -> list[str]:
             if n.lower().endswith(".exe"):
                 out.append(os.path.join(ROOT, n))
     except OSError:
+        # 包根列不了 → 当没有可签名目标（WARN 会说明）
         pass
     return out
 
@@ -1126,6 +1129,7 @@ def check_voice_backend(cfg: object) -> tuple[str, str, str, str]:
             try:
                 os.unlink(out)
             except OSError:
+                # 试听用的临时音频删不掉由临时目录回收
                 pass
             return (PASS, "语音合成", f"{label} · 真合成 OK（{size} 字节）", "")
         except Exception as e:  # noqa: BLE001

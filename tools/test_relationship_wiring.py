@@ -108,6 +108,7 @@ async def scenario(tmp: Path) -> None:
     try:
         await bus_task
     except asyncio.CancelledError:
+        # 取消后台总线任务 = 场景正常收尾
         pass
 
     # ---------------- 断言 ----------------
@@ -166,6 +167,7 @@ async def scenario_disabled(tmp: Path) -> None:
     try:
         await t
     except asyncio.CancelledError:
+        # 同上：取消是预期路径
         pass
     check(HistoryStore(base_dir=tmp).count("danya") == 0, "关闭开关后不写任何数据")
 

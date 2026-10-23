@@ -52,6 +52,7 @@ def load(sess_dir):
     try:
         rec = json.loads(io.open(p, encoding='utf-8', errors='replace').read())
     except Exception:
+        # trace 文件解析失败 → 返回 None（研究脚本，人工诊断用）
         return None
     cfg = rec.get('config') or {}
     ch = rec.get('chunks') or []
