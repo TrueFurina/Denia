@@ -12,7 +12,10 @@ sherpa.feed，cmd_rec 从未被调用 → 测出 "cmd_acc=0"、"USER_TEXT 没发
 静默失效，是测试桩只模了回退路径、没模主路径。这里改成两种引擎都确定性覆盖：
   · 场景 A（主路径）：注入假 sherpa → 走 sherpa.feed 分支；
   · 场景 B（回退路径）：让 sherpa 导入失败 → 走 vosk cmd_rec 分支。
-两者都必须发出 WAKE_WORD + USER_TEXT，否则判红。
+  · 场景 C（健壮性）：畸形帧（b"BAD" 让 sherpa.feed 抛 ValueError）夹在
+    唤醒与指令之间，断言 USER_TEXT 仍在——证明识别循环被 try/except 兜住、
+    坏帧只跳过不杀守护线程（否则坏帧冒泡杀死线程 → 永久失聪）。
+三者都必须发出 WAKE_WORD + USER_TEXT，否则判红。
 
 桩约定：None = 这一刻没收到音频（真实静音间隙，audio.get 超时返回 None）；
 非空字节 = 一段语音。FakeRec 收到非空音频即"端点收口"，返回 True 并吐对应文本。
@@ -93,16 +96,35 @@ class FakeSherpa:
         return "今天天气怎么样" if data == b"CMD_SPEECH" else ""
 
 
-def _install_sherpa(available):
+def _install_sherpa(available, cls=None):
     """注入 src.voice.sherpa_recognizer 桩：available=True 提供 SherpaRecognizer
     （主路径）；available=False 让该模块没有 SherpaRecognizer 属性 → _run 内的
     `from .sherpa_recognizer import SherpaRecognizer` 抛 ImportError → sherpa=None
-    （回退 vosk 路径）。"""
+    （回退 vosk 路径）。cls 可指定替代的识别器类（如 BadFrameSherpa）。"""
     name = "src.voice.sherpa_recognizer"
     mod = types.ModuleType(name)
     if available:
-        mod.SherpaRecognizer = FakeSherpa
+        mod.SherpaRecognizer = cls if cls is not None else FakeSherpa
     sys.modules[name] = mod
+
+
+# ── 畸形帧识别器：对 b"BAD" 帧抛 ValueError，模拟真实 sherpa.feed 内部
+# np.frombuffer 在奇数长度 PCM 上抛 ValueError 的崩溃路径。其余帧与 FakeSherpa 同。
+# 仅用于"坏帧不该杀死守护线程"的回归场景。 ──
+class BadFrameSherpa:
+    def __init__(self):
+        pass
+
+    def reset(self):
+        pass
+
+    def feed(self, data):
+        if data == b"BAD":
+            raise ValueError("模拟奇数长度 PCM 帧让 np.frombuffer 崩")
+        return "今天天气怎么样" if data == b"CMD_SPEECH" else ""
+
+
+BAD_FRAME_SCRIPT = [b"WAKE_SPEECH", None, b"BAD", b"CMD_SPEECH", None] + [None] * 200
 
 
 # ── 假 AudioIO：_run 内部会 new 它，帧从共享队列取，取空返回 None（静音/超时） ──
@@ -156,19 +178,20 @@ cfg = load_config("config.yaml")
 FRAME_SCRIPT = [b"WAKE_SPEECH", None, b"CMD_SPEECH", None] + [None] * 200
 
 
-def run_scenario(label, sherpa_available):
+def run_scenario(label, sherpa_available, sherpa_cls=None, frames=None,
+                 continuous=False):
     """跑一遍「唤醒语音 → 静音 → 指令语音 → 静音 → 空转」脚本，
-    校验事件流闭环。返回是否有 FAIL。"""
+    校验事件流闭环。sherpa_cls/frames 用于畸形帧等扩展场景。"""
     global FAIL
     print(f"\n=== 场景：{label} ===")
     SHARED_FRAMES.clear()
-    SHARED_FRAMES.extend(FRAME_SCRIPT)
-    _install_sherpa(sherpa_available)
+    SHARED_FRAMES.extend(frames if frames is not None else FRAME_SCRIPT)
+    _install_sherpa(sherpa_available, sherpa_cls)
 
     bus = FakeBus()
     asr = asr_mod.ASR(bus, cfg)
     asr._wake_words = ["达妮娅"]      # 与桩结果解耦，不依赖 config 内容
-    asr.set_continuous(False)         # 关掉免唤醒，走"唤醒词→指令"流程
+    asr.set_continuous(continuous)    # 免唤醒开关
     asr.set_listening(True)           # 麦克风监听开着（否则 _run 开头挂起）
 
     asr.start()
@@ -207,6 +230,12 @@ def run_scenario(label, sherpa_available):
 run_scenario("主路径 sherpa 可用", sherpa_available=True)
 # 场景 B：回退路径（sherpa 导入失败）→ 走 vosk cmd_rec 分支
 run_scenario("回退路径 vosk 可用", sherpa_available=False)
+# 场景 C：畸形帧（b"BAD" 让 sherpa.feed 抛 ValueError）夹在唤醒与指令之间。
+# 若识别循环未被 try/except 兜住，坏帧会冒泡杀死守护线程 → 后续 CMD_SPEECH
+# 永不被识别 → USER_TEXT 消失（"她醒了却再也不理你"）。这里断言 USER_TEXT
+# 仍在（守护线程活着、跳过了坏帧）。
+run_scenario("畸形帧不杀循环（sherpa 主路径）", sherpa_available=True,
+             sherpa_cls=BadFrameSherpa, frames=BAD_FRAME_SCRIPT)
 
 print()
 if FAIL:
