@@ -13,6 +13,7 @@
 
 | commit | 时间 | 类型 | 一句话 | 验证 |
 |---|---|---|---|---|
+| `873ee58` | 01:0x | chore | **出厂模板 24 个死键删掉 + 模板对账闸门**：普查发现 `config.release.yaml` 424 个叶子键里 **24 个没有任何代码读取点**——用户/队友照着模板配了，什么都没发生（`voice`/`voice_id` 同型的放大版）。三个最恶劣的：`proactive.duplex_mic_vad` 有一处读（`getattr(self,'_duplex_mic_vad',True)`）但**全仓没有赋值点**，永远落默认值；`max_per_type_per_day` 被 docstring 承诺为"同类活动每日上限"而真实机制是 `type_cooldown_s`；`sticker.random_probs.*` 整子树死（sticker_bridge 用裸 `random.choice`，参数全硬编码）。删除：`game_stagger`（08-25 已被节奏门禁取代的残留）/ `accumulate_screen` / `duplex_mic_vad` / `duplex_mode_lock_mem_pct`+`util_pct`（兄弟键 ext_mb/silent 都活着）/ `duplex_ocr_frame_overlay` / `duplex_timing_pressure` / `game_immersive` / `heavy_apps_cloud_*`×3 / `immersive_interval_s` / `llm_timeout_s` / `max_per_day` / `max_per_type_per_day` / `react_to_screen` / `sticker.timing_mode`+`random_seed`+`random_cooldown`+`random_probs.*`+`warmth_*`。新闸门 `check_config_keys.py`：模板每个键必须出现在代码 NAME/STRING token 里（**tokenize 丢注释**——注释里提一句不算读取点，那正是 docstring 谎言形态）；例外清单带原因（`_release_note` 元键 / `ollama.options.*` 泛型透传）。 | 两刀变异全红（插死键 / 抽豁免条目——证明清单不是装饰品）；全量门禁 **146/146**（12m25s）；`test_release_template` 无损；模板工作副本 CRLF→LF 还原 |
 | `8e68ed1` | 00:0x | fix | **双工过渡看门狗从来没启动过——重连卡死时她会永久静默**：`_duplex_in_transition` 禁言闸门会把 `_on_duplex_speak` 的开口全丢弃（2001/3336），正常出口只有 connected/prepared（2989/3047）；重连卡在"正在重连"类状态、prepared 永不到达时，闸门**永不起下课** → 她永久静默且零报错。看门狗方法 `_duplex_force_clear_transition`（20s 强制解除禁言）09-08 就写好了，但**全仓零启动点**——2912 的注释却一直承诺"配合看门狗兜底"。修法：闸门拉起处记 `_duplex_transition_since` 时间戳；方法补 20s elapsed 守卫（没到窗口不动、没记时间戳不动）；挂 5s 双工诊断 tick（与哑火看门狗同 tick）。顺带删 `cloud_omni_realtime._reopen_stream` 死包装（锁不可重入，真调用方都在持锁状态直接调 `_reopen_stream_locked`，包装零调用）+ 修三处提到它的注释。 | 回归 **14 项**（两对照组：闸门没起 / 20s 窗口内都不许误清）；**四刀变异全红**（阈值失效→卡死也不清 / 抽 raise 时间戳 / 抽 tick 调用 / 死包装复活）；全量门禁 **144/144**（12m39s） |
 | `05fee72` | 23:5x | test | **闸门登记对账（「写了没进闸门」第五次复发）**：`tools/` 下 8 个 `check_*.py`/`test_*.py` 从未登记进 check_all——4 个硬编码开发机 G:/H: 盘路径（换机即废）、1 个要真实百炼 Key + 声卡外放的真机探针、3 个人工诊断仪器；名字长得像闸门，新人跑了报红还以为产品坏了，而它们覆盖的行为**没有任何自动判据在守**。普查口径：tools/ 824 处盘符路径 / 264 文件全部 git 跟踪（进队友包），按「队友会不会跑」切刀——闸门类 39 个文件的命中全是 URL / 注释墓碑 / 变异锚点 / 标准系统位（Edge/WebView2/SystemRoot）/ 测试夹具，**功能代码零 dev 路径依赖**，队友面（doctor/check_all/pack）无出厂缺陷（`src/` 75 处上一轮已定性）。修法：新闸门三条判据——正向（lookalike 要么在 GATES 里、要么 docstring 带「不进闸门：原因」且原因不许空）、反向（登记的脚本都真实存在，防改名后登记项变哑、汇总还显示通过）、去重（同脚本不许登记两次）；8 个文件补免登标记。**顺带把并发会话锁定期缓办的 `test_set_player_name_wiring.py` 补登记**——本闸门第一次跑就把它判了待定，正在尽职。 | 四刀变异全红（未登记新文件 / 撕免登标记 / 登记项指向不存在 / 重复登记）+ 双对照（待定 0 从输出解析、不写死数字）+ 还原后字节一致；全量门禁 **142/142**（12m9s）；新登记测试 venv 单跑 11/11 |
 | `539406e` | 22:45 | fix | **看链·SET_PLAYER_NAME 死订阅清理（写了没接线）**：`GameOcrMonitor` 订阅了 `SET_PLAYER_NAME` 事件（`_on_set_player_name`）并声称「proactive 从用户回复提取名字后发布」，但全仓 grep **零发布者**——proactive.py 零 `player_name` 引用、dialogue.py 无名字提取逻辑；WebUI「我的名字」直调 `set_player_name`（webapp.ocr_set_player_name → GameOcrMonitor.set_player_name）才是唯一真实生效路径。死监听器 + 误导性 docstring/注释已删，改名只走直调路径。 | 新增回归 `src/tests/test_set_player_name_wiring.py` 11/11（WebUI 直调写内存+config / 死方法已删 / 构造无 SET_PLAYER_NAME 订阅）；全量门禁 141/141 |
@@ -4804,3 +4805,60 @@ idiom，不起新线程）；⑤ 解除时 kind/name/时间戳一并复位，下
 不动 / [5] 三处接线源码断言 / [6] 死包装墓碑。四刀变异全红（M1 阈值 20→99999 即
 "永久静默"回归本身 / M2 抽 raise 时间戳 / M3 抽 tick 调用 / M4 死包装复活），每刀
 断言红在具体那条；双对照 + 还原后字节一致。全量门禁 **144/144**（12m39s）。
+
+---
+
+### `873ee58` · 出厂模板 24 个死键：用户照着配了，什么都没发生
+
+**问题**：`config.release.yaml` 424 个叶子键里 **24 个没有任何代码读取点**。
+用户/队友照着出厂模板配这些项，行为零变化——`voice`/`voice_id` 那类"配了
+不算"缺陷的放大版。三个最恶劣的形态：
+- `proactive.duplex_mic_vad`：proactive.py:4250 有读
+  `getattr(self, '_duplex_mic_vad', True)`，但**全仓没有一处赋值**——读永远落
+  默认 True。看着接了线，实则没通电。
+- `max_per_type_per_day`：proactive.py docstring 写着"同类活动每日最多 N 次"，
+  真实去重机制是 `type_cooldown_s`（冷却制，非每日上限）。文档承诺了一个
+  不存在的键。
+- `sticker.random_probs.{with,before,after}` 等 9 项：贴纸功能存在
+  （sticker_bridge.py），但参数全硬编码（裸 `random.choice`），配置子树整个死。
+
+**删除清单**（24 项）：`perception.ocr.game_stagger`（08-25 已被 game_cadence
+节奏门禁取代，game_ocr.py:660 注释自证）、`proactive.accumulate_screen`、
+`duplex_mic_vad`、`duplex_mode_lock_mem_pct`、`duplex_mode_lock_util_pct`
+（兄弟键 ext_mb/silent 在 9171-9173 真读，这两个是漏接线）、
+`duplex_ocr_frame_overlay`、`duplex_timing_pressure`、`game_immersive`、
+`heavy_apps_cloud_sync`、`heavy_apps_cloud_url`、`heavy_apps_promote_threshold`
+（模块活着、键没人读）、`immersive_interval_s`、`llm_timeout_s`、`max_per_day`、
+`max_per_type_per_day`、`react_to_screen`、`sticker.timing_mode`、
+`sticker.random_seed`、`sticker.random_cooldown`、`sticker.random_probs`（含
+with/before/after 三子键）、`sticker.warmth_high`、`sticker.warmth_override`。
+代码侧两处：4250 的假 getattr 改常量 True（附删除理由注释）；docstring 里
+max_per_type_per_day 的谎言行删除。
+
+**审计口径（四步，每步都抓出了自己方法的错）**：
+① 叶名在 src/*.py 里 grep 引号/点号形态 → 26 个零命中；
+② **全仓 ripgrep 复核** → 打回 3 个：`log_keep`/`log_max_mb` 在**仓库根的
+main.py:2455-2456** 真读（我的扫描面只有 src/）；`num_ctx` 经
+`vars(ollama_cfg.options)` **泛型透传**（叶名不该出现）；`duplex_mic_vad` 的
+"读取"其实没有赋值点（从误报变成更严重的定性）；
+③ **tokenize 空跑判据**（NAME/STRING token、丢 COMMENT）→ 失败集收敛到
+22 + 2 例外，同时暴露**常见词叶名假通过**（`with`/`after` 是 Python 关键词
+token，两个死键因此漏过初筛，靠人工普查抓出）——写进闸门 docstring 的已知盲区；
+④ 人工核实每个候选的子串误报（`before` 命中 `insertAdjacentHTML("beforeend")`）
+与泛型消费（sticker/heavy_apps/perception.ocr 三个子树逐个排除）。
+
+**新闸门** `tools/check_config_keys.py`：模板每个叶子键必须出现在
+src/**/*.py + 根入口脚本的 NAME/STRING token 里（tokenize 丢 COMMENT——
+注释提一句不算读取点）。例外清单每条带原因：`_release_note`（元信息）、
+`ollama.options.*`（泛型透传，ollama_client.py 一行 `vars()` 转发整棵子树）。
+**已知盲区写明在 docstring**：常见词叶名假通过，靠人工。
+
+**踩坑**：① 变异刀 M1 锚点写死 `\n`，而模板工作副本是 **CRLF**（`.gitattributes`
+要 LF + autocrlf → git 状态显示干净，CRLF 一直挂着）→ 锚点 0 命中。已二进制转
+LF + 刀改实测 EOL 构造锚点。② 删除数别写死：模板 424→400（删 25 行、24 个
+叶子键——`random_probs` 是父节点），通过数从闸门输出读。
+
+**验证**：两刀变异全红（M1 往模板插 `zzz_dead_probe_key` → 红并点名；M2 抽掉
+ollama.options 豁免 → 4 个透传键红，证明清单 load-bearing）+ 双对照；
+`test_release_template` 单跑无损（模板断言不依赖被删键）；全量门禁 **146/146**
+（12m25s，新闸门 1.6s / 变异 6.6s）。
