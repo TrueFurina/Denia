@@ -202,5 +202,104 @@ raw7 = {"voice": {"clone": {}}}
 merge_cloud_tts_provider(raw7, "openai_tts", api_key="k-oa")
 check("空 cloud → 单桶 openai_tts", "openai_tts" in raw7["voice"]["clone"]["cloud"])
 
+# ---------- 6) TTS worker 异常隔离（2026-10-23）----------
+# 背景：原 _worker 由 start_worker 以 asyncio.create_task 启动，既没存任务句柄也没加
+# done_callback，且循环体无顶层守卫。任一条任务里的未捕获异常（如 _state.transition /
+# _bus.publish 在异常态抛错、或 _speak_flow 逃逸出的异常）会直接杀死 worker 协程 → 队列
+# 停止排空 → 之后所有 TTS 静默失效（"她说了却后面没声"）。本段验证修复：单条任务异常被
+# 兜住后 worker 仍存活并继续处理后续任务；且 done_callback 会在 worker 异常退出时重启它。
+print("[6] TTS worker 异常隔离（单条任务异常不杀死整条播放链路）")
+sys.path.insert(0, ROOT)   # 让 src 成为包根（tts.py 顶层 `from ..config` 需要）
+from src.voice.tts import TTS as _TTS
+
+
+class _FakeState:
+    async def transition(self, *a, **k):
+        pass
+
+    async def to_idle(self, *a, **k):
+        pass
+
+
+class _FakeBus:
+    async def publish(self, *a, **k):
+        pass
+
+
+def _mk_tts():
+    o = _TTS.__new__(_TTS)
+    o._queue = asyncio.Queue()
+    o._tts_stale_s = 0
+    o._interrupt_until = 0.0
+    o._interrupted = False
+    o._streaming = False
+    o._decision_seen = False
+    o._pending_sentences = 0
+    o._state = _FakeState()
+    o._bus = _FakeBus()
+    o._worker_task = None
+    return o
+
+
+async def _run_guard():
+    o = _mk_tts()
+    seen = []
+    st = {"n": 0}
+
+    async def _dispatch(payload):
+        st["n"] += 1
+        if st["n"] == 1:
+            seen.append("boom")
+            raise RuntimeError("模拟状态机/事件总线在异常态抛错")
+        seen.append("ok")
+
+    o._speak_flow = _dispatch
+    await o._queue.put(("full", {"text": "会崩的一句"}))
+    await o._queue.put(("full", {"text": "正常的一句"}))
+    task = asyncio.ensure_future(o._worker())
+    await asyncio.sleep(0.15)
+    alive = not task.done()          # 关键：第一条崩了之后 worker 还活着
+    task.cancel()
+    try:
+        await task
+    except asyncio.CancelledError:
+        pass
+    return seen, alive
+
+
+_seen, _alive = asyncio.run(_run_guard())
+# 鉴别力：若 worker 没有顶层守卫（原实现），第一条 boom 会直接杀死 worker 协程 →
+# 第二条 ok 永远不会被分发、且 task 已 done → 本断言必败。故它能证明守卫确实在起作用。
+check("worker 一条任务异常后继续：两条都被分发（不静默死亡）",
+      _seen == ["boom", "ok"])
+check("worker 一条任务异常后仍存活（不吞异常、不卡死队列）", _alive is True)
+
+
+async def _run_cb():
+    o = _mk_tts()
+
+    async def _raises():
+        raise RuntimeError("boom")
+
+    bad = asyncio.ensure_future(_raises())
+    await asyncio.sleep(0.02)          # 让其带异常结束
+    o._on_worker_done(bad)             # 模拟 asyncio 调 done_callback
+    new_task = o._worker_task
+    restarted = new_task is not None and new_task is not bad
+    if new_task is not None:           # 别让重启出来的 worker 一直阻塞在空队列
+        new_task.cancel()
+        try:
+            await new_task
+        except asyncio.CancelledError:
+            pass
+    return restarted
+
+
+_restarted = asyncio.run(_run_cb())
+# 鉴别力：若 _on_worker_done 没重启（原实现根本没这个回调），o._worker_task 仍是 None/原任务
+# → 本断言必败。
+check("done_callback 在 worker 异常退出时重启 worker（避免永久失声）",
+      _restarted is True)
+
 print(f"\n结果：{PASS} 通过 / {FAIL} 失败")
 sys.exit(1 if FAIL else 0)
