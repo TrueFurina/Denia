@@ -42,7 +42,9 @@ ROOT = os.path.dirname(os.path.dirname(HERE))
 sys.path.insert(0, ROOT)
 
 from src.tests._dlg_voice_harness import (  # noqa: E402
-    build_dialogue, drive_voice, VALID_DECISION_RAW,
+    build_dialogue, drive_voice, drive_direct,
+    FakeVisionRouter, make_tool_llm,
+    VALID_DECISION_RAW,
     STAGE_DIRECTION_ONLY_RAW, MARKDOWN_SCAFFOLD_ONLY_RAW,
 )
 from src.companion.dialogue import EMPTY_REPLY_TEXT  # noqa: E402
@@ -240,6 +242,71 @@ async def _scenario_empty_text_from_model():
               f"文案与场景 6 逐字一致（同一个出口）：{failed[0].get('text')!r}")
 
 
+async def _scenario_vision_and_tools_paths():
+    """场景 8/9：另外两个能出声的入口也要过同一道闸。
+
+    三个入口（respond 主链 / 聊天发图 / 聊天调工具）的终稿都过 _strip_markdown
+    （± _humanize_reply），而这两个清洗都可能把内容清空。主链 10-23 已守，另两个
+    此前**完全没守**：模型/VLM 只吐"（翻个白眼）"这类纯舞台动作时，终稿为 ""，
+    发出去被前端静默丢弃 → "图也发了 / 工具也跑了，她却不说话"。
+
+    每个入口都跑**正反两路**：正常文本必须照常播出（证明闸门不是"永远发失败"），
+    纯舞台动作必须走失败出口。
+    """
+    print("=== 场景 8 · 聊天发图入口（正反两路） ===")
+    for label, ans, want_fail in (("正常描述", "图里是一只橘猫在窗台上晒太阳", False),
+                                  ("纯舞台动作", "（翻个白眼）", True)):
+        bus, dlg = build_dialogue()
+        dlg._shrink_images = lambda imgs: imgs
+        dlg._vision_router = FakeVisionRouter(ans)
+        ai, partials = await drive_direct(
+            dlg, lambda: dlg._respond_vision_chat([b"img"], "这是什么", "voice"))
+        check(dlg._vision_router.calls == 1, f"[{label}] 视觉模型真被调了一次")
+        failed = _failed(ai)
+        spoken = _ok_decisions(ai)
+        if want_fail:
+            check(not spoken,
+                  f"[{label}] **不得**把舞台指示当图片描述播出（got={len(spoken)}）")
+            check(len(failed) == 1, f"[{label}] 走失败出口（got={len(failed)}）")
+            if failed:
+                check(failed[0].get("text") == EMPTY_REPLY_TEXT,
+                      f"[{label}] 文案走同一个常量：{failed[0].get('text')!r}")
+        else:
+            check(len(spoken) == 1 and not failed,
+                  f"[{label}] 正常播出一条、无失败气泡（got spoken={len(spoken)} failed={len(failed)}）")
+            if spoken:
+                check("橘猫" in (spoken[0].get("text") or ""),
+                      f"[{label}] 播出的是模型描述本身：{spoken[0].get('text')!r}")
+
+    print("=== 场景 9 · 聊天调工具入口（正反两路） ===")
+    for label, ans, want_fail in (("正常回复", "已经帮你打开播放器了", False),
+                                  ("纯舞台动作", "（翻个白眼）", True)):
+        bus, dlg = build_dialogue()
+        dlg._tools_in_chat_enabled = lambda: True
+        dlg._build_tool_messages = lambda *a, **k: [{"role": "user", "content": "x"}]
+        make_tool_llm(dlg, ans)
+        handled, ai = None, []
+        # _respond_with_tools 自己发事件；用 drive_direct 收
+        bus2, dlg2 = dlg._bus, dlg
+        ai, partials = await drive_direct(
+            dlg, lambda: dlg._respond_with_tools("帮我开播放器", "", "", []))
+        failed = _failed(ai)
+        spoken = _ok_decisions(ai)
+        if want_fail:
+            check(not spoken,
+                  f"[{label}] **不得**把舞台指示当工具结果播出（got={len(spoken)}）")
+            check(len(failed) == 1, f"[{label}] 走失败出口（got={len(failed)}）")
+            if failed:
+                check(failed[0].get("text") == EMPTY_REPLY_TEXT,
+                      f"[{label}] 文案走同一个常量：{failed[0].get('text')!r}")
+        else:
+            check(len(spoken) == 1 and not failed,
+                  f"[{label}] 正常播出一条、无失败气泡（got spoken={len(spoken)} failed={len(failed)}）")
+            if spoken:
+                check("播放器" in (spoken[0].get("text") or ""),
+                      f"[{label}] 播出的是工具链结果本身：{spoken[0].get('text')!r}")
+
+
 async def _run():
     await _scenario_positive()
     await _scenario_crash_after_streamed()
@@ -248,6 +315,7 @@ async def _run():
     await _scenario_crash_outside_respond()
     await _scenario_stage_direction_only()
     await _scenario_empty_text_from_model()
+    await _scenario_vision_and_tools_paths()
 
 
 def main():

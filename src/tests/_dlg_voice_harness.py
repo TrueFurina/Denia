@@ -249,3 +249,64 @@ async def drive_voice(bus: EventBus, dlg: Dialogue,
             await bus_run
         except asyncio.CancelledError:
             pass
+
+
+async def drive_direct(dlg: Dialogue, coro_factory):
+    """直接 await 某个 Dialogue 方法（不经 USER_TEXT），收集它发出的事件。
+
+    用于驱动 `_respond_vision_chat`（聊天发图）与 `_respond_with_tools`（聊天调工具）
+    这两个不经过 respond 主链的入口。返回 (ai_decisions, partial_texts)。
+
+    等待同样全用循环轮次 + queue.join()，不用墙上时钟。
+    """
+    bus = dlg._bus
+    ai: list[dict] = []
+    partials: list[dict] = []
+
+    async def _cap(e):
+        if e.type == EventType.AI_DECISION:
+            ai.append(e.data)
+        elif e.type == EventType.PARTIAL_TEXT:
+            partials.append(e.data)
+
+    bus.subscribe(EventType.AI_DECISION, _cap)
+    bus.subscribe(EventType.PARTIAL_TEXT, _cap)
+    bus.bind_loop(asyncio.get_event_loop())
+    bus_run = asyncio.create_task(bus.run())
+    try:
+        await coro_factory()
+        for _ in range(32):
+            await asyncio.sleep(0)
+        await bus._queue.join()
+        return ai, partials
+    finally:
+        bus.stop()
+        bus_run.cancel()
+        try:
+            await bus_run
+        except asyncio.CancelledError:
+            pass
+
+
+class FakeVisionRouter:
+    """最小视觉路由桩：vision_chat 直接返回预设文本（可设成纯舞台动作）。"""
+
+    def __init__(self, answer: str) -> None:
+        self._answer = answer
+        self.calls = 0
+
+    async def vision_chat(self, images, text, system_prompt=None):
+        self.calls += 1
+        return self._answer
+
+
+def make_tool_llm(dlg, answer: str):
+    """把 dlg._llm 的 chat_with_tools 换成返回预设文本的桩（不真调工具）。"""
+    async def _chat_with_tools(messages, _sys, tools, on_tool, max_steps,
+                               on_confirm=None, require_confirm=False,
+                               destructive_tools=None, on_status=None,
+                               on_token=None):
+        if on_token is not None:
+            await on_token(answer)
+        return answer
+    dlg._llm.chat_with_tools = _chat_with_tools
