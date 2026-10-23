@@ -307,6 +307,57 @@ async def _scenario_vision_and_tools_paths():
                       f"[{label}] 播出的是工具链结果本身：{spoken[0].get('text')!r}")
 
 
+async def _scenario_channel_relayed_through_tools():
+    """场景 10：社交通道的消息进工具链，channel/reply_target 必须原样带出去。
+
+    base._feed_brain 用 respond(text, source=..., channel=self.name, reply_target=<peer>)
+    喂大脑；通道侧 _on_decision 判 `d.get("channel") != self.name` 才忽略，桌面侧
+    （ws_server）只播 channel 为空的。此前工具链 4 个发布点一个都不带这两个键 ⇒
+    ① 发消息的人判 channel 不匹配被忽略 → **完全收不到回复**；
+    ② 桌面侧当桌面决策 → **桌宠替那条 QQ 消息念出来**。
+    默认 allow_tools_in_chat:false，所以这是潜伏缺陷——一开开关就发作。
+
+    正反两路：外部通道要带上、桌面要留空（否则桌面会把 QQ 的回复也念一遍）。
+    """
+    print("=== 场景 10 · 工具链透传 channel/reply_target（正反两路） ===")
+    tgt = {"message_type": "private", "user_id": 123456}
+
+    # 反路（对照）：桌面来源 → channel 必须留空（否则桌宠会念 QQ 的回复）
+    bus, dlg = build_dialogue()
+    dlg._tools_in_chat_enabled = lambda: True
+    dlg._build_tool_messages = lambda *a, **k: [{"role": "user", "content": "x"}]
+    make_tool_llm(dlg, "已经帮你打开播放器了")
+    ai, partials = await drive_direct(
+        dlg, lambda: dlg.respond("帮我开播放器", source="webui"))
+    desktop = [d for d in ai if not d.get("failed")]
+    check(len(desktop) == 1, f"[桌面] 播出一条（got={len(desktop)}）")
+    if desktop:
+        check(desktop[0].get("channel", "") in ("", None),
+              f"[桌面] channel 留空={desktop[0].get('channel', '')!r}（桌面才认）")
+
+    # 正路：外部通道 → channel/reply_target 必须原样出现在决策上
+    bus, dlg = build_dialogue()
+    dlg._tools_in_chat_enabled = lambda: True
+    dlg._build_tool_messages = lambda *a, **k: [{"role": "user", "content": "x"}]
+    make_tool_llm(dlg, "已经帮你打开播放器了")
+    ai, partials = await drive_direct(
+        dlg, lambda: dlg.respond("帮我开播放器", source="qq",
+                                 channel="onebot", reply_target=tgt))
+    chan = [d for d in ai if not d.get("failed")]
+    check(len(chan) == 1, f"[onebot] 播出一条（got={len(chan)}）")
+    if chan:
+        d0 = chan[0]
+        check(d0.get("channel") == "onebot",
+              f"[onebot] channel 透传={d0.get('channel')!r}（通道侧靠它认领）")
+        check(d0.get("reply_target") == tgt,
+              f"[onebot] reply_target 透传={d0.get('reply_target')!r}（靠它发回那个 peer）")
+        # 直接照 _on_decision 的过滤逻辑验一遍两头
+        check(d0.get("channel") == "onebot",
+              "[onebot] 通道侧 _on_decision 会认领（不再被忽略）")
+        check(bool(d0.get("channel")),
+              "[桌面] 桌面侧不会播这条（channel 非空）→ 桌宠不替 QQ 答话")
+
+
 async def _run():
     await _scenario_positive()
     await _scenario_crash_after_streamed()
@@ -316,6 +367,7 @@ async def _run():
     await _scenario_stage_direction_only()
     await _scenario_empty_text_from_model()
     await _scenario_vision_and_tools_paths()
+    await _scenario_channel_relayed_through_tools()
 
 
 def main():
