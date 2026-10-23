@@ -13,7 +13,7 @@
 
 | commit | 时间 | 类型 | 一句话 | 验证 |
 |---|---|---|---|---|
-| `b34d7a7` | 21:2x | fix | **第七处静默失效·她听到却不回答**：桌面来源（voice/webui/console）的 USER_TEXT 在 `_on_user_text` 走 `asyncio.create_task` 后台任务，而 respond 尾段（剥 markdown / 拟人化 / 记历史 / 发 AI_DECISION，dialogue.py 1205~1336）在 respond 内部只管 LLM 的 try/except（1126~1159）**之外** → 尾段一崩，异常落到无人 await 的后台任务，静默吞掉 → 用户全程无感知。修法**两层**：①尾段自己加守卫，判据与原有 LLM 失败分支同构——**她有没有已经说出口的话**：流式已播出 → 补发非 failed 决策（她话已说出口、TTS 已念完，不能再补一句"失败"）；毫无产出 → 才 failed；②create_task 补 done_callback 作最后防线（覆盖 vision / 媒体等 respond 之外的支路）：取异常（消除 "Task exception was never retrieved" 警告）→ 记日志 → `publish_threadsafe` 补发 failed 气泡，不再对着静音桌宠 | 五场景真值表（正常 / **已答完再崩→不得有 failed** / 非流式再崩→不得有 failed / LLM 没生成→必须有 failed / 崩在 respond 之外→靠 done_callback），含对照组区分「判据正确」与「判据恒真」；**harness 让 FakeLLM 真流式**（第一版把 `_chat_decision` 桩成返回 `(RAW,True)`，一条 PARTIAL_TEXT 都没发，"她已答完"这个前提根本没造出来，于是把"已回答+红字失败"自相矛盾断言成了正确）；等待改循环轮次 + `queue.join()`，不再用 5s 超时（变异 7.9s→3.5s）；**三把刀全红**（摘 done_callback / 守卫恒 failed / 守卫丢非流式兜底）；闸门 +2（137→139）；工作区另有并发「闸门登记对账」+2，合并实测 **141/141** 全绿 |
+| `b34d7a7` | 21:2x | fix | **第七处静默失效·她听到却不回答**：桌面来源（voice/webui/console）的 USER_TEXT 在 `_on_user_text` 走 `asyncio.create_task` 后台任务，而 respond 尾段（剥 markdown / 拟人化 / 记历史 / 发 AI_DECISION，dialogue.py 1205~1336）在 respond 内部只管 LLM 的 try/except（1126~1159）**之外** → 尾段一崩，异常落到无人 await 的后台任务，静默吞掉 → 用户全程无感知。修法**两层**：①尾段自己加守卫，判据与原有 LLM 失败分支同构——**她有没有已经说出口的话**：流式已播出 → 补发非 failed 决策（她话已说出口、TTS 已念完，不能再补一句"失败"）；毫无产出 → 才 failed；②create_task 补 done_callback 作最后防线（覆盖 vision / 媒体等 respond 之外的支路）：取异常（消除 "Task exception was never retrieved" 警告）→ 记日志 → `publish_threadsafe` 补发 failed 气泡，不再对着静音桌宠 | 五场景真值表（正常 / **已答完再崩→不得有 failed** / 非流式再崩→不得有 failed / LLM 没生成→必须有 failed / 崩在 respond 之外→靠 done_callback），含对照组区分「判据正确」与「判据恒真」；**harness 让 FakeLLM 真流式**（第一版把 `_chat_decision` 桩成返回 `(RAW,True)`，一条 PARTIAL_TEXT 都没发，"她已答完"这个前提根本没造出来，于是把"已回答+红字失败"自相矛盾断言成了正确）；等待改循环轮次 + `queue.join()`，不再用 5s 超时（变异 7.9s→3.5s）；**五把刀全红**（摘 done_callback / 守卫恒 failed / 守卫丢非流式兜底）；闸门 +2（137→139）；工作区另有并发「闸门登记对账」+2，合并实测 **141/141** 全绿 |
 | `6a07e12` | 07:5x | fix | **克隆面板「预填她的」从来是坏的**：预置角色「温柔女友」的参考音频随包分发（`_role_assets/ref/xiaowei.wav`），但面板**预填写一份、按钮读另一份**——卡片预填 `voice.ref || demo.ref`，试听/开始克隆只读 `c.voice.ref`；预置角色只有 demo.ref（`path` 还是开发机绝对路径 `D:/GPT-SoVITS/...`）⇒ 试听按钮每次静默 return，「开始克隆」取到空 refPath 后跳过真实克隆、落到「无桥降级」画一条**假进度条**再 toast「克隆完成」——用户机器上什么都没发生（该文件自己的红线写着"不画假进度"）。顺带查到 `/local_img` 是**图片**路由（Content-Type 只认图片、白名单只放行 `char_banners`/`char_avatars`+注册目录），用户自选音频的试听也一直静默 404。修法：`_clRef` 单一来源（预填/试听/克隆共用）、随包资产经新后端 `use_bundled_ref_audio` 物化到 `data/voice_ref/`（白名单防穿越）、选文件换 `pickReferenceAudio`（B3 持久化）、`/local_img` 补音频类型并注册目录、**假进度条整段删** | jsdom 真值表 **24 项**（原样加载 `onboarding_role.js` 整文件真点真走：S1 随包资产 / S2 用户文件 / S3 无桥 / S4 墓碑，两个对照组）；后端门禁 20 项（物化 + **8 条白名单拒绝** + 目录注册 + 音频类型）；**六刀变异全红**、还原后仍绿；闸门 134 → **137**，全量 **137/137**（11m13s） |
 | `b2bc771` | 06:2x | test | **「后端广播 type ↔ 前端分发分支」对账闸门**：后端往前端推消息走 `CoreWebView2.PostWebMessageAsJson`，前端接 `chrome.webview.addEventListener('message')`，两边靠一个字符串 `type` 对上，而**没有任何机制保证它对得上**（`quota_alert` 与 `character_switched` 两起都死在这，症状永远静默：分支不执行、不报错，只是"那个功能不工作"）。只做**单向**（前端 type ⊆ 后端广播全集）——反向会假红：`pet_tip` 就走 `api.pop_pet_bubble()` 1.5s 轮询，桌宠窗的 `chrome.webview` 监听对 `PostWebMessageAsJson` **完全不触发**（rig 页 2026-09-03 实锤：3 次广播 / 0 回执），"广播了但没人用 webview 监听器接"在这里是合法设计。边界必须精确圈定：全仓 `.type === 'x'` 有 25 处以上**不是**消息分发（`dataset.type`、本地事件总线 `ev.type==='asr'`、通知项 `n.type`、骨架 `s.type==='row'`…），一刀切必假红。**顺带补登记两把从没跑过的变异刀**：`_qc_channel_mutation` 与 `_qc_gewechat_mutation` 只在 check_all 的注释里被提到、从没进名单——按项目自己的规矩「加门必须同时加变异」，那两道门**一直是装饰品**；实跑前者，七刀里 **C/D/F/G 四把锚点命中 0 次被静默跳过**（根因：`J()` 写死 CRLF 而 `doctor.py` 早变成 LF，**单行锚点不受影响、刀照跑，所以坏得极隐蔽**） | 七刀变异全过（含"原 bug 原样"与两个"不许误伤"对照组）；渠道探活判级变异修好后**七刀全红**、还原字节一致；微信回调变异五刀全红；闸门 130 → **134**；全量门禁 **134/134**（10m43s） |
 | `ca6cff3` | 06:2x | fix | **切角色后界面名字不跟随**：`app_backend.js` 里 `d.type === 'character_switched'` 这条分支自 2026-10-02 写下起就是**死的**——后端 `EventType.CHARACTER_SWITCHED` 只经 `ws_server.broadcast` 发（`{message_type, payload}` 信封，给 Unity 与旧壳 `app.js` 用），而 `app_backend.js` 里**没有 WebSocket 客户端**；`app.js` 有 ws 却没这个 case、且只被 `index.legacy.html` 加载。于是 `applyCharacterNameBoot`（那段注释原话就是"用户切换角色后这些仍显示旧名…看着像 bug"）**要修的那个 bug 本身就没修好**：点「设为默认角色」toast 说成功了，侧边栏 / 通话页 / 输入框 placeholder 一直是旧名字，直到刷新页面；`window.refreshCharacterName` 全仓零调用者。两端都修：后端 `_broadcast_character_switched()` 在 `switch_character` 的**两处**成功返回前都调（配置级回落路径不发事件，只挂总线会漏），前端 `setDefault()` 成功后显式兜底 | 新闸门 `check_broadcast_types.py` 的变异刀 M1 就是**原 bug 原样**（把那行广播改掉 → 闸门红并点名 `character_switched`），证明闸门在修复前确实是红的；七刀变异全过；全量门禁 **134/134** |
@@ -158,7 +158,7 @@ try/except（1126~1159）之外**。LLM 调用本身有 75s 超时兜底，但�
 | 4 LLM 就没生成 | 无 | LLM 调用 | **必须**有 failed 气泡（守住原有兜底） |
 | 5 崩在 respond 之外 | — | 媒体摄入探测 | 必须靠 done_callback 补发 failed 气泡 |
 
-- `tools/_qc_dialogue_voice_chain_mutation.py`：**三把刀全红**——CB 摘
+- `tools/_qc_dialogue_voice_chain_mutation.py`：**五把刀全红**——CB 摘
   `add_done_callback`（场景 5 翻回静默）；T1 守卫 `if _partial:` → `if False:`
   （场景 2/3 被补失败气泡）；T2 守卫丢掉 `or parse_decision(raw)` 兜底（场景 3 误判
   毫无产出）。变异工具通过 `harness.Dialogue = mutant.Dialogue` **原样跑测试里的场景
@@ -195,6 +195,35 @@ try/except（1126~1159）之外**。LLM 调用本身有 75s 超时兜底，但�
 check_all.py 里**自己那一 hunk**，用 `git add -p` 精确摘选），把并发的「闸门登记对账」
 工作树原样留下（check_all.py 的 hunk1 + 8 个改动的 check_*.py + 2 个未跟踪工具）——
 又一次印证「只 add 自己知道的文件，别让收口提交吞掉别人的改动」。
+
+### 同日再续：顺着"不可达分支"查到两处真实的静默/错误播出
+
+尾段守卫里留了一条"毫无产出 → failed"的分支，注释写着"正常情况下不可达"。顺着它
+查下去，发现**不可达是真的，但附近藏着两个真问题**——都在 respond 的清洗环节：
+
+| 模型吐了什么 | `_strip_markdown` | `_humanize_reply` | 原代码结局 |
+|---|---|---|---|
+| `（翻个白眼）`（纯舞台动作） | 原样保留 | **返回 `""`** | `if _hum:` 不成立 → 文本**保持未清洗的舞台指示** → 非流式路径下 TTS 把它当台词念出来（"翻个白眼"） |
+| `****`（纯 markdown 骨架） | **返回 `""`** | — | `decision["text"]` 变 `""` → 发一条 `text=""` 的决策 → **前端静默丢弃** → "说了话没人应" |
+
+第二条正是 10-11/10-14 两次要治的"舞台指示上屏/进 TTS"，只是换了个入口：那两次治的是
+流式分句（`_strip_stage_directions`）和提示词，**终稿这条路一直是漏的**。
+
+**修法**：清洗之后判空，且**查 `_hum` 而不是 `decision["text"]`**——一查同时覆盖两种
+情形（`_humanize_reply` 只在"输入本身是空 / 全是舞台动作 / 全是空白"时返空；实测
+"好呀/嗯/啊？/呜呜……"都不返空，不会误杀正常短回复）。走**同一个出口**
+`_publish_empty_reply`，文案提成模块常量 `EMPTY_REPLY_TEXT`——因为现在有**两个**调用点
+（parse 后就是空 / 清洗后被清空），必须逐字一致，否则又是"同一件事两份实现"。
+
+**上一问的那个待决项也一并处理了**：把不可达的 `else` 分支改成**向上 `raise`**，交给
+任务级 done_callback 用同一条兜底路径发失败气泡。理由：不可达的分支是没人跑过的死
+代码，而且它会在仓里复制第二份失败气泡载荷（和任务级兜底形成双实现）。宁可达不到，
+也不写没人验证的分支。
+
+**验证**：测试扩到**七场景 / 45 项断言**（新增场景 6 纯舞台动作 + 纯 markdown 骨架、
+场景 7 模型直接返回空 text——后两者合起来证明两个调用点产出逐字一致）；变异
+**三把刀 → 五把刀**（新增 T3 去掉清洗后判空、T4 改 `EMPTY_REPLY_TEXT` 抓文案漂移）。
+基线七场景全绿、五刀全红。
 
 ---
 

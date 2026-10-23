@@ -43,7 +43,9 @@ sys.path.insert(0, ROOT)
 
 from src.tests._dlg_voice_harness import (  # noqa: E402
     build_dialogue, drive_voice, VALID_DECISION_RAW,
+    STAGE_DIRECTION_ONLY_RAW, MARKDOWN_SCAFFOLD_ONLY_RAW,
 )
+from src.companion.dialogue import EMPTY_REPLY_TEXT  # noqa: E402
 
 FAIL = 0
 
@@ -186,12 +188,66 @@ async def _scenario_llm_failed_before_output():
               f"失败气泡文本非空：{failed[0].get('text')!r}")
 
 
+async def _scenario_stage_direction_only():
+    """场景 6：模型只吐了舞台动作描写 / 纯 markdown 骨架（弱模型真会这样）
+    → 必须走"空响应"失败出口。
+
+    两条都不能发生：
+      · 把"（翻个白眼）"当台词播出去——非流式路径下 TTS 会念"翻个白眼"，
+        正是 10-11/10-14 两次要治的（原代码 `if _hum:` 不成立时就留着未清洗文本）；
+      · 发一条 text="" 的决策——前端静默丢弃，又变成"说了话没人应"。
+    """
+    print("=== 场景 6 · 模型只吐舞台动作/markdown 骨架（必须走空响应失败出口） ===")
+    for label, raw in (("舞台动作", STAGE_DIRECTION_ONLY_RAW),
+                       ("markdown 骨架", MARKDOWN_SCAFFOLD_ONLY_RAW)):
+        bus, dlg = build_dialogue(stream_support=False, llm_raw=raw)
+        ai, partials, task = await drive_voice(bus, dlg)
+        check(task is not None and task.exception() is None,
+              f"[{label}] 没有异常逃出 respond（空响应是被正常处理的，不是崩溃）")
+        spoken = [d for d in ai if not d.get("failed")]
+        check(not spoken,
+              f"[{label}] **不得**把清洗后的残骸当台词播出（got={len(spoken)}）")
+        failed = _failed(ai)
+        check(len(failed) == 1,
+              f"[{label}] 走空响应失败出口：恰好一条 failed 气泡（got={len(failed)}）")
+        if failed:
+            check(bool((failed[0].get("text") or "").strip()),
+                  f"[{label}] 失败气泡文本非空：{failed[0].get('text')!r}")
+            check("翻个白眼" not in (failed[0].get("text") or ""),
+                  f"[{label}] 失败气泡里不含原始舞台指示")
+            check(failed[0].get("text") == EMPTY_REPLY_TEXT,
+                  f"[{label}] 文案走 EMPTY_REPLY_TEXT 常量（与场景 7 同一个出口，不是双写）")
+
+
+async def _scenario_empty_text_from_model():
+    """场景 7：模型直接就返回空 text → 早期那个空响应检查也要走同一个出口。
+
+    与场景 6 合起来证明 `_publish_empty_reply` 的**两个调用点产出逐字一致**——
+    否则就是"同一件事两份实现"，其中一份悄无声息地漂移。
+    """
+    print("=== 场景 7 · 模型直接返回空 text（早期检查，同一个出口） ===")
+    raw = '{"emotion":"neutral","action":"idle","intensity":3,"text":""}'
+    bus, dlg = build_dialogue(stream_support=False, llm_raw=raw)
+    ai, partials, task = await drive_voice(bus, dlg)
+    check(task is not None and task.exception() is None,
+          "没有异常逃出 respond（空响应是被正常处理的，不是崩溃）")
+    check(not [d for d in ai if not d.get("failed")],
+          "不得播出任何台词（本来就没有）")
+    failed = _failed(ai)
+    check(len(failed) == 1, f"恰好一条 failed 气泡（got={len(failed)}）")
+    if failed:
+        check(failed[0].get("text") == EMPTY_REPLY_TEXT,
+              f"文案与场景 6 逐字一致（同一个出口）：{failed[0].get('text')!r}")
+
+
 async def _run():
     await _scenario_positive()
     await _scenario_crash_after_streamed()
     await _scenario_crash_non_streamed()
     await _scenario_llm_failed_before_output()
     await _scenario_crash_outside_respond()
+    await _scenario_stage_direction_only()
+    await _scenario_empty_text_from_model()
 
 
 def main():
