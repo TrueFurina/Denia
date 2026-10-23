@@ -19,7 +19,7 @@ NameError 和「设备不存在」长得一模一样，日志里一条都看不�
 用法
 ----
     python tools/check_silent_except.py --all src
-    python tools/check_silent_except.py --main            # 只扫三条主链路
+    python tools/check_silent_except.py --main            # 只扫主链路
     python tools/check_silent_except.py --main --strict   # 主链路真静默 → exit 1
 """
 from __future__ import annotations
@@ -28,11 +28,16 @@ import argparse
 import ast
 import os
 
-# 主链路：用户能直接感知「没反应」的三条路径
+# 主链路：用户能直接感知「没反应」的路径
+# 【2026-10-24 扩】纳入 src/companion/proactive.py——主动搭话/双工控制/看屏互动/
+# 档位同步全在这，普查时发现它有 43 处真空吞（记忆持久化、话术 LLM、引擎停止…
+# 全静默）。已全部处理（承重路径 logger.debug(exc_info=True)，有意降级带理由注释），
+# 从此新来的真空吞在这条链上直接红。
 MAIN_CHAIN = [
     "src/llm/cloud_omni_realtime.py",
     "src/companion/dialogue.py",
     "src/voice/tts.py",
+    "src/companion/proactive.py",
 ]
 
 
