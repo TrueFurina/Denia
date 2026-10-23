@@ -13,6 +13,7 @@
 
 | commit | 时间 | 类型 | 一句话 | 验证 |
 |---|---|---|---|---|
+| `09dcbc7` | 04:3x | chore | **听/说/双工三族 19 处真空吞清零 + 设置器写入键对账干净**：① `mic_proc`（7）/ `tts_backends`（5）/ `local_omni_duplex`（7）的 except-pass 全部补上理由——逐处读过，全是良性：日志开关失败落 stderr 兜底、ws.close 清理（上层已 warning 并回退新握手）、设备/窗口探测跳过、语速微调失败按默认语速合成（不出声才是事故）、四个旋钮设置器的 `except (TypeError, ValueError): return` 是**入参校验**（非法值安静返回，变更本身有 logger.info）。三文件现 0 真静默。② **设置器写入键对账（新审计，结论干净）**：模板对账闸门只覆盖静态侧（模板里的键有没有人读）；本次补查动态侧——从 webapp.py 提取设置器写进 config 的 79 个叶子键（section dict 人工映射），逐个核对后端读取点：**79/79 都有读取，0 个死键**。「用户开了开关什么都没发生」这个类在写入侧不存在。因 section 映射会随代码腐烂，不建闸门，按纪律记录为带日期与方法论的审计发现（复核日期 2026-10-24；删除条件：设置器保存路径重构后重跑）。 | 三文件编译 + 复扫 0 真静默；全量门禁 **147/147**（12m47s） |
 | `8fab483` | 03:2x | fix | **webapp.py 43 处真空吞清零 + 纳入主链静默闸门；OpenBLAS 抖动有了串行复核包装器**：① `check_silent_except` 主链再扩——UI↔后端的桥 webapp.py（143 处 except-pass 里 43 处块内无注释无日志）全部处理：探针/枚举/清理类补理由注释，承重的试听/克隆/保存路径本就有 `_last_tts_error`/`logger.exception` 上报（补的是清理点注释）；主链现五文件 300 处静默全有着落、0 真静默。② 全量门禁连跑时 `test_phash`/`test_set_player_name_wiring` 间歇撞 OpenBLAS「Memory allocation still failed」（单独跑就过、产品无问题）——新增 `run_test_with_mem_retry.py` 包装器：**只认这一种文案、只串行复核一次、真缺陷绝不重试**（自测三用例守着），两个抖动测试改走包装器。③ 登记对账闸门修两处误判：包装器式登记（argv[1] 是真测试）曾被误判未登记 → 登记身份改取 argv 里全部 .py/.js；共用包装器的两个条目曾被误判重复 → 去重改比对整条 argv。④ `test_doctor` 的「不应有 FAIL」断言补上 FAIL 行明细（跑闸负载下间歇红过两次而旧断言不说是哪项）。 | 主链闸门 0 真静默；变异刀五刀全过（新增 E 刀：webapp 注入）；包装器自测 7/7；额度墓碑刀因 webapp 转 LF 锚点失效→改逐文件实测 EOL 后三刀全过；全量门禁 **147/147**（12m48s） |
 | `404a849` | 02:1x | fix | **proactive.py 43 处真空吞清零 + 纳入主链静默闸门**：`check_silent_except` 的主链原先只有 cloud_omni_realtime/dialogue/tts 三个文件，而**主动搭话/双工控制/看屏互动/档位同步全在 proactive.py**——普查发现它有 **43 处 `except: pass` 且块内无注释无日志**，其中承重路径包括：双工对话写长期记忆失败（通话后她不记得说过什么）、打字侧接语音上下文的历史桥失败、主动搭话筒术 LLM 失败、看屏批量循环启动失败、taskkill 杀不掉引擎进程、配置档位同步失败。处理口径：**承重路径 `logger.debug(..., exc_info=True)`**（行为不变、失败可诊断），**有意降级补理由注释**（探针失败/任务取消/兼容垫/清理路径）。随后把 proactive.py 纳入 MAIN_CHAIN（现四文件 158 处静默全有注释/日志、0 真静默）。全仓其余 159 处真静默在非主链文件，记录待逐文件推进。 | 闸门 `--main --strict` 0 真静默；变异刀**加第四刀**（往 proactive.py 注入真空吞 → 红并点名，证明新覆盖有牙齿）；四刀全过 + 双还原字节一致；全量门禁 **146/146**（12m29s） |
 | `873ee58` | 01:0x | chore | **出厂模板 24 个死键删掉 + 模板对账闸门**：普查发现 `config.release.yaml` 424 个叶子键里 **24 个没有任何代码读取点**——用户/队友照着模板配了，什么都没发生（`voice`/`voice_id` 同型的放大版）。三个最恶劣的：`proactive.duplex_mic_vad` 有一处读（`getattr(self,'_duplex_mic_vad',True)`）但**全仓没有赋值点**，永远落默认值；`max_per_type_per_day` 被 docstring 承诺为"同类活动每日上限"而真实机制是 `type_cooldown_s`；`sticker.random_probs.*` 整子树死（sticker_bridge 用裸 `random.choice`，参数全硬编码）。删除：`game_stagger`（08-25 已被节奏门禁取代的残留）/ `accumulate_screen` / `duplex_mic_vad` / `duplex_mode_lock_mem_pct`+`util_pct`（兄弟键 ext_mb/silent 都活着）/ `duplex_ocr_frame_overlay` / `duplex_timing_pressure` / `game_immersive` / `heavy_apps_cloud_*`×3 / `immersive_interval_s` / `llm_timeout_s` / `max_per_day` / `max_per_type_per_day` / `react_to_screen` / `sticker.timing_mode`+`random_seed`+`random_cooldown`+`random_probs.*`+`warmth_*`。新闸门 `check_config_keys.py`：模板每个键必须出现在代码 NAME/STRING token 里（**tokenize 丢注释**——注释里提一句不算读取点，那正是 docstring 谎言形态）；例外清单带原因（`_release_note` 元键 / `ollama.options.*` 泛型透传）。 | 两刀变异全红（插死键 / 抽豁免条目——证明清单不是装饰品）；全量门禁 **146/146**（12m25s）；`test_release_template` 无损；模板工作副本 CRLF→LF 还原 |
@@ -4950,3 +4951,33 @@ FAIL 行明细（下次红一行定位），**不猜根因就不加宽泛重试*
 **验证**：全量门禁 **147/147**（12m48s，新登记「内存抖动复核自测」4.5s、
 两个抖动测试走包装器后 1.5s/2.0s、doctor 78.8s）；主链闸门 0 真静默；登记对账
 147 登记/8 免登/0 待定，其变异刀四刀仍全红；额度墓碑刀三刀全过。
+
+---
+
+### `09dcbc7` · 听/说/双工三族真空吞清零 + 设置器写入键对账（干净结论）
+
+**① 19 处真空吞清零**（mic_proc 7 / tts_backends 5 / local_omni_duplex 7）。
+逐处读过上下文，全部良性，补理由注释（与主链五文件同标准）：
+- `mic_proc._open_log/log`：日志候选路径开不了就试下一个、写失败落 stderr 兜底、
+  stderr 也没了就丢日志（采集主流程不受影响）；
+- `mic_proc.main`：单设备信息/单窗口峰值统计失败 → 跳过该项（诊断路径）；
+- `tts_backends.synthesize`：语速微调（`setProperty("rate")`）失败 → 按默认语速
+  合成——**不出声才是事故，语速不是**；
+- `tts_backends` 四处 `await ws.close()`：关闭失败的残留连接由超时/GC 回收，
+  且上层都已 `logger.warning` 并回退全新握手；
+- `local_omni_duplex` 四个旋钮设置器：`except (TypeError, ValueError): return`
+  是**入参校验**（调用方传错值时不炸链），不是操作失败；`_cascade_run` 的
+  CancelledError 是正常退出；补推帧缓存失败不影响本帧推送。
+
+**② 设置器写入键对账（新审计，干净）**：`check_config_keys` 守的是静态侧
+（模板键有没有人读）。本次补动态侧：从 webapp.py 提取设置器写进 config 的
+79 个叶子键（`section_dict["key"] = value` 形态 + section→配置段人工映射），
+逐个核对后端读取点（tokenize NAME/STRING）——**79/79 有着落，0 死键**。
+「用户开了开关、什么都没发生」在写入侧不存在。
+
+**为什么不建闸门**：section dict → 配置段的映射是人工的，会随代码重构腐烂——
+腐烂的映射意味着漏检，而漏检是静默的（正是这类闸门要防的东西）。按纪律记录为
+审计发现：**复核日期 2026-10-24；删除条件=设置器保存路径重构后重跑本对账**。
+
+**验证**：三文件 py_compile + 复扫 0 真静默；全量门禁 **147/147**（12m47s，
+doctor 本轮未抖——最近三轮两绿一红）。
