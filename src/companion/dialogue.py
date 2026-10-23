@@ -1193,95 +1193,142 @@ class Dialogue:
             await self._state.to_idle("dialogue")
             return
 
-        decision = parse_decision(raw)
-        if not (decision.get("text") or "").strip():
-            # 空响应（模型返回空/被网关兜底吞掉）：与异常同待遇，发失败气泡，
-            # 否则 webapp.py 会静默丢弃，用户体验"说了话没人应"。
-            logger.warning("LLM 返回空响应，按失败处理（避免打字无回复）")
+        # 【2026-10-23 尾段守卫】parse_decision 之下的每一步（剥 markdown / 拟人化 /
+        # JSON 兜底 / 记历史 / 发决策）都在上方那个 try/except（只管 LLM 调用）的覆盖
+        # 之外。这里补一层，并**复用上方 LLM 失败分支的同一条判据**：
+        #   已经流式播出过内容 → 补发一条 streamed=True 的**非 failed** 决策——她话已
+        #     说出口、TTS 已逐句念完、聊天气泡已封口上屏，此时不能再补一句"失败"
+        #     （否则"已回答 + 红字失败气泡"同时出现，自相矛盾）；
+        #   一个字都没流出来 → 才发 failed 失败气泡（带具体原因，同 _fail_text）。
+        # 任务级 done_callback（_on_user_text）只是最后防线，覆盖 vision / 媒体支路。
+        try:
+            decision = parse_decision(raw)
+            if not (decision.get("text") or "").strip():
+                # 空响应（模型返回空/被网关兜底吞掉）：与异常同待遇，发失败气泡，
+                # 否则 webapp.py 会静默丢弃，用户体验"说了话没人应"。
+                logger.warning("LLM 返回空响应，按失败处理（避免打字无回复）")
+                await self._bus.publish(Event(EventType.AI_DECISION, {
+                    "emotion": "neutral",
+                    "action": "talk",
+                    "text": "消息发送失败（模型返回空，请稍后再试）",
+                    "failed": True,
+                    "channel": channel,
+                    "reply_target": reply_target,
+                    "user_activity": self._activity_payload(),
+                    "voice": self._current_voice(),
+                }, "dialogue"))
+                await self._state.to_idle("dialogue")
+                return
+            logger.info("决策: emotion=%s action=%s text=%r", decision["emotion"], decision["action"], decision["text"])
+
+            # 【2026-10-04 23:11 剥 markdown 标记】用户 22:55/23:06 两次截图实锤：
+            #   她把 `**娅娅**`、`**你叫我叫「鸡仔」**`、`## 记下来的三件事`、`| 特性 | 细节 |`
+            #   原样吐在气泡里（前端**没有** markdown 渲染，是纯文本显示 ⇒ `**` 直接可见）。
+            #   这是"AI 在念 markdown"的破绽。**源头剥掉**（只去符号、不删内容）。
+            decision["text"] = self._strip_markdown(decision["text"])
+            # 【2026-10-11 说话节奏】再收一道：去括号动作/场景描写 + 多段并句 + 超长截断，
+            # 让聊天页像真人一句一句说（模型不一定听提示词，这层兜底不靠它自觉）。
+            # 口径与本轮流式分句一致（_rb_sent/_rb_chars），确保上屏句数 == 记录句数。
+            _hum = self._humanize_reply(decision["text"],
+                                        max_sentences=_rb_sent, trim_min_chars=_rb_chars)
+            if _hum:
+                decision["text"] = _hum
+
+            # 【2026-10-14 JSON 兜底（A1c 配套）】长对话里模型偶尔"忘了套 JSON 外壳"、
+            #   只吐纯台词 → parse 回退成 neutral/idle，桌面表情/动作不跟随（静止不动）。
+            #   锚句是软约束、偶有残留漂移，这里做**解析层硬兜底**：仅当 raw 里根本没有
+            #   可解析 JSON 时，回退重试一次——让模型把"她已经说出口的这句话"补成结构化
+            #   情绪/动作。**只补 emotion/action/intensity，绝不动 text**（text 已流式播出，
+            #   改它会导致二次说话/重复 TTS）。任何失败都静默保留原决策，不影响正常回复。
+            if not decision_had_json(raw):
+                try:
+                    _rep_prompt = (
+                        "下面是桌面伴侣刚说出口的一句话。请把它理解成一次桌宠互动，"
+                        "只输出一个 JSON 对象，字段：\n"
+                        "emotion——必须严格取以下之一（不许自造词）："
+                        "neutral/happy/shy/surprised/sad/angry/sleepy/curious。"
+                        "注意“comfort/concerned/caring”等都不是合法 emotion，"
+                        "想表达关心请用 sad 或 happy，配上 action=comfort。\n"
+                        "action——必须严格取以下之一："
+                        "idle/greet/listen/think/talk/laugh/wave/yawn/comfort。\n"
+                        "intensity——1~5 的整数。\n"
+                        "不要输出任何其他文字，不要重复原句。\n"
+                        "她说的话：" + decision["text"]
+                    )
+                    _rep_raw = await asyncio.wait_for(
+                        self._llm.chat([{"role": "user", "content": _rep_prompt}],
+                                       options={"temperature": 0.0, "max_tokens": 80}),
+                        timeout=12.0,
+                    )
+                    _rep = parse_decision(_rep_raw)
+                    if decision_had_json(_rep_raw):
+                        decision["emotion"] = _rep.get("emotion", "neutral")
+                        decision["action"] = _rep.get("action", "talk")
+                        decision["intensity"] = _rep.get("intensity", 3)
+                        logger.info("JSON 兜底补全: emotion=%s action=%s",
+                                    decision["emotion"], decision["action"])
+                    else:
+                        logger.warning("JSON 兜底重试仍未返回 JSON，保留原决策")
+                except Exception:  # noqa: BLE001
+                    logger.warning("JSON 兜底重试失败，保留原决策", exc_info=True)
+
+            # 记录历史（方案 C：打字聊天与双工共用共享会话历史，双向连贯）
+            # 记 decision["text"]（已清描写/截断的干净文本）而非 raw——raw 是含 thinking 的
+            # 原始 JSON，且可能比实际发出的句子多（超预算被丢）；历史与"她真说出口的"对齐，
+            # 否则她下一轮会"记得"屏幕/语音里根本没出现的句子。
+            shared_history().add_turn("user", user_text, source="chat")
+            shared_history().add_turn("assistant", decision["text"], source="chat")
+
+            # 发决策事件（streamed=True：句子已逐句播放，TTS 不再整段重播）
             await self._bus.publish(Event(EventType.AI_DECISION, {
-                "emotion": "neutral",
-                "action": "talk",
-                "text": "消息发送失败（模型返回空，请稍后再试）",
-                "failed": True,
+                "emotion": decision["emotion"],
+                "action": decision["action"],
+                "intensity": decision.get("intensity", 3),
+                "text": decision["text"],
+                "streamed": streamed,
                 "channel": channel,
                 "reply_target": reply_target,
                 "user_activity": self._activity_payload(),
                 "voice": self._current_voice(),
             }, "dialogue"))
+        except Exception as e:  # noqa: BLE001
+            # 尾段崩（剥 markdown / 拟人化 / 记历史 / 发决策 任一步）。判据与上方
+            # LLM 失败分支同构：**她有没有已经说出口的话**。有 → 非 failed 续发；
+            # 一句话都没有 → 才 failed。绝不在"已回答"之后补一句"失败"。
+            # streamed 保持原值：流式播过就标 True（TTS 别整段重播），非流式标 False
+            # （TTS 把整段念出来）——两条路她都确实把话说出口了。
+            # 取文本用 streamer.raw or raw：流式路径两者同一个串；非流式路径
+            # （后端不支持流式，_chat_decision 返回 llm.chat 的整段）streamer 从未被
+            # 喂过、raw 才是正文，只取 streamer 会拿到空而误判成"毫无产出"。
+            logger.exception("决策尾段处理失败（按已有产出降级）")
+            _partial = (parse_decision(streamer.raw).get("text", "")
+                        or parse_decision(raw).get("text", ""))
+            if _partial:
+                await self._bus.publish(Event(EventType.AI_DECISION, {
+                    "emotion": "neutral",
+                    "action": "talk",
+                    "text": _partial,
+                    "streamed": streamed,
+                    "channel": channel,
+                    "reply_target": reply_target,
+                    "user_activity": self._activity_payload(),
+                    "voice": self._current_voice(),
+                }, "dialogue"))
+            else:
+                # 上方"空响应"检查已挡掉无文本的情形，此分支正常情况下不可达；
+                # 保留是为了万一上游判据变化也绝不静默（宁发失败气泡也不无声）。
+                await self._bus.publish(Event(EventType.AI_DECISION, {
+                    "emotion": "neutral",
+                    "action": "talk",
+                    "text": self._fail_text(e),
+                    "failed": True,
+                    "channel": channel,
+                    "reply_target": reply_target,
+                    "user_activity": self._activity_payload(),
+                    "voice": self._current_voice(),
+                }, "dialogue"))
             await self._state.to_idle("dialogue")
             return
-        logger.info("决策: emotion=%s action=%s text=%r", decision["emotion"], decision["action"], decision["text"])
-
-        # 【2026-10-04 23:11 剥 markdown 标记】用户 22:55/23:06 两次截图实锤：
-        #   她把 `**娅娅**`、`**你叫我叫「鸡仔」**`、`## 记下来的三件事`、`| 特性 | 细节 |`
-        #   原样吐在气泡里（前端**没有** markdown 渲染，是纯文本显示 ⇒ `**` 直接可见）。
-        #   这是"AI 在念 markdown"的破绽。**源头剥掉**（只去符号、不删内容）。
-        decision["text"] = self._strip_markdown(decision["text"])
-        # 【2026-10-11 说话节奏】再收一道：去括号动作/场景描写 + 多段并句 + 超长截断，
-        # 让聊天页像真人一句一句说（模型不一定听提示词，这层兜底不靠它自觉）。
-        # 口径与本轮流式分句一致（_rb_sent/_rb_chars），确保上屏句数 == 记录句数。
-        _hum = self._humanize_reply(decision["text"],
-                                    max_sentences=_rb_sent, trim_min_chars=_rb_chars)
-        if _hum:
-            decision["text"] = _hum
-
-        # 【2026-10-14 JSON 兜底（A1c 配套）】长对话里模型偶尔"忘了套 JSON 外壳"、
-        #   只吐纯台词 → parse 回退成 neutral/idle，桌面表情/动作不跟随（静止不动）。
-        #   锚句是软约束、偶有残留漂移，这里做**解析层硬兜底**：仅当 raw 里根本没有
-        #   可解析 JSON 时，回退重试一次——让模型把"她已经说出口的这句话"补成结构化
-        #   情绪/动作。**只补 emotion/action/intensity，绝不动 text**（text 已流式播出，
-        #   改它会导致二次说话/重复 TTS）。任何失败都静默保留原决策，不影响正常回复。
-        if not decision_had_json(raw):
-            try:
-                _rep_prompt = (
-                    "下面是桌面伴侣刚说出口的一句话。请把它理解成一次桌宠互动，"
-                    "只输出一个 JSON 对象，字段：\n"
-                    "emotion——必须严格取以下之一（不许自造词）："
-                    "neutral/happy/shy/surprised/sad/angry/sleepy/curious。"
-                    "注意“comfort/concerned/caring”等都不是合法 emotion，"
-                    "想表达关心请用 sad 或 happy，配上 action=comfort。\n"
-                    "action——必须严格取以下之一："
-                    "idle/greet/listen/think/talk/laugh/wave/yawn/comfort。\n"
-                    "intensity——1~5 的整数。\n"
-                    "不要输出任何其他文字，不要重复原句。\n"
-                    "她说的话：" + decision["text"]
-                )
-                _rep_raw = await asyncio.wait_for(
-                    self._llm.chat([{"role": "user", "content": _rep_prompt}],
-                                   options={"temperature": 0.0, "max_tokens": 80}),
-                    timeout=12.0,
-                )
-                _rep = parse_decision(_rep_raw)
-                if decision_had_json(_rep_raw):
-                    decision["emotion"] = _rep.get("emotion", "neutral")
-                    decision["action"] = _rep.get("action", "talk")
-                    decision["intensity"] = _rep.get("intensity", 3)
-                    logger.info("JSON 兜底补全: emotion=%s action=%s",
-                                decision["emotion"], decision["action"])
-                else:
-                    logger.warning("JSON 兜底重试仍未返回 JSON，保留原决策")
-            except Exception:  # noqa: BLE001
-                logger.warning("JSON 兜底重试失败，保留原决策", exc_info=True)
-
-        # 记录历史（方案 C：打字聊天与双工共用共享会话历史，双向连贯）
-        # 记 decision["text"]（已清描写/截断的干净文本）而非 raw——raw 是含 thinking 的
-        # 原始 JSON，且可能比实际发出的句子多（超预算被丢）；历史与"她真说出口的"对齐，
-        # 否则她下一轮会"记得"屏幕/语音里根本没出现的句子。
-        shared_history().add_turn("user", user_text, source="chat")
-        shared_history().add_turn("assistant", decision["text"], source="chat")
-
-        # 发决策事件（streamed=True：句子已逐句播放，TTS 不再整段重播）
-        await self._bus.publish(Event(EventType.AI_DECISION, {
-            "emotion": decision["emotion"],
-            "action": decision["action"],
-            "intensity": decision.get("intensity", 3),
-            "text": decision["text"],
-            "streamed": streamed,
-            "channel": channel,
-            "reply_target": reply_target,
-            "user_activity": self._activity_payload(),
-            "voice": self._current_voice(),
-        }, "dialogue"))
 
         # 长期记忆：【2026-10-11】旧单句白名单提炼**已断开**（保留代码可回退），
         #   改走"整段上下文 LLM 提炼"（上下文快超限时自动触发；详见 _maybe_synthesize_memory）。
