@@ -13,6 +13,7 @@
 
 | commit | 时间 | 类型 | 一句话 | 验证 |
 |---|---|---|---|---|
+| `8e68ed1` | 00:0x | fix | **双工过渡看门狗从来没启动过——重连卡死时她会永久静默**：`_duplex_in_transition` 禁言闸门会把 `_on_duplex_speak` 的开口全丢弃（2001/3336），正常出口只有 connected/prepared（2989/3047）；重连卡在"正在重连"类状态、prepared 永不到达时，闸门**永不起下课** → 她永久静默且零报错。看门狗方法 `_duplex_force_clear_transition`（20s 强制解除禁言）09-08 就写好了，但**全仓零启动点**——2912 的注释却一直承诺"配合看门狗兜底"。修法：闸门拉起处记 `_duplex_transition_since` 时间戳；方法补 20s elapsed 守卫（没到窗口不动、没记时间戳不动）；挂 5s 双工诊断 tick（与哑火看门狗同 tick）。顺带删 `cloud_omni_realtime._reopen_stream` 死包装（锁不可重入，真调用方都在持锁状态直接调 `_reopen_stream_locked`，包装零调用）+ 修三处提到它的注释。 | 回归 **14 项**（两对照组：闸门没起 / 20s 窗口内都不许误清）；**四刀变异全红**（阈值失效→卡死也不清 / 抽 raise 时间戳 / 抽 tick 调用 / 死包装复活）；全量门禁 **144/144**（12m39s） |
 | `05fee72` | 23:5x | test | **闸门登记对账（「写了没进闸门」第五次复发）**：`tools/` 下 8 个 `check_*.py`/`test_*.py` 从未登记进 check_all——4 个硬编码开发机 G:/H: 盘路径（换机即废）、1 个要真实百炼 Key + 声卡外放的真机探针、3 个人工诊断仪器；名字长得像闸门，新人跑了报红还以为产品坏了，而它们覆盖的行为**没有任何自动判据在守**。普查口径：tools/ 824 处盘符路径 / 264 文件全部 git 跟踪（进队友包），按「队友会不会跑」切刀——闸门类 39 个文件的命中全是 URL / 注释墓碑 / 变异锚点 / 标准系统位（Edge/WebView2/SystemRoot）/ 测试夹具，**功能代码零 dev 路径依赖**，队友面（doctor/check_all/pack）无出厂缺陷（`src/` 75 处上一轮已定性）。修法：新闸门三条判据——正向（lookalike 要么在 GATES 里、要么 docstring 带「不进闸门：原因」且原因不许空）、反向（登记的脚本都真实存在，防改名后登记项变哑、汇总还显示通过）、去重（同脚本不许登记两次）；8 个文件补免登标记。**顺带把并发会话锁定期缓办的 `test_set_player_name_wiring.py` 补登记**——本闸门第一次跑就把它判了待定，正在尽职。 | 四刀变异全红（未登记新文件 / 撕免登标记 / 登记项指向不存在 / 重复登记）+ 双对照（待定 0 从输出解析、不写死数字）+ 还原后字节一致；全量门禁 **142/142**（12m9s）；新登记测试 venv 单跑 11/11 |
 | `539406e` | 22:45 | fix | **看链·SET_PLAYER_NAME 死订阅清理（写了没接线）**：`GameOcrMonitor` 订阅了 `SET_PLAYER_NAME` 事件（`_on_set_player_name`）并声称「proactive 从用户回复提取名字后发布」，但全仓 grep **零发布者**——proactive.py 零 `player_name` 引用、dialogue.py 无名字提取逻辑；WebUI「我的名字」直调 `set_player_name`（webapp.ocr_set_player_name → GameOcrMonitor.set_player_name）才是唯一真实生效路径。死监听器 + 误导性 docstring/注释已删，改名只走直调路径。 | 新增回归 `src/tests/test_set_player_name_wiring.py` 11/11（WebUI 直调写内存+config / 死方法已删 / 构造无 SET_PLAYER_NAME 订阅）；全量门禁 141/141 |
 | `61a3eb7` | 22:2x | fix | **说链·TTS worker 异常隔离（静默失效）**：`tts.start_worker` 以 `asyncio.create_task(self._worker())` 启动播放 worker，既没存任务句柄、也没加 done_callback，且 `_worker` 循环体无顶层 try/except → 任一条任务里的未捕获异常（位于 try 之外的状态机/事件总线调用）杀死 worker 协程 → 队列停止排空 → 之后所有 TTS 静默失效（"她说了却后面没声"）。`__init__` 加 `self._worker_task=None`；`start_worker` 改 `ensure_future` + `add_done_callback(self._on_worker_done)`；`_worker` 循环体包 try/except（单条坏任务 `logger.exception` + `to_idle` + `continue`，不拖垮整链）；新增 `_on_worker_done` 在 worker 异常退出时 `ensure_future` 重启并重新挂回调。 | 全量门禁 141/141（含 [6] TTS worker 异常隔离 3 断言：首条异常后两条仍分发 / worker 仍存活 / done_callback 重启）；`tools/test_tts_multi_provider.py` 30/30 |
@@ -4757,3 +4758,49 @@ ASCII——中文锚点一律 `.encode("utf-8")` 拼。
 对照组绿且「待定 0」从输出解析（不写死数字）；收尾再跑一次对照，全部变异还原后字节一致。
 全量门禁 **142/142**（12m9s，含新闸门 0.5s / 变异刀 4.1s / 补登记的玩家名接线 1.1s）；
 `test_set_player_name_wiring.py` venv 单跑 11/11。
+
+---
+
+### `8e68ed1` · 双工过渡看门狗从来没启动过——重连卡死时她会永久静默
+
+**问题**：`_duplex_in_transition` 禁言闸门（切角色/重连/换会话时防止弱模型
+persona 未稳定就开口）会把 `_on_duplex_speak` 的开口全丢弃（2001/3336 两处），
+正常出口只有 connected/prepared（2989/3047）。若重连卡在"正在重连"类状态、
+prepared 永不到达，闸门**永不起下课** → 她永久静默、界面无任何报错。
+看门狗方法 `_duplex_force_clear_transition`（20s 强制解除禁言 + 通知 connected）
+09-08 就写好了，但全仓 grep **零启动点**——而 2912 的注释一直写着"配合
+_duplex_force_clear_transition 看门狗兜底"。**承诺了一条不存在的保险丝。**
+
+**修法**（`src/companion/proactive.py`）：
+① `__init__` 加 `_duplex_transition_since = 0.0`；② 闸门拉起处记时间戳；
+③ 方法补 elapsed 守卫（没到 20s 不动、没记时间戳不动——老状态安全默认）；
+④ 挂 5s 双工诊断 tick（与哑火看门狗 `_check_duplex_deadair` 同 tick，文件既有
+idiom，不起新线程）；⑤ 解除时 kind/name/时间戳一并复位，下次拉起重新武装。
+
+**顺带**（`src/llm/cloud_omni_realtime.py`）：删 `_reopen_stream` 死包装——
+锁不可重入（653 实锤），真调用方（set_device 热切换 / _run 写入自愈）都在持锁
+状态下直接调 `_reopen_stream_locked`，加锁 wrapper 零调用；三处提到它的注释改成
+真实路径。
+
+**审计口径**（本次怎么找到它的）：系统性扫「注释承诺了具体机制」的行——从承诺行
+抽私有机制名，核对**有定义且有调用**（39 个承诺名）。两个疑似被人工核实**驳回**
+（扫描脚本自身的误报，记录在案免得下次重踩）：`_capture_watchdog_loop` 是
+`Thread(target=...)` 引用（不带括号，"零调用"是误判，10-23 修的采集看门狗接线
+完好）；`_startup_supervisor` 其实**存在**于 main.py:1982——我的 grep 被 `head -15`
+截断才误判"不存在"，**差点去修一条正确注释**（"结论必须有证据"的又一处价值）。
+
+**踩坑**：
+① **CRLF 工作副本能一直挂着没人发现**：proactive.py 工作副本是 CRLF（早先某次
+文本模式写入留下），而 `.gitattributes` 有 `*.py text eol=lf` + `core.autocrlf=true`
+→ git 比较时归一化 → `git status` 显示**干净**。已二进制转回 LF（CRLF=9543→0）。
+刀必须实测 EOL 不能记。
+② 扫描脚本把实例属性（`self._x=`）和回调引用都误判"零调用/无定义"——枚举之后
+必须人工核实再动手。
+③ 测试里写死的调用数（`>= 3`）在删了死代码后变成谎话 → 从实际调用点取数。
+
+**验证**：`src/tests/test_duplex_transition_watchdog.py` 14 项——[1] 闸门没起不动
+（对照）/ [2] 20s 窗口内不动（对照：正常重连不许被强行放行，否则禁言闸门形同虚设）
+/ [3] 卡过 20s 强制解除 + kind/name/时间戳复位 + 通知 connected / [4] 没记时间戳
+不动 / [5] 三处接线源码断言 / [6] 死包装墓碑。四刀变异全红（M1 阈值 20→99999 即
+"永久静默"回归本身 / M2 抽 raise 时间戳 / M3 抽 tick 调用 / M4 死包装复活），每刀
+断言红在具体那条；双对照 + 还原后字节一致。全量门禁 **144/144**（12m39s）。
