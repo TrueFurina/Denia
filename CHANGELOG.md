@@ -13,6 +13,15 @@
 
 | commit | 时间 | 类型 | 一句话 | 验证 |
 |---|---|---|---|---|
+| `d5e1433` | 21:0x | fix | **听链·坏帧杀守护线程（静默失效）**：ASR 识别循环体无 try/except，单帧畸形音频（如奇数长度 PCM 让 sherpa.feed 的 np.frombuffer 抛 ValueError）冒泡杀死 daemon 线程、且无 supervisor 重启 → 永久失聪（"她听了却再也听不见"）。循环体外层包一层 try/except，坏帧只记日志+跳过+continue，下一帧正常音频仍识别、USER_TEXT 照常发出 | 全量门禁 141/141（含场景 C 畸形帧 + 变异刀 C）；测试三场景 + 四刀变异全过 |
+| `ba5eebc` | — | fix | **双工通话内容不进桌面聊天页/活动日志**：duplex 来源 USER_TEXT 漏过 webapp `_on_chat_user_text` 与 activity_reporter `_on_user_text` 两道闸，既污染桌面聊天页、又误记 direction=user | 测试 13 场景/95 断言 + 15 刀变异；全量门禁 141/141 |
+| `3bb6581` | — | fix | inject_context=false 是"只存不用"——两条记忆写路径却做成"不记" | —（未在本轮复核） |
+| `af170e2` | — | fix | 一句纯聊天永久抹掉她"看懂游戏"的能力——_build_messages 别再改实例状态 | —（未在本轮复核） |
+| `dac37f8` | — | fix | _on_user_text 那一跳也透传 channel/reply_target + 修两处桩签名漂移 | —（未在本轮复核） |
+| `f38f857` | — | fix | 工具链透传 channel/reply_target——QQ 命中工具链时一头没接到、另一头接错 | —（未在本轮复核） |
+| `94ab932` | — | fix | 三个能出声的入口统一判空——聊天发图/调工具此前完全没守 | —（未在本轮复核） |
+| `a7314ed` | — | fix | 清洗后判空——模型只吐舞台动作/markdown 骨架时不再静默丢弃或念出来 | —（未在本轮复核） |
+| `531b6b2` | — | fix | 自查上一处修复的三个缺陷——尾段守卫分层 + 桩不许说谎 + 去掉超时判据 | —（未在本轮复核） |
 | `b34d7a7` | 21:2x | fix | **第七处静默失效·她听到却不回答**：桌面来源（voice/webui/console）的 USER_TEXT 在 `_on_user_text` 走 `asyncio.create_task` 后台任务，而 respond 尾段（剥 markdown / 拟人化 / 记历史 / 发 AI_DECISION，dialogue.py 1205~1336）在 respond 内部只管 LLM 的 try/except（1126~1159）**之外** → 尾段一崩，异常落到无人 await 的后台任务，静默吞掉 → 用户全程无感知。修法**两层**：①尾段自己加守卫，判据与原有 LLM 失败分支同构——**她有没有已经说出口的话**：流式已播出 → 补发非 failed 决策（她话已说出口、TTS 已念完，不能再补一句"失败"）；毫无产出 → 才 failed；②create_task 补 done_callback 作最后防线（覆盖 vision / 媒体等 respond 之外的支路）：取异常（消除 "Task exception was never retrieved" 警告）→ 记日志 → `publish_threadsafe` 补发 failed 气泡，不再对着静音桌宠 | 五场景真值表（正常 / **已答完再崩→不得有 failed** / 非流式再崩→不得有 failed / LLM 没生成→必须有 failed / 崩在 respond 之外→靠 done_callback），含对照组区分「判据正确」与「判据恒真」；**harness 让 FakeLLM 真流式**（第一版把 `_chat_decision` 桩成返回 `(RAW,True)`，一条 PARTIAL_TEXT 都没发，"她已答完"这个前提根本没造出来，于是把"已回答+红字失败"自相矛盾断言成了正确）；等待改循环轮次 + `queue.join()`，不再用 5s 超时（变异 7.9s→3.5s）；**七把刀全红**（摘 done_callback / 守卫恒 failed / 守卫丢非流式兜底）；闸门 +2（137→139）；工作区另有并发「闸门登记对账」+2，合并实测 **141/141** 全绿 |
 | `6a07e12` | 07:5x | fix | **克隆面板「预填她的」从来是坏的**：预置角色「温柔女友」的参考音频随包分发（`_role_assets/ref/xiaowei.wav`），但面板**预填写一份、按钮读另一份**——卡片预填 `voice.ref || demo.ref`，试听/开始克隆只读 `c.voice.ref`；预置角色只有 demo.ref（`path` 还是开发机绝对路径 `D:/GPT-SoVITS/...`）⇒ 试听按钮每次静默 return，「开始克隆」取到空 refPath 后跳过真实克隆、落到「无桥降级」画一条**假进度条**再 toast「克隆完成」——用户机器上什么都没发生（该文件自己的红线写着"不画假进度"）。顺带查到 `/local_img` 是**图片**路由（Content-Type 只认图片、白名单只放行 `char_banners`/`char_avatars`+注册目录），用户自选音频的试听也一直静默 404。修法：`_clRef` 单一来源（预填/试听/克隆共用）、随包资产经新后端 `use_bundled_ref_audio` 物化到 `data/voice_ref/`（白名单防穿越）、选文件换 `pickReferenceAudio`（B3 持久化）、`/local_img` 补音频类型并注册目录、**假进度条整段删** | jsdom 真值表 **24 项**（原样加载 `onboarding_role.js` 整文件真点真走：S1 随包资产 / S2 用户文件 / S3 无桥 / S4 墓碑，两个对照组）；后端门禁 20 项（物化 + **8 条白名单拒绝** + 目录注册 + 音频类型）；**六刀变异全红**、还原后仍绿；闸门 134 → **137**，全量 **137/137**（11m13s） |
 | `b2bc771` | 06:2x | test | **「后端广播 type ↔ 前端分发分支」对账闸门**：后端往前端推消息走 `CoreWebView2.PostWebMessageAsJson`，前端接 `chrome.webview.addEventListener('message')`，两边靠一个字符串 `type` 对上，而**没有任何机制保证它对得上**（`quota_alert` 与 `character_switched` 两起都死在这，症状永远静默：分支不执行、不报错，只是"那个功能不工作"）。只做**单向**（前端 type ⊆ 后端广播全集）——反向会假红：`pet_tip` 就走 `api.pop_pet_bubble()` 1.5s 轮询，桌宠窗的 `chrome.webview` 监听对 `PostWebMessageAsJson` **完全不触发**（rig 页 2026-09-03 实锤：3 次广播 / 0 回执），"广播了但没人用 webview 监听器接"在这里是合法设计。边界必须精确圈定：全仓 `.type === 'x'` 有 25 处以上**不是**消息分发（`dataset.type`、本地事件总线 `ev.type==='asr'`、通知项 `n.type`、骨架 `s.type==='row'`…），一刀切必假红。**顺带补登记两把从没跑过的变异刀**：`_qc_channel_mutation` 与 `_qc_gewechat_mutation` 只在 check_all 的注释里被提到、从没进名单——按项目自己的规矩「加门必须同时加变异」，那两道门**一直是装饰品**；实跑前者，七刀里 **C/D/F/G 四把锚点命中 0 次被静默跳过**（根因：`J()` 写死 CRLF 而 `doctor.py` 早变成 LF，**单行锚点不受影响、刀照跑，所以坏得极隐蔽**） | 七刀变异全过（含"原 bug 原样"与两个"不许误伤"对照组）；渠道探活判级变异修好后**七刀全红**、还原字节一致；微信回调变异五刀全红；闸门 130 → **134**；全量门禁 **134/134**（10m43s） |
@@ -4666,3 +4675,31 @@ qwen3-tts-flash"，防止靠整段删配置过关。
 **后端 `getattr` 读取点 > 出厂模板实际字段 > 注释/命名直觉**。测试全绿也救不了
 字段名写错——因为测试里写的也是同一个错误假设。任何"迁移/修复配置"的代码，
 都要拿真实配置文件的副本跑一次。
+
+---
+
+### `ba5eebc` · 双工通话内容不进桌面聊天页/活动日志
+
+`proactive` 发 `USER_TEXT{source:"duplex"}` 是**侧信道**（专为驱动好感度，早退是两端都有注释的有意设计）。但 `USER_TEXT` 是公开总线，**7 个订阅者里 2 个漏判 `source=="duplex"`**：
+
+- `webapp._on_chat_user_text`：只判 `is_proactive`，不判 `source=="duplex"` → 通话中用户每句话被当打字消息进 `_chat_buffer` 并被 `_persist_chat` 落盘。
+- `activity_reporter._on_user_text`：两个都不判 → 日报把通话原话当打字聊天；且主动搭话也被错标 `direction="user"`（重复 + 错标）。
+
+修：`webapp` 与 `activity_reporter` 两处补 `source=="duplex"` 闸门；主动搭话不在此记（AI 侧已按 `ai_proactive` 记过）。数据不丢（`_publish_call_record` 四个发布点 + `shared_history(source="duplex")` 都在）。
+
+验证：场景 13 正反两路四种来源 + 断言"落盘数与上屏同构" + 断言"通话记录发布点仍在"；95 项断言；变异十二刀 → 十五刀。6 文件 +257/−15。全量门禁 141/141。
+
+---
+
+### `d5e1433` · 听链·坏帧杀守护线程（永久失聪）
+
+`src/voice/asr.py` 的 `_run()` 识别循环体（`while self._running:` 内三分支：免唤醒持续识别 / 唤醒 / 指令）**没有任何 try/except**。单帧畸形/边界音频让识别器内部抛异常冒泡出 `_run`——典型触发：`sherpa.feed` 的 `np.frombuffer(pcm_int16)` 在**奇数长度 PCM** 上抛 `ValueError`。ASR 是 `daemon=True` 线程、由 `start()` 直接拉起、**无 supervisor 重启** → 一次坏帧永久杀死监听线程、全程不报错 → "她听了却再也听不见"。
+
+判据来源：`grep` 确认无重启逻辑；初始化/麦克风启动失败的 `return` 语义保留。
+
+修：循环体外层把三分支识别派发包一层 `try/except Exception`，坏帧只 `logger.error` + `continue`，下一帧正常音频仍识别、USER_TEXT 照常发出（对齐 MEMORY §6「任务体自己兜住」）。
+
+验证：
+- `test_asr_event_flow.py` 新增场景 C：注入 `BadFrameSherpa`（`b"BAD"` 帧抛 ValueError），坏帧夹在唤醒与指令之间，断言 WAKE_WORD + USER_TEXT 仍发出（坏帧被跳过、循环活着）。三场景全过。
+- `_qc_asr_event_flow_mutation.py` 新增刀 C：把 except 的 `continue` 改成 `raise` → 坏帧冒泡杀死线程 → USER_TEXT 消失（鉴别力成立）。因分支整体缩进 +4，B1 锚点同步更新；基线（双引擎 + 畸形帧路径）全绿、四刀（A/B1/B2/C）全红。
+- 全量门禁 141/141（含场景 C + 变异刀 C）（待本轮跑完回填）。
