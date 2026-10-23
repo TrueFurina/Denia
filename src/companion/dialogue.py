@@ -700,10 +700,21 @@ class Dialogue:
             }, "dialogue"))
             await self._state.to_idle("dialogue")
             return
+        # 【2026-10-23】VLM 也可能只吐 markdown 骨架（列表/加粗符号）或纯舞台动作
+        # （"（翻个白眼）"）→ 清洗后为空。与 respond 主链 / 工具链共用同一道闸
+        # （_guard_speakable），否则发一条 text="" 的决策被前端静默丢弃 =
+        # "图也发了、话也不说"；或把舞台指示当图片描述播出去（TTS 念"翻个白眼"）。
+        # 清洗口径与工具链的 _emit_seg 一致：_drop_stage_dirs（"全删空"时返回空串，
+        # 不走 _strip_stage_directions 的"退回原文"保底——保底会把残骸放出来）。
+        # **不加 _humanize_reply 的句数截断**：图片描述不该被"回多长看对方"砍断，
+        # 视觉链本就该说清图里是什么（10-12 工具链对齐时也没给它加截断）。
+        _ans = self._drop_stage_dirs(self._strip_markdown(ans))
+        if not await self._guard_speakable(_ans, "", None):
+            return
         # 记录历史（与打字聊天共用共享会话历史，双向连贯）
         shared_history().add_turn(
             "user", ((text or "") + f" [图片×{len(images)}]"), source="chat")
-        shared_history().add_turn("assistant", ans, source="chat")
+        shared_history().add_turn("assistant", _ans, source="chat")
         # 【2026-10-04 21:55 新增·看图后写记忆】此前 `vision_router` 零记忆代码、
         # `_respond_vision_chat` 看完图只记 shared_history（**进程内**、重启即失），
         # ⇒ 用户 21:50 通话里说「我等会发给你看照片」、她「我已经迫不及待想看啦」，
@@ -719,8 +730,8 @@ class Dialogue:
             logger.debug("看图记忆提炼失败（不影响回复）", exc_info=True)
         await self._bus.publish(Event(EventType.AI_DECISION, {
             "emotion": "neutral", "action": "talk", "intensity": 3,
-            # 【23:11】VLM 常顺手给 markdown（列表/加粗），一并剥掉
-            "text": self._strip_markdown(ans), "streamed": False,
+            # 【23:11】VLM 常顺手给 markdown（列表/加粗），一并剥掉（见上方 _ans）
+            "text": _ans, "streamed": False,
             "channel": "", "reply_target": None,
             "user_activity": self._activity_payload(),
             "voice": self._current_voice(),
@@ -1066,6 +1077,25 @@ class Dialogue:
         }, "dialogue"))
         await self._state.to_idle("dialogue")
 
+    async def _guard_speakable(self, text: str, channel: str,
+                               reply_target: Optional[dict]) -> bool:
+        """清洗后的终稿必须"有可说的内容"，否则发失败气泡并返回 False。
+
+        【2026-10-23】**三个能出声的入口共用这一道闸**：respond 主链、
+        `_respond_with_tools`（聊天中调用工具）、`_respond_vision_chat`（聊天发图）。
+        三者的终稿都过 `_strip_markdown`（± `_humanize_reply`），而这两个清洗都可能把
+        内容清空——纯 markdown 骨架（"**"/"__"）或纯舞台动作（"（翻个白眼）"）。
+        不拦的两种结局：
+          · text="" → 前端静默丢弃 → "说了话没人应"；
+          · 未清洗的残骸当台词播出去 → TTS 念"翻个白眼"。
+        调用方写法：`if not await self._guard_speakable(t, ch, rt): return`。
+        """
+        if (text or "").strip():
+            return True
+        logger.warning("清洗后无可说内容（纯 markdown 骨架或纯舞台动作描写）")
+        await self._publish_empty_reply(channel, reply_target)
+        return False
+
     async def _on_unity_inbound(self, e: Event) -> None:
         d = e.data or {}
         msg_type = d.get("message_type")
@@ -1259,10 +1289,8 @@ class Dialogue:
             #      路径下 TTS 把它当台词念出来（"翻个白眼"）——正是 10-11/10-14 两次要治的。
             # `_humanize_reply` 只在"输入本身就是空 / 全是舞台动作 / 全是空白"时返空
             # （实测"好呀/嗯/啊？/呜呜……"都不返空），所以这一查同时覆盖 ① ②。
-            # 两种都按"空响应"走同一个出口（见 _publish_empty_reply）。
-            if not (_hum or "").strip():
-                logger.warning("清洗后无可说内容（纯 markdown 骨架或纯舞台动作描写）")
-                await self._publish_empty_reply(channel, reply_target)
+            # 三种坏结局都按"空响应"走同一个出口（见 _publish_empty_reply / _guard_speakable）。
+            if not await self._guard_speakable(_hum, channel, reply_target):
                 return
             decision["text"] = _hum
 
@@ -1610,6 +1638,13 @@ class Dialogue:
             _text_out = self._humanize_reply(
                 self._strip_markdown(result),
                 max_sentences=_rb_sent, trim_min_chars=_rb_chars)
+        # 【2026-10-23】工具链这条终稿也要过同一道闸。此前它 strip+humanize 之后
+        # **不判空**：模型/工具只返回"（翻个白眼）"这类纯舞台动作时 _text_out 为 ""，
+        # 发出去被前端静默丢弃 → "问了话、工具也跑了，她却不说话"。
+        # channel/reply_target 传 ("", None)：工具链本就未接入外部通道（见下方发布），
+        # 这个通道缺口另案记录，不在本条里混着改。
+        if not await self._guard_speakable(_text_out, "", None):
+            return True
         # 记录文本历史（不掺工具调用痕迹，保持多轮自然）
         shared_history().add_turn("user", user_text, source="chat")
         shared_history().add_turn("assistant", _text_out, source="chat")
