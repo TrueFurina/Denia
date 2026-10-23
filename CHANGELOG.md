@@ -13,6 +13,7 @@
 
 | commit | 时间 | 类型 | 一句话 | 验证 |
 |---|---|---|---|---|
+| `05fee72` | 23:5x | test | **闸门登记对账（「写了没进闸门」第五次复发）**：`tools/` 下 8 个 `check_*.py`/`test_*.py` 从未登记进 check_all——4 个硬编码开发机 G:/H: 盘路径（换机即废）、1 个要真实百炼 Key + 声卡外放的真机探针、3 个人工诊断仪器；名字长得像闸门，新人跑了报红还以为产品坏了，而它们覆盖的行为**没有任何自动判据在守**。普查口径：tools/ 824 处盘符路径 / 264 文件全部 git 跟踪（进队友包），按「队友会不会跑」切刀——闸门类 39 个文件的命中全是 URL / 注释墓碑 / 变异锚点 / 标准系统位（Edge/WebView2/SystemRoot）/ 测试夹具，**功能代码零 dev 路径依赖**，队友面（doctor/check_all/pack）无出厂缺陷（`src/` 75 处上一轮已定性）。修法：新闸门三条判据——正向（lookalike 要么在 GATES 里、要么 docstring 带「不进闸门：原因」且原因不许空）、反向（登记的脚本都真实存在，防改名后登记项变哑、汇总还显示通过）、去重（同脚本不许登记两次）；8 个文件补免登标记。**顺带把并发会话锁定期缓办的 `test_set_player_name_wiring.py` 补登记**——本闸门第一次跑就把它判了待定，正在尽职。 | 四刀变异全红（未登记新文件 / 撕免登标记 / 登记项指向不存在 / 重复登记）+ 双对照（待定 0 从输出解析、不写死数字）+ 还原后字节一致；全量门禁 **142/142**（12m9s）；新登记测试 venv 单跑 11/11 |
 | `539406e` | 22:45 | fix | **看链·SET_PLAYER_NAME 死订阅清理（写了没接线）**：`GameOcrMonitor` 订阅了 `SET_PLAYER_NAME` 事件（`_on_set_player_name`）并声称「proactive 从用户回复提取名字后发布」，但全仓 grep **零发布者**——proactive.py 零 `player_name` 引用、dialogue.py 无名字提取逻辑；WebUI「我的名字」直调 `set_player_name`（webapp.ocr_set_player_name → GameOcrMonitor.set_player_name）才是唯一真实生效路径。死监听器 + 误导性 docstring/注释已删，改名只走直调路径。 | 新增回归 `src/tests/test_set_player_name_wiring.py` 11/11（WebUI 直调写内存+config / 死方法已删 / 构造无 SET_PLAYER_NAME 订阅）；全量门禁 141/141 |
 | `61a3eb7` | 22:2x | fix | **说链·TTS worker 异常隔离（静默失效）**：`tts.start_worker` 以 `asyncio.create_task(self._worker())` 启动播放 worker，既没存任务句柄、也没加 done_callback，且 `_worker` 循环体无顶层 try/except → 任一条任务里的未捕获异常（位于 try 之外的状态机/事件总线调用）杀死 worker 协程 → 队列停止排空 → 之后所有 TTS 静默失效（"她说了却后面没声"）。`__init__` 加 `self._worker_task=None`；`start_worker` 改 `ensure_future` + `add_done_callback(self._on_worker_done)`；`_worker` 循环体包 try/except（单条坏任务 `logger.exception` + `to_idle` + `continue`，不拖垮整链）；新增 `_on_worker_done` 在 worker 异常退出时 `ensure_future` 重启并重新挂回调。 | 全量门禁 141/141（含 [6] TTS worker 异常隔离 3 断言：首条异常后两条仍分发 / worker 仍存活 / done_callback 重启）；`tools/test_tts_multi_provider.py` 30/30 |
 | `ec7c53b` | 21:3x | fix | **听链·双工采集卡死看门狗（静默失效）**：`cloud_omni_realtime._subproc_capture_loop` 阻塞在 `proc.stdout.read(4)`，无超时；注释承诺的「卡死看门狗线程」全文件 grep 证实**根本不存在** → 子进程活着却不再写（设备热插拔 / AGC 卡死 / 回调冻结）时 `read` 永久阻塞 → 采集冻结、既不重启也不报错（"她听了却卡死"的静默永久失聪）。抽 `_capture_stalled`/`_kill_capture_proc`/`_watchdog_tick`/`_capture_watchdog_loop` 四纯方法，每轮启动 daemon 看门狗线程周期检测（距最后一块音频 >2s）并 kill 子进程 → read EOF → 内层 break → `restarts<5` 自动重启；看门狗读 `self._last_blk_ts`（原为局部变量，跨线程恒读默认 0.0 → 会误杀健康流，已改实例属性并开局置 `_cap_t0`）。 | 全量门禁 141/141（含场景 D 8 断言 + 判据恒 False 反向对照）；测试 19/19 |
@@ -4706,3 +4707,53 @@ qwen3-tts-flash"，防止靠整段删配置过关。
 - `test_asr_event_flow.py` 新增场景 C：注入 `BadFrameSherpa`（`b"BAD"` 帧抛 ValueError），坏帧夹在唤醒与指令之间，断言 WAKE_WORD + USER_TEXT 仍发出（坏帧被跳过、循环活着）。三场景全过。
 - `_qc_asr_event_flow_mutation.py` 新增刀 C：把 except 的 `continue` 改成 `raise` → 坏帧冒泡杀死线程 → USER_TEXT 消失（鉴别力成立）。因分支整体缩进 +4，B1 锚点同步更新；基线（双引擎 + 畸形帧路径）全绿、四刀（A/B1/B2/C）全红。
 - 全量门禁 141/141（含场景 C + 变异刀 C）（待本轮跑完回填）。
+
+---
+
+### `05fee72` · 闸门登记对账：长得像闸门的脚本，必须要么登记、要么写明为什么不用
+
+**问题（「写了没进闸门」第五次复发）**：`tools/` 下 8 个 `check_*.py` / `test_*.py`
+从未登记进 check_all——4 个硬编码开发机 G:/H: 盘路径（`check_sample` / `check_v2` /
+`check_turn_taking` / `check_ww_identity`，换机即废）、1 个要真实百炼 Key + 声卡外放的
+真机探针（`test_onboarding_role_backend`）、3 个人工诊断仪器（`check_tts_audio` /
+`check_turn_audio_len` / `check_cascade_status`）。名字长得像闸门，新人跑了报红还会
+以为产品坏了；而它们覆盖的行为**没有任何自动判据在守**。前四次：`test_context_persistence`
+27 项全绿而闸门零命中、`audit_dead_ids` 写着"纳入自测后即成为回归闸门"却从没进、
+`_qc_channel_mutation`/`_qc_gewechat_mutation` 只在 check_all 注释里被提到、并发会话的
+`test_set_player_name_wiring` 因 check_all 被锁而留在树上没接线。
+
+**普查口径（先回答"会不会绊到队友"，再决定动不动）**：tools/ 全量盘符路径 824 处 /
+264 个文件，**全部 git 跟踪**（按 `git ls-files` 进队友包）。按「队友会不会跑」切刀：
+闸门类 39 个文件的命中逐条看过，全是 URL / 注释墓碑（check_all 自己记录旧
+`G:/ai对话/11` 的说明）/ 变异刀锚点（故意写 dev 路径测闸门）/ 标准系统位（Edge、
+WebView2、SystemRoot）/ 测试夹具输入——**功能代码零 dev 路径依赖**，队友面
+（doctor / check_all / pack）无出厂缺陷。228 个 dev 研究脚本（bake/_analyze/gen 系）
+是一次性工具，不拦。`src/` 75 处上一轮已定性无出厂缺陷。
+
+**修法**：新闸门 `tools/check_gate_registry.py`，三条判据：
+① **正向**——`tools/` 与 `src/tests/` 顶层每个 lookalike，要么出现在
+`check_all.GATES` 的 argv 里，要么 docstring 带「不进闸门：<原因>」（原因不许空，
+否则就是第二个「发现」栏）；② **反向**——登记的每个脚本路径都真实存在（防改名/
+删除后登记项变哑，而汇总里还显示这一项「通过」）；③ **去重**——同一脚本不许登记
+两次（2026-10-21 教训：重复登记白跑两遍还互相打架）。8 个文件补免登标记，各带原因。
+变异刀 `tools/_qc_gate_registry_mutation.py`：四刀注入 + 双对照。
+
+**踩坑（五个，全部当场修）**：
+① 登记表注释里躺着已删重复登记的墓碑（`smoke_import.py` 在注释里出现第二次）→
+正则扫源码会把自己注释满足 → **必须 AST 解析** check_all（且 `GATES` 是带类型标注的
+`AnnAssign`，`ast.Assign` 遍历不到）；
+② GATES 里有 `-m` 式调用，`argv[0]` 不是脚本路径 → 反向/去重必须先跳过，
+否则第一项就假红；
+③ `os.path.join` 在 Windows 给反斜杠，比不过登记表里的正斜杠 → 一把假红 43 个
+（src/tests 全灭）——**跨平台路径比较必须归一**；
+④ 变异刀的 `MARKER_RE` 漏 `re.M`，`^` 只匹配字符串开头 → 「现找目标」直接落空
+（刀报"找不到带免登标记的文件"而不是静默跳过，这条救了它）；
+⑤ 字节字面量两连：`b"中文"` 直接 SyntaxError、字符类里的全角冒号 `[：:]` 同样非
+ASCII——中文锚点一律 `.encode("utf-8")` 拼。
+
+**验证**：四刀全红（M1 放未登记新文件 / M2 撕某免登文件的标记 / M3 把登记项指向
+不存在的脚本 / M4 复制一条登记项），每刀都断言**具体抓到了注入的那个错**（点名文件名 /
+报「不存在」/ 报「重复登记」），不是任意非零退出——分不清「闸门在工作」和「闸门自己崩了」；
+对照组绿且「待定 0」从输出解析（不写死数字）；收尾再跑一次对照，全部变异还原后字节一致。
+全量门禁 **142/142**（12m9s，含新闸门 0.5s / 变异刀 4.1s / 补登记的玩家名接线 1.1s）；
+`test_set_player_name_wiring.py` venv 单跑 11/11。
