@@ -301,6 +301,7 @@ class ProactiveStrategy:
             try:
                 await t
             except (asyncio.CancelledError, Exception):
+                # 任务清理：cancel 后 await 只为回收，CancelledError 是预期结果
                 pass
 
     def _last_proactive_or_zero(self) -> float:
@@ -716,6 +717,7 @@ class ProactiveStrategy:
             if _bridge:
                 _base = _base + '\n' + _bridge
         except Exception:
+            # 降级：桥失败只是少一段跨模式上下文，主提示词照常下发
             pass
         # 【2026-09-11】原来插在它前面的 _TIME_QUOTE_GUARD 已删除：实测那条"报时间必须逐字
         # 引用数字"的硬约束反而诱发模型念时间（英文句式 Current time is …）。现在时段块本身
@@ -847,6 +849,7 @@ class ProactiveStrategy:
             if m:
                 return json.loads(m.group(0))
         except Exception:
+            # 解析失败返回空 dict（调用方按"这轮不开口"处理），见 docstring
             pass
         return {}
 
@@ -1183,6 +1186,7 @@ class ProactiveStrategy:
                     if _fg:
                         parts.append(f'前台窗口：{_fg}')
                 except Exception:
+                    # 降级：前台名拿不到就少一段上下文，不影响指令主体
                     pass
             _fs = self._focus_state()
             if _fs and _fs != '未知':
@@ -1245,6 +1249,7 @@ class ProactiveStrategy:
                     if m.is_game_foreground():
                         return '打游戏中（关键时刻值得开口，其余安静）'
                 except Exception:
+                    # 降级：探测失败按"非游戏前台"继续后面的判据
                     pass
                 # foreground_title 是 @_sampled 方法，必须调用（非采样线程返回缓存值）；
                 # 只 getattr 会拿到 bound method 对象，这里会拿 repr 去做正则匹配。
@@ -1456,7 +1461,8 @@ class ProactiveStrategy:
                 self._duplex_last_ai_emit_ts = 0.0
                 logger.debug('重建会话恢复陪伴帧间隔失败', exc_info=True)
         except Exception:
-            pass
+            # 承重：整段重建失败=本轮通话会话恢复不了，必须留痕（否则"她听不见"零线索）
+            logger.debug('双工通话会话重建失败', exc_info=True)
 
     # ================= 通话档位 / 设备 / 控制（双工通话面板「接线层」） =================
     # 只写状态属性 + 复用已有 client 公共 API（set_instructions / reprepare / set_call_mute /
@@ -1976,7 +1982,8 @@ class ProactiveStrategy:
                         logger.info('知识库变化(%r → %r)：已请求重建双工会话，立即下发新提示词', _prev, kb_id)
                         return True
         except Exception:
-            pass
+            # 承重：KB 变化推不动重建=她还在用旧知识的提示词，必须留痕
+            logger.debug('知识库变化重建双工会话失败', exc_info=True)
         return False
 
     def _maybe_refresh_time_snapshot(self, client: Any) -> None:
@@ -2054,6 +2061,7 @@ class ProactiveStrategy:
                 try:
                     _os.makedirs(_d, exist_ok=True)
                 except Exception:
+                    # 降级：目录建失败后面写盘会失败并 return None，图标本就可选
                     pass
                 _safe = "".join(c for c in _pid if c.isalnum() or c in "-_") or "app"
                 _p = _os.path.join(_d, _safe + ".png")
@@ -2062,6 +2070,7 @@ class ProactiveStrategy:
                         _f.write(_b64.b64decode(b64))
                     return _p
                 except Exception:
+                    # 降级：写盘失败→无图标（调用方按无图标处理），函数末尾另有总兜底日志
                     return None
 
             # 已有图标 → 直接落盘
@@ -2098,6 +2107,7 @@ class ProactiveStrategy:
                                     if _os.path.isfile(cand2):
                                         return cand2
                     except Exception:
+                        # 降级：这个目录列不动就换下一个 base，图标解析 best-effort
                         pass
                 return None
 
@@ -2122,6 +2132,7 @@ class ProactiveStrategy:
             try:
                 _reg.update(_pid, icon_b64=_b64_out)
             except Exception:
+                # 降级：回填失败只影响"下次还要再提取一次"，本次图标已拿到
                 pass
             return _write_tmp(_b64_out)
         except Exception as _e:
@@ -2224,7 +2235,9 @@ class ProactiveStrategy:
                 from .conversation_history import shared_history
                 shared_history().add_turn("assistant", t, source="duplex")
             except Exception:
-                pass
+                # 承重：这是"打字侧接得上语音对话"的桥，失败必须留痕（否则用户看到
+                # 打字时她"忘了刚在电话里说过什么"却零线索）
+                logger.debug('双工AI发言写入共享历史失败（打字侧将接不上语音上下文）', exc_info=True)
             _buf = list(getattr(self, '_duplex_ai_lines', None) or [])
             _buf.append(t)
             if len(_buf) > 12:
@@ -2240,7 +2253,8 @@ class ProactiveStrategy:
             # 供云端双工（用户侧转写）共用，避免两条链路逻辑分叉。
             self._maybe_trigger_duplex_memory_extract()
         except Exception:
-            pass
+            # 承重：整段失败=这句话既没进共享历史也没进缓冲，留痕
+            logger.debug('双工AI发言记录整段失败', exc_info=True)
 
     async def _duplex_extract_memory(self) -> None:
         """【A-4】从最近的语音用户片段里提炼可长期记住的用户事实并入库。
@@ -2314,6 +2328,7 @@ class ProactiveStrategy:
                 return (title or proc, 'chat')
             return (title or proc, 'other')
         except Exception:
+            # 降级：解析失败返回 None，调用方按"未识别软件"处理（不猜）
             return None
 
     def _save_duplex_talk_log(self) -> None:
@@ -2330,9 +2345,11 @@ class ProactiveStrategy:
                 try:
                     _save('\n'.join(_buf))
                 except Exception:
-                    pass
+                    # 承重：双工对话进不了长期记忆=通话后她不记得说过什么，必须留痕
+                    logger.debug('双工对话写入长期记忆失败', exc_info=True)
         except Exception:
-            pass
+            # 承重：同上，外层兜底也要留痕（内存 store 缺失是正常路径，异常不是）
+            logger.debug('双工对话存档整段失败', exc_info=True)
 
     def _similar_to_recent(self, text: str) -> bool:
         """与最近说过的话相似（True=丢弃）。"""
@@ -2504,6 +2521,8 @@ class ProactiveStrategy:
                     timeout=20.0,
                 )
             except Exception:
+                # 承重：话术 LLM 失败=这次主动搭话不出口，留痕（超时/限额/网断都可诊断）
+                logger.debug('主动搭话话术生成失败（本次不开口）', exc_info=True)
                 return
             text = self._clean_duplex_speech((raw or '').strip())
             if not text or self._is_empty_filler(text) or self._similar_to_recent(text):
@@ -3104,6 +3123,7 @@ class ProactiveStrategy:
             from ..ui.mode_notify import update_mode_notify
             update_mode_notify(connected=True)
         except Exception:
+            # 降级：闸门已解除，通知刷新失败只影响角标即时性（下条状态会纠正）
             pass
 
     async def _log_duplex_source(self, verdict: str, text: str) -> None:
@@ -3122,6 +3142,7 @@ class ProactiveStrategy:
                 if m is not None:
                     _, fg_proc = m.foreground_process()
             except Exception:
+                # 降级：本函数是开口溯源日志，拿不到进程名就少一个字段，不拦开口
                 pass
             call = False
             try:
@@ -4022,6 +4043,7 @@ class ProactiveStrategy:
                 c.set_instructions(text, prefix)
                 return
             except TypeError:
+                # 兼容垫：老客户端 set_instructions 只收一个参数，退回单位置调用
                 pass
         c.set_instructions(text)
 
@@ -4112,6 +4134,7 @@ class ProactiveStrategy:
                                 if not _detected and self._app_knowledge._current is not None:
                                     self._app_knowledge.reset()
                         except Exception:
+                            # 降级：应用识别失败这轮不切知识库，下 5s tick 再试
                             pass
                     _sc = getattr(self, '_switch_controller', None)
                     if _sc is None:
@@ -4341,6 +4364,7 @@ class ProactiveStrategy:
                 if _mic_hvd is not None:
                     _mic_hvd.stop()
             except Exception:
+                # 清理路径：VAD 停不掉不影响主流程（进程退出会回收），不 raise
                 pass
 
     # ======== 云端双工用户自有端点（2026-09-24） ========
@@ -4729,6 +4753,7 @@ class ProactiveStrategy:
             from types import SimpleNamespace
             return SimpleNamespace(**_merged)
         except Exception:
+            # 降级：配置合并失败→None，调用方按"云端 omni 不可用"走本地/快照
             return None
 
     def _cloud_omni_enabled(self) -> bool:
@@ -5577,12 +5602,14 @@ class ProactiveStrategy:
                     if _ut and EXTRACT_HINT_RE.search((_ut[-1] or '')):
                         _fire = True
                 except Exception:  # noqa: BLE001
-                    pass
+                    # 承重：提示词命中检查失败只少一条立即提炼触发，留痕
+                    logger.debug('读取最近用户发言做提炼命中判断失败', exc_info=True)
             if _fire:
                 _loop = asyncio.get_running_loop()
                 _loop.create_task(self._duplex_extract_memory())
         except Exception:
-            pass
+            # 承重：提炼触发器自己崩=语音里说的偏好水远不会进记忆，必须留痕
+            logger.debug('双工记忆提炼触发失败', exc_info=True)
 
 
     async def _run_local_duplex(self) -> None:
@@ -5974,6 +6001,7 @@ class ProactiveStrategy:
                                 fg_game_name = _sp_proc
                             logger.info('软件档案强制锁：前台进程 %r 在高性能档案中（白名单名匹配失败，档案兜底命中）', _sp_proc)
                     except Exception:
+                        # 降级：档案匹配失败退回后面的知识库/白名单判据，锁模式决策不断链
                         pass
                 recognized_game_lock = False
                 fg_proc = ''
@@ -6073,6 +6101,7 @@ class ProactiveStrategy:
                             util_pct, mem_pct, _own_model_active, heavy,
                             getattr(self, '_duplex_load_rounds', 0), locked)
                 except Exception:
+                    # 诊断日志自身失败不该再触发告警，也不该打断锁模式循环
                     pass
                 if heavy:
                     self._duplex_load_rounds = getattr(self, '_duplex_load_rounds', 0) + 1
@@ -7193,6 +7222,7 @@ class ProactiveStrategy:
                 if '视频' in _title or '直播' in _title:
                     return True
             except Exception:
+                # 降级：判"可评论"失败按不可评论，标题关键词那两条已足够常用
                 pass
         return False
 
@@ -7243,6 +7273,7 @@ class ProactiveStrategy:
             try:
                 exc = f.exception()
             except Exception:
+                # 任务被取消时 f.exception() 抛 CancelledError——无需记录
                 return
             if exc:
                 logger.error('双工运行时同步协程异常（此前被静默吞掉）: %s', exc, exc_info=exc)
@@ -7695,6 +7726,7 @@ class ProactiveStrategy:
                 if _sp_mode == MODE_DUPLEX:
                     return ('realtime', '软件档案模式')
             except Exception:
+                # 降级：档案判据失败继续问知识库/白名单，锁模式决策链不断
                 pass
         if self._game_knowledge is not None:
             try:
@@ -7704,6 +7736,7 @@ class ProactiveStrategy:
                 if _gk_mode == 'duplex':
                     return ('realtime', '知识库陪伴模式')
             except Exception:
+                # 降级：同上，继续走白名单/快照判据
                 pass
         if self._force_snapshot_games:
             for _f in self._force_snapshot_games:
@@ -7794,6 +7827,7 @@ class ProactiveStrategy:
         try:
             return asyncio.get_running_loop()
         except RuntimeError:
+            # 预期：桥线程里本就没有运行中的 loop，往下走线程兜底（见下方修复注释）
             pass
         # 【2026-10-17 修复·拨号拿不到循环 → 云端客户端永不拉起】
         # 拨号路径是「JS 桥线程 → start_duplex_call → set_duplex_mode(reason='call_start')」，
@@ -8243,6 +8277,7 @@ class ProactiveStrategy:
                         _tier = getattr(_p, 'tier', '') or ''
                         _prof = {'id': getattr(_p, 'id', ''), 'display_name': getattr(_p, 'display_name', ''), 'exe_name': getattr(_p, 'exe_name', ''), 'mode': getattr(_p, 'mode', ''), 'tier': _tier}
                 except Exception:
+                    # 降级：诊断接口里查档案失败只少 matched_profile 字段，不瞎猜
                     pass
             return {'success': True, 'foreground_exe': _proc, 'game_name': _gn, 'decision_mode': 'snapshot' if _mode is True else 'duplex', 'decision_source': _source, 'matched_profile': _prof, 'high_performance': _tier == 'high_performance'}
         except Exception as e:
@@ -8311,6 +8346,7 @@ class ProactiveStrategy:
                     try:
                         pids.append(int(parts[1]))
                     except ValueError:
+                        # tasklist 表头/空行混进来，跳过这行
                         continue
         except Exception:
             return []
@@ -8367,6 +8403,7 @@ class ProactiveStrategy:
                     try:
                         pids.append(int(parts[1]))
                     except ValueError:
+                        # tasklist 表头/空行混进来，跳过这行
                         continue
             return pids
         except Exception:
@@ -8387,6 +8424,7 @@ class ProactiveStrategy:
             try:
                 tree |= set(eng.model_process_pids())
             except Exception:
+                # 降级：引擎自报 PID 失败时退回 Comni.exe 树，排除不全只影响显存统计精度
                 pass
         return list(tree)
 
@@ -8409,6 +8447,7 @@ class ProactiveStrategy:
                     if mb:
                         total += float(mb)
                 except Exception:
+                    # 单个 PID 查不到就跳过，总和按已查到的算（统计精度降级，不中断）
                     continue
             return total
         except Exception:
@@ -8437,7 +8476,8 @@ class ProactiveStrategy:
                 try:
                     subprocess.run(['taskkill', '/T', '/F', '/PID', str(pid)], capture_output=True, timeout=8, creationflags=134217728)
                 except Exception:
-                    pass
+                    # 承重：单个 PID 杀不掉=显存没还干净，留痕（taskkill 超时/拒绝访问都可诊断）
+                    logger.debug('游戏锁: taskkill PID %s 失败', pid, exc_info=True)
             self._comni_stopped_by_us = True
             logger.info('游戏锁: 已退出 Comni 进程(PID=%s)，释放本地模型显存给游戏', pids)
         except Exception as e:
@@ -8462,6 +8502,7 @@ class ProactiveStrategy:
                 if eng.is_model_loaded():
                     return True
             except Exception:
+                # 降级：探测失败按"未激活"，与函数末尾的 _duplex_locked 兜底一致
                 pass
         return not getattr(self, '_duplex_locked', False)
 
@@ -9375,7 +9416,8 @@ class ProactiveStrategy:
                 try:
                     self._screen_batch_task = asyncio.ensure_future(self._screen_batch_loop())
                 except Exception:
-                    pass
+                    # 承重：批量循环起不来=看屏积累的轨迹永远不会被整合出声，留痕
+                    logger.debug('屏幕活动批量循环启动失败（看屏互动将不会发生）', exc_info=True)
         except Exception:
             logger.debug('屏幕活动累计异常', exc_info=True)
 
@@ -9385,6 +9427,7 @@ class ProactiveStrategy:
             self._screen_batch_buf = []
             self._screen_batch_ts = time.time()
         except Exception:
+            # 降级：重置失败最坏结果是旧轨迹多留一轮，下轮 flush 会清空
             pass
 
     async def _screen_batch_loop(self):
@@ -9400,6 +9443,7 @@ class ProactiveStrategy:
                 except Exception:
                     logger.debug('批量互动 flush 异常', exc_info=True)
         except asyncio.CancelledError:
+            # 任务取消是正常退出路径（_flush/finally 会收尾），不记异常
             pass
         except Exception:
             logger.debug('批量互动循环异常', exc_info=True)
@@ -9441,6 +9485,8 @@ class ProactiveStrategy:
                     timeout=20.0,
                 )
             except Exception:
+                # 承重：整合 LLM 失败=这批轨迹白积累，留痕（超时/限额/网断都可诊断）
+                logger.debug('批量互动整合话术生成失败（本批不出口）', exc_info=True)
                 return
             text = self._clean_duplex_speech((raw or '').strip())
             if not text:
@@ -9544,4 +9590,5 @@ class ProactiveStrategy:
             if dm in (False, True, 'realtime', 'local', 'local_omni') and dm != self._duplex_mode:
                 self.set_duplex_mode(dm)
         except Exception:
-            pass
+            # 承重：模式同步失败=用户在设置里改的档位不生效，留痕
+            logger.debug('从配置同步双工模式失败', exc_info=True)
