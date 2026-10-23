@@ -1061,7 +1061,11 @@ class GameOcrMonitor:
     def set_player_name(self, name: str) -> None:
         """设置游戏玩家名：内存热生效 + 写回 config.yaml（下次启动保留）。
 
-        AI 询问得到名字后（publish SET_PLAYER_NAME 事件）或 WebUI 填写时调用。
+        当前唯一生效路径：WebUI「我的名字」填写（webapp.ocr_set_player_name
+        → GameOcrMonitor.set_player_name）。历史上文档曾声称 proactive 从用户
+        回复提取名字后发布 SET_PLAYER_NAME 事件再经订阅刷新，但该事件全仓无任何
+        发布者，事件路径早已静默死亡，已于 2026-10-23 清理死订阅。改名一律走
+        本直调方法。
         """
         name = (name or "").strip()
         self._player_name = name
@@ -1132,13 +1136,6 @@ class GameOcrMonitor:
             if regions:
                 return regions
         return _deep_copy_regions(self._regions)
-
-    async def _on_set_player_name(self, event: Event) -> None:
-        """事件处理器：proactive 从用户回复提取名字后发布 SET_PLAYER_NAME。"""
-        data = event.data if isinstance(event.data, dict) else {}
-        name = data.get("name")
-        if name:
-            self.set_player_name(str(name))
 
     def _match_self_kill_feed(self, text: str) -> bool:
         """击杀播报精确匹配：玩家是【击杀者】。
@@ -3027,11 +3024,6 @@ class GameOcrMonitor:
         # 卸载、显存充裕，懒加载才能让 GPU OCR 在对局中稳定生效。
         # 启动输入证据门钩子（pynput 全局监听，幂等；独立实例在此启动）
         self._sensor.start()
-        # 订阅玩家名设置事件（proactive 从用户回复提取名字后发布，热生效）
-        try:
-            self._bus.subscribe(EventType.SET_PLAYER_NAME, self._on_set_player_name)
-        except Exception:  # noqa: BLE001
-            pass
         logger.info("游戏 OCR 识别启动: 设备=%s 间隔=%.1fs 冷却=%ss 玩家名=%r",
                     "GPU(DirectML)" if self._ocr_use_gpu else "CPU",
                     self._interval, self._cooldown_s, self._player_name)
