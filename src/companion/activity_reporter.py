@@ -80,6 +80,18 @@ class ActivityReporter:
         d = e.data or {}
         if not isinstance(d, dict):
             return
+        # 【2026-10-23】两条闸门，都与本类 AI 侧的处理对齐：
+        # ① 双工通话里用户说的话不进活动日志的"聊天"流：它已由 `_publish_call_record`
+        #    发 CALL_SPEECH 进独立通话记录通道（docstring 原话"通话记录与聊天流彻底
+        #    分离…不进聊天页"）。混进来会让日报把通话原话当成打字聊天，且
+        #    `shared_history(source="duplex")` 里已有同一份。
+        # ② 主动搭话（is_proactive）不在此记：那是**她说的**，不是用户说的。
+        #    `_on_ai_decision` 已经按 `direction="ai_proactive"` 记过一次——
+        #    在这里再记就会即错标成"用户说的"、又重复记一条。
+        if str(d.get("source") or "") == "duplex":
+            return
+        if d.get("is_proactive"):
+            return
         self._logger.handle_chat(str(d.get("text") or ""), direction="user")
 
     async def _on_ai_decision(self, e: Event) -> None:

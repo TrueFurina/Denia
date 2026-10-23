@@ -2615,6 +2615,16 @@ class CharacterAPI(PetAPI, WindowAPI):
         d = e.data or {}
         if d.get("is_proactive"):
             return
+        # 【2026-10-23 修·通话内容混进聊天页】双工通话里用户说的话**不进聊天页**。
+        # proactive 发 USER_TEXT{source:"duplex"} 只是为了驱动关系事件（dialogue 已对
+        # duplex 早退），而通话文本本来就由 `_publish_call_record` 发 CALL_SPEECH 进独立的
+        # "通话记录"通道——那个函数的 docstring 原话："通话记录与聊天流彻底分离…不进聊天页"，
+        # 本地双工达妮娅侧的注释也重复了一遍。此前这里只判 is_proactive、漏了 duplex ⇒
+        # 通话中用户说的每句话都被当成打字消息追加进 _chat_buffer 并 _persist_chat
+        # **落盘**，正是 10-02 建 CALL_SPEECH 要消除的那种"混进聊天页"（用户没打过的字
+        # 出现在聊天流里，且污染持久的聊天日志）。
+        if str(d.get("source") or "") == "duplex":
+            return
         text = (d.get("text") or "").strip()
         _raw_imgs = d.get("images") or []
         img_urls = self._save_chat_images(_raw_imgs) if _raw_imgs else []

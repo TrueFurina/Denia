@@ -49,13 +49,18 @@ def check(cond, msg):
         FAIL += 1
 
 
-def load_patched(knife_name, source):
-    """把改过的 dialogue 源写到 src/companion/_mut_<name>.py 并导入，返回 (module, path)。"""
+def load_patched(knife_name, source, pkg_dir="companion", pkg="src.companion"):
+    """把改过的源写到 <pkg_dir>/_mut_<name>.py 并导入，返回 (module, path)。
+
+    pkg_dir/pkg 默认指向 src/companion（dialogue.py 一族）；webapp / activity_reporter
+    的刀传 "ui"/"src.ui" 或 "companion"/"src.companion"。放同目录是为了让相对导入
+    （`from ..config import ...`）照原样解析。
+    """
     fname = f"_mut_{knife_name}.py"
-    fpath = os.path.join(ROOT, "src", "companion", fname)
+    fpath = os.path.join(ROOT, "src", pkg_dir, fname)
     with open(fpath, "w", encoding="utf-8") as f:
         f.write(source)
-    modname = f"src.companion.{fname[:-3]}"
+    modname = f"{pkg}.{fname[:-3]}"
     sys.modules.pop(modname, None)
     try:
         return importlib.import_module(modname), fpath
@@ -67,26 +72,72 @@ def load_patched(knife_name, source):
         raise
 
 
-async def _scenario_fails(scenario_fn, DialogueCls):
-    """用给定的 Dialogue 类跑测试里的某个场景函数，返回"它是否判红"。"""
+async def _scenario_fails(scenario_fn, DialogueCls=None,
+                          chat_sink_cls=None, activity_reporter_cls=None):
+    """用给定的（可能被换掉的）被测类跑测试里的某个场景函数，返回"它是否判红"。
+
+    三类注入点都与 harness 的延迟绑定对齐：Dialogue（dialogue.py 一族）、
+    chat_sink_cls（webapp 的聊天页 handler）、activity_reporter_cls（活动日志）。
+    没传的就是 None → 用真身。
+    """
     import src.tests._dlg_voice_harness as harness
     import src.tests.test_dialogue_voice_chain as tv
-    old = harness.Dialogue
-    harness.Dialogue = DialogueCls
+    saved = (harness.Dialogue, harness.chat_sink_cls, harness.activity_reporter_cls)
+    if DialogueCls is not None:
+        harness.Dialogue = DialogueCls
+    if chat_sink_cls is not None:
+        harness.chat_sink_cls = lambda: chat_sink_cls
+    if activity_reporter_cls is not None:
+        harness.activity_reporter_cls = lambda: activity_reporter_cls
     tv.FAIL = 0
     try:
         await scenario_fn()
     finally:
-        harness.Dialogue = old
+        (harness.Dialogue, harness.chat_sink_cls,
+         harness.activity_reporter_cls) = saved
     return tv.FAIL > 0
+
+
+# ── 跨文件刀：改的不是 dialogue.py，而是 webapp / activity_reporter。
+#    字段依次为 (名称, 目标文件, 目录, 包名, 锚点, 替换, 应判红的场景,
+#                harness 注入点名, 变异体里要取的类名)。
+#    harness 注入点对应 _dlg_voice_harness 里的延迟绑定函数（chat_sink_cls /
+#    activity_reporter_cls）——场景 13 经它们取类，所以刀才能打在变异体上。
+#    放模块级：KNIVES 是 _run() 的局部，而这个列表在函数外更稳妥。──
+EXTERNAL_KNIVES = [
+    # 聊天页又收双工用户话 → 通话内容混进聊天页并被 _persist_chat 落盘
+    ("T12_chat_page_shows_duplex",
+     os.path.join("src", "ui", "webapp.py"), "ui", "src.ui",
+     "        if str(d.get(\"source\") or \"\") == \"duplex\":\n"
+     "            return\n"
+     "        text = (d.get(\"text\") or \"\").strip()\n",
+     "        text = (d.get(\"text\") or \"\").strip()\n",
+     ["_scenario_duplex_not_in_chat_page"], "chat_sink_cls", "CharacterAPI"),
+    # 活动日志又收双工用户话 → 日报把通话原话当打字聊天
+    ("T13_activity_log_shows_duplex",
+     os.path.join("src", "companion", "activity_reporter.py"), "companion", "src.companion",
+     "        if str(d.get(\"source\") or \"\") == \"duplex\":\n"
+     "            return\n"
+     "        if d.get(\"is_proactive\"):\n",
+     "        if d.get(\"is_proactive\"):\n",
+     ["_scenario_duplex_not_in_chat_page"], "activity_reporter_cls", "ActivityReporter"),
+    # 活动日志把主动搭话错标成"用户说的"（AI 侧已按 ai_proactive 记过，会重复+错标）
+    ("T14_activity_log_labels_proactive_as_user",
+     os.path.join("src", "companion", "activity_reporter.py"), "companion", "src.companion",
+     "        if d.get(\"is_proactive\"):\n"
+     "            return\n"
+     "        self._logger.handle_chat(",
+     "        self._logger.handle_chat(",
+     ["_scenario_duplex_not_in_chat_page"], "activity_reporter_cls", "ActivityReporter"),
+]
 
 
 async def _run():
     import src.tests.test_dialogue_voice_chain as tv
     from src.companion.dialogue import Dialogue as RealDialogue
 
-    # —— 基线：干净 dialogue.py，十二个场景必须全绿 ——
-    print("=== 基线（干净 dialogue.py，十二个场景应全绿） ===")
+    # —— 基线：干净 dialogue.py，十三个场景必须全绿 ——
+    print("=== 基线（干净代码，十三个场景应全绿） ===")
     for name in ("_scenario_positive", "_scenario_crash_after_streamed",
                  "_scenario_crash_non_streamed", "_scenario_llm_failed_before_output",
                  "_scenario_crash_outside_respond", "_scenario_stage_direction_only",
@@ -203,7 +254,24 @@ async def _run():
             written.append(fpath)
             for sname in scenarios:
                 fn = getattr(tv, sname)
-                bad = await _scenario_fails(fn, mod.Dialogue)
+                bad = await _scenario_fails(fn, DialogueCls=mod.Dialogue)
+                check(bad, f"刀 {name}：{sname} 判红（鉴别力成立）")
+
+        # —— 跨文件刀：改的不是 dialogue.py，而是 webapp / activity_reporter ——
+        for (name, relpath, pkg_dir, pkg, old, new, scenarios,
+             inject, cls_attr) in EXTERNAL_KNIVES:
+            print(f"\n=== 刀 {name}（目标 {relpath}，应让 "
+                  f"{', '.join(s.split('_scenario_')[1] for s in scenarios)} 判红） ===")
+            src = open(os.path.join(ROOT, relpath), "r", encoding="utf-8").read()
+            if old not in src:
+                check(False, f"刀 {name}：找不到锚点（{relpath} 已变，需重对）")
+                continue
+            mod, fpath = load_patched("dialogue_voice_chain_" + name,
+                                      src.replace(old, new, 1), pkg_dir, pkg)
+            written.append(fpath)
+            for sname in scenarios:
+                fn = getattr(tv, sname)
+                bad = await _scenario_fails(fn, **{inject: getattr(mod, cls_attr)})
                 check(bad, f"刀 {name}：{sname} 判红（鉴别力成立）")
     finally:
         for fpath in written:
@@ -217,8 +285,12 @@ async def _run():
                    "T6_tools_guard_removed", "T7_tools_drops_channel",
                    "T8_user_text_drops_channel", "T9_build_drops_game_knowledge",
                    "T10_vision_memory_gated_by_inject",
-                   "T11_promise_memory_gated_by_inject"):
+                   "T11_promise_memory_gated_by_inject",
+                   "T12_chat_page_shows_duplex",
+                   "T13_activity_log_shows_duplex",
+                   "T14_activity_log_labels_proactive_as_user"):
             sys.modules.pop(f"src.companion._mut_dialogue_voice_chain_{_n}", None)
+            sys.modules.pop(f"src.ui._mut_dialogue_voice_chain_{_n}", None)
 
 
 def main():
@@ -227,9 +299,11 @@ def main():
     if FAIL:
         print(f"共 {FAIL} 处不符")
         sys.exit(1)
-    print("全部通过：十二把刀都有鉴别力（done_callback 兜底 + 尾段守卫判据 + 非流式兜底"
+    print("全部通过：十五把刀都有鉴别力（done_callback 兜底 + 尾段守卫判据 + 非流式兜底"
           " + 主链清洗后判空 + 空响应出口文案不漂移 + 视觉链闸门 + 工具链闸门"
-          " + 工具链透传 channel/reply_target + USER_TEXT 那一跳 + 不抹共享游戏知识库 + 两条记忆写路径不闸在 inject 上）")
+          " + 工具链透传 channel/reply_target + USER_TEXT 那一跳 + 不抹共享游戏知识库"
+          " + 两条记忆写路径不闸在 inject 上 + 双工不进聊天页 + 双工不进活动日志"
+          " + 主动搭话不被错标成用户说的话）")
 
 
 if __name__ == "__main__":
