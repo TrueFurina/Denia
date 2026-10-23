@@ -650,7 +650,7 @@ class _AudioPlayer:
         self._stop = threading.Event()
         self._err_total = 0     # 【2026-10-09】写入失败累计（stop 时汇总打印）
         # 【2026-10-09 新增·段错误防护】stream 的 write（_run 线程）与
-        # close/reopen（stop/_reopen_stream）必须互斥——实测并发 write+close
+        # close/reopen（stop/_reopen_stream_locked）必须互斥——实测并发 write+close
         # 会触发 PortAudio 原生层 use-after-free（烟测直接 SIGSEGV）。
         # threading.Lock 不可重入：_run 内部自愈走 _reopen_stream_locked。
         self._lock = threading.Lock()
@@ -699,7 +699,8 @@ class _AudioPlayer:
         return None
 
     def _open_stream_only(self) -> None:
-        """只重建输出流（不起新线程）——_open 与写入自愈 _reopen_stream 共用。"""
+        """只重建输出流（不起新线程）——_open、set_device 与 _run 写入自愈共用
+        （都经 _reopen_stream_locked：锁不可重入，调用方必须已持有 _lock）。"""
         # ---- 优先 sounddevice（与本地双工同一设备表，能正确解析用户设的扬声器名）----
         try:
             import sounddevice as sd
@@ -907,17 +908,6 @@ class _AudioPlayer:
         except Exception:  # noqa: BLE001
             logger.exception("云端双工播放器：重开输出流失败（下轮写入再试）")
 
-    def _reopen_stream(self) -> None:
-        """【2026-10-09 新增·写入自愈】连续写入失败后重建输出流（不开新线程）。
-
-        触发场景：通话中系统重枚举音频端点（换麦/插拔耳机/设备切换）会让
-        OutputStream 变 invalid state，此后每次 write 都抛异常——旧版只打
-        DEBUG（INFO 日志下完全静默）⇒ "明明收到音频、wav 存档也完整，就是
-        没声音且日志零痕迹"（run_20261009_011718 症状）。
-        """
-        with self._lock:
-            self._reopen_stream_locked()
-
     def set_device(self, device_name: str) -> bool:
         """【2026-10-18 新增·通话中切换扬声器】热切换输出设备并立即生效。
 
@@ -962,7 +952,7 @@ class _AudioPlayer:
                 continue
             try:
                 with self._lock:
-                    # 与 stop()/_reopen_stream 的 close/reopen 互斥——
+                    # 与 stop()/_reopen_stream_locked 的 close/reopen 互斥——
                     # 并发 write+close 会段错误（烟测 SIGSEGV 实证）。
                     if self._stop.is_set():
                         break

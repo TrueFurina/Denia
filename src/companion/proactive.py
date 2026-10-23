@@ -2924,6 +2924,9 @@ class ProactiveStrategy:
                        or '后重连' in _s0)
         if _connecting:
             self._duplex_in_transition = True
+            # 看门狗计时起点：prepared 迟迟不来时 _duplex_force_clear_transition 靠它
+            # 判断卡了多久（调用点在 5s 双工诊断 tick，见 _check_duplex_deadair 旁边）。
+            self._duplex_transition_since = time.time()
             logger.info('双工过渡期禁言闸门：拉起（状态=%s）', _s0[:40])
         try:
             from ..ui.mode_notify import update_mode_notify
@@ -3079,17 +3082,30 @@ class ProactiveStrategy:
                 logger.debug('重连前刷新 instructions 失败', exc_info=True)
 
     def _duplex_force_clear_transition(self) -> None:
-        """过渡期看门狗：prepared 迟迟不来（重连卡死）时强制解除禁言，避免永久静默。"""
-        if getattr(self, '_duplex_in_transition', False):
-            logger.warning('双工过渡看门狗：20s 未收到 prepared，强制解除禁言闸门')
-            self._duplex_in_transition = False
-            self._duplex_transition_kind = None
-            self._duplex_transition_name = ''
-            try:
-                from ..ui.mode_notify import update_mode_notify
-                update_mode_notify(connected=True)
-            except Exception:
-                pass
+        """过渡期看门狗（挂在 5s 双工诊断 tick 上）：prepared 迟迟不来（重连卡死）时
+        强制解除禁言，避免永久静默。
+
+        背景：_duplex_in_transition 闸门会把 _on_duplex_speak 的开口全丢弃
+        （2001/3336 两处），正常出口只有 connected/prepared（2989/3047）。若重连卡在
+        "正在重连"类状态、prepared 永不到达，她将**永久静默且零报错**——本看门狗
+        就是那条出口。2026-10-23 接线：方法自 09-08 就写好了，但**从来没有启动点**
+        （2912 的注释却一直承诺"配合 _duplex_force_clear_transition 看门狗兜底"）。
+        """
+        if not getattr(self, '_duplex_in_transition', False):
+            return
+        _since = float(getattr(self, '_duplex_transition_since', 0.0) or 0.0)
+        if not _since or (time.time() - _since) < 20.0:
+            return                      # 还没到 20s，仍在正常重连等待窗口
+        logger.warning('双工过渡看门狗：20s 未收到 prepared，强制解除禁言闸门')
+        self._duplex_in_transition = False
+        self._duplex_transition_since = 0.0
+        self._duplex_transition_kind = None
+        self._duplex_transition_name = ''
+        try:
+            from ..ui.mode_notify import update_mode_notify
+            update_mode_notify(connected=True)
+        except Exception:
+            pass
 
     async def _log_duplex_source(self, verdict: str, text: str) -> None:
         """记录双工开口的触发来源，定位"这句话为什么说出口"。
@@ -4133,6 +4149,10 @@ class ProactiveStrategy:
                     logger.info('双工诊断: 专注=%s 前台=%s 出声=%s 距上次开口=%.0fs 距上次主动=%.0fs', self._focus_state(), _fg, _spk, max(_since_speak, 0), max(_since_active, 0))
                     # 【2026-09-18】哑火看门狗：用户说完话 AI 迟迟不开口 → 告警/兜底
                     await self._check_duplex_deadair()
+                    # 【2026-10-23 接线】过渡期看门狗：重连卡死时禁言闸门没有出口，
+                    # 她会永久静默。方法 09-08 就写好了但一直没启动点（2912 注释却
+                    # 一直承诺"配合看门狗兜底"）。与哑火看门狗挂同一个 5s tick。
+                    self._duplex_force_clear_transition()
                 except Exception:
                     logger.debug('双工诊断日志失败', exc_info=True)
             except Exception:
@@ -8835,6 +8855,7 @@ class ProactiveStrategy:
         # （pk≈0.0002）下永不成立，模型每帧都以为有人在说话。
         self._duplex_call_silence_force_listen = True
         self._duplex_in_transition = False
+        self._duplex_transition_since = 0.0   # 过渡期看门狗计时起点（0=闸门没拉起；见 _duplex_force_clear_transition）
         self._duplex_interaction_slice_nums = None
         self._duplex_frame_interval_s = 0.0   # 0=沿用原硬编码（style 决定 0.5/1.0）
         self._duplex_interaction_style = None

@@ -314,6 +314,11 @@ GATES: list[tuple[str, str, list[str], bool]] = [
     ("视频观看", PY_VENV, ["src/channels/tests/test_video_watch.py"], False),
     ("视频进度", PY_VENV, ["src/channels/tests/test_video_watch_progress.py"], False),
     ("双工停止与麦克风", PY_VENV, ["tools/test_duplex_stop_and_mic.py"], False),
+    # 过渡期看门狗接线（2026-10-23）：重连卡死时禁言闸门没有出口 → 她永久静默。
+    # 方法 09-08 就写好了但从来没有启动点（注释却一直承诺"配合看门狗兜底"）。
+    # 测试守行为两对照组 + 三处接线源码断言 + 死包装墓碑；四刀变异全红。
+    ("过渡看门狗接线", PY_VENV, ["src/tests/test_duplex_transition_watchdog.py"], False),
+    ("过渡看门狗变异", PY_VENV, ["tools/_qc_duplex_transition_mutation.py"], True),
     ("记忆反思", PY_VENV, ["tools/test_memory_reflect.py"], False),
     ("记忆合成", PY_VENV, ["tools/test_memory_synthesis.py"], False),
     ("里程碑落盘", PY_VENV, ["tools/test_milestone_persist.py"], False),
