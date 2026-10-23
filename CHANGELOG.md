@@ -13,6 +13,7 @@
 
 | commit | 时间 | 类型 | 一句话 | 验证 |
 |---|---|---|---|---|
+| `404a849` | 02:1x | fix | **proactive.py 43 处真空吞清零 + 纳入主链静默闸门**：`check_silent_except` 的主链原先只有 cloud_omni_realtime/dialogue/tts 三个文件，而**主动搭话/双工控制/看屏互动/档位同步全在 proactive.py**——普查发现它有 **43 处 `except: pass` 且块内无注释无日志**，其中承重路径包括：双工对话写长期记忆失败（通话后她不记得说过什么）、打字侧接语音上下文的历史桥失败、主动搭话筒术 LLM 失败、看屏批量循环启动失败、taskkill 杀不掉引擎进程、配置档位同步失败。处理口径：**承重路径 `logger.debug(..., exc_info=True)`**（行为不变、失败可诊断），**有意降级补理由注释**（探针失败/任务取消/兼容垫/清理路径）。随后把 proactive.py 纳入 MAIN_CHAIN（现四文件 158 处静默全有注释/日志、0 真静默）。全仓其余 159 处真静默在非主链文件，记录待逐文件推进。 | 闸门 `--main --strict` 0 真静默；变异刀**加第四刀**（往 proactive.py 注入真空吞 → 红并点名，证明新覆盖有牙齿）；四刀全过 + 双还原字节一致；全量门禁 **146/146**（12m29s） |
 | `873ee58` | 01:0x | chore | **出厂模板 24 个死键删掉 + 模板对账闸门**：普查发现 `config.release.yaml` 424 个叶子键里 **24 个没有任何代码读取点**——用户/队友照着模板配了，什么都没发生（`voice`/`voice_id` 同型的放大版）。三个最恶劣的：`proactive.duplex_mic_vad` 有一处读（`getattr(self,'_duplex_mic_vad',True)`）但**全仓没有赋值点**，永远落默认值；`max_per_type_per_day` 被 docstring 承诺为"同类活动每日上限"而真实机制是 `type_cooldown_s`；`sticker.random_probs.*` 整子树死（sticker_bridge 用裸 `random.choice`，参数全硬编码）。删除：`game_stagger`（08-25 已被节奏门禁取代的残留）/ `accumulate_screen` / `duplex_mic_vad` / `duplex_mode_lock_mem_pct`+`util_pct`（兄弟键 ext_mb/silent 都活着）/ `duplex_ocr_frame_overlay` / `duplex_timing_pressure` / `game_immersive` / `heavy_apps_cloud_*`×3 / `immersive_interval_s` / `llm_timeout_s` / `max_per_day` / `max_per_type_per_day` / `react_to_screen` / `sticker.timing_mode`+`random_seed`+`random_cooldown`+`random_probs.*`+`warmth_*`。新闸门 `check_config_keys.py`：模板每个键必须出现在代码 NAME/STRING token 里（**tokenize 丢注释**——注释里提一句不算读取点，那正是 docstring 谎言形态）；例外清单带原因（`_release_note` 元键 / `ollama.options.*` 泛型透传）。 | 两刀变异全红（插死键 / 抽豁免条目——证明清单不是装饰品）；全量门禁 **146/146**（12m25s）；`test_release_template` 无损；模板工作副本 CRLF→LF 还原 |
 | `8e68ed1` | 00:0x | fix | **双工过渡看门狗从来没启动过——重连卡死时她会永久静默**：`_duplex_in_transition` 禁言闸门会把 `_on_duplex_speak` 的开口全丢弃（2001/3336），正常出口只有 connected/prepared（2989/3047）；重连卡在"正在重连"类状态、prepared 永不到达时，闸门**永不起下课** → 她永久静默且零报错。看门狗方法 `_duplex_force_clear_transition`（20s 强制解除禁言）09-08 就写好了，但**全仓零启动点**——2912 的注释却一直承诺"配合看门狗兜底"。修法：闸门拉起处记 `_duplex_transition_since` 时间戳；方法补 20s elapsed 守卫（没到窗口不动、没记时间戳不动）；挂 5s 双工诊断 tick（与哑火看门狗同 tick）。顺带删 `cloud_omni_realtime._reopen_stream` 死包装（锁不可重入，真调用方都在持锁状态直接调 `_reopen_stream_locked`，包装零调用）+ 修三处提到它的注释。 | 回归 **14 项**（两对照组：闸门没起 / 20s 窗口内都不许误清）；**四刀变异全红**（阈值失效→卡死也不清 / 抽 raise 时间戳 / 抽 tick 调用 / 死包装复活）；全量门禁 **144/144**（12m39s） |
 | `05fee72` | 23:5x | test | **闸门登记对账（「写了没进闸门」第五次复发）**：`tools/` 下 8 个 `check_*.py`/`test_*.py` 从未登记进 check_all——4 个硬编码开发机 G:/H: 盘路径（换机即废）、1 个要真实百炼 Key + 声卡外放的真机探针、3 个人工诊断仪器；名字长得像闸门，新人跑了报红还以为产品坏了，而它们覆盖的行为**没有任何自动判据在守**。普查口径：tools/ 824 处盘符路径 / 264 文件全部 git 跟踪（进队友包），按「队友会不会跑」切刀——闸门类 39 个文件的命中全是 URL / 注释墓碑 / 变异锚点 / 标准系统位（Edge/WebView2/SystemRoot）/ 测试夹具，**功能代码零 dev 路径依赖**，队友面（doctor/check_all/pack）无出厂缺陷（`src/` 75 处上一轮已定性）。修法：新闸门三条判据——正向（lookalike 要么在 GATES 里、要么 docstring 带「不进闸门：原因」且原因不许空）、反向（登记的脚本都真实存在，防改名后登记项变哑、汇总还显示通过）、去重（同脚本不许登记两次）；8 个文件补免登标记。**顺带把并发会话锁定期缓办的 `test_set_player_name_wiring.py` 补登记**——本闸门第一次跑就把它判了待定，正在尽职。 | 四刀变异全红（未登记新文件 / 撕免登标记 / 登记项指向不存在 / 重复登记）+ 双对照（待定 0 从输出解析、不写死数字）+ 还原后字节一致；全量门禁 **142/142**（12m9s）；新登记测试 venv 单跑 11/11 |
@@ -4862,3 +4863,41 @@ LF + 刀改实测 EOL 构造锚点。② 删除数别写死：模板 424→400�
 ollama.options 豁免 → 4 个透传键红，证明清单 load-bearing）+ 双对照；
 `test_release_template` 单跑无损（模板断言不依赖被删键）；全量门禁 **146/146**
 （12m25s，新闸门 1.6s / 变异 6.6s）。
+
+---
+
+### `404a849` · proactive.py 43 处真空吞清零 + 纳入主链静默闸门
+
+**问题**：`tools/check_silent_except.py` 的主链（用户能直接感知「没反应」的路径）
+原先只有 cloud_omni_realtime / dialogue / tts 三个文件。但**主动搭话、双工控制、
+看屏互动、档位同步全在 proactive.py**——它不在管辖内。普查（四步：AST 枚举 →
+宿主函数分流 → 逐个读上下文定性）发现它有 **43 处 `except: pass` 且块内既无注释
+也无日志**，其中承重路径的静默失败直接对应症状：
+
+| 位置 | 静默失败的后果 |
+|---|---|
+| `_save_duplex_talk_log`（×2） | 双工对话写不进长期记忆 → 通话后她不记得说过什么 |
+| `_record_duplex_ai_line`（×2） | 打字侧接不上语音上下文（桥断了） |
+| `_maybe_trigger_duplex_memory_extract`（×2） | 语音里说的偏好永远不进记忆 |
+| `check_and_trigger` / `_flush_screen_batch` | 话术 LLM 失败 → 这次不开口，零线索 |
+| `_on_screen_activity` | 看屏批量循环起不来 → 看屏互动永远不发生 |
+| `_stop_comni_engine` | taskkill 失败 → 显存没还干净 |
+| `_sync_duplex_mode_from_cfg` | 设置里改的档位不生效 |
+| `_rebuild_call_session` / `_reconcile_kb` | 会话重建/KB 切换失败 |
+
+**处理口径**（与其余三文件既有标准一致）：
+- **承重路径**：`logger.debug(..., exc_info=True)`——行为不变（原本就是吞），
+  但失败从「零线索」变「debug 级可诊断」；
+- **有意降级**：补一句理由注释（探针失败按默认值继续 / 任务取消是正常退出 /
+  老客户端签名兼容垫 / 清理路径不 raise / 诊断接口少一个字段）。
+
+**闸门扩展**：proactive.py 纳入 `MAIN_CHAIN`（现四文件）。主链现状：158 处静默
+全部有注释或日志、**0 真静默**。变异刀加第四刀：往 proactive.py 注入真空吞 →
+闸门必须红并点名（不验的话「扩了范围」和「没扩」在汇总里长得一模一样）。
+
+**剩余**：全仓另有 159 处真静默分布在非主链文件（webapp.py 30 处 except-pass 是
+下一个候选），按文件逐个推进，不在这轮混入。
+
+**验证**：`check_silent_except --main --strict` 0 真静默；变异四刀全过
+（A tts 注入 / B 语法错 / C 文件缺失 / D proactive 注入）+ 双还原字节一致；
+全量门禁 **146/146**（12m29s，变异刀 3.5s）。
