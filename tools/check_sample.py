@@ -1,5 +1,7 @@
 # -*- coding: utf-8 -*-
 """修复后试听样本的客观体检。
+不进闸门：一次性研究脚本——基准文件全在开发机 G:/H: 盘，换机即废；口径留档，
+判据未进自动闸门（2026-10-22 普查定性，见 tools/check_gate_registry.py）。
 
 口径与 ab_objective_check.py 完全一致（同一 f0_median / band4k / campplus 说话人余弦），
 以保证数字可与历史 A/B 直接比较。

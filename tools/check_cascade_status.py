@@ -1,6 +1,8 @@
 # -*- coding: utf-8 -*-
 """
 通话大脑状态自检 —— 打完一通电话后跑，回答三个问题：
+不进闸门：人工诊断工具——读真实通话 trace 按需跑，不是通过/失败式自动闸门
+（2026-10-22 普查定性，见 tools/check_gate_registry.py）。
   1. 现在配置是 duplex 还是 cascade？
   2. 这一通里外接 LLM 到底产出过没有（cascade_sent）？
   3. 如果没有，是被哪道闸拦了（cascade_drop 的 reason）？
