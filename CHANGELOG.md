@@ -13,7 +13,7 @@
 
 | commit | 时间 | 类型 | 一句话 | 验证 |
 |---|---|---|---|---|
-| `b34d7a7` | 21:2x | fix | **第七处静默失效·她听到却不回答**：桌面来源（voice/webui/console）的 USER_TEXT 在 `_on_user_text` 走 `asyncio.create_task` 后台任务，而 respond 尾段（剥 markdown / 拟人化 / 记历史 / 发 AI_DECISION，dialogue.py 1186~1251）在 respond 内部 try/except **之外** → 尾段一崩，异常落到无人 await、也无 done_callback 的 fire-and-forget 任务，静默吞掉 → 用户全程无感知。修法：给 create_task 补 done_callback——取异常（消除 "Task exception was never retrieved" 警告）→ 记日志 → `publish_threadsafe` 补发 failed AI_DECISION（红字失败气泡），不再对着静音桌宠 | 新单测守「正常链有回复 + 尾段崩有失败气泡兜底」含对照组；变异一刀（摘 add_done_callback）→ 失败气泡消失=翻回静默（证明承重非空转）；harness 单测/变异共用；闸门 +2（137→139）；工作区另有并发「闸门登记对账」+2，合并实测 **141/141** 全绿 |
+| `b34d7a7` | 21:2x | fix | **第七处静默失效·她听到却不回答**：桌面来源（voice/webui/console）的 USER_TEXT 在 `_on_user_text` 走 `asyncio.create_task` 后台任务，而 respond 尾段（剥 markdown / 拟人化 / 记历史 / 发 AI_DECISION，dialogue.py 1205~1336）在 respond 内部只管 LLM 的 try/except（1126~1159）**之外** → 尾段一崩，异常落到无人 await 的后台任务，静默吞掉 → 用户全程无感知。修法**两层**：①尾段自己加守卫，判据与原有 LLM 失败分支同构——**她有没有已经说出口的话**：流式已播出 → 补发非 failed 决策（她话已说出口、TTS 已念完，不能再补一句"失败"）；毫无产出 → 才 failed；②create_task 补 done_callback 作最后防线（覆盖 vision / 媒体等 respond 之外的支路）：取异常（消除 "Task exception was never retrieved" 警告）→ 记日志 → `publish_threadsafe` 补发 failed 气泡，不再对着静音桌宠 | 五场景真值表（正常 / **已答完再崩→不得有 failed** / 非流式再崩→不得有 failed / LLM 没生成→必须有 failed / 崩在 respond 之外→靠 done_callback），含对照组区分「判据正确」与「判据恒真」；**harness 让 FakeLLM 真流式**（第一版把 `_chat_decision` 桩成返回 `(RAW,True)`，一条 PARTIAL_TEXT 都没发，"她已答完"这个前提根本没造出来，于是把"已回答+红字失败"自相矛盾断言成了正确）；等待改循环轮次 + `queue.join()`，不再用 5s 超时（变异 7.9s→3.5s）；**三把刀全红**（摘 done_callback / 守卫恒 failed / 守卫丢非流式兜底）；闸门 +2（137→139）；工作区另有并发「闸门登记对账」+2，合并实测 **141/141** 全绿 |
 | `6a07e12` | 07:5x | fix | **克隆面板「预填她的」从来是坏的**：预置角色「温柔女友」的参考音频随包分发（`_role_assets/ref/xiaowei.wav`），但面板**预填写一份、按钮读另一份**——卡片预填 `voice.ref || demo.ref`，试听/开始克隆只读 `c.voice.ref`；预置角色只有 demo.ref（`path` 还是开发机绝对路径 `D:/GPT-SoVITS/...`）⇒ 试听按钮每次静默 return，「开始克隆」取到空 refPath 后跳过真实克隆、落到「无桥降级」画一条**假进度条**再 toast「克隆完成」——用户机器上什么都没发生（该文件自己的红线写着"不画假进度"）。顺带查到 `/local_img` 是**图片**路由（Content-Type 只认图片、白名单只放行 `char_banners`/`char_avatars`+注册目录），用户自选音频的试听也一直静默 404。修法：`_clRef` 单一来源（预填/试听/克隆共用）、随包资产经新后端 `use_bundled_ref_audio` 物化到 `data/voice_ref/`（白名单防穿越）、选文件换 `pickReferenceAudio`（B3 持久化）、`/local_img` 补音频类型并注册目录、**假进度条整段删** | jsdom 真值表 **24 项**（原样加载 `onboarding_role.js` 整文件真点真走：S1 随包资产 / S2 用户文件 / S3 无桥 / S4 墓碑，两个对照组）；后端门禁 20 项（物化 + **8 条白名单拒绝** + 目录注册 + 音频类型）；**六刀变异全红**、还原后仍绿；闸门 134 → **137**，全量 **137/137**（11m13s） |
 | `b2bc771` | 06:2x | test | **「后端广播 type ↔ 前端分发分支」对账闸门**：后端往前端推消息走 `CoreWebView2.PostWebMessageAsJson`，前端接 `chrome.webview.addEventListener('message')`，两边靠一个字符串 `type` 对上，而**没有任何机制保证它对得上**（`quota_alert` 与 `character_switched` 两起都死在这，症状永远静默：分支不执行、不报错，只是"那个功能不工作"）。只做**单向**（前端 type ⊆ 后端广播全集）——反向会假红：`pet_tip` 就走 `api.pop_pet_bubble()` 1.5s 轮询，桌宠窗的 `chrome.webview` 监听对 `PostWebMessageAsJson` **完全不触发**（rig 页 2026-09-03 实锤：3 次广播 / 0 回执），"广播了但没人用 webview 监听器接"在这里是合法设计。边界必须精确圈定：全仓 `.type === 'x'` 有 25 处以上**不是**消息分发（`dataset.type`、本地事件总线 `ev.type==='asr'`、通知项 `n.type`、骨架 `s.type==='row'`…），一刀切必假红。**顺带补登记两把从没跑过的变异刀**：`_qc_channel_mutation` 与 `_qc_gewechat_mutation` 只在 check_all 的注释里被提到、从没进名单——按项目自己的规矩「加门必须同时加变异」，那两道门**一直是装饰品**；实跑前者，七刀里 **C/D/F/G 四把锚点命中 0 次被静默跳过**（根因：`J()` 写死 CRLF 而 `doctor.py` 早变成 LF，**单行锚点不受影响、刀照跑，所以坏得极隐蔽**） | 七刀变异全过（含"原 bug 原样"与两个"不许误伤"对照组）；渠道探活判级变异修好后**七刀全红**、还原字节一致；微信回调变异五刀全红；闸门 130 → **134**；全量门禁 **134/134**（10m43s） |
 | `ca6cff3` | 06:2x | fix | **切角色后界面名字不跟随**：`app_backend.js` 里 `d.type === 'character_switched'` 这条分支自 2026-10-02 写下起就是**死的**——后端 `EventType.CHARACTER_SWITCHED` 只经 `ws_server.broadcast` 发（`{message_type, payload}` 信封，给 Unity 与旧壳 `app.js` 用），而 `app_backend.js` 里**没有 WebSocket 客户端**；`app.js` 有 ws 却没这个 case、且只被 `index.legacy.html` 加载。于是 `applyCharacterNameBoot`（那段注释原话就是"用户切换角色后这些仍显示旧名…看着像 bug"）**要修的那个 bug 本身就没修好**：点「设为默认角色」toast 说成功了，侧边栏 / 通话页 / 输入框 placeholder 一直是旧名字，直到刷新页面；`window.refreshCharacterName` 全仓零调用者。两端都修：后端 `_broadcast_character_switched()` 在 `switch_character` 的**两处**成功返回前都调（配置级回落路径不发事件，只挂总线会漏），前端 `setDefault()` 成功后显式兜底 | 新闸门 `check_broadcast_types.py` 的变异刀 M1 就是**原 bug 原样**（把那行广播改掉 → 闸门红并点名 `character_switched`），证明闸门在修复前确实是红的；七刀变异全过；全量门禁 **134/134** |
@@ -123,34 +123,75 @@
 **风险点**：桌面来源（`_DESKTOP_SOURCES = ("webui","voice","console","")`）的
 USER_TEXT 在 `_on_user_text`（dialogue.py:840）走 `asyncio.create_task` 后台任务
 （2026-10-04 为修「UI 卡片后出」刻意为之，不能在这里 await）。而 respond 的尾段——
-`parse_decision` 之后的剥 markdown（1186）/ 拟人化（1190）/ JSON 兜底 /
-`shared_history` 记录（1237）/ 发 AI_DECISION（1241）——**在 respond 内部那个
-try/except（1119~1161）之外**。LLM 调用本身有 75s 超时兜底，但尾段没有：一旦这里抛
+`parse_decision` 之后的剥 markdown（1228）/ 拟人化（1232）/ JSON 兜底 /
+`shared_history` 记录（1279）/ 发 AI_DECISION（~1283）——**在 respond 内部那个
+try/except（1126~1159）之外**。LLM 调用本身有 75s 超时兜底，但尾段没有：一旦这里抛
 异常（或 `_respond_vision_chat` / 媒体摄入崩），异常落到无人 await、也无 done_callback
 的后台任务上 → 静默吞掉 → 用户「说了话没人应」，且连失败气泡都没有。这正是 §5/§6 那类：
 链路看着在跑，其实断了。
 
-**修法**（dialogue.py:843~874）：给 create_task 补一个 done_callback——
-`t.result()` 取出异常（消除 asyncio 的 "Task exception was never retrieved" 警告，
-`CancelledError` 单独放过）→ `logger.exception` 落日志 → `publish_threadsafe` 补发一条
-`failed=True` 的 AI_DECISION（前端红字失败气泡）。用 `publish_threadsafe` 而非再
-`create_task` 去 publish：它同步入队，不依赖调用方是否 await 这个本就是 fire-and-forget
-的任务。
+**修法**——两层，判据必须一致：
 
-**验证**：
-- `src/tests/test_dialogue_voice_chain.py`：①正常链 voice USER_TEXT → 一条 text 非空、
-  非 failed 的 AI_DECISION（且文本来自模型决策、不是失败兜底话术——对照组区分「判据
-  正确」与「判据恒真」）；②尾段崩（`_strip_markdown` 抛异常）→ 仍补发 failed 失败
-  气泡，且后台任务异常被 done_callback 接住（不静默）。
-- `tools/_qc_dialogue_voice_chain_mutation.py`：摘掉 `task.add_done_callback(...)` →
-  失败气泡消失（got=0），翻回静默；基线（带回调）有气泡。一刀证明兜底承重、非空转。
-- 夹具 `src/tests/_dlg_voice_harness.py`：单测与变异共用同一驱动（口径单一事实源）；
-  `drive_voice` 刻意**不 await 后台任务取异常**（那正是被测的静默点），改轮询 done +
-  `task.exception()` 断言。FakeLLM 显式覆写全部抽象成员（ABC 否则拒绝实例化）。
+1. **尾段自己的守卫**（dialogue.py:1196 起，包住 1205~1336）。判据与 respond 里**原有**
+   的 LLM 失败分支（1126~1159）同构：**她有没有已经说出口的话**。
+   - 流式已播出 → 补发一条 `streamed` 保持原值的**非 failed** 决策。她话已说出口、
+     TTS 已逐句念完、聊天气泡已封口上屏（`_on_chat_partial` 把片段写成真气泡），
+     此时再补一句"失败"就是"已回答 + 红字失败气泡"自相矛盾。
+   - 毫无产出 → 才发 failed 失败气泡（带 `_fail_text(e)` 的具体原因）。
+   - 取文本用 `parse_decision(streamer.raw) or parse_decision(raw)`：流式路径两者同一个串；
+     **非流式路径**（后端不支持流式，`_chat_decision` 返回 `llm.chat` 的整段）streamer 从未
+     被喂过，只取 streamer 会拿到空而误判成"毫无产出"。
+2. **任务级 done_callback 作最后防线**（dialogue.py:850/874）。`t.result()` 取出异常
+   （消除 asyncio 的 "Task exception was never retrieved" 警告，`CancelledError` 单独放过）
+   → `logger.exception` 落日志 → `publish_threadsafe` 补发一条 `failed=True` 的
+   AI_DECISION（前端红字失败气泡）。用 `publish_threadsafe` 而非再 `create_task` 去
+   publish：它同步入队，不依赖调用方是否 await 这个本就是 fire-and-forget 的任务。
+   它覆盖的是第 1 层管不到的地方——`_respond_vision_chat` / 媒体摄入等 respond 之外的支路。
+
+**验证**（五场景真值表，缺一不能区分"判据正确"与"判据恒真"）：
+
+| 场景 | 流式产出 | 崩在哪 | 期望 |
+|---|---|---|---|
+| 1 正常链 | 有 | 不崩 | 一条非 failed 决策，`streamed=True` |
+| 2 **已答完再崩** | **有** | respond 尾段 | **不得**有 failed 气泡；一条非 failed 决策 |
+| 3 非流式再崩 | 无（后端不支持流式） | respond 尾段 | 不得有 failed；非 failed、`streamed=False` |
+| 4 LLM 就没生成 | 无 | LLM 调用 | **必须**有 failed 气泡（守住原有兜底） |
+| 5 崩在 respond 之外 | — | 媒体摄入探测 | 必须靠 done_callback 补发 failed 气泡 |
+
+- `tools/_qc_dialogue_voice_chain_mutation.py`：**三把刀全红**——CB 摘
+  `add_done_callback`（场景 5 翻回静默）；T1 守卫 `if _partial:` → `if False:`
+  （场景 2/3 被补失败气泡）；T2 守卫丢掉 `or parse_decision(raw)` 兜底（场景 3 误判
+  毫无产出）。变异工具通过 `harness.Dialogue = mutant.Dialogue` **原样跑测试里的场景
+  函数**，不另抄一套断言。
+- 夹具 `src/tests/_dlg_voice_harness.py`：单测与变异共用同一驱动；`drive_voice`
+  **不 await 后台任务取异常**（那正是被测的静默点），改轮询 done + `task.exception()`；
+  等待全用**循环轮次** + `bus._queue.join()`，不用 5s 超时（依赖时间的判据会偶发假红），
+  变异耗时 7.9s → 3.5s。
 - 全量门禁：本轮 +2（137→139）；跑门禁时工作区另有并发的「闸门登记对账」+2，合并实测
   **141/141** 全绿、无跳过。
 
-**并发纪律**：本轮提交只 `git add` 自己的 5 个文件（dialogue.py + 3 新文件 +
+### 同日续：自查抓到的三个自身缺陷（已一并修）
+
+上一轮收尾后 review 自己的改动，抓到三处，都在本轮修掉：
+
+1. **测试把错误行为钉成了契约**（最重）。harness 第一版把 `_chat_decision` 整个换成返回
+   `(RAW, True)` 的桩——`streamed=True` 是**假的**：一条 PARTIAL_TEXT 都没发、TTS 什么都没
+   念、气泡什么都没上屏。于是"尾段崩"场景模拟的是"崩在流式之前"的世界，与它注入的位置
+   （流式之后）不是同一个，从而掩盖了"她已答完 + 红字失败气泡"这个真缺陷；而场景 2 的
+   断言还**主动要求**看到失败话术——谁把矛盾修好，这条测试会红着拦他。
+   修法：**不桩 `_chat_decision`**，让 FakeLLM 真支持流式（`supports_stream` +
+   `chat_stream`），跑生产那条真流式路径；场景 1/2 用 `partials` 非空证明"她确实已经
+   说出口了"。这正是 §5「Python 复刻只证明我两次写得一样」那一类。
+2. **判据依赖墙上时钟**。`drive_voice` 用 `sleep(0.05)` 轮询 + `wait_for(..., 5.0)`，
+   变异刀那个"静默"结论实际是"5 秒内没到"。改循环轮次 + `queue.join()`。
+3. **文档行号被自己的修复冲掉 +33**。commit message / 明细 / memory 都写 "1186~1251"，
+   真实已是 1205~1336——下一个人照着 1186 找会落到 `to_idle` 上。
+
+顺带修掉 memory 里一句写过头的话："fire-and-forget 必须配 done_callback"——同文件另 3 处
+`create_task`（727/1339/2388 一带）是靠**自身内部 try/except** 兜住的。正确规则是
+「**任务体自己兜住，或调用方兜住，二者有一即可，且都要能出声**」。
+
+**并发纪律**：本轮提交只 `git add` 自己的文件（dialogue.py + 3 个测试/工具文件 +
 check_all.py 里**自己那一 hunk**，用 `git add -p` 精确摘选），把并发的「闸门登记对账」
 工作树原样留下（check_all.py 的 hunk1 + 8 个改动的 check_*.py + 2 个未跟踪工具）——
 又一次印证「只 add 自己知道的文件，别让收口提交吞掉别人的改动」。

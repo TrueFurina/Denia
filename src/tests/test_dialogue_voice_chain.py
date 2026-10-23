@@ -1,22 +1,35 @@
 # -*- coding: utf-8 -*-
 """语音→LLM→TTS 消费链闭环：USER_TEXT(source=voice) 必须换来一句真的 AI_DECISION。
 
-这是「听到→想→说」三段主链的收口证据的前半段之后半段：
+这是「听到→想→说」三段主链的收口证据的后半段：
   · 前半段（test_asr_event_flow.py）证明 asr 唤醒后真的发出 USER_TEXT；
   · 本文件证明 USER_TEXT 被 Dialogue 消费后，真的产出一条可播放的 AI_DECISION
     （否则"她听到却不回答"）。
-关键风险点（第七处候选静默失效）：桌面来源（含 voice）的 USER_TEXT 在 _on_user_text 里
-走 asyncio.create_task 后台任务（fire-and-forget），而 respond 的尾段（剥 markdown /
-拟人化 / 记历史 / 发 AI_DECISION）在 respond 内部 try/except **之外**。一旦尾段抛异常，
-异常落到无人 await、也无 done_callback 的后台任务上 → 静默吞掉 → 用户全程无感知。
 
-因此本测试两条：
-  1) 正常链：voice USER_TEXT → 一条 failed 缺省、text 非空的 AI_DECISION；
-  2) 尾段崩：注入 _strip_markdown 抛异常 → 必须有一条 failed=True 的失败气泡兜底
-     （而不是静默）。这条守的就是 dialogue.py 里给 create_task 补的 done_callback。
+**两层风险，两条判据**（缺一不可）：
+  1. 桌面来源（含 voice）的 USER_TEXT 在 _on_user_text 里走 asyncio.create_task
+     后台任务（fire-and-forget）→ 配 done_callback 兜底（第七处静默失效）；
+  2. respond 的尾段（剥 markdown / 拟人化 / 记历史 / 发 AI_DECISION）在 respond
+     内部那个只管 LLM 调用的 try/except **之外** → 尾段自己也要有守卫。
 
-配套变异（tools/_qc_dialogue_voice_chain_mutation.py）：去掉 done_callback 后，
-  第 2 条必须从"有失败气泡"翻成"静默无声"——否则说明这条兜底是空转的。
+**尾段守卫的判据是"她有没有已经说出口的话"**，与 respond 里原有 LLM 失败分支同构：
+已经流式播出 → 补发**非 failed** 决策（她话已说出口、TTS 已念完、气泡已上屏，
+    不能再补一句"失败"，否则"已回答 + 红字失败气泡"自相矛盾）；
+毫无产出 → 才发 failed 失败气泡。
+所以必须四条场景一起跑才能区分"判据正确"与"判据恒真"：
+
+  | 场景 | 流式产出 | 尾段 | 期望 |
+  |---|---|---|---|
+  | 1 正常链 | 有 | 不崩 | 一条非 failed 决策，streamed=True |
+  | 2 已答完再崩 | **有** | 崩 | **不得**有 failed 气泡；一条非 failed 决策 |
+  | 3 非流式再崩 | 无（后端不支持流式） | 崩 | 不得有 failed 气泡；非 failed、streamed=False |
+  | 4 压根没生成 | 无 | LLM 就失败 | 必须有 failed 气泡（守住原有兜底）|
+
+场景 2 是本文件的核心：它守的正是"别在已回答之后补一句失败"。
+【2026-10-23】第一版没有场景 2——harness 把 _chat_decision 桩成返回 (RAW, True)，
+一条 PARTIAL_TEXT 都没发，"已答完"这个前提根本没被造出来，于是把自相矛盾的行为
+断言成了正确。现在 harness 让 FakeLLM 真流式，场景 1/2 用 partials 非空证明
+"她确实已经说出口了"。
 
 运行：.venv/Scripts/python.exe src/tests/test_dialogue_voice_chain.py
 """
@@ -29,7 +42,7 @@ ROOT = os.path.dirname(os.path.dirname(HERE))
 sys.path.insert(0, ROOT)
 
 from src.tests._dlg_voice_harness import (  # noqa: E402
-    build_dialogue, drive_voice, VALID_DECISION_RAW, FAIL_TEXT,
+    build_dialogue, drive_voice, VALID_DECISION_RAW,
 )
 
 FAIL = 0
@@ -42,39 +55,143 @@ def check(cond, msg):
         FAIL += 1
 
 
-async def _run():
-    # —— 场景 1：正常链路。voice 用户说一句 → 得到一句真回复 ——
-    bus, dlg = build_dialogue()
-    got, task = await drive_voice(bus, dlg)
+def _decisions(ai):
+    return [d for d in ai]
+
+
+def _failed(ai):
+    return [d for d in ai if d.get("failed")]
+
+
+def _ok_decisions(ai):
+    return [d for d in ai if not d.get("failed")]
+
+
+async def _scenario_positive():
+    """场景 1：正常流式链。voice 用户说一句 → 得到一句真回复。"""
+    print("=== 场景 1 · 正常流式链（应一条非 failed 决策，streamed=True） ===")
+    bus, dlg = build_dialogue(stream_support=True)
+    ai, partials, task = await drive_voice(bus, dlg)
     check(task is not None and task.done(), "USER_TEXT(voice) 触发了桌面后台任务")
     check(task is not None and task.exception() is None,
-          f"正常链路后台任务无异常（got exc={task.exception() if task else 'NA'}）")
-    succ = [d for d in got if not d.get("failed")]
-    check(len(succ) == 1,
-          f"恰好一条非失败 AI_DECISION（got={len(got)} 条：{[d.get('failed') for d in got]}）")
+          f"正常链后台任务无异常（exc={task.exception() if task else 'NA'}）")
+    check(len(partials) >= 1,
+          f"流式真的发生了：{len(partials)} 条 PARTIAL_TEXT（streamed=True 不是谎）")
+    check(len(_decisions(ai)) == 1,
+          f"恰好一条 AI_DECISION（got={len(ai)}）")
+    succ = _ok_decisions(ai)
     if succ:
         check(bool((succ[0].get("text") or "").strip()),
               f"回复文本非空：{succ[0].get('text')!r}")
         check("今天天气" in (succ[0].get("text") or ""),
               "回复文本来自模型决策（不是失败兜底话术）——证明真的走过 respond 决策链")
-    # 对照组：失败话术不应出现在正常链路里（区分"判据正确"与"判据恒真"）
-    check(not any(d.get("failed") for d in got),
-          "正常链路不出现 failed 失败气泡")
+        check(succ[0].get("streamed") is True,
+              "streamed=True（与真流式一致，TTS 才不会整段重播）")
+    check(not _failed(ai), "正常链不出现 failed 失败气泡（对照组）")
 
-    # —— 场景 2：respond 尾段（_strip_markdown）崩 → 必须兜底成失败气泡，而非静默 ——
-    bus2, dlg2 = build_dialogue(strip_markdown_raise=True)
-    got2, task2 = await drive_voice(bus2, dlg2)
-    check(task2 is not None and task2.done(), "尾段崩溃场景后台任务已结束")
-    check(task2 is not None and task2.exception() is not None,
-          "确实发生了尾段异常（对照组：证明失败是真的，不是空跑）")
-    failed = [d for d in got2 if d.get("failed")]
+
+async def _scenario_crash_after_streamed():
+    """场景 2（核心）：她已经说出口了，尾段才崩 → 绝不能再补一句"失败"。"""
+    print("=== 场景 2 · 已答完再崩（不得有 failed 气泡） ===")
+    bus, dlg = build_dialogue(strip_markdown_raise=True, stream_support=True)
+    ai, partials, task = await drive_voice(bus, dlg)
+    check(getattr(dlg, "_inject_hits", 0) >= 1,
+          "注入点确实执行到了（对照组：证明失败是真的，不是空跑）")
+    check(task is not None and task.exception() is None,
+          "尾段守卫已接住异常 → 后台任务本身无异常（分层生效，不需要任务级兜底）")
+    check(len(partials) >= 1,
+          f"前提成立：崩溃前已流式播出 {len(partials)} 句（她话已说出口）")
+    check(not _failed(ai),
+          f"**不得**出现 failed 失败气泡（got={len(_failed(ai))} 条）"
+          "——她已答完，不能再补一句失败")
+    succ = _ok_decisions(ai)
+    check(len(succ) == 1,
+          f"补发恰好一条非 failed 决策（got={len(succ)}）")
+    if succ:
+        check(bool((succ[0].get("text") or "").strip()),
+              f"续发文本非空：{succ[0].get('text')!r}")
+        check(succ[0].get("streamed") is True,
+              "续发标 streamed=True（TTS 别整段重播，她已逐句念过）")
+
+
+async def _scenario_crash_non_streamed():
+    """场景 3：后端不支持流式，尾段才崩 → 仍要把话说出口，不能报失败。"""
+    print("=== 场景 3 · 非流式再崩（不得有 failed 气泡，streamed=False） ===")
+    bus, dlg = build_dialogue(strip_markdown_raise=True, stream_support=False)
+    ai, partials, task = await drive_voice(bus, dlg)
+    check(getattr(dlg, "_inject_hits", 0) >= 1,
+          "注入点确实执行到了（对照组）")
+    check(task is not None and task.exception() is None,
+          "尾段守卫已接住异常 → 后台任务本身无异常")
+    check(len(partials) == 0, "非流式路径没有 PARTIAL_TEXT（符合生产语义）")
+    check(not _failed(ai),
+          f"**不得**出现 failed 失败气泡（got={len(_failed(ai))} 条）"
+          "——模型已生成正文，只是没来得及后处理")
+    succ = _ok_decisions(ai)
+    check(len(succ) == 1, f"补发恰好一条非 failed 决策（got={len(succ)}）")
+    if succ:
+        check(bool((succ[0].get("text") or "").strip()),
+              f"续发文本非空：{succ[0].get('text')!r}")
+        check(succ[0].get("streamed") is False,
+              "续发标 streamed=False（TTS 把整段念出来，她还没说过）")
+
+
+async def _scenario_crash_outside_respond():
+    """场景 5（第七处那道防线）：崩在 respond **之外** → 只能靠任务级 done_callback。
+
+    注入 `_desktop_media_enabled`（_process_desktop_message 里、respond 之前的探测），
+    异常会逃出 respond 的两层 try，落进无人 await 的 fire-and-forget 任务。
+    没有 done_callback 就是静默失声；有 → failed 失败气泡。
+    这正是 tools/_qc_dialogue_voice_chain_mutation.py 那把刀要证明有鉴别力的地方。
+    """
+    print("=== 场景 5 · 崩在 respond 之外（必须靠 done_callback 兜底） ===")
+    bus, dlg = build_dialogue(desktop_media_raise=True)
+    ai, partials, task = await drive_voice(bus, dlg)
+    check(getattr(dlg, "_inject_hits", 0) >= 1,
+          "注入点确实执行到了（对照组）")
+    check(task is not None and task.exception() is not None,
+          "异常逃出了 respond → 后台任务确实带着异常（这正是会被静默吞掉的那种）")
+    failed = _failed(ai)
     check(len(failed) == 1,
-          f"尾段崩溃仍补发一条 failed 失败气泡（got={len(got2)} 条）——不是静默失声")
+          f"done_callback 补发了 failed 失败气泡（got={len(failed)}）——不是静默失声")
     if failed:
         check(bool((failed[0].get("text") or "").strip()),
               f"失败气泡文本非空：{failed[0].get('text')!r}")
-        check(failed[0].get("text") == FAIL_TEXT,
-              "失败气泡走 done_callback 兜底话术（证明是这条回调接住的）")
+
+
+async def _scenario_llm_failed_before_output():
+    """场景 4（对照组）：LLM 压根没生成 → 必须仍有 failed 失败气泡。
+
+    守住 respond 里原有的"打字无回复兜底"，证明尾段守卫没把它改坏。
+    """
+    print("=== 场景 4 · LLM 就没生成（必须有 failed 气泡） ===")
+    bus, dlg = build_dialogue()
+    # 让 LLM 两条路都抛：流式迭代抛 / 一次性 chat 抛
+    async def _boom_chat(messages, options=None):
+        raise RuntimeError("injected: llm down")
+
+    async def _boom_stream(messages, options=None):
+        raise RuntimeError("injected: llm down")
+        yield ""  # noqa: 让它成为异步生成器
+
+    dlg._llm.chat = _boom_chat
+    dlg._llm.chat_stream = _boom_stream
+    ai, partials, task = await drive_voice(bus, dlg)
+    check(len(partials) == 0, "一句话都没流出来（前提成立）")
+    failed = _failed(ai)
+    check(len(failed) == 1,
+          f"LLM 无产出时仍有 failed 失败气泡（got={len(failed)}）——守住原兜底")
+    if failed:
+        check(bool((failed[0].get("text") or "").strip()),
+              f"失败气泡文本非空：{failed[0].get('text')!r}")
+
+
+async def _run():
+    await _scenario_positive()
+    await _scenario_crash_after_streamed()
+    await _scenario_crash_non_streamed()
+    await _scenario_llm_failed_before_output()
+    await _scenario_crash_outside_respond()
 
 
 def main():
@@ -83,7 +200,8 @@ def main():
     if FAIL:
         print(f"共 {FAIL} 处不符")
         return 1
-    print("全部通过：语音→想→说 消费链闭环（正常链有回复；尾段崩有失败气泡兜底）")
+    print("全部通过：语音→想→说 消费链闭环（含尾段守卫真值表：已答完不报失败，"
+          "没生成才报失败）")
     return 0
 
 
