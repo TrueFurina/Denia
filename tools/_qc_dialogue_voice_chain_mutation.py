@@ -10,7 +10,7 @@
 `build_dialogue` 对 Dialogue **延迟绑定**（模块全局），故把 `harness.Dialogue` 换成
 变异体的类，就能原样跑测试里的场景函数——断言口径单一事实源，不另抄一套。
 
-十把刀（改完必须让对应场景判红）：
+十二把刀（改完必须让对应场景判红）：
   CB  摘掉 `task.add_done_callback(_on_desktop_msg_done)`
       → 场景 5（崩在 respond 之外）失败气泡消失 = 静默失声。第一层防线失效。
   T1  尾段守卫 `if not _partial:` → `if True:`（一律向上抛、不降级续发）
@@ -26,7 +26,7 @@
 先跑「基线」（干净 dialogue.py，五个场景）：必须全绿，否则说明 harness/测试本身坏了。
 
 用法：.venv/Scripts/python.exe tools/_qc_dialogue_voice_chain_mutation.py
-退出码 0=十把刀都有鉴别力；1=有刀没鉴别力或基线异常。
+退出码 0=十二把刀都有鉴别力；1=有刀没鉴别力或基线异常。
 """
 import asyncio
 import importlib
@@ -85,8 +85,8 @@ async def _run():
     import src.tests.test_dialogue_voice_chain as tv
     from src.companion.dialogue import Dialogue as RealDialogue
 
-    # —— 基线：干净 dialogue.py，十一个场景必须全绿 ——
-    print("=== 基线（干净 dialogue.py，十一个场景应全绿） ===")
+    # —— 基线：干净 dialogue.py，十二个场景必须全绿 ——
+    print("=== 基线（干净 dialogue.py，十二个场景应全绿） ===")
     for name in ("_scenario_positive", "_scenario_crash_after_streamed",
                  "_scenario_crash_non_streamed", "_scenario_llm_failed_before_output",
                  "_scenario_crash_outside_respond", "_scenario_stage_direction_only",
@@ -163,6 +163,32 @@ async def _run():
          "            kt_only = (getattr(_gk, \"knowledge_text\", \"\") or \"\").strip()\n"
          "            self._game_knowledge = None  # 变异：又抹掉共享引用\n",
          ["_scenario_game_knowledge_not_dropped"]),
+        # 看图记忆写路径又闸上 inject_context → 关注入时 silently 丢掉全部"她看过这张图"
+        ("T10_vision_memory_gated_by_inject",
+         "        store = self._memory_store\n"
+         "        if store is None or not vlm_answer:\n"
+         "            return False\n",
+         "        store = self._memory_store\n"
+         "        if store is None or not vlm_answer:\n"
+         "            return False\n"
+         "        try:\n"
+         "            if not self._memory_inject_enabled():\n"
+         "                return False\n"
+         "        except Exception:\n"
+         "            return False\n",
+         ["_scenario_memory_stored_when_injection_off"]),
+        # 承诺/待办记忆写路径同样又闸上 → "忘了就是失约"那一类对关注入的用户全丢
+        ("T11_promise_memory_gated_by_inject",
+         "        if not self._PROMISE_RE.search(t):\n"
+         "            return False\n",
+         "        if not self._PROMISE_RE.search(t):\n"
+         "            return False\n"
+         "        try:\n"
+         "            if not self._memory_inject_enabled():\n"
+         "                return False\n"
+         "        except Exception:\n"
+         "            return False\n",
+         ["_scenario_memory_stored_when_injection_off"]),
     ]
 
     written = []
@@ -189,7 +215,9 @@ async def _run():
                    "T2_guard_drops_raw_fallback", "T3_no_empty_check_after_clean",
                    "T4_empty_reply_text_drift", "T5_vision_guard_removed",
                    "T6_tools_guard_removed", "T7_tools_drops_channel",
-                   "T8_user_text_drops_channel", "T9_build_drops_game_knowledge"):
+                   "T8_user_text_drops_channel", "T9_build_drops_game_knowledge",
+                   "T10_vision_memory_gated_by_inject",
+                   "T11_promise_memory_gated_by_inject"):
             sys.modules.pop(f"src.companion._mut_dialogue_voice_chain_{_n}", None)
 
 
@@ -199,9 +227,9 @@ def main():
     if FAIL:
         print(f"共 {FAIL} 处不符")
         sys.exit(1)
-    print("全部通过：十把刀都有鉴别力（done_callback 兜底 + 尾段守卫判据 + 非流式兜底"
+    print("全部通过：十二把刀都有鉴别力（done_callback 兜底 + 尾段守卫判据 + 非流式兜底"
           " + 主链清洗后判空 + 空响应出口文案不漂移 + 视觉链闸门 + 工具链闸门"
-          " + 工具链透传 channel/reply_target + USER_TEXT 那一跳 + 不抹共享游戏知识库）")
+          " + 工具链透传 channel/reply_target + USER_TEXT 那一跳 + 不抹共享游戏知识库 + 两条记忆写路径不闸在 inject 上）")
 
 
 if __name__ == "__main__":

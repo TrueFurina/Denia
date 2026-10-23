@@ -306,6 +306,27 @@ class FakeVisionRouter:
         return self._answer
 
 
+class FakeMemoryStore:
+    """最小记忆库桩：记录 add() 收到的 fact，memory_text() 回放它们。
+
+    必须实现 `memory_text`——`_assemble_chat_memory` 靠它取记忆文本，缺了会被
+    `except Exception` 吞成空串，于是"注入开"那一半永远不成立（假阴）。
+    """
+
+    def __init__(self) -> None:
+        self.added: list[str] = []
+
+    def add(self, fact, **kw):
+        self.added.append(fact)
+        return True
+
+    def memory_text(self, n=8, query=""):
+        return "\n".join(self.added[-n:]) if self.added else ""
+
+    def set_character(self, cid):
+        pass
+
+
 def make_tool_llm(dlg, answer: str):
     """把 dlg._llm 的 chat_with_tools 换成返回预设文本的桩（不真调工具）。"""
     async def _chat_with_tools(messages, _sys, tools, on_tool, max_steps,

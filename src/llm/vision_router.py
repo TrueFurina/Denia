@@ -460,10 +460,12 @@ class VisionRouter:
         图片对话（避免格式不兼容）。全部失败才抛错（由 dialogue 兜底回文本或失败气泡）。
         """
         if not self._perception_enabled():
-            # 【2026-10-04 修】原来这里是**硬编码字符串** "（vision_models.enabled=false）"，
-            # 与真实配置无关：哪怕你只是关了别的开关、或压根没配 enabled，
-            # 也会统一报"enabled=false"，把用户引到错误的开关上。改为动态取值。
-            _vm = (getattr(self.cfg, "raw", None) or {}).get("vision_models") or {}
+            # 【2026-10-23 修】10-04 那条注释写"改为动态取值"，但 `_vm = ...` 算出来后
+            # **从未被使用**，抛出的仍是写死的那句——注释描述了一件没发生的事（死变量）。
+            # 现状核实：`_perception_enabled()` 只读 `vision_models.enabled`（缺省 true），
+            # 所以这句话目前**恰好是对的**。但不要让读者误以为它是动态的：将来
+            # `_perception_enabled()` 若再加条件（桌面看屏/额度之类），这句提示会把用户
+            # 引到错误的开关上。⇒ 删掉死变量，并把"只有这一个条件"写成显式断言式的注释。
             raise RuntimeError(
                 "看图能力已关闭（视觉模型总开关 vision_models.enabled=false），"
                 "请在设置里开启；已绑定视觉模型时默认是可用的。")
