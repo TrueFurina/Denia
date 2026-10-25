@@ -175,6 +175,11 @@ GATES: list[tuple[str, str, list[str], bool]] = [
     # 间歇撞 OpenBLAS "Memory allocation still failed"（单独跑就过，产品无问题）。
     # 包装器只认这一种文案、只串行复核一次、真缺陷绝不重试（自测守着这三条）。
     ("玩家名接线", PY_VENV, ["tools/run_test_with_mem_retry.py", "src/tests/test_set_player_name_wiring.py"], False),
+    # 【2026-10-24】打字时本地双工暂停/恢复 接线回归：proactive 同样 import numpy，
+    # 走串行复核包装器免疫 OpenBLAS 抖动。守 _note_user_typing 触发 pause +
+    # _maybe_resume_typing_paused_duplex 8s 后 resume（修复前 _duplex_paused_for_typing
+    # 永不被置 True、pause() 零调用 —— 整条死接线）。
+    ("打字双工暂停", PY_VENV, ["tools/run_test_with_mem_retry.py", "src/tests/test_typing_duplex_pause.py"], False),
     # 「没配大脑」承接浮层：首启不拿填表拦人，代价是第一次点发送只会得到「未发送」。
     # 这条守四件事：①只在失败那一刻亮（进页面就亮=顶部条换个位置）②判据是能力槽
     # 状态不是 error 文案 ③判据三态——后端没就绪是「问不出来」，不是「没配」

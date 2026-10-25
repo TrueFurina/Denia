@@ -332,11 +332,48 @@ class ProactiveStrategy:
         （dialogue 已隔离 source=='duplex'），真正进入的是**声音** —— 双工拨通后
         麦克风一直采，打字时的键盘声/呼吸/环境声越过本地 VAD 阈值就会 commit，
         云端随即用达妮娅音色回一句。这里记录打字时刻，供 VAD 抬高阈值用。
+
+        【2026-10-24 接线·写了没接线修复】本地全双工（local_omni_duplex 带 pause/resume）
+        不走 VAD 抬阈，而是直接让麦流上行暂停：打字时调用 duplex.pause() 让双工给打字
+        回复让路，避免键盘声被本地模型 commit；8s 无打字后由刷新循环里的
+        _duplex_paused_for_typing 分支 resume() 恢复（见 ~4112）。此前 _duplex_paused_for_typing
+        永不被置 True、pause() 零调用 —— 整条接线死掉。这里补上触发点（只对带 pause 的
+        本地双工生效，云端/其它双工无 pause 方法则跳过）。
         """
         try:
             self._duplex_user_typing_ts = time.time()
+            # 供恢复循环计时：每次按键刷新，使 resume 在"最后一次按键 8s 后"触发。
+            self._duplex_pause_ts = time.time()
+            if not getattr(self, '_duplex_paused_for_typing', False):
+                _rc = getattr(self, '_duplex_client', None)
+                if (_rc is not None and getattr(_rc, 'running', False)
+                        and hasattr(_rc, 'pause')):
+                    try:
+                        _rc.pause()
+                        self._duplex_paused_for_typing = True
+                    except Exception:  # noqa: BLE001
+                        logger.debug('打字暂停本地双工失败', exc_info=True)
         except Exception:  # noqa: BLE001
             pass
+
+    def _maybe_resume_typing_paused_duplex(self) -> None:
+        """打字暂停后的恢复分支（从双工刷新循环抽出，便于回归）。
+
+        打字时 _note_user_typing 会 pause 本地双工并置 _duplex_paused_for_typing；
+        此处每轮刷新检查：距最后一次按键 ≥ _DUPLEX_TYPING_RESUME_S（8s）即 resume()
+        并清标志。只对带 resume 的本地双工生效；其它双工（无 resume 方法）跳过。
+        """
+        if not getattr(self, '_duplex_paused_for_typing', False):
+            return
+        if time.time() - getattr(self, '_duplex_pause_ts', 0.0) < _DUPLEX_TYPING_RESUME_S:
+            return
+        _rc = getattr(self, '_duplex_client', None)
+        if _rc is not None and getattr(_rc, 'running', False) and hasattr(_rc, 'resume'):
+            try:
+                _rc.resume()
+            except Exception:  # noqa: BLE001
+                logger.debug('恢复双工失败', exc_info=True)
+        self._duplex_paused_for_typing = False
 
     def _in_call(self) -> bool:
         """是否处于语音/视频通话中（双工被通话占用）。
@@ -4109,15 +4146,7 @@ class ProactiveStrategy:
                 # 【2026-09-11 时间快照】快照过期(≥30min)则重建一次会话刷新【当前时间】
                 # （本地 omni 会话常驻，prepare 只发一次 → 时间会冻结；见常量注释）
                 self._maybe_refresh_time_snapshot(client)
-                if getattr(self, '_duplex_paused_for_typing', False):
-                    if time.time() - getattr(self, '_duplex_pause_ts', 0.0) >= 8.0:
-                        _rc = getattr(self, '_duplex_client', None)
-                        if _rc is not None and getattr(_rc, 'running', False) and hasattr(_rc, 'resume'):
-                            try:
-                                _rc.resume()
-                            except Exception:
-                                logger.debug('恢复双工失败', exc_info=True)
-                        self._duplex_paused_for_typing = False
+                self._maybe_resume_typing_paused_duplex()
                 if self._duplex_foreground == 'game':
                     fg = self._monitor is not None and self._monitor.is_game_foreground()
                     client.set_force_listen(not fg)
