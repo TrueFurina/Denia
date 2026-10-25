@@ -9098,7 +9098,7 @@ class CharacterAPI(PetAPI, WindowAPI):
                     from . import native_notify as _nn
                     _nn.show("模型未配置，无法加载视觉",
                              "这次通话暂时看不到画面（本地视觉模型未就绪）。可先语音聊天；"
-                             "去「设置 · 功能与性能」勾选并保存即后台下载，完成后重拨就能看屏。",
+                             "去「设置 · 模型与 API」勾选并保存即后台下载，完成后重拨就能看屏。",
                              "focus", 8000, key="call_vision_missing")
             except Exception:  # noqa: BLE001
                 logger.exception("通话视觉缺失弹窗失败（忽略）")
@@ -10685,7 +10685,7 @@ class CharacterAPI(PetAPI, WindowAPI):
             return {"success": False, "error": f"保存失败: {e}"}
 
     def get_companion_features(self) -> dict:
-        """返回当前归一功能集（设置页「功能与性能」面板用）。
+        """返回当前归一功能集（设置页「模型与 API」面板用）。
 
         兼容旧用户：config 里没有 companion_features 时，从现有引擎配置回填一份，
         让老配置也能在设置页正常显示/编辑，不会白屏。
@@ -10717,7 +10717,7 @@ class CharacterAPI(PetAPI, WindowAPI):
         }
 
     def save_companion_features(self, payload: dict = None) -> dict:
-        """设置页「功能与性能」面板保存：写入归一功能集并反推引擎配置（热切换生效）。
+        """设置页「模型与 API」面板保存：写入归一功能集并反推引擎配置（热切换生效）。
 
         与引导页共用同一 companion_features 真相源，所以「设置里改」=「改了引导页的选择」，
         二者完全一致、互相同步。本地功能会触发后台模型准备（自动下载，不阻塞）。
@@ -11060,7 +11060,7 @@ class CharacterAPI(PetAPI, WindowAPI):
             need = r.get("need")
             if need == "config":
                 _nn.show("视觉模型还没选",
-                         "视觉感知已开，但还没选本地/云端模型。去「设置 · 功能与性能」勾选"
+                         "视觉感知已开，但还没选本地/云端模型。去「设置 · 模型与 API」勾选"
                          "本地双工或本地快照（看屏），或选云端双工免下载，即可开始看屏。",
                          "focus", 9000, key="companion_readiness")
             elif need == "model":
@@ -11074,7 +11074,7 @@ class CharacterAPI(PetAPI, WindowAPI):
             return {"success": False, "error": str(e)}
 
     def _kickoff_custom_model_prep(self, features, pro):
-        """自定义配置 / 设置页「功能与性能」保存 / 视觉开关开启后，后台自动准备所选的本地模型。
+        """自定义配置 / 设置页「模型与 API」保存 / 视觉开关开启后，后台自动准备所选的本地模型。
 
         容错：任何一步失败只记日志，不影响引导或开关切换。前端引导页与设置页都告知用户
         "所选模型会自动准备"，这里就是"软件内引导下载"的落地：勾选即开始后台下载。
@@ -11180,7 +11180,7 @@ class CharacterAPI(PetAPI, WindowAPI):
             if mode == _mode_gates.MODE_LOCAL:
                 return False, (
                     "你当前是「纯本地」档，语音通话走的是本地模型，云端双工不在这一档里。"
-                    "若想用云端双工（延迟更低、可克隆音色），请到 设置 → 功能与性能 → 档位 切到「云端」或「混合」。"
+                    "若想用云端双工（延迟更低、可克隆音色），请到 设置 → 模型与 API → 档位 切到「云端」或「混合」。"
                 )
             if not has_key:
                 return False, (
