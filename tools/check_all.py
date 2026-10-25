@@ -259,7 +259,14 @@ GATES: list[tuple[str, str, list[str], bool]] = [
     # 才会撞上，所以不能靠"我这儿跑着没问题"。变异 3 刀（首启开关 / 唤醒词 /
     # 图标不进包清单）全红。
     ("出厂模板与首启", PY_VENV, ["src/tests/test_release_template.py"], False),
-    ("doctor 自检结构", PY_VENV, ["src/tests/test_doctor.py"], False),
+    # 【2026-10-26】doctor 门禁也走 OpenBLAS 串行复核包装器。根因：doctor 的
+    # check_deps 用 importlib 逐个 import 核心依赖，核心段含 numpy(requirements.txt:10)；
+    # 全量门禁并发跑时 numpy 的 OpenBLAS 后端在内存争用下打印
+    # "Memory allocation still failed" 并令 import 抛异常 → doctor 误报「缺 numpy」→
+    # test_doctor [3]（断言无 FAIL）间歇红。单跑无内存压力则稳过。与 test_phash /
+    # test_set_player_name_wiring 同根同解：只在那一文案上串行复核一次，真缺依赖
+    # （别的报错）绝不重试，真缺陷仍抓得到。
+    ("doctor 自检结构", PY_VENV, ["tools/run_test_with_mem_retry.py", "src/tests/test_doctor.py"], False),
     # 「她现在能说话吗」：engine 为空会落到静音后端（不出声、不联网、零日志）。
     ("语音合成判级", PY_VENV, ["src/tests/test_doctor_voice_backend.py"], False),
     # 「听得见吗」：vosk 语言代码写成 zh-cn（应为 cn）+ model_path 指向
