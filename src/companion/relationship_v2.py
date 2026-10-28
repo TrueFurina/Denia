@@ -1,8 +1,11 @@
 # -*- coding: utf-8 -*-
-"""关系系统 v2 —— **实验模块**（2026-10-13）。
+"""关系系统 v2 —— **当前生产实现**（2026-10-13 起草，已定轨）。
 
-⚠️ 状态：实验。本项目**没有任何生产代码 import 本模块**，只有 `tools/relationship_v2_ab_probe.py`
-会引它做 A/B 对照。开发者拍板"定轨"后，才会把本文件的逻辑合并进 `relationship.py`。
+⚠️ 状态：已定轨（非实验）。本模块**已被生产接线**，并非孤立 A/B 探针：
+  · `companion/relationship.py:918` 实例化 `RelationshipEngineV2(self.store)` 作为
+    当前关系引擎（生产默认走 v2，v1 仅作父类保留语义）；
+  · `companion/relationship.py:997` 引 `relation_block_text_v2()` 生成喂给提示词的关系块文案。
+`tools/relationship_v2_ab_probe.py` 仍可调本模块做对照，但那只是可选探针，不改变"v2 已上线"的事实。
 
 针对 `docs/_relationship_realism_probe.txt` 实测出的 5 条"不像人"，逐条改：
 
