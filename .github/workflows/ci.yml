@@ -1,0 +1,50 @@
+name: ci
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  syntax:
+    name: syntax gate
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: byte-compile (hard gate)
+        run: python -m compileall -q src main.py tools
+      - name: validate requirements syntax (advisory)
+        continue-on-error: true
+        run: python tools/check_requirements.py
+
+  unit:
+    name: unit tests (observe mode)
+    needs: syntax
+    runs-on: windows-latest
+    # 观察模式：仓库此前零 CI，先让它跑起来看真实失败面。
+    # 连续 3 次全绿后，把下面这行删掉，让它成为真正的门禁。
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: install test deps
+        # 刻意不装 PyAudio / sounddevice / pywebview：CI 无音频与桌面会话，
+        # 装它们只会让安装阶段先失败。依赖它们的用例在观察模式下失败是预期内的。
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install pytest pyyaml httpx numpy requests psutil rich
+      - name: pytest
+        run: python -m pytest src/tests -q -p no:cacheprovider --maxfail=15
