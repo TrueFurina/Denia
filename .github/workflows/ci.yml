@@ -9,6 +9,12 @@ on:
 permissions:
   contents: read
 
+# Windows runner 默认控制台编码不是 UTF-8；项目里的中文输出会抛
+# UnicodeEncodeError: 'charmap' codec ...（2026-10-28 实测）。
+env:
+  PYTHONUTF8: "1"
+  PYTHONIOENCODING: "utf-8"
+
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
