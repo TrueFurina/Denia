@@ -39,8 +39,9 @@ jobs:
     needs: syntax
     runs-on: windows-latest
     env:
-      # 需要音频设备 / 桌面会话 / 外设，Windows runner 上没有，跑必红。
-      # 这些脚本请在真机上跑，不要靠 CI 判定。
+      # 需要音频设备 / 桌面会话 / 外设，Windows runner 上没有，跑必红；
+      # test_phash.py 需要 imagehash（项目刻意不装，避免拖入 109MB 的 scipy），
+      # 它自己在缺依赖时会明确报缺。这些请在真机上跑，不靠 CI 判定。
       SKIP: >-
         test_asr_event_flow.py test_asr_voice_pipeline.py test_dialogue_voice_chain.py
         test_doctor.py test_doctor_asr.py test_doctor_voice_backend.py
@@ -49,6 +50,7 @@ jobs:
         test_perception_indicator.py
         test_pet_backend.py test_pet_shell_fallback.py test_pet_shell_selfheal.py
         test_pet_state.py
+        test_phash.py
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -76,7 +78,11 @@ jobs:
           }
           Write-Host ""
           Write-Host ("执行 {0} 个，通过 {1}，失败 {2}" -f $ran, ($ran - $failed.Count), $failed.Count)
-          if ($failed.Count -gt 0) { Write-Host ("失败清单: " + ($failed -join ', ')) }
+          if ($failed.Count -gt 0) {
+            Write-Host ("失败清单: " + ($failed -join ', '))
+            # 只打 annotation 不退出码 = 假绿。这里必须让 job 真红。
+            exit 1
+          }
 
   pytest:
     name: pytest (standalone modules only)
