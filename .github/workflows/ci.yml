@@ -34,45 +34,21 @@ jobs:
         continue-on-error: true
         run: python tools/check_requirements.py
 
-  unit:
-    name: pytest (real cases only)
-    needs: syntax
-    runs-on: windows-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-      - name: install test deps
-        # 不装 PyAudio / sounddevice / pywebview：CI 无音频设备与桌面会话，
-        # 装了只会让安装阶段先炸。依赖它们的用例会在 self-check 里被列为已知不可跑。
-        run: |
-          python -m pip install --upgrade pip
-          python -m pip install pytest PyYAML httpx numpy websockets requests rich psutil Pillow mss ollama dashscope pywebview sounddevice
-      - name: pytest
-        run: python -m pytest src/tests -q -p no:cacheprovider
-
   self-check:
-    name: self-check scripts (observe mode)
+    name: self-check scripts
     needs: syntax
     runs-on: windows-latest
-    # 观察模式：这些脚本历史上没有被自动跑过，先看真实失败面。
-    # 连续稳定后，把不依赖音频/桌面的脚本移到硬门禁 job 里。
-    continue-on-error: true
     env:
-      SCRIPTS: >-
-        test_config_schema.py
-        test_config_env_refs.py
-        test_config_path_refs.py
-        test_config_migrate.py
-        test_io_safe.py
-        test_log_rotate.py
-        test_secret_box.py
-        test_package_secrets_scan.py
-        test_make_dist_deps.py
-        test_release_template.py
-        test_check_await_sync.py
-        test_check_async_blocking.py
+      # 需要音频设备 / 桌面会话 / 外设，Windows runner 上没有，跑必红。
+      # 这些脚本请在真机上跑，不要靠 CI 判定。
+      SKIP: >-
+        test_asr_event_flow.py test_asr_voice_pipeline.py test_dialogue_voice_chain.py
+        test_doctor.py test_doctor_asr.py test_doctor_voice_backend.py
+        test_doctor_llm_channel.py test_doctor_config_warn.py
+        test_autostart.py test_setup_hint.py test_wake_word.py
+        test_perception_indicator.py
+        test_pet_backend.py test_pet_shell_fallback.py test_pet_shell_selfheal.py
+        test_pet_state.py
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -82,20 +58,38 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           python -m pip install PyYAML httpx numpy websockets requests rich psutil Pillow mss ollama dashscope pywebview sounddevice
-      - name: run each self-check, report per script
+      - name: run every test_*.py as a script
         shell: pwsh
         run: |
-          $failed = @()
-          foreach ($s in $env:SCRIPTS -split '\s+') {
-            if (-not $s) { continue }
-            Write-Host "::group::$s"
-            python "src/tests/$s"
+          $skip = @($env:SKIP -split '\s+' | Where-Object { $_ })
+          $ran = 0; $failed = @()
+          foreach ($f in Get-ChildItem src/tests/test_*.py | Sort-Object Name) {
+            if ($skip -contains $f.Name) { Write-Host "::group::跳过 $($f.Name)（需音频/桌面）"; Write-Host "::endgroup::"; continue }
+            $ran++
+            Write-Host "::group::$($f.Name)"
+            python $f.FullName
             if ($LASTEXITCODE -ne 0) {
-              Write-Host "::error file=src/tests/$s::自检失败（exit $LASTEXITCODE）"
-              $failed += $s
+              Write-Host "::error file=src/tests/$($f.Name)::自检失败（exit $LASTEXITCODE）"
+              $failed += $f.Name
             }
             Write-Host "::endgroup::"
           }
           Write-Host ""
-          Write-Host ("通过 {0} / 失败 {1}" -f (($env:SCRIPTS -split '\s+' | Where-Object {$_}).Count - $failed.Count), $failed.Count)
-          if ($failed.Count -gt 0) { Write-Host ("失败: " + ($failed -join ', ')) }
+          Write-Host ("执行 {0} 个，通过 {1}，失败 {2}" -f $ran, ($ran - $failed.Count), $failed.Count)
+          if ($failed.Count -gt 0) { Write-Host ("失败清单: " + ($failed -join ', ')) }
+
+  pytest:
+    name: pytest (standalone modules only)
+    needs: syntax
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: install deps
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install pytest PyYAML httpx numpy websockets requests rich psutil Pillow mss ollama dashscope pywebview sounddevice
+      - name: pytest
+        run: python -m pytest src/tests -q -p no:cacheprovider
