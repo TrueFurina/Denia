@@ -29,22 +29,67 @@ jobs:
         run: python tools/check_requirements.py
 
   unit:
-    name: unit tests (observe mode)
+    name: pytest (real cases only)
     needs: syntax
     runs-on: windows-latest
-    # 观察模式：仓库此前零 CI，先让它跑起来看真实失败面。
-    # 连续 3 次全绿后，把下面这行删掉，让它成为真正的门禁。
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
       - name: install test deps
-        # 刻意不装 PyAudio / sounddevice / pywebview：CI 无音频与桌面会话，
-        # 装它们只会让安装阶段先失败。依赖它们的用例在观察模式下失败是预期内的。
+        # 不装 PyAudio / sounddevice / pywebview：CI 无音频设备与桌面会话，
+        # 装了只会让安装阶段先炸。依赖它们的用例会在 self-check 里被列为已知不可跑。
         run: |
           python -m pip install --upgrade pip
           python -m pip install pytest pyyaml httpx numpy requests psutil rich
       - name: pytest
-        run: python -m pytest src/tests -q -p no:cacheprovider --maxfail=15
+        run: python -m pytest src/tests -q -p no:cacheprovider
+
+  self-check:
+    name: self-check scripts (observe mode)
+    needs: syntax
+    runs-on: windows-latest
+    # 观察模式：这些脚本历史上没有被自动跑过，先看真实失败面。
+    # 连续稳定后，把不依赖音频/桌面的脚本移到硬门禁 job 里。
+    continue-on-error: true
+    env:
+      SCRIPTS: >-
+        test_config_schema.py
+        test_config_env_refs.py
+        test_config_path_refs.py
+        test_config_migrate.py
+        test_io_safe.py
+        test_log_rotate.py
+        test_secret_box.py
+        test_package_secrets_scan.py
+        test_make_dist_deps.py
+        test_release_template.py
+        test_check_await_sync.py
+        test_check_async_blocking.py
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: install deps
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install pyyaml httpx numpy requests psutil rich
+      - name: run each self-check, report per script
+        shell: pwsh
+        run: |
+          $failed = @()
+          foreach ($s in $env:SCRIPTS -split '\s+') {
+            if (-not $s) { continue }
+            Write-Host "::group::$s"
+            python "src/tests/$s"
+            if ($LASTEXITCODE -ne 0) {
+              Write-Host "::error file=src/tests/$s::自检失败（exit $LASTEXITCODE）"
+              $failed += $s
+            }
+            Write-Host "::endgroup::"
+          }
+          Write-Host ""
+          Write-Host ("通过 {0} / 失败 {1}" -f (($env:SCRIPTS -split '\s+' | Where-Object {$_}).Count - $failed.Count), $failed.Count)
+          if ($failed.Count -gt 0) { Write-Host ("失败: " + ($failed -join ', ')) }
