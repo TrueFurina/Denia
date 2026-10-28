@@ -1,8 +1,10 @@
 # -*- coding: utf-8 -*-
-"""关系裁判 v2 —— **实验模块**（2026-10-13）。
+"""关系裁判 v2 —— **已定轨**（2026-10-13 起草）。
 
-⚠️ 状态：实验。无任何生产代码 import 本模块；只有 `tools/relationship_judge_ab_probe.py`
-会引它做 A/B 对照。定轨后才会并入 `relationship_judge.py`。
+⚠️ 状态：已定轨（非实验）。本模块**已被生产接线**：`companion/relationship_v2.py:156`
+`from .relationship_judge_v2 import heuristic_signals_v2`，即 v2 关系引擎在缺 LLM 裁判时
+回退到本模块的规则裁判。`tools/relationship_judge_ab_probe.py` 仍可引它做 A/B 对照，
+但那只是可选探针，不改变"本模块已上线"的事实。
 
 ## 为什么要写 v2
 `heuristic_signals`（v1 规则裁判）实测出的语义盲区（见 docs/_relationship_affection_probe.txt）：
