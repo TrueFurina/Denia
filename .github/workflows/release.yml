@@ -1,0 +1,85 @@
+name: release
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  package:
+    name: assemble dist (gates included)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # make_dist.py 自带三道闸：check_package_secrets / check_web_assets / 必需文件清单。
+      # 任一道拦住都会非零退出——这一步失败即代表"这个包不能发"，不要绕过。
+      - name: make_dist (whitelist assemble + secret gate)
+        run: python tools/make_dist.py --out dist --no-runtime
+
+      - name: pack
+        shell: pwsh
+        run: |
+          if ($env:GITHUB_REF -like 'refs/tags/*') {
+            $ver = $env:GITHUB_REF -replace 'refs/tags/',''
+          } else {
+            $ver = 'snapshot-' + $env:GITHUB_SHA.Substring(0,7)
+          }
+          Compress-Archive -Path dist\* -DestinationPath "denia-srcpkg-$ver.zip" -Force
+          "VER=$ver" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: denia-srcpkg
+          path: denia-srcpkg-*.zip
+          retention-days: 30
+
+  publish:
+    name: publish release
+    needs: package
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: windows-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: denia-srcpkg
+
+      - name: write release notes
+        shell: pwsh
+        run: |
+          $lines = @(
+            '由 tools/make_dist.py --no-runtime 按白名单组装出的源码运行包（不含内置 Python 运行时）。',
+            '组装阶段已过三道闸：凭据/隐私扫描、静态资源完整性、必需文件清单。',
+            '',
+            '### 使用',
+            '1. 解压到任意目录',
+            '2. 准备干净的 Python 3.12 环境，执行 python -m pip install -r requirements.txt',
+            '3. 执行 python main.py',
+            '',
+            '### 这个包不是什么',
+            '- 不是 NSIS 安装包（tools/installer.nsi 需本地构建，尚未进 CI）',
+            '- 不含本机的 config.yaml、通话记录与真实 Key —— 它们在原工作目录，不会进包',
+            '',
+            '### 为什么可以放心下载',
+            '能发出来就说明 tools/check_package_secrets.py 这一关是过的；有命中会直接构建失败。'
+          )
+          $lines -join [Environment]::NewLine | Out-File -FilePath notes.md -Encoding utf8
+
+      - name: gh release create
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $tag = $env:GITHUB_REF -replace 'refs/tags/',''
+          $pkg = Get-ChildItem denia-srcpkg-*.zip | Select-Object -First 1
+          gh release create $tag $pkg.FullName --title "Denia $tag" --notes-file notes.md
