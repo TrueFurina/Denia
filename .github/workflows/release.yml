@@ -88,4 +88,6 @@ jobs:
         run: |
           $tag = $env:GITHUB_REF -replace 'refs/tags/',''
           $pkg = Get-ChildItem denia-srcpkg-*.zip | Select-Object -First 1
-          gh release create $tag $pkg.FullName --title "Denia $tag" --notes-file notes.md
+          # publish job 没有 checkout，gh 不知道当前仓库是谁，必须显式 --repo，
+          # 否则报 "no git remotes found"（2026-10-28 实测）。
+          gh release create $tag $pkg.FullName --repo $env:GITHUB_REPOSITORY --title "Denia $tag" --notes-file notes.md
