@@ -97,6 +97,30 @@ python tools/check_all.py     # 57 道闸门（截至 2026-10-20），约 4 分�
 
 新增能力请同时补：闸门 + 变异 + CHANGELOG 明细（问题 → 改动 → 验证证据）。
 
+### 本地跑一遍 CI 同款检查
+
+CI 是三条腿，任一红即不通过（[`ci.yml`](.github/workflows/ci.yml)）：
+
+```bash
+python -m pip install -r requirements-test.txt   # 只装测试依赖，不装整套运行依赖
+python -m compileall -q src main.py tools        # 腿 1：语法（硬门禁）
+python -m pytest src/tests -q                    # 腿 2：pytest
+```
+
+腿 3 是 `src/tests` 下的**脚本式自检**，要逐个跑：
+
+```powershell
+Get-ChildItem src/tests/test_*.py | ForEach-Object { python $_.FullName }
+```
+
+它们不是 pytest 用例——`import` 阶段就会跑完整检查并 `sys.exit(1)`，混进 pytest 会让
+整个收集以 `INTERNALERROR` 中断（2026-10-28 实测：55 个文件 0 个用例执行）。所以
+`src/tests/conftest.py` 用 `collect_ignore` 把它们挡在外面，而不是让它们"看起来跑了"。
+
+需要音频设备 / 桌面会话的用例（见 `ci.yml` 的 `SKIP` 列表、以及依赖 imagehash 的
+`test_phash.py`）在 CI 上必然失败，刻意不跑——**它们需要在真机上验，不要靠 CI 判定**。
+
+
 ---
 
 ## 文档地图
