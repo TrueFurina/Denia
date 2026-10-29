@@ -1,0 +1,40 @@
+# 达妮娅 · 测试/CI 依赖
+#
+# 为什么单独一份
+# -------------
+# requirements.txt 是 74 行的**运行**依赖（含 PyAudio / pycaw / pywin32 / vosk / pygame），
+# 而 CI 只需要跑测试。装全套有两个问题：
+#   1) 音频/桌面相关包在 Windows runner 上没有设备，装了也跑不起来（对应 test_*.py
+#      已在 ci.yml 的 SKIP 清单里排除）；
+#   2) 安装耗时长，且任何一个包在 runner 上装失败都会让 CI 红在与代码无关的地方。
+#
+# 这份清单的来源
+# --------------
+# 不是抄 requirements.txt，而是**由 CI 的实际缺失项反推**：
+#   - websockets：src/tests 里两个用例 `import websockets`，漏装 → 收集阶段直接报缺
+#   - ollama / dashscope：模型后端适配层的用例会 import
+# 每一条都对应一次真实的 CI 失败，所以删任何一行前先确认没有用例依赖它。
+#
+# 不在这里的
+# ----------
+# sounddevice / PyAudio / pywebview 之外的声音与设备依赖属于"真机才跑得了"的一类，
+# 对应用例在 ci.yml 的 SKIP 里，CI 不判定它们。test_phash.py 需要 imagehash，
+# 项目刻意不装（会拖入 109MB 的 scipy），它自带缺依赖时报缺。
+#
+# 维护规则
+# --------
+# ci.yml 的两个 job 都只执行 `pip install -r requirements-test.txt`。
+# 新增测试若引入新包：先加到这里 → 推上去让 CI 验证 → 不要直接改 ci.yml 里的 pip 行。
+pytest>=8.0
+PyYAML>=6.0
+httpx>=0.27
+numpy>=1.26
+websockets>=13.0
+requests>=2.31
+rich>=13.7
+psutil>=5.9
+Pillow>=10.0
+mss>=9.0
+ollama>=0.4.0
+dashscope>=1.20
+pywebview>=5.0
