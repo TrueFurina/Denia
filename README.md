@@ -120,7 +120,6 @@ Get-ChildItem src/tests/test_*.py | ForEach-Object { python $_.FullName }
 需要音频设备 / 桌面会话的用例（见 `ci.yml` 的 `SKIP` 列表、以及依赖 imagehash 的
 `test_phash.py`）在 CI 上必然失败，刻意不跑——**它们需要在真机上验，不要靠 CI 判定**。
 
-
 ---
 
 ## 文档地图
