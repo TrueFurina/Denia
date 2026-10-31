@@ -184,6 +184,12 @@ GATES: list[tuple[str, str, list[str], bool]] = [
     # 恒 False（真名 apply_call_settings），"切麦立即生效、不必重开整通电话"从未生效。
     # 同样 import proactive/numpy，走串行复核包装器。变异刀：改回旧名 → 两判据全红。
     ("切麦热切换接线", PY_VENV, ["tools/run_test_with_mem_retry.py", "src/tests/test_duplex_mic_hotswitch_wiring.py"], False),
+    # 【2026-10-31】主动搭话「去重 + 冷却时间戳守卫」回归：守 _screen_activity_repeat /
+    # _similar_summary 输入轨迹去重、_similar_to_recent 输出去重、_last_proactive_or_zero
+    # 的 None→0.0（旧 bug：None 相减 TypeError 被最外层 DEBUG 吞 → 主动搭话永不触发）。
+    # proactive import numpy，走串行复核包装器免疫 OpenBLAS 抖动；变异刀三刀全红。
+    ("主动搭话去重冷却", PY_VENV, ["tools/run_test_with_mem_retry.py", "src/tests/test_proactive_dedup_cooldown.py"], False),
+    ("主动搭话去重变异", PY_VENV, ["tools/_qc_proactive_dedup_mutation.py"], True),
     # 「没配大脑」承接浮层：首启不拿填表拦人，代价是第一次点发送只会得到「未发送」。
     # 这条守四件事：①只在失败那一刻亮（进页面就亮=顶部条换个位置）②判据是能力槽
     # 状态不是 error 文案 ③判据三态——后端没就绪是「问不出来」，不是「没配」
