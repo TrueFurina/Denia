@@ -14645,10 +14645,15 @@ class CharacterAPI(PetAPI, WindowAPI):
             self._cfg.ns = _to_ns(raw)
             # 让运行中的双工立即用新设备（不必重开整通电话）
             try:
-                if self._proactive is not None and hasattr(self._proactive, "set_duplex_mic"):
-                    self._proactive.set_duplex_mic(str(picked))
+                if self._proactive is not None:
+                    # 【2026-10-31 修·守卫写错名】原来 hasattr(self._proactive, "set_duplex_mic")
+                    # 恒 False —— ProactiveStrategy 上没有 set_duplex_mic，真名是
+                    # apply_call_settings(mic_device=...)：更新 _duplex_mic_device 并对当前
+                    # 双工客户端调 set_mic_device() 热切换。于是"切麦立即生效、不必重开整通
+                    # 电话"此前从未生效过（守卫把"方法名写错"伪装成"这个版本可能没有"）。
+                    self._proactive.apply_call_settings(mic_device=str(picked))
             except Exception:  # noqa: BLE001
-                pass
+                logger.debug('热切换双工麦克风失败', exc_info=True)
             if enabled and self._asr is not None:
                 try:
                     self._asr.set_listening(True)

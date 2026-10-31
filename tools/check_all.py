@@ -180,6 +180,10 @@ GATES: list[tuple[str, str, list[str], bool]] = [
     # _maybe_resume_typing_paused_duplex 8s 后 resume（修复前 _duplex_paused_for_typing
     # 永不被置 True、pause() 零调用 —— 整条死接线）。
     ("打字双工暂停", PY_VENV, ["tools/run_test_with_mem_retry.py", "src/tests/test_typing_duplex_pause.py"], False),
+    # 【2026-10-31】设置页切麦热切换 接线回归：webapp 里 hasattr(proactive,"set_duplex_mic")
+    # 恒 False（真名 apply_call_settings），"切麦立即生效、不必重开整通电话"从未生效。
+    # 同样 import proactive/numpy，走串行复核包装器。变异刀：改回旧名 → 两判据全红。
+    ("切麦热切换接线", PY_VENV, ["tools/run_test_with_mem_retry.py", "src/tests/test_duplex_mic_hotswitch_wiring.py"], False),
     # 「没配大脑」承接浮层：首启不拿填表拦人，代价是第一次点发送只会得到「未发送」。
     # 这条守四件事：①只在失败那一刻亮（进页面就亮=顶部条换个位置）②判据是能力槽
     # 状态不是 error 文案 ③判据三态——后端没就绪是「问不出来」，不是「没配」
