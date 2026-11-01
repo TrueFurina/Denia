@@ -167,6 +167,10 @@ GATES: list[tuple[str, str, list[str], bool]] = [
     # ①亮灭由后端真实状态决定（写死 class=on 就是骗人）②走页面轮询而不是
     # 跨线程 evaluate_js（main_window.py:454 有自锁实锤）。
     ("感知指示器", PY_VENV, ["src/tests/test_perception_indicator.py"], False),
+    # 【2026-10-31】感知指示器变异刀（补齐「加门没加变异」缺口——该测试 docstring 提到
+    # 「变异刀3」但刀从未提交）：四刀打 watching 写死 true / privacy 恒 false /
+    # 静态 class=on / toggle 改无条件 add，每刀都必须让测试变红、还原后全绿。标慢项。
+    ("感知指示器变异", PY_VENV, ["tools/_qc_perception_indicator_mutation.py"], True),
     # 【2026-10-23 补登记】SET_PLAYER_NAME 死订阅清理（539406e）的回归测试：并发会话
     # 修的时候 check_all 正被锁着，测试先留在树上没接线——正是「写了没进闸门」的形态，
     # 也被 check_gate_registry 判了待定。现在补登：守 WebUI 直调是唯一真路径、
