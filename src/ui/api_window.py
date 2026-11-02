@@ -22,10 +22,6 @@ class WindowAPI:
     """窗口与运行时健康相关的前端桥方法。"""
 
 
-    def on_page_loaded(self, html_len: int = -1) -> dict:
-        logger.info("[页面已加载] 主窗口前端页面渲染成功, innerHTML长度=%s", html_len)
-        return {"ok": True, "html_len": html_len}
-
     def ui_ping(self) -> dict:
         """前端存活心跳。幂等、极低开销，前端可安全高频调用。
 

@@ -60,9 +60,19 @@ for sc, exp in A_edge:
     # 用 trust=sc, intimacy=sc, warmth=sc 使 score=sc
     got = mgr.relationship_progress_label(aff_state(sc, sc, sc))
     check(f"edge score={sc:g}->{exp}", got == exp, f"got={got}")
-# 真实 danya
-real = mgr.relationship_progress_label(get_relationship_manager().get("danya"))
-check("真实 danya state -> 处得挺舒服", real == "处得挺舒服", f"got={real}")
+# 真实 danya：标签须与其实际好感度分数自洽。
+# 2026-11-02 修·数据脆弱：原断言硬编码「处得挺舒服」，但那只是 danya.json 缺失时
+#   默认好感(50/45/50)映射的结果；用户真实历史恢复后好感约 24→「刚认识」即假红。
+#   改为用真实分数构造等分状态比对（relationship_progress_label 只依赖分数），随数据自洽。
+_danya_state = get_relationship_manager().get("danya")
+_danya_aff = (_danya_state or {}).get("affinity") or {}
+_danya_score = (0.4 * float(_danya_aff.get("trust", 0.0) or 0.0)
+                + 0.4 * float(_danya_aff.get("intimacy", 0.0) or 0.0)
+                + 0.2 * float(_danya_aff.get("warmth", 0.0) or 0.0))
+real = mgr.relationship_progress_label(_danya_state)
+_exp_real = mgr.relationship_progress_label(aff_state(_danya_score, _danya_score, _danya_score))
+check(f"真实 danya state(score={_danya_score:.1f}) 标签与等分状态自洽",
+      real == _exp_real, f"got={real} exp={_exp_real}")
 
 # ---------------- B. _proactive_decision 闸门 ----------------
 print("\n== B. _proactive_decision 关系闸门 ==")
