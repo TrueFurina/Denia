@@ -95,3 +95,20 @@
 
 本项目据此发现过：CLR 崩溃守卫从未装上过、`pet_hit_rect` 调用的 `native.set_pet_hit_rect` 根本不存在、
 两个 tkinter 功能在发布版里永远返回"不可用"。
+
+## 第八条 · 删页面/删 JS 前，先查它是不是后端方法的唯一调用点
+
+**反向接线闸门（`tools/check_api_wiring.py`）是双向的**：它不只守「前端调了 → 后端有」，
+也守「后端有 → 得有人调」。删掉一个看似孤立的 HTML/JS 页，可能正是某个后端 `js_api`
+方法的**唯一调用点**——删完该方法立刻成孤儿，`反向接线` 报红，`check_all` 跟着红。
+
+**已踩过的实例**（2026-11-02）：`src/ui/web/index.legacy.html`（93KB，全仓零引用）被判为死页删除，
+但它的内联 JS 调了后端 `api_window.py::on_page_loaded` 2 次。删页后该方法零调用点，
+`反向接线` 报「③ on_page_loaded 未接线」。正解是按门禁提示「要么接线、要么删掉」，
+把该死方法一并移除（现代 `index.html` 并不调它），而不是把旧页塞回、或往 `KNOWN_UNWIRED` 里加名字消红。
+
+**操作判据**：
+- 删任何 HTML/JS 前，先 `grep -rn "<页面里出现的方法名>" src/`，确认它不是某后端方法的唯一调用点；
+- 删完立刻单跑 `tools/check_api_wiring.py` 与 `tools/check_broadcast_types.py`，别等全量 `check_all` 才发现；
+- 像 `app.js` 这种「死页的依赖」可能同时是某道闸门/变异刀的锚点（`check_broadcast_types` 的扫描目标、
+  `_qc_broadcast_types_mutation` 的 M4 锚点）——删它前先 `grep` 门禁脚本，别顺手把闸门的牙拔了。
