@@ -439,6 +439,11 @@ class CharacterAPI(PetAPI, WindowAPI):
     UI_PING_TIMEOUT: float = 30.0   # 连续 30s 无心跳才判无响应（模型加载期会饿前端心跳）
     UI_RECOVER_GRACE_S: float = 120.0  # 启动宽限期：前 120s 只记日志，绝不触发恢复
     UI_PING_INTERVAL: float = 5.0  # 守护线程自身轮询间隔
+    # 【2026-11-04】自动恢复预算：一轮无响应最多试 2 次、间隔 ≥60s，到顶就明确放弃。
+    # 防止"前端其实被系统节流了"时反复 Reload 造成重载风暴。
+    UI_RELOAD_COOLDOWN_S: float = 60.0
+    UI_RELOAD_MAX_PER_EPISODE: int = 2
+    UI_RELOAD_ENABLED: bool = True
 
 
 

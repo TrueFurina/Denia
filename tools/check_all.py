@@ -515,6 +515,10 @@ GATES: list[tuple[str, str, list[str], bool]] = [
     ("在场感增强变异", PY_VENV, ["tools/_qc_presence_mutation.py"], True),
     ("门禁互斥锁", PY_VENV, ["tools/test_gate_lock.py"], False),
     ("门禁互斥锁变异", PY_VENV, ["tools/_qc_gate_lock_mutation.py"], True),
+    ("UI心跳恢复策略", PY_VENV, ["tools/test_ui_heartbeat.py"], False),
+    ("UI心跳恢复策略变异", PY_VENV, ["tools/_qc_ui_heartbeat_mutation.py"], True),
+    ("UI看门狗COM边界", PY_VENV, ["tools/check_ui_reload_boundary.py"], False),
+    ("UI看门狗COM边界变异", PY_VENV, ["tools/_qc_ui_reload_boundary_mutation.py"], True),
 ]
 
 

@@ -122,38 +122,55 @@ class WindowAPI:
         }
 
     def _ui_watchdog_loop(self) -> None:
-        """守护线程：周期性检查前端心跳是否中断。
+        """守护线程：周期性检查前端心跳是否中断，并按预算尝试恢复。
 
-        【2026-09-03 加固】不再「只记日志不干预」：首次判定 UI 无响应即尽力重载卡死
-        的 WebView2 窗口（渲染进程还活着时 Reload 可救回），并持续周期记录方便排查。
+        【2026-11-04 修·界面死了就再也回不来】原来默认只记日志
+        （`UI_RELOAD_RECOVER=1` 才动），实测实例跑 2h17m 后前端心跳从 22:06 断到
+        23:10、期间零恢复动作。现在改成：默认开启有预算的恢复，判定权交给
+        `HeartbeatRecoveryPolicy`（纯状态机、可离线测），COM 访问一律留在
+        `_recover_stuck_windows` 的 GUI 线程封送里（静态闸门守着这条边界）。
+
         关键前提：_wv2_broadcast 已改为非阻塞推送，即便 UI 真死，后端（双工/聊天/
         心跳）也不再被拖垮，看门狗日志可正常落盘。
         """
+        from .heartbeat_policy import HeartbeatRecoveryPolicy
+
+        policy = HeartbeatRecoveryPolicy(
+            timeout=float(self.UI_PING_TIMEOUT),
+            grace=float(self.UI_RECOVER_GRACE_S),
+            cooldown=float(getattr(self, "UI_RELOAD_COOLDOWN_S", 60.0)),
+            max_attempts=int(getattr(self, "UI_RELOAD_MAX_PER_EPISODE", 2)),
+            enabled=bool(getattr(self, "UI_RELOAD_ENABLED", True)),
+        )
         while True:
             try:
                 time.sleep(self.UI_PING_INTERVAL)
-                if not self._ui_ping_armed:
-                    continue  # 前端尚未上报过首跳（预览/未连接），不误报
-                gap = time.time() - self._last_ui_ping
-                if gap > self.UI_PING_TIMEOUT:
-                    if not self._ui_unresponsive_logged:
-                        self._ui_unresponsive_logged = True
+                now = time.time()
+                last = self._last_ui_ping
+                armed = bool(self._ui_ping_armed)
+                decision, why = policy.check(now, last, armed, self._boot_ts)
+                if decision in ("idle", "healthy"):
+                    continue
+                gap = now - last
+                if not self._ui_unresponsive_logged:
+                    self._ui_unresponsive_logged = True
+                    logger.warning(
+                        "[UI心跳] ⚠️ 前端无响应（心跳中断 %.0fs，阈值 %.0fs）；%s",
+                        gap, self.UI_PING_TIMEOUT, why,
+                    )
+                if decision == "reload":
+                    logger.warning("[UI心跳] 尝试恢复：%s", why)
+                    self._recover_stuck_windows()
+                elif decision == "give_up":
+                    if policy.should_log_give_up():
                         logger.warning(
-                            "[UI心跳] ⚠️ 前端无响应（心跳中断 %.0fs，阈值 %.0fs）"
-                            " — 判定为 UI 卡死/渲染进程挂死，尝试重载窗口恢复",
-                            gap, self.UI_PING_TIMEOUT,
-                        )
-                        if time.time() - self._boot_ts < self.UI_RECOVER_GRACE_S:
-                            logger.warning("[UI心跳] 启动宽限期内（模型加载会饿前端心跳），"
-                                           "只记日志不触发恢复")
-                        else:
-                            self._recover_stuck_windows()
-                    else:
-                        # 仍在无响应：周期提醒，便于用户/日志定位
-                        logger.warning(
-                            "[UI心跳] 前端仍无响应（已中断 %.0fs），重载未生效或渲染进程已退出",
-                            gap,
-                        )
+                            "[UI心跳] %s；自动恢复已放弃，需手动点「重载界面」或重启软件",
+                            why)
+                elif decision not in ("cooldown", "disabled", "grace"):
+                    logger.debug("[UI心跳] %s：%s", decision, why)
+                elif decision == "cooldown" and gap < self.UI_PING_TIMEOUT * 3:
+                    # 只在前 90s 周期性提醒，之后交给 give_up，不刷屏
+                    logger.warning("[UI心跳] 前端仍无响应（已中断 %.0fs）；%s", gap, why)
             except Exception as exc:  # 看门狗自身绝不能崩
                 try:
                     logger.error("[UI心跳] 看门狗异常: %s", exc)
@@ -181,10 +198,16 @@ class WindowAPI:
         # 必须在 GUI 线程调用，跨线程调它 → 整个进程冻结：日志 16:55:50 起全停 4 分钟+，
         # 所有线程无输出）。默认禁用自动 Reload；确要启用设环境变量 UI_RELOAD_RECOVER=1，
         # 且经控件 BeginInvoke 封送到 GUI 线程执行。
+        # 【2026-11-04 改·默认开启，改成 opt-out】
+        # 16:55:50 那次冻结是**守护线程直接调 cv2.Reload()**（跨套间 COM）造成的；
+        # 下面的 _reload 已经整体移进 BeginInvoke，在 GUI 线程里访问 COM，冻结根因不在了。
+        # 继续默认关闭 = 前端心跳一断界面就永远回不来（22:06→23:10 实测 64 分钟零恢复）。
+        # 次数/冷却由 HeartbeatRecoveryPolicy 约束，这里只保留 30s 的底层冷却。
+        # 真要退回"只记日志"：设 UI_RELOAD_RECOVER=0。
         import os as _os
-        if _os.environ.get("UI_RELOAD_RECOVER") != "1":
-            logger.warning("[UI心跳] 自动 Reload 恢复保持禁用（跨线程 Reload 曾冻结整个进程，"
-                           "16:55:50 实证）；前端无响应仅记录，不影响后端运行")
+        if _os.environ.get("UI_RELOAD_RECOVER", "1") == "0":
+            logger.warning("[UI心跳] 自动 Reload 恢复按环境变量关闭（UI_RELOAD_RECOVER=0）；"
+                           "仅记录，不影响后端运行")
             return
         pet_uid = getattr(getattr(self, "_pet_win", None), "uid", None)
         for uid, ctrl in list(STATE.wv2_controls.items()):

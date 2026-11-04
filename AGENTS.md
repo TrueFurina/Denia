@@ -31,6 +31,7 @@
 | **DPI 感知、单实例互斥体必须在任何窗口创建之前设置** | 建窗后再设 DPI 感知会被系统静默忽略，且不报错。故固定放在 `main()` 最前面（`src/win_shell.py`）。 |
 | **ctypes 调用 Win32 必须声明 `argtypes`** | 未声明时 `HWND_TOPMOST = -1` 被当 32 位 int 传成 `0x00000000FFFFFFFF`，句柄校验必失败（`GetLastError=1400`）。项目里所有置顶曾因此从未生效。 |
 | **不要跨线程写 WinForms 控件属性** | 如 `window.on_top = x` 底层是 `form.TopMost`，后台线程每秒写一次会在切窗时卡住。改走纯 Win32 `SetWindowPos`。 |
+| **WebView2 的 COM（`CoreWebView2` / `Reload` / `IsConnected`）只能在 GUI 线程访问** | 2026-09-04 16:55:50 实锤：看门狗线程直接 `cv2.Reload()` → 整个进程冻结 4 分钟以上、所有线程无输出。正解是把 COM 访问整体移进闭包，用 `ctrl.BeginInvoke(Action(...))` 封送；守护线程只碰 `BeginInvoke`。这条现在由 `tools/check_ui_reload_boundary.py` 静态守着，改 `src/ui/api_window.py` 必跑。 |
 
 ## 第四条 · WebView2 透明：已确认为硬限制，别再试
 
