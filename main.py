@@ -147,7 +147,7 @@ from src.companion.game_session import DeltaGameSession
 from src.companion.memory_store import MemoryStore
 from src.companion.persona import Persona
 from src.companion.proactive import ProactiveStrategy
-from src.config import Config, load_config, probe_all
+from src.config import Config, ensure_config_file, load_config, probe_all
 from src.event_bus import EventBus, Event, EventType
 from src.llm import create_llm, create_vision_router
 from src.perception.foreground_monitor import ForegroundMonitor
@@ -2515,6 +2515,26 @@ def main() -> None:
         atexit.register(_pet_shutdown_all)
     except Exception as _e:  # noqa: BLE001  壳模块有平台依赖，缺了不能拖垮启动
         logger.debug("[壳] 退出清理注册失败（忽略）：%s", _e)
+
+    # 【2026-11-04 修·干净目录首跑】队友照 README 走、唯独漏了
+    # `cp config.release.yaml config.yaml` 那一步时，原来会在 load_config 里抛
+    # FileNotFoundError：窗口一个都不出现，只落一个 crash 日志——用户看到的是
+    # "双击没反应"，而这条恰恰是验包时最先撞到的（实测）。
+    # 判定收在 src.config.ensure_config_file（可单测），这里只负责说清楚做了什么。
+    _cfg_status, _cfg_detail = ensure_config_file(args.config)
+    if _cfg_status == "created":
+        console.print(
+            f"[yellow]首次启动：已从模板 {_os.path.basename(_cfg_detail)} 生成 "
+            f"{_os.path.basename(args.config)}[/]")
+        console.print("[dim]  模板里是 ${DASHSCOPE_API_KEY} 这类环境变量引用；"
+                      "填 API Key 请走设置页，别手改这个文件。[/]")
+    elif _cfg_status == "missing":
+        console.print(f"[red]找不到配置文件：{args.config}[/]")
+        console.print("[dim]  从模板起一份：copy config.release.yaml config.yaml[/]")
+        raise SystemExit(2)
+    elif _cfg_status == "error":
+        console.print(f"[red]配置文件不存在，复制模板也失败：{_cfg_detail}[/]")
+        raise SystemExit(2)
 
     cfg = load_config(args.config)
     # 【阶段 B2】日志保留策略来自配置：app.log_keep（份数）/ app.log_max_mb（单份上限）。

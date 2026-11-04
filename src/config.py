@@ -495,6 +495,41 @@ class Config:
                 logger.exception("保存配置失败: %s", self.path)
 
 
+CONFIG_TEMPLATE_NAMES = ("config.release.yaml", "config.example.yaml", "config.template.yaml")
+
+
+def ensure_config_file(path: str) -> tuple[str, str]:
+    """确保配置文件存在：缺失时从**同目录**的出厂模板复制一份。
+
+    返回 (status, detail)：
+      - ``("exists", path)``   已存在，什么都不做（**绝不覆盖**用户实配）
+      - ``("created", tpl)``   从模板新建，detail 是所用模板路径
+      - ``("missing", path)``  文件缺失且旁边没有模板
+      - ``("error", msg)``     复制失败（权限/磁盘），msg 是原因
+
+    【2026-11-04 加·干净目录首跑】验包实测：队友照 README 走、唯独漏了
+    `cp config.release.yaml config.yaml`，原来会在 load_config 里抛
+    FileNotFoundError——窗口一个都不出现，只落一个 crash 日志，用户看到的是
+    "双击没反应"。所以把"缺配置怎么办"收进一个可测的函数，main 只负责打印。
+
+    为什么不做成 load_config 内部自动兜底：那会让"配错路径"也变成静默生成，
+    排查时看不到任何痕迹。启动层显式调用 + 明说做了什么，才是可解释的。
+    """
+    if os.path.exists(path):
+        return ("exists", path)
+    base = os.path.dirname(os.path.abspath(path)) or "."
+    for name in CONFIG_TEMPLATE_NAMES:
+        tpl = os.path.join(base, name)
+        if os.path.exists(tpl):
+            try:
+                import shutil
+                shutil.copyfile(tpl, path)
+            except OSError as e:  # noqa: BLE001
+                return ("error", str(e))
+            return ("created", tpl)
+    return ("missing", path)
+
+
 def load_config(path: str) -> Config:
     with open(path, "r", encoding="utf-8") as f:
         raw = yaml.safe_load(f)

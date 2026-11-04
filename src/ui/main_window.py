@@ -980,9 +980,25 @@ def create_desktop_companion(api: Optional[CharacterAPI] = None) -> "webview.Win
     def _pet_detach_render():
         try:
             import time as _t
-            native = getattr(pet_window, "native", None)
+            # 【2026-11-04 修·native 是"窗口创建后才赋值"】pywebview 6.x 的
+            # Window.__init__ 里是 `self.native = None  # set in the gui after
+            # window creation`。原来这里只查一次：查早了就永久放弃，而这条分支
+            # **只在没有 Electron 壳的机器上走**（源码直跑 / 队友新装），开发机
+            # 有壳从来不走，所以一直没暴露——验包时才撞到。改成等它出现再判。
+            native = None
+            for _i in range(24):
+                native = getattr(pet_window, "native", None)
+                if native is not None:
+                    break
+                _t.sleep(0.25)
             if native is None or not hasattr(native, "detach_pet_render"):
-                logger.warning("[桌宠] 渲染窗分离：native 不可用，跳过（窗口将无法拖动）")
+                # 实话实说：detach_pet_render 在 pywebview 6.x 里**根本不存在**
+                # （全仓也没有它的定义），所以没有 Electron 壳时，分层透明窗整窗
+                # 点击穿透——桌宠只能显示，点不到也拖不动。
+                # 想要可拖动的桌宠：cd shell && npm install（装壳后走另一条路径）。
+                logger.warning(
+                    "[桌宠] 没有 Electron 壳：当前 pywebview 不提供 detach_pet_render，"
+                    "桌宠窗口只能显示、不能拖动（要拖动：cd shell && npm install）")
                 return
             for _i in range(24):
                 try:

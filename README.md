@@ -29,6 +29,8 @@
 
 ### 路线 B · 从源码跑（给开发/联调）
 
+需要 **Python 3.12**（开发/验包基线；3.11 未测，3.13+ 部分依赖还没有 wheel）。
+
 ```bash
 python -m venv .venv
 .venv/Scripts/pip install -r requirements.txt
@@ -36,6 +38,10 @@ cp config.release.yaml config.yaml     # 出厂模板；里面是 ${DASHSCOPE_AP
 .venv/Scripts/python main.py --doctor  # 先自检，别等启动失败才排查
 .venv/Scripts/python main.py
 ```
+
+漏了 `cp` 那一步也不会崩：`main.py` 发现 `config.yaml` 不在、旁边有 `config.release.yaml`
+时会自己起一份并打一行提示（2026-11-04 验包时补的——原来这里直接抛
+`FileNotFoundError`，窗口一个都不出现，只落一个 crash 日志）。
 
 `--doctor` 在这台开发机上的基线：**16 PASS / 3 WARN / 0 FAIL**（3 个 WARN 都是开发环境专属：
 配置是出厂默认但有使用痕迹 / 没有签名的 exe 入口 / 旧配置里残留「小薇」唤醒词）。
@@ -66,9 +72,9 @@ cp config.release.yaml config.yaml     # 出厂模板；里面是 ${DASHSCOPE_AP
 | 语音通话（双工） | ✅ | 云端实时通话，可打断 |
 | 语音合成 TTS | ✅ | 云端（CosyVoice / MiniMax / Fish）+ 本地（pyttsx3 / edge-tts），可克隆音色 |
 | 语音识别 ASR | ✅ | vosk 本地中文模型；唤醒词「达妮娅」（拼音容错，能接住「达尼亚」） |
-| 看屏接话 | ✅ | 默认每 2s 一帧；敏感窗口跳过；隐私模式一键全停；右下角有指示点 |
+| 看屏接话 | ✅ | 你说话时按需看一眼（聊天/叫她）；「每 2s 实时看」要自己在设置里打开（出厂默认关）。敏感窗口跳过；隐私模式一键全停；右下角有指示点 |
 | 长期记忆 | ✅ | 可查看、可删除、可导出 Markdown |
-| 桌面形象 | ⚠️ | Live2D rig 已就绪。WebView2 透明是硬限制（见 AGENTS.md 第四条），所以默认 `auto`：优先 Electron 壳（真透明），回退 pywebview |
+| 桌面形象 | ⚠️ | Live2D rig 已就绪。WebView2 透明是硬限制（见 AGENTS.md 第四条），所以默认 `auto`：优先 Electron 壳（真透明、可拖动），回退 pywebview（**只能显示，点不到也拖不动**——要完整桌宠体验先 `cd shell && npm install`） |
 | 本地模型 | ❌ | 明确不做（下 1–2GB、首 token 数秒，陪伴类第一句就冷场） |
 | 社区表情包 | 🚧 | 安装链路已修好，资源库待上线 |
 
