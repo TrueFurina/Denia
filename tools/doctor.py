@@ -667,7 +667,8 @@ def check_config(path: str) -> tuple[str, str, str, str]:
             if os.path.isfile(os.path.join(here, tpl)):
                 return (FAIL, "配置文件",
                         f"找不到 {os.path.basename(path)}（旁边有 {tpl} 模板，还没复制成实配）",
-                        f"复制模板再填 Key：copy {tpl} {os.path.basename(path)}")
+                        f"复制模板再填 Key：copy {tpl} {os.path.basename(path)}"
+                        f"（或直接跑一次 main.py，它会自己从模板生成）")
         return (FAIL, "配置文件", f"找不到 {path}",
                 f"确认运行目录，或用 --config 指定路径；"
                 f"从模板起一份：copy config.release.yaml {os.path.basename(path)}")
