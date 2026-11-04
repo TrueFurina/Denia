@@ -519,6 +519,13 @@ GATES: list[tuple[str, str, list[str], bool]] = [
     ("UI心跳恢复策略变异", PY_VENV, ["tools/_qc_ui_heartbeat_mutation.py"], True),
     ("UI看门狗COM边界", PY_VENV, ["tools/check_ui_reload_boundary.py"], False),
     ("UI看门狗COM边界变异", PY_VENV, ["tools/_qc_ui_reload_boundary_mutation.py"], True),
+    # 【2026-11-05 加·阶段 0】发布口径与验收时序：前者挡「72.8MB 写成 175.5MB」
+    # 这类对外数字漂移（数字越放第一屏错得越致命），后者挡 e44a646 修过的
+    # 「verify_deps 跑在 _pth/DLL 铺设之前」假红悄悄回归。两道都配了变异刀。
+    ("发布口径对账", PY_VENV, ["tools/check_release_numbers.py"], False),
+    ("发布口径对账变异", PY_VENV, ["tools/_qc_release_numbers_mutation.py"], True),
+    ("出包验收时序", PY_VENV, ["tools/check_verify_deps_order.py"], False),
+    ("出包验收时序变异", PY_VENV, ["tools/_qc_verify_deps_order_mutation.py"], True),
 ]
 
 

@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "version": "v0.2.0",
+  "setup_size_mb": 175.5,
+  "source_size_mb": 17.9,
+  "stage_size_mb": 645.9,
+  "setup_sha256": "",
+  "source_sha256": "da0aa0f8895e8ea24a97622aa6437e80407c0cec999e254be8e37cce04cebfc0",
+  "setup_doctor": "17 PASS / 2 WARN / 0 FAIL",
+  "source_doctor": "16 PASS / 3 WARN / 0 FAIL",
+  "measured_at": "2026-11-04 23:48",
+  "_source_doc": "docs/deliverables/2026-11-04_当前HEAD出包与验包记录.md",
+  "_note": "唯一真值。出包后跑 tools/sync_release_site.py --from-exe <安装包> [--from-zip <源码包>] 更新本文件并回填站点；对外数字由 tools/check_release_numbers.py 对账，改一处不改另一处必红。"
+}
