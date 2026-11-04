@@ -486,6 +486,11 @@ GATES: list[tuple[str, str, list[str], bool]] = [
     # 和"静音只翻 muted、不动 mode"这两条——它们错了用户只会觉得"点了没反应"。
     ("托盘开关", PY_VENV, ["tools/test_tray_switch.py"], False),
     ("托盘开关变异", PY_VENV, ["tools/_qc_tray_switch_mutation.py"], True),
+    # 【2026-11-04 加】产品必需资产清单。参考音频曾被两次"清理"弄丢
+    # （10-19 当垃圾删、11-02 判"字节一致"没抢救就 rm -rf 整包）。
+    # 守的是"存在 / 非空壳 / 真格式 / 已入库"四条——清理动作必须撞上它。
+    ("必需资产清单", PY_VENV, ["tools/test_bundled_assets.py"], False),
+    ("必需资产变异", PY_VENV, ["tools/_qc_bundled_assets_mutation.py"], True),
 ]
 
 

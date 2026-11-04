@@ -42,18 +42,6 @@ def chk(name, cond, extra=""):
         print(f"  FAIL {name}" + (f" :: {extra}" if extra else ""))
 
 
-def _write_probe_wav(path: str) -> None:
-    """写一个 0.3 秒静音 16bit 单声道 wav，只用于覆盖「复制 / 物化」链路。
-
-    不是产品素材：只是让被测代码有一段**真实字节**可以复制、可以比字节数。
-    """
-    import wave
-    with wave.open(path, "wb") as w:
-        w.setnchannels(1)
-        w.setsampwidth(2)
-        w.setframerate(16000)
-        w.writeframes(b"\x00\x00" * 4800)
-
 
 def main() -> int:
     from src.ui.webapp import CharacterAPI, register_local_img_dir
@@ -67,21 +55,11 @@ def main() -> int:
     api._cfg = load_config(cfg_copy)
 
     bundled = os.path.join(ROOT, "src", "ui", "web", "_role_assets", "ref", "xiaowei.wav")
-    # 【2026-11-04 修·夹具别依赖「本该存在」的私有资产】公开仓库里从来没有
-    # _role_assets/ref/xiaowei.wav（公开化时移除了私人录音），而原断言把它当
-    # 「测试前提」⇒ 整道闸门 7 项 FAIL，红得像「物化逻辑坏了」，实际是素材不在。
-    # 反过来的错误修法是删掉断言让它变绿——那这道闸门就再也不覆盖物化链路了。
-    # 正解：用**合成夹具**覆盖逻辑，并把「产品缺素材」如实打出来（不判红、不假装通过）。
-    _fixture_made = False
-    if not os.path.isfile(bundled):
-        os.makedirs(os.path.dirname(bundled), exist_ok=True)
-        _write_probe_wav(bundled)
-        _fixture_made = True
-        print("  NOTE 预置参考音频未随公开仓库分发（%s）"
-              % os.path.relpath(bundled, ROOT))
-        print("       → 本条用合成 wav 覆盖「物化逻辑」；产品缺口：克隆面板"
-              "「预填她的」对预置角色不可用，需补一个可分发素材或下线该入口")
-    chk("物化前提可用（真实素材或合成夹具）", os.path.isfile(bundled), bundled)
+    # 【2026-11-04 更新】素材已入库（commit bf04139，从 DanYaAI.zip 恢复）。
+    # 所以这里不再"缺了就造合成夹具"：缺失 = 回归，必须红。
+    # 否则"真素材被删"会被夹具掩盖 —— 这正是 10-19 / 11-02 两次清理没被发现的原因。
+    chk("随包参考音频在仓库里（缺失=回归，可从 git 恢复）",
+        os.path.isfile(bundled), bundled)
 
     print("\n[1] use_bundled_ref_audio：随包资产 → 真实磁盘路径")
     r = api.use_bundled_ref_audio({"url": "_role_assets/ref/xiaowei.wav"})
@@ -146,16 +124,6 @@ def main() -> int:
     except OSError:
         # 测试收尾清理：文件不存在就不用删
         pass
-    if _fixture_made:
-        # 合成夹具只在本次测试期间存在：删掉文件，空目录也一并收掉，
-        # 别把 _role_assets/ref/ 留在工作区（它会被误当成真素材）。
-        try:
-            os.remove(bundled)
-            _refdir = os.path.dirname(bundled)
-            if os.path.isdir(_refdir) and not os.listdir(_refdir):
-                os.rmdir(_refdir)
-        except OSError:
-            pass
     shutil.rmtree(tmp, ignore_errors=True)
 
     print("\n结果: %d PASS / %d FAIL" % (OK, FAIL))
