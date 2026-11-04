@@ -2943,6 +2943,62 @@ def main() -> None:
         else:
             logger.warning("系统托盘启动失败，将使用默认退出行为")
 
+    # ---- 3.5 在场感：全局热键 + 独占全屏自动退场（2026-11-04 补 P0-2）----
+    # 两条都只复用**已有**回调（托盘那一套），不新写一份能力，避免热键状态和托盘状态
+    # 各写各的。失败一律降级：热键没起来 / 探测不到全屏，都不能影响她正常启动。
+    try:
+        from src.system.hotkeys import start_from_config
+        from src.system.fullscreen_guard import FullscreenGuard, probe_exclusive_fullscreen
+
+        _presence = (cfg.raw.get("presence") or {}) if isinstance(cfg.raw, dict) else {}
+
+        def _pet_visible_now() -> bool:
+            ca = getattr(runtime, "_char_api", None)
+            if ca is not None and hasattr(ca, "pet_is_visible"):
+                try:
+                    return bool(ca.pet_is_visible())
+                except Exception:  # noqa: BLE001
+                    return False
+            return False
+
+        def _hk_pet():
+            # 翻转，不是"总是显示"：热键要能一键藏、也能一键召回
+            on_show_pet(hide=_pet_visible_now())
+
+        runtime.hotkeys = start_from_config(cfg, {
+            "mute": on_toggle_mute,
+            "pet": _hk_pet,
+            "watch": on_toggle_watch,
+        })
+
+        if bool(_presence.get("auto_hide_fullscreen", False)):
+            _guard = FullscreenGuard()
+            try:
+                _poll = float(_presence.get("fullscreen_poll_s") or 1.0)
+            except (TypeError, ValueError):
+                _poll = 1.0
+            _poll = max(0.3, min(_poll, 10.0))
+
+            def _fs_guard_loop():
+                while not runtime.stop_requested.is_set():
+                    try:
+                        _exclusive = probe_exclusive_fullscreen()
+                        _act = _guard.update(_exclusive, _pet_visible_now())
+                        if _act == "hide":
+                            logger.info("独占全屏：桌宠自动退场")
+                            on_show_pet(hide=True)
+                        elif _act == "show":
+                            logger.info("已退出独占全屏：桌宠回到桌面")
+                            on_show_pet(hide=False)
+                    except Exception:  # noqa: BLE001
+                        logger.debug("全屏退场轮询异常（忽略）", exc_info=True)
+                    runtime.stop_requested.wait(_poll)
+
+            threading.Thread(target=_fs_guard_loop, name="fs-guard", daemon=True).start()
+            logger.info("全屏自动退场已启用（每 %.1fs 采样，只认独占全屏）", _poll)
+    except Exception as _e:  # noqa: BLE001
+        logger.warning("在场感增强未能启用（其余功能不受影响）：%s", _e)
+
     # 4. 启动 pywebview（阻塞，直到所有窗口关闭 或 stop_requested）。
     # 关键（2026-08-24 黑屏根因修复）：把启动监督逻辑作为 func 回调传入，
     # 使其在 GUI 线程执行 —— 所有 create_window 必须在 GUI 线程，否则窗口

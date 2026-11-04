@@ -511,6 +511,8 @@ GATES: list[tuple[str, str, list[str], bool]] = [
     ("命令守卫变异", PY_VENV, ["tools/_qc_run_command_mutation.py"], True),
     ("配置首启兜底", PY_VENV, ["tools/test_config_bootstrap.py"], False),
     ("配置首启兜底变异", PY_VENV, ["tools/_qc_config_bootstrap_mutation.py"], True),
+    ("在场感增强", PY_VENV, ["tools/test_presence_controls.py"], False),
+    ("在场感增强变异", PY_VENV, ["tools/_qc_presence_mutation.py"], True),
 ]
 
 

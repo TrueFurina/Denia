@@ -1904,3 +1904,14 @@ relationship:
   newbie_turns: 0
   newbie_days: 0
 _release_note: 发布模板：所有 api_key 已置空，请用户填自己的服务商 Key；角色默认不绑定任何音色（引擎留空=不出声，用户自行绑定）
+
+# 【2026-11-04】在场感：全局热键 + 独占全屏自动退场
+# 注意：全屏判定只认"窗口矩形覆盖整块显示器"，**窗口最大化不算**——
+# 用 is_foreground_fullscreen() 那个"沉浸"语义会让用户一最大化浏览器她就消失。
+presence:
+  hotkeys_enabled: true
+  hotkey_mute: <ctrl>+<alt>+m
+  hotkey_pet: <ctrl>+<alt>+h
+  hotkey_watch: <ctrl>+<alt>+s
+  auto_hide_fullscreen: true
+  fullscreen_poll_s: 1.0

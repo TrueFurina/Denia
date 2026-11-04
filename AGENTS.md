@@ -76,6 +76,7 @@
 - **`python -c "..."` 里的 `\n` 会被 Git Bash 转成 `/n`**（MSYS 路径转换）：会把源码写坏，报错还长得像语法错误。改源码一律**落 .py 脚本**再跑，别用 `-c` 拼多行。
 - **`b"中文"` 是 SyntaxError**：bytes 字面量只能放 ASCII。中文锚点一律 `"中文".encode("utf-8")`，或用 `J(*lines)` 逐行拼。
 - **反引号在双引号里会被 bash 当命令替换**：`python -c "... `x` ..."` 会先去执行 `x`。写这类补丁一律走脚本文件。
+- **pynput `GlobalHotKeys` 会忽略一切程序合成的按键**：`_on_press(key, injected)` 里写着 `if not injected`，而 `Controller.press()` / `SendInput` 产生的事件全都带 `injected=True`。所以用「脚本按一次 Ctrl+Alt+M」验热键，**必然**得到"没生效"的假红（2026-11-04 实测踩到：合成事件能被普通 `Listener` 收到并 canonical 成 `Key.ctrl`/`Key.alt`/`'m'`，但 `GlobalHotKeys` 一律不处理）。正确探针：把 canonical key 直接喂 `listener._on_press(key, injected=False)`，链路（配置→映射→HotKey 状态机→回调）照样全覆盖。
 
 
 ## 第六条 · 交付红线
