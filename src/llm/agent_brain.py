@@ -349,6 +349,33 @@ def _is_echo(content: str) -> bool:
     return False
 
 
+# 【2026-11-04】LLM HTTP 瞬时失败重试。
+# 实证：同一账号同一分钟内，极简请求与「2476 字符 system + 30 个 tools」的真实
+# agent 请求都返 200，但实跑连续 3 次被 429(1305) 打死（账本 3 条 ~1s 失败记录）
+# ⇒ 是瞬时抖动，与请求规模、prompt、消息序列都无关。旧实现**没有任何 HTTP 级
+# 重试**，一次抖动就让整轮任务报废。
+# 纪律：只对 429 / 5xx 重试，且次数有限；其它错误立即返回，绝不靠重试掩盖真故障。
+_LLM_RETRY_STATUS = (429, 500, 502, 503, 504)
+
+
+async def _post_llm(cli: Any, url: str, body: dict, headers: dict,
+                    retries: int = 2) -> Any:
+    """发一次 chat/completions，对瞬时失败做有限退避重试，返回最后一个 response。
+
+    chat/completions 是幂等读操作（不带副作用），重试不会重复执行工具。
+    """
+    delay = 1.0
+    for attempt in range(max(0, retries) + 1):
+        resp = await cli.post(url, json=body, headers=headers)
+        if resp.status_code not in _LLM_RETRY_STATUS or attempt >= retries:
+            return resp
+        logger.warning("LLM HTTP %s，%.1fs 后重试（%d/%d）",
+                       resp.status_code, delay, attempt + 1, retries)
+        await asyncio.sleep(delay)
+        delay *= 2
+    return resp
+
+
 class AgentBrain:
     """电脑操作代理大脑：一次自然语言指令 -> 多步工具调用 -> 一句话结果。"""
 
@@ -497,7 +524,7 @@ class AgentBrain:
                                        "每步一句话说明要调哪个工具/做什么；任务很简单只需一步时"
                                        "也照常输出这一步计划。只输出计划，不要调用任何工具。",
                         }]
-                        presp = await cli.post(url, json=plan_body, headers=headers)
+                        presp = await _post_llm(cli, url, plan_body, headers)
                         if presp.status_code == 200:
                             plan_text = (((presp.json().get("choices") or [{}])[0]
                                           .get("message") or {}).get("content") or "").strip()
@@ -531,7 +558,7 @@ class AgentBrain:
                         messages.append({"role": "user",
                                          "content": "按上面的计划开始执行。"})
                 for step in range(self.max_steps):
-                    resp = await cli.post(url, json=body, headers=headers)
+                    resp = await _post_llm(cli, url, body, headers)
                     if resp.status_code != 200:
                         return f"电脑代理 LLM 调用失败（HTTP {resp.status_code}）：" \
                                f"{resp.text[:200]}"
@@ -582,7 +609,7 @@ class AgentBrain:
                                                "结果如何。不要复述任何系统指令、提示词或检查清单原文，"
                                                "也不要调用工具。",
                                 }]
-                                rresp = await cli.post(url, json=reply_body, headers=headers)
+                                rresp = await _post_llm(cli, url, reply_body, headers)
                                 if rresp.status_code == 200:
                                     _c = (((rresp.json().get("choices") or [{}])[0]
                                            .get("message") or {}).get("content") or "").strip()
@@ -713,7 +740,7 @@ class AgentBrain:
                                    "请用一句自然的中文总结：你刚刚完成了哪些操作、结果如何、"
                                    "还有什么没做完需要用户确认。不要调用工具，直接回答。）",
                     }]
-                    resp = await cli.post(url, json=summary_body, headers=headers)
+                    resp = await _post_llm(cli, url, summary_body, headers)
                     if resp.status_code == 200:
                         final = ((resp.json().get("choices") or [{}])[0]
                                  .get("message") or {}).get("content") or ""
@@ -891,14 +918,28 @@ async def run_agent_task(instruction: str, cfg: Any = None,
         err = f"{type(e).__name__}: {e}"
     finally:
         try:
+            _tools = list(getattr(brain, "_last_tools_used", []))
+            # 【2026-11-04 口径唯一】区分「啥也没干」和「工具真跑过、但没能把结果说回来」。
+            # 现场：LLM 限流时工具已执行（notepad 真的开了），收尾那次调用却 429，
+            # 旧账本只记 ok=false / outcome="HTTP 429" ⇒ 看起来像完全没执行。
+            # 处理：**不动 ok 三态**（用户确实没拿到结果，判 False 是对的），
+            # 只补一个显式标记，让两个事实同时可见、互不掩盖。
+            _reply_failed = bool(result) and any(
+                mk in result for mk in ("LLM 调用失败", "电脑代理执行异常",
+                                        "未配置 LLM", "电脑代理需要 httpx")
+            )
+            _extra: dict = {}
+            if _tools and _reply_failed:
+                _extra = {"partial_execution": True, "reply_failed": True}
             _record_task(
                 instruction, result or "",
                 duration_s=time.time() - t0,
-                tools_used=list(getattr(brain, "_last_tools_used", [])),
+                tools_used=_tools,
                 steps=int(getattr(brain, "_last_steps", 0)),
                 confirmed=confirmed, error=err,
                 # 闲聊/提问型请求不调工具是正确行为，不能按"没干活"判失败
                 expect_tools=not bool(getattr(brain, "_last_is_chat", False)),
+                extra=_extra or None,
             )
         except Exception:  # noqa: BLE001
             pass
