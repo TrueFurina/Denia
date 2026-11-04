@@ -513,6 +513,8 @@ GATES: list[tuple[str, str, list[str], bool]] = [
     ("配置首启兜底变异", PY_VENV, ["tools/_qc_config_bootstrap_mutation.py"], True),
     ("在场感增强", PY_VENV, ["tools/test_presence_controls.py"], False),
     ("在场感增强变异", PY_VENV, ["tools/_qc_presence_mutation.py"], True),
+    ("门禁互斥锁", PY_VENV, ["tools/test_gate_lock.py"], False),
+    ("门禁互斥锁变异", PY_VENV, ["tools/_qc_gate_lock_mutation.py"], True),
 ]
 
 
@@ -610,4 +612,19 @@ def main(argv: list[str]) -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main(sys.argv[1:]))
+    _argv = sys.argv[1:]
+    if "--list" in _argv:            # 只读，不碰工作区，不需要互斥
+        raise SystemExit(main(_argv))
+    # 【2026-11-04 加·并发护栏】变异刀会临时改源码；两个会话同时跑会互相覆盖
+    # 还原结果，把好代码留在工作区，之后每一轮都判红（今天踩到两次）。
+    # 拿不到锁时按仓库惯例 exit 77（跳过，不是通过）。
+    from _gate_lock import acquire, release
+    _got, _why = acquire()
+    if not _got:
+        print("⏸ 本轮门禁未运行：%s" % _why)
+        print("   等那一轮跑完再重试；别强行删 logs/.check_all.lock。")
+        raise SystemExit(77)
+    try:
+        raise SystemExit(main(_argv))
+    finally:
+        release()
