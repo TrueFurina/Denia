@@ -409,7 +409,7 @@ characters:
     volume: +0%
     fallback_pyttsx3: true
     api_url: ''
-    reference_audio: ''
+    reference_audio: assets/voices/daniya_ref_0813_24k.wav
     reference_text: ''
     language: zh
     api_key: ''
@@ -424,7 +424,7 @@ characters:
     enabled: false
     format: mmd
     path: ''
-  ref_audio: ''
+  ref_audio: assets/voices/daniya_ref_0813_24k.wav
 - id: 蓝色大肥鱼
   name: 大肥鱼
   avatar: _role_assets/fatfish.jpg
@@ -1369,7 +1369,7 @@ proactive:
   duplex_local_omni_listen_prob_scale: 0.3
   # 【2026-10-20】原值指向开发机的绝对路径（G: 盘），新用户没有这个盘 →
   # 本地双工一旦启用就找不到参考音。改成随包分发的相对路径（assets/voices 在仓库里）。
-  duplex_local_omni_ref_audio: ''
+  duplex_local_omni_ref_audio: assets/voices/daniya_ref_0813_24k.wav
   duplex_local_omni_unload_on_game: true
   force_kill_omni_on_unload: true
   duplex_max_width: 768

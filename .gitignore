@@ -75,3 +75,6 @@ tools/daniya_sticker_skill/data/
 # 个人数据归档/回收暂存（含历史对话/记忆/配置，严禁入库）
 archive_daniya_20261102/
 .trash/
+
+# 建仓前的整包归档（227MB）：参考音频就是从这里找回来的，但它本身不该入库。
+DanYaAI.zip
