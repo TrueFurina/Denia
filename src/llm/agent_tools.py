@@ -1852,6 +1852,11 @@ def _run_command(command: str, ctx: dict) -> str:
             run_argv, shell=False, capture_output=True, text=True,
             timeout=float(ctx.get("cmd_timeout") or 30),
             encoding="utf-8", errors="replace",
+            # 【2026-11-04】cwd 固定在工作区，与文件类工具同一套边界。
+            # 注意：run_command **不能**靠路径检查来"沙箱"——shell 里一句 cd 就出去了。
+            # 它真正的门是"fail-closed 白名单 + 禁元字符 + 只许单条命令"；
+            # 这里只保证**相对路径**落在工作区，别让人以为它和 write_file 一样受限。
+            cwd=workspace_dir(),
         )
         out = (proc.stdout or "") + (proc.stderr or "")
         logger.debug("run_command 已执行：%s（exit=%s）", exe, proc.returncode)

@@ -505,6 +505,10 @@ GATES: list[tuple[str, str, list[str], bool]] = [
     # 「已写入」——用户以为改的是那个文件，实际写到了别处。守的是"越界必须明说"。
     ("工作区边界", PY_VENV, ["tools/test_workspace_guard.py"], False),
     ("工作区边界变异", PY_VENV, ["tools/_qc_workspace_mutation.py"], True),
+    # 【2026-11-04 加】run_command 的守卫：fail-closed 白名单 / 禁元字符 / cwd 落在工作区。
+    # 它**不能**靠路径检查沙箱化（shell 一句 cd 就出去了），所以这四条判据就是它的全部门。
+    ("命令守卫", PY_VENV, ["tools/test_run_command_guard.py"], False),
+    ("命令守卫变异", PY_VENV, ["tools/_qc_run_command_mutation.py"], True),
 ]
 
 
