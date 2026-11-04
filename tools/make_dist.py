@@ -344,8 +344,16 @@ def build_wheelhouse(out_dir: str, python_exe: str, upto: str) -> bool:
 
 
 def install_deps(out_dir: str, upto: str = "important", offline: bool = False,
-                 verify: bool = True) -> bool:
-    """把依赖装进包内的 python/。按档推进，核心失败即停。"""
+                 verify: bool = True, *, defer_verify: bool = False) -> bool:
+    """把依赖装进包内的 python/。按档推进，核心失败即停。
+
+    【2026-11-04】``defer_verify=True``：只装依赖、**不在这里验收**。
+    原因：验收（``verify_deps`` → 包内 ``main.py --doctor``）需要 isolated
+    ``_pth`` 和 pywin32 DLL 都已就位，而这两步在 ``main()`` 里发生在
+    ``install_deps`` **之后**。以前在这里直接验 → 首次装配必报
+    ``ModuleNotFoundError: pywintypes``（假红），流程走完再跑 doctor 却全绿。
+    主流程用 defer_verify=True 调用，并在隔离段之后统一验一次。
+    """
     python_exe = os.path.join(out_dir, "python", "python.exe")
     if not os.path.isfile(python_exe):
         print("  ✗ 包内没有 python/python.exe（用了 --no-runtime？）—— 不知道该往哪装依赖")
@@ -398,6 +406,8 @@ def install_deps(out_dir: str, upto: str = "important", offline: bool = False,
     if fatal:
         return False
     warn_stale_pth(out_dir)   # 【C9-2】新装 .pth 在 isolated 模式下会静默失效，必须报警
+    if defer_verify:
+        return True
     if verify:
         return verify_deps(out_dir, python_exe)
     return True
@@ -1211,7 +1221,10 @@ def main() -> int:
 
     if args.install_deps:
         print("\n=== 依赖安装（装进包内 python/）===")
-        deps_ok = install_deps(out, upto=args.tier, offline=args.offline) and deps_ok
+        # 验收延后到隔离段之后：此处 _pth 还没写、pywin32 DLL 还没铺，
+        # 在这里跑 doctor 会因 pywintypes 找不到而假红（见 install_deps docstring）。
+        deps_ok = install_deps(out, upto=args.tier, offline=args.offline,
+                               defer_verify=True) and deps_ok
 
     # 隔离必须写在依赖装完之后：pywin32 的三个子目录要先存在，才能决定 _pth
     # 里要不要写它们。也必须写在闸门之前，否则闸门查到的是一份还没隔离的包。
@@ -1228,6 +1241,15 @@ def main() -> int:
         dlls = bundle_pywin32_dlls(out)
         if dlls:
             print(f"  · pywin32 DLL 铺到 python/ 根（入口无关的依赖 DLL 路径）：{', '.join(dlls)}")
+
+    # 【2026-11-04】隔离就绪后才验收。以前在 install_deps() 内部就验，
+    # 那时 _pth 未写 / DLL 未铺 → `pywintypes` 假红，且错误结论一路写进
+    # "依赖环节失败"。现在只验一次，验的是**最终交付形态**。
+    if args.install_deps and deps_ok:
+        print("\n=== 包内 doctor 验收（隔离就绪后）===")
+        probe_py = os.path.join(out, "python", "python.exe")
+        if not verify_deps(out, probe_py):
+            deps_ok = False
 
     rc, deps_missing = run_gates(out, strict_deps=args.strict_deps, root=root)
     if not deps_ok:
