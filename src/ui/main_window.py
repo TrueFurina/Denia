@@ -96,15 +96,26 @@ def _ensure_web_server() -> str:
         return _html
     # 允许中文/特殊路径文件名
     class _Handler(http.server.SimpleHTTPRequestHandler):
+        # 【2026-11-04】/local_img 的图片要长缓存（原因见 do_GET 里那段注释），
+        # 其余响应（HTML/JS/CSS）仍然强制不缓存，避免改了前端跑旧逻辑。
+        #
+        # ⚠️ 必须写成**类属性**，不能在 __init__ 里设实例属性：
+        # BaseHTTPRequestHandler.__init__ 会在构造过程中就把本次请求处理完，
+        # 等 __init__ 走到我们那行时 end_headers 早就执行过了 —— 那时属性还不存在，
+        # 直接 AttributeError，表现为**所有静态文件都 RemoteDisconnected**
+        # （2026-11-04 实测踩到：/local_img 正常、/index.html 全部断连）。
+        _skip_no_store = False
+
         def __init__(self, *args, **kwargs):
             super().__init__(*args, directory=web_root, **kwargs)
         def end_headers(self):
             # 强制不缓存：WebView2 的 HTTP 缓存会跨 app 重启保留在同一 UserDataFolder，
             # 导致前端 JS/CSS 改了但设备仍跑旧逻辑（如旧版 #modeBtn 仍是跳设置页的链接、
             # 旧聊天页 gsap.from(opacity:0) 卡透明态）。加 no-store 后每次加载都重新拉取。
-            self.send_header("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
-            self.send_header("Pragma", "no-cache")
-            self.send_header("Expires", "0")
+            if not self._skip_no_store:
+                self.send_header("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
+                self.send_header("Pragma", "no-cache")
+                self.send_header("Expires", "0")
             super().end_headers()
         def do_GET(self):
             # 🖼️ 角色卡头图（2026-09-29）：页面跑在 http://127.0.0.1，无法直接加载
@@ -201,7 +212,15 @@ def _ensure_web_server() -> str:
                         self.send_response(200)
                         self.send_header('Content-Type', _ct)
                         self.send_header('Content-Length', str(len(_data)))
-                        self.send_header('Cache-Control', 'no-store')
+                        # 【2026-11-04 修·"对话头像经常加载不出来"】
+                        # 原来这里和 end_headers 各发一次 no-store ⇒ 每张头像**每次
+                        # 渲染都重新下载**：聊天页一条消息一个 img，30 条就是 30 次
+                        # 376KB 的 danya.png（约 11MB），任何一次失败都会被前端
+                        # `onerror="this.remove()"` 永久删掉 → 表现为"头像时有时无"。
+                        # 文件名即内容标识（用户换头像会生成带时间戳的新文件名），
+                        # 所以长缓存是安全的。
+                        self._skip_no_store = True
+                        self.send_header('Cache-Control', 'public, max-age=86400')
                         self.end_headers()
                         try:
                             self.wfile.write(_data)

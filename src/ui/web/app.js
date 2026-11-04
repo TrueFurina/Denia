@@ -197,6 +197,7 @@ async function loadCharacters() {
             renderCharacterList();
             updateActiveIndicator();
             updateChatHeader();
+            refreshMessageAvatars();
         }
     } catch (e) {
         console.error("加载角色失败:", e);
@@ -1258,6 +1259,26 @@ function rebuildCharAvatars() {
         CHAR_AVATARS[c.id] = /^(https?:|data:|\/)/.test(a)
             ? a
             : "/local_img?path=" + encodeURIComponent(a);
+    }
+}
+
+// 历史消息可能先于角色表渲染（重载时聊天记录是本地缓存、渲染得很快，而角色表要等后端），那时 aiAvatarHtml()
+// 拿不到 src，只画了首字母；角色表到了以后没人回头补，
+// 于是用户看到的就是「这次有头像、下次没有」。
+function refreshMessageAvatars() {
+    const src = CHAR_AVATARS[activeId];
+    if (!src) return;
+    const list = document.querySelectorAll('.msg-avatar-fallback');
+    for (let i = 0; i < list.length; i++) {
+        const fb = list[i];
+        const prev = fb.previousElementSibling;
+        if (prev && prev.classList && prev.classList.contains('msg-avatar-img')) continue;
+        const img = document.createElement('img');
+        img.className = 'msg-avatar-img';
+        img.src = src;
+        img.alt = '';
+        img.onerror = function () { this.remove(); };
+        fb.parentNode.insertBefore(img, fb);
     }
 }
 
