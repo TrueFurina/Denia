@@ -24,6 +24,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 import time
 from typing import Any, Callable, Optional
 
@@ -49,7 +50,7 @@ _STATE_CHANGING_TOOLS = {
     "write_file", "append_file", "play_song",
 }
 
-_BASE_PROMPT = """你是「达妮娅」的电脑操作代理。用户用中文要求你操作这台电脑（打开软件、放歌、\
+_BASE_PROMPT = """你是「{agent_name}」的电脑操作代理。用户用中文要求你操作这台电脑（打开软件、放歌、\
 刷视频、搜索资料、点击、输入文字、执行命令、看屏幕等）。
 
 规则：
@@ -75,7 +76,7 @@ _BASE_PROMPT = """你是「达妮娅」的电脑操作代理。用户用中文�
 5. 在"决定调用工具"的那一轮里，先用一句中文自然地说出你打算做什么（会被念出来给用户听），
    然后再调用工具；不要静默操作。
 6. 全部工具执行完后，用一句自然中文向用户汇报结果（做了什么、结果如何），不要编造没做到的事。
-7. 如果用户只是闲聊/问候、不需要操作电脑，就正常用达妮娅的口吻聊天，不要强行调用工具。
+7. 如果用户只是闲聊/问候、不需要操作电脑，就正常用{agent_name}的口吻聊天，不要强行调用工具。
 8. 如果某件事工具做不到，直接说明限制，不要假装完成。
 9. 执行时严格按前面「规划阶段」给出的分步计划推进；若实际界面与计划不符，先复核再调整，不要盲走。简单任务（一步就能完成）无需多步计划，直接执行即可。
 10. 动作后必须复核：每完成一个会改变界面的动作（点击/输入/打开/切换窗口/执行命令），在继续下一步或最终汇报前，必须先复核该动作是否真的生效——优先用 ui_inspect 看控件是否变化，必要时用 see_screen 截图让视觉模型确认。绝不要凭"调用没报错"就假设成功；未生效就重试或换方案，不得在未确认的情况下汇报"已完成"。"""
@@ -223,6 +224,130 @@ def _load_persona_text(cfg: Any) -> str:
     return "\n\n".join(parts)
 
 
+def _known_tool_names() -> set:
+    """已注册的工具名集合（兜底解析时用来验名，防止把任意 JSON 当工具调）。"""
+    try:
+        from .agent_tools import TOOL_SPECS
+        return {str(s.get("function", {}).get("name", "")) for s in TOOL_SPECS}
+    except Exception:  # noqa: BLE001
+        return set()
+
+
+def _parse_text_tool_call(content: str) -> Optional[dict]:
+    """认出「伪 tool_calls」：模型把工具调用写成了 ```json {...} 文本。
+
+    为什么必须有（2026-11-03 实测，glm-4-flash 必现）：
+    计划阶段注入的 assistant 消息位于 messages 末尾，模型会"接着这段话往下写"，
+    把工具调用写成 JSON 文本而不是原生 ``tool_calls``。旧代码把它当"最终自然
+    语言回复"直接返回 —— **工具一次都没执行，输出却长得像干过了**（假绿）。
+
+    安全约束：只有当 **name 确实是已注册工具** 时才认；否则返回 None，
+    让它照常当自然语言回复处理。宁可漏判，绝不乱调。
+
+    返回值是标准 OpenAI tool_call 结构，可直接复用下面的执行分支。
+    """
+    if not content or '"name"' not in content:
+        return None
+    text = content.replace("```json", " ").replace("```", " ")
+    idx = text.find("{")
+    if idx < 0:
+        return None
+    try:
+        obj, _end = json.JSONDecoder().raw_decode(text, idx)
+    except Exception:  # noqa: BLE001
+        return None
+    if not isinstance(obj, dict):
+        return None
+    fn = obj.get("function") if isinstance(obj.get("function"), dict) else {}
+    name = obj.get("name") or fn.get("name")
+    if not isinstance(name, str) or name not in _known_tool_names():
+        return None
+    params = obj.get("parameters")
+    if params is None:
+        params = fn.get("arguments")
+    if isinstance(params, str):
+        try:
+            params = json.loads(params)
+        except Exception:  # noqa: BLE001
+            params = {}
+    if not isinstance(params, dict):
+        params = {}
+    return {
+        "id": "call_text_0",
+        "type": "function",
+        "function": {"name": name,
+                     "arguments": json.dumps(params, ensure_ascii=False)},
+    }
+
+
+# 【2026-11-03 P0 假绿 #3】规划阶段的两类判定标签。
+# 模型第一行必是 [闲聊] 或 [任务]，据此决定"要不要动手"以及"要不要记账为闲聊型"。
+_CHAT_TAG = "[闲聊]"
+_TASK_TAG = "[任务]"
+
+# 兜底：老模型不吐标签时，用这些短语判"这是闲聊型"。
+# 只在**整段就是这句话**时才算 —— 宽松包含会把真任务误判成闲聊，
+# 那样账本会把"没调工具的真任务"记成成功（正是要防的假绿）。
+_CHAT_FALLBACK_MARKERS = (
+    "无需多步计划，直接执行", "无需多步计划", "不需要多步计划",
+    "无需执行", "不需要执行", "无需操作",
+)
+
+
+def _split_plan_tag(plan_text: str) -> tuple[bool, str]:
+    """解析规划阶段输出 → (是否闲聊型, 去掉标签后的计划正文)。
+
+    【2026-11-03 P0 假绿 #3】第一版用"计划里含不需要动手的短语"来判闲聊，
+    实测（真实 API 采样 9 条）会**把真任务也判成闲聊**：
+    模型对"把桌面上的 report.docx 重命名为 周报.docx"也吐"无需多步计划"，
+    一旦误判 → 记账时 expect_tools=False → "没调工具的真任务"被记成成功（假绿）。
+
+    改成**显式标签驱动**：模型第一行必是 [闲聊] / [任务]，靠它分流；
+    标签缺失才退回短语兜底，且兜底只认"整段就是那句话"。
+    """
+    raw = (plan_text or "").strip()
+    if not raw:
+        return True, ""
+    lines = raw.splitlines()
+    head = lines[0].strip()
+    if head.startswith(_CHAT_TAG):
+        return True, ""
+    if head.startswith(_TASK_TAG):
+        body = "\n".join(lines[1:]).strip()
+        return False, body
+    # 无标签：按整段精确匹配兜底
+    norm = re.sub(r"^[\s\-\*\d\.、）)]+", "", raw).strip().rstrip("。.！!").strip()
+    for m in _CHAT_FALLBACK_MARKERS:
+        if norm == m or norm.rstrip("。.") == m.rstrip("。."):
+            return True, ""
+    # 拿不准 → 一律当"任务型"（保守：宁可要求调工具，也不放过真任务）
+    return False, raw
+
+
+# 【2026-11-03 P0 假绿 #3】收尾复读检测：模型把注入的指令原样吐回来时，
+# 用户看到的是提示词而不是回答。用特征片段判定，命中即拦下并要求重答。
+_ECHO_SIGNATURES = (
+    "你刚刚执行了可能改变界面状态的动作",
+    "在继续下一步或最终汇报前",
+    "不要凭调用没报错就假设成功",
+    "请先用 ui_inspect 或 see_screen 复核",
+    "按上面的计划开始执行",
+    "请把上面的任务拆成简洁的中文分步执行计划",
+)
+
+
+def _is_echo(content: str) -> bool:
+    """判断模型输出是否只是把系统注入的指令复读了一遍。"""
+    c = (content or "").strip()
+    if not c:
+        return False
+    # 复读的特征：包含注入指令的标志片段，且长度接近该指令（说明不是顺带提到）
+    for sig in _ECHO_SIGNATURES:
+        if sig in c:
+            return True
+    return False
+
+
 class AgentBrain:
     """电脑操作代理大脑：一次自然语言指令 -> 多步工具调用 -> 一句话结果。"""
 
@@ -231,7 +356,8 @@ class AgentBrain:
                  temperature: float = 0.0, timeout_s: float = 60.0,
                  max_tokens: int = 1024, ctx: Optional[dict] = None,
                  persona: str = "", plan_first: bool = True,
-                 verify_actions: bool = True) -> None:
+                 verify_actions: bool = True,
+                 agent_name: str = "达妮娅") -> None:
         self.base_url = (base_url or "").rstrip("/")
         self.api_key = api_key or ""
         self.model = model or ""
@@ -241,6 +367,8 @@ class AgentBrain:
         self.timeout_s = float(timeout_s or 60.0)
         self.max_tokens = int(max_tokens or 1024)
         self._persona = (persona or "").strip()
+        # 【2026-11-03】代理身份名，用于渲染 _BASE_PROMPT（桌宠=达妮娅 / 工作助手=中性名）
+        self._agent_name = (agent_name or "达妮娅").strip() or "达妮娅"
         self.plan_first = bool(plan_first)
         self.verify_actions = bool(verify_actions)
         # 传给工具的上下文（LLM 配置 + 安全闸 + 视觉模型）
@@ -250,11 +378,22 @@ class AgentBrain:
         self._ctx.setdefault("model", self.model)
         self._ctx["plan_first"] = self.plan_first
         self._ctx["verify_actions"] = self.verify_actions
+        # 任务账本跟踪：每次 run 结束后由 run_agent_task 读取，写入 data/tasks.jsonl。
+        # 对应 AGENTS.md「结论必须有证据」——把"干了什么"落成可追溯记录。
+        self._last_tools_used: list[str] = []
+        self._last_steps: int = 0
+        # 【2026-11-03】本次请求是否为"不需要动手"的闲聊/提问型。
+        # 规划阶段判定为 noop 时置 True —— 记账时用它决定"没调工具"算不算失败。
+        self._last_is_chat: bool = False
 
     def _system_prompt(self) -> str:
+        # 【2026-11-03】_BASE_PROMPT 里原本硬编码"达妮娅"，与 workbuddy 模式的人设冲突
+        # （模型会答"我是达妮娅的电脑操作代理"）。改为按 agent_name 渲染，
+        # 桌宠模式仍传 "达妮娅"，工作助手模式传中性名。
+        base = _BASE_PROMPT.format(agent_name=self._agent_name)
         if self._persona:
-            return self._persona + "\n\n" + _BASE_PROMPT
-        return _BASE_PROMPT
+            return self._persona + "\n\n" + base
+        return base
 
     async def run(self, instruction: str,
                   on_status: Optional[Callable[[str], Any]] = None,
@@ -270,6 +409,10 @@ class AgentBrain:
             return "没有收到要执行的指令"
         if not self.enabled or not self.base_url or not self.api_key or not self.model:
             return "电脑代理未启用或未配置 LLM（config.yaml 的 agent.enabled 及 cascade LLM）。"
+        # 【2026-11-03】每次调用重置本轮统计，避免桌宠路径多次 run() 时状态串味
+        self._last_tools_used = []
+        self._last_steps = 0
+        self._last_is_chat = False
         # 【2026-10-01 A-3】堵"操作大脑记忆孤岛"。
         # 旧实现 messages 从零构造（只有 system + 本次指令）：既读不到用户在打字/语音里
         # 聊过什么（偏好、习惯、约定），操作完也不写回共享历史 —— 于是她在电脑上帮你
@@ -337,8 +480,16 @@ class AgentBrain:
                         plan_body["max_tokens"] = 400
                         plan_body["messages"] = messages + [{
                             "role": "user",
-                            "content": "请把上面的任务拆成简洁的中文分步执行计划：用编号列表，每步一句话说明要调哪个工具/做什么。"
-                                       "只输出计划，不要调用任何工具。如果任务很简单（一步就能完成），就直接说『无需多步计划，直接执行』。",
+                            "content": "先输出一个判定标签，再输出计划。判定标签只有两种：\n"
+                                       "[闲聊] —— 用户在打招呼、提问、介绍自己、问你是谁、"
+                                       "问你能做什么，不需要动手操作电脑；\n"
+                                       "[任务] —— 用户要求你实际操作电脑（打开软件、改文件、"
+                                       "搜索、点按等）。\n"
+                                       "格式：第一行只写标签（[闲聊] 或 [任务]），然后另起一行写计划。\n"
+                                       "如果是 [闲聊]：只输出标签这一行，不要写计划。\n"
+                                       "如果是 [任务]：写完标签后输出分步计划，用编号列表，"
+                                       "每步一句话说明要调哪个工具/做什么；任务很简单只需一步时"
+                                       "也照常输出这一步计划。只输出计划，不要调用任何工具。",
                         }]
                         presp = await cli.post(url, json=plan_body, headers=headers)
                         if presp.status_code == 200:
@@ -346,6 +497,18 @@ class AgentBrain:
                                           .get("message") or {}).get("content") or "").strip()
                     except Exception as e:  # noqa: BLE001
                         logger.debug("规划阶段失败(忽略): %s", e)
+                    # 【2026-11-03 P0 假绿 #3】按标签分流：
+                    #   [闲聊] → 不调工具才是正确行为（记账口径要区分），不广播计划、不注入；
+                    #   [任务] → 剥掉标签，只把计划正文广播+注入。
+                    # 注入计划会让模型进入"执行计划"框架、把末尾 role=user 的自检提示
+                    # 当成待答提问原样复读（实测对照 4a 复读=True / 4b 复读=False）。
+                    if plan_text:
+                        _is_chat, plan_body_text = _split_plan_tag(plan_text)
+                        if _is_chat:
+                            self._last_is_chat = True
+                            plan_text = ""
+                        else:
+                            plan_text = plan_body_text
                     if plan_text and on_status is not None:
                         try:
                             await on_status({"phase": "plan", "text": plan_text,
@@ -354,7 +517,13 @@ class AgentBrain:
                         except Exception:  # noqa: BLE001
                             pass
                     if plan_text:
+                        # 【2026-11-03 P0】注入计划前补一条 user 把话轮交还模型：
+                        # 尾部留一条 assistant 消息，模型会顺着它"接着往下写"，把工具
+                        # 调用写成 ```json 文本而不是原生 tool_calls —— 实测 glm-4-flash
+                        # 必现，且**工具一次没执行**，输出却像干过了（假绿）。
                         messages.append({"role": "assistant", "content": "（执行计划）" + plan_text})
+                        messages.append({"role": "user",
+                                         "content": "按上面的计划开始执行。"})
                 for step in range(self.max_steps):
                     resp = await cli.post(url, json=body, headers=headers)
                     if resp.status_code != 200:
@@ -379,7 +548,47 @@ class AgentBrain:
                     msg = (data.get("choices") or [{}])[0].get("message") or {}
                     tool_calls = msg.get("tool_calls") or []
                     content = (msg.get("content") or "").strip()
+                    # 【2026-11-03 P0 兜底】模型没吐原生 tool_calls、而是把调用写成
+                    # JSON 文本时，还原成标准 tool_calls 走同一条执行路径。
+                    # 否则工具一次没跑，输出却像干过了 —— 假绿（见 _parse_text_tool_call）。
+                    if not tool_calls and content:
+                        _synth = _parse_text_tool_call(content)
+                        if _synth is not None:
+                            logger.info("AGENT 从文本还原 tool_call: %s",
+                                        _synth["function"]["name"])
+                            tool_calls = [_synth]
+                            content = ""
                     if not tool_calls:
+                        # 【2026-11-03 P0 假绿 #3】复读拦截：模型把注入的指令原样吐回来，
+                        # 用户看到的是提示词而不是回答。这种输出**不能直接交给用户**，
+                        # 也不能进任务账本（会被判成"失败"而丢失真实结果）。
+                        # 处理：拿同一段上下文、不带 tools 再问一次"用你自己的话汇报"，
+                        # 强制它产出面向用户的结论；仍复读则如实说明，不再透传提示词。
+                        if _is_echo(content):
+                            logger.warning("AGENT 输出复读了系统指令，触发重答")
+                            try:
+                                reply_body = dict(body)
+                                reply_body.pop("tools", None)
+                                reply_body.pop("tool_choice", None)
+                                reply_body["messages"] = messages + [{
+                                    "role": "user",
+                                    "content": "请用你自己的话，向用户汇报你刚才实际做了什么、"
+                                               "结果如何。不要复述任何系统指令、提示词或检查清单原文，"
+                                               "也不要调用工具。",
+                                }]
+                                rresp = await cli.post(url, json=reply_body, headers=headers)
+                                if rresp.status_code == 200:
+                                    _c = (((rresp.json().get("choices") or [{}])[0]
+                                           .get("message") or {}).get("content") or "").strip()
+                                    if _c and not _is_echo(_c):
+                                        content = _c
+                                    elif _c:
+                                        content = ("（我已完成上面的操作，但没能用一句话说清结果，"
+                                                   "详细执行记录见任务账本与日志。）")
+                            except Exception as e:  # noqa: BLE001
+                                logger.warning("复读重答失败: %s", e)
+                                content = ("（我已完成上面的操作，但没能用一句话说清结果，"
+                                           "详细执行记录见任务账本与日志。）")
                         # 终态：模型给出自然语言结论（调用方负责念出）
                         if on_status is not None:
                             try:
@@ -434,6 +643,11 @@ class AgentBrain:
                                 continue
                         result = await dispatch_tool(fname, fargs, self._ctx)
                         logger.info("AGENT 工具 %s -> %s", fname, result[:120])
+                        # 任务账本：记录实际执行过的工具（被确认闸拦下的不计入）
+                        try:
+                            self._last_tools_used.append(fname)
+                        except Exception:  # noqa: BLE001
+                            pass
                         messages.append({
                             "role": "tool",
                             "tool_call_id": tc.get("id", ""),
@@ -449,6 +663,7 @@ class AgentBrain:
                                 "请先用 ui_inspect 或 see_screen 复核该动作是否真的生效；"
                                 "未生效则重试或换方案，不要凭调用没报错就假设成功。"})
                     # 继续循环：把工具结果喂回模型，直到它给出最终自然语言回复
+                    self._last_steps = step + 1
                     continue
                 # 【2026-09-29 修"操作过多就甩一句提示"】步数用尽时不再直接抛硬编码提示，
                 # 而是再问一次（不带 tools，强制收口）让它总结已完成的操作与结果。
@@ -579,9 +794,17 @@ class AgentBrain:
             "repo_root": repo_root or _repo_root(),
         }
         persona = _load_persona_text(cfg) if cfg is not None else ""
+        # 【2026-11-03】代理身份名：默认"达妮娅"（桌宠）；workbuddy 模式在 cfg.ns.agent
+        # 上覆盖 agent_name 即可切成中性身份，不必改本文件。
+        agent_name = "达妮娅"
+        if agent is not None:
+            _an = (getattr(agent, "agent_name", "") or "").strip()
+            if _an:
+                agent_name = _an
         return cls(base_url=base, api_key=key, model=model, enabled=enabled,
                    max_steps=max_steps, ctx=ctx, persona=persona,
-                   plan_first=plan_first, verify_actions=verify_actions)
+                   plan_first=plan_first, verify_actions=verify_actions,
+                   agent_name=agent_name)
 
 
 async def run_agent_task(instruction: str, cfg: Any = None,
@@ -592,14 +815,53 @@ async def run_agent_task(instruction: str, cfg: Any = None,
 
     cfg 为 None 时懒加载 config（带缓存）。返回最终回复文本 / 说明字符串。
     on_confirm(desc)->bool：高危工具执行前的确认钩子（无则跳过确认闸）。
+
+    每次调用都会落一条 ``data/tasks.jsonl`` 记录（工具形态的一等公民是任务本身，
+    见 src/system/tasks.py）。记账失败不影响主流程。
     """
     if cfg is None:
         cfg = _load_cfg()
     if cfg is None:
         return "电脑代理无法加载配置（config.yaml 缺失或解析失败）。"
+    from src.system.tasks import record as _record_task
     brain = AgentBrain.from_config(cfg, _repo_root())
-    return await brain.run(instruction, on_status=on_status, on_speak=on_speak,
-                           on_confirm=on_confirm)
+    confirmed = 0
+    _orig_confirm = on_confirm
+
+    async def _confirm_wrapper(desc: str) -> bool:
+        nonlocal confirmed
+        confirmed += 1
+        if _orig_confirm is not None:
+            try:
+                return bool(await _orig_confirm(desc))
+            except Exception:  # noqa: BLE001
+                return False
+        return True
+
+    t0 = time.time()
+    err = ""
+    try:
+        result = await brain.run(
+            instruction, on_status=on_status, on_speak=on_speak,
+            on_confirm=_confirm_wrapper if _orig_confirm is not None else None,
+        )
+    except Exception as e:  # noqa: BLE001
+        result = ""
+        err = f"{type(e).__name__}: {e}"
+    finally:
+        try:
+            _record_task(
+                instruction, result or "",
+                duration_s=time.time() - t0,
+                tools_used=list(getattr(brain, "_last_tools_used", [])),
+                steps=int(getattr(brain, "_last_steps", 0)),
+                confirmed=confirmed, error=err,
+                # 闲聊/提问型请求不调工具是正确行为，不能按"没干活"判失败
+                expect_tools=not bool(getattr(brain, "_last_is_chat", False)),
+            )
+        except Exception:  # noqa: BLE001
+            pass
+    return result
 
 
 def agent_route_chat(cfg: Any = None) -> bool:

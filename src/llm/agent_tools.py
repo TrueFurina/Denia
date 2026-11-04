@@ -100,22 +100,82 @@ _COMMON_APPS = {
 }
 
 
+def _target_visible(tok: str):
+    """启动后核验：目标窗口真的出现了吗？
+
+    返回 True=看到了 / False=没看到 / None=核验不了（无法枚举窗口）。
+    核验不了时**不得据此判失败**——那只是没证据，不是反证。
+
+    为什么必须有（2026-11-03 实测）：explorer 委托**不一定成事** ——
+    Win11 上 Store 化的"记事本"经 ``explorer.exe notepad`` 开不出来
+    （``os.startfile("notepad")`` 才开得出来）。旧代码不看结果就回报
+    "已通过 Shell 委托启动：notepad" ⇒ **工具报成功、事没办成**（假绿）。
+    核验不到窗口就必须换通道，不能报成功。
+    """
+    base = (tok or "").strip().strip('"').lower()
+    if not base:
+        return None
+    base = os.path.basename(base)
+    if base.endswith(".exe"):
+        base = base[:-4]
+    if not base:
+        return None
+    try:
+        rows = _win32_windows()
+    except Exception:  # noqa: BLE001
+        return None  # 核验不了 → 交回上层，别拿"没证据"当"失败"
+    for _hwnd, title, exe in rows:
+        t = (title or "").lower()
+        e = (exe or "").lower()
+        # 标题匹配（中文应用名 / 文档名）+ 可执行文件名匹配（英文应用名）
+        if base in t or base in e:
+            return True
+    return False
+
+
 def _launch_token(tok: str) -> str:
+    """启动一个应用/文件/协议，两条通道 + 启动后核验。
+
+    通道 1（explorer 委托）：launcher 型应用（汽水音乐等 Electron）唯一可靠通道，
+    经 cmd start / os.startfile / Popen 直启会 code 0 秒退、不产生任何子进程
+    （2026-10-16 本机六路径对照实测）。但它**开不出 Store 化的系统应用**
+    （2026-11-03 实测：explorer.exe notepad 开不出记事本）。
+
+    通道 2（os.startfile）：系统/Store 应用的可靠通道。
+
+    两条都走完仍核验不到窗口时，如实说"没检测到窗口"，**不报成功**。
+    """
     tok = (tok or "").strip()
     if not tok:
         return "未提供要启动的目标"
+    if tok.startswith("http://") or tok.startswith("https://"):
+        webbrowser.open(tok)
+        return f"已在默认浏览器打开 {tok}"
+    first_err = ""
     try:
-        if tok.startswith("http://") or tok.startswith("https://"):
-            webbrowser.open(tok)
-            return f"已在默认浏览器打开 {tok}"
-        # 【2026-10-16 启动通道重做】launcher 委托型应用（汽水音乐等 Electron）经
-        # cmd start / os.startfile / Popen 直启会以 code 0 秒退、不产生任何子进程
-        # （本机六路径对照实测：explorer.exe 是唯一可靠通道，等价于资源管理器双击）。
-        # explorer 也能解析 ms-settings: / control / shell:AppsFolder / 普通程序名。
         subprocess.Popen(["explorer.exe", tok], shell=False)
-        return f"已通过 Shell 委托启动：{tok}"
     except Exception as e:  # noqa: BLE001
-        return f"启动 {tok} 失败：{e}"
+        first_err = str(e)
+    else:
+        first_err = ""
+    # 核验通道 1 的结果：开不出就得换通道，不能照报成功
+    vis = _target_visible(tok)
+    if vis is False:
+        time.sleep(1.2)
+        vis = _target_visible(tok)
+    if vis is not False:
+        return f"已启动：{tok}（Shell 委托）"
+    # 通道 2：os.startfile（系统/Store 应用可靠通道）
+    try:
+        os.startfile(tok)
+    except Exception as e:  # noqa: BLE001
+        return (f"启动 {tok} 失败：Shell 委托未生效"
+                f"{('，' + first_err) if first_err else ''}；startfile 报错：{e}")
+    time.sleep(1.2)
+    if _target_visible(tok) is not False:
+        return f"已启动：{tok}（startfile 兜底通道；Shell 委托未生效）"
+    return (f"已尝试启动 {tok}（两条通道都试过），但未检测到对应窗口 —— "
+            f"请人工确认是否真的打开了，不要假定成功")
 
 
 def _open_app(target: str, a11y: bool = False) -> str:
@@ -137,12 +197,8 @@ def _open_app(target: str, a11y: bool = False) -> str:
         if t in keys or low in [k.lower() for k in keys]:
             return _launch_token(tok)
     if os.path.exists(t):
-        try:
-            # explorer 委托（launcher 型应用直 Popen 会秒退，见 _launch_token 注释）
-            subprocess.Popen(["explorer.exe", t], shell=False)
-            return f"已启动 {t}"
-        except Exception as e:  # noqa: BLE001
-            return f"启动 {t} 失败：{e}"
+        # 走同一条「双通道 + 启动后核验」路径：直报"已启动"同样是假绿
+        return _launch_token(t)
     # 3) 模糊匹配本机已安装应用（开始菜单 / Get-StartApps）——覆盖汽水音乐、抖音桌面端等
     #    未列入白名单的应用。装了就能开，没装才返回失败提示（不假装启动）。
     fuzzy = _fuzzy_launch(t, a11y=a11y)
