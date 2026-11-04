@@ -66,6 +66,13 @@ MUTS = [
     ("H 端口探测的异常被静默吞掉（服务没起连提示都没有）",
      E("                    except OSError:"),
      E("                    except OSError:\n                        pass\n                    if False:")),
+
+    ("I 不认 web 根（随包素材 _role_assets/* 被误判成裂图）",
+     J('    _web = os.path.join(ROOT, "src", "ui", "web", p)',
+       "    if os.path.exists(_web):",
+       "        return _web",
+       '    return os.path.join(ROOT, p)'),
+     J('    return os.path.join(ROOT, p)')),
 ]
 
 
@@ -97,7 +104,7 @@ def main() -> int:
     print(f"\n还原字节一致：{ok}")
     if not ok:
         bad += 1
-    print("八刀全红" if bad == 0 else f"有 {bad} 处异常")
+    print("九刀全红" if bad == 0 else f"有 {bad} 处异常")
     return 1 if bad else 0
 
 

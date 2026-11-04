@@ -166,11 +166,27 @@ def main() -> int:
     # banner/avatar 是"留空反而更好"的典型：空 → 走内置兜底图；填路径 → 必须真能取到。
     _media_bad: list[str] = []
 
+    def _media_exists(v: str) -> bool:
+        """判断 banner/avatar 指向的文件是否真实存在。
+
+        【2026-11-04】角色素材是 **web 相对路径**（`_role_assets/danya.png`），
+        相对的是 web 根而不是仓库根 —— /local_img 路由就是这么解析的
+        （src/ui/main_window.py）。不认这一条，就会把"其实存在"的随包素材判成裂图，
+        逼着人把好配置改回空串。
+        ⚠️ 同一套解析规则也写在 tools/_qc_path_refs.py::_resolve 里（那道闸门扫
+        的是任意路径键）。两处必须一致：改这里记得同步改那边。
+        """
+        p = v.strip()
+        if os.path.isabs(p):
+            return os.path.isfile(p)
+        return (os.path.isfile(os.path.join(ROOT, "src", "ui", "web", p))
+                or os.path.isfile(os.path.join(ROOT, p)))
+
     def _walk_media(node, path):
         if isinstance(node, dict):
             for k, v in node.items():
                 if k in ("banner", "avatar") and isinstance(v, str) and v.strip():
-                    if not os.path.isfile(os.path.join(ROOT, v.strip())):
+                    if not _media_exists(v):
                         _media_bad.append(f"{path}.{k} = {v.strip()}")
                 _walk_media(v, f"{path}.{k}")
         elif isinstance(node, list):

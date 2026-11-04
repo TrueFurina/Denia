@@ -40,6 +40,10 @@ PATH_KEYS = {
     "model_path", "reference_audio", "ref_audio", "path", "file", "dir",
     "model_dir", "audio_path", "wav_path", "icon_path", "exe_path",
     "handshake_path", "log_dir", "cache_dir", "data_dir",
+    # 【2026-11-04 加·补一类漏网】角色头像/头图也是"填了就必须真存在"的本地路径：
+    # 出厂模板曾把开发机的 G:\ 绝对路径写进 avatar/banner，新用户装完就是裂图，
+    # 而这条闸门当时扫不到（不在白名单）——2026-11-04 实测踩到，故补进来。
+    "avatar", "banner",
 }
 
 url_re = re.compile(r"^(https?|wss?)://", re.I)
@@ -90,7 +94,20 @@ def _optional(node) -> bool:
 
 
 def _resolve(p: str) -> str:
-    return p if os.path.isabs(p) else os.path.join(ROOT, p)
+    """把配置里的本地路径解析成磁盘路径。
+
+    【2026-11-04】角色头像/头图可能是 **web 相对路径**（如 `_role_assets/danya.png`），
+    它相对的是 web 根而不是仓库根 —— /local_img 路由就是这么解析的
+    （src/ui/main_window.py 里那段 `os.path.join(web_root, _p)`）。
+    不在这里对齐，闸门会把"其实存在"的随包素材判成裂图，逼着人把好配置改回去。
+    规则与路由一致：web 根下确实存在就用它，否则退回仓库根。
+    """
+    if os.path.isabs(p):
+        return p
+    _web = os.path.join(ROOT, "src", "ui", "web", p)
+    if os.path.exists(_web):
+        return _web
+    return os.path.join(ROOT, p)
 
 
 def walk(node, trail: str = "", optional: bool = False) -> None:

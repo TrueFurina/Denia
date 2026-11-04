@@ -123,12 +123,25 @@ def _ensure_web_server() -> str:
                             os.path.join(web_root, "..", "..", "..", "data", "char_banners")),
                         os.path.abspath(
                             os.path.join(web_root, "..", "..", "..", "data", "char_avatars")),
+                        # 【2026-11-04】随包角色素材（danya.png / fatfish.jpg 等）：
+                        # 公开化后角色图放在 web 根下的 `_role_assets/`，而角色卡、
+                        # 聊天页、通话页统一经 `/local_img?path=` 取图。不放行这个目录，
+                        # 出厂模板一引用它们就只能显示占位图（素材其实一直都在仓库里）。
+                        os.path.abspath(os.path.join(web_root, "_role_assets")),
                     ]
                     try:
                         _allowed.extend([os.path.abspath(_d) for _d in list(STATE.local_img_extra_dirs)])
                     except Exception:  # noqa: BLE001
                         pass
                     _full = os.path.abspath(_p)
+                    # 【2026-11-04】相对路径按 **web 根** 解析：角色素材存的是
+                    # `_role_assets/xxx.jpg` 这种 web 相对路径，而 os.path.abspath
+                    # 是按进程 CWD（仓库根）解析的 → 会落到 D:/Denia/_role_assets
+                    # 这个不存在的位置，然后 404。存在才采用，保持 data/ 老路径不变。
+                    if _p and not os.path.isabs(_p):
+                        _cand = os.path.abspath(os.path.join(web_root, _p))
+                        if os.path.isfile(_cand):
+                            _full = _cand
                     if any(_full.startswith(_a + os.sep) and os.path.isfile(_full) for _a in _allowed):
                         _ext = os.path.splitext(_full)[1].lower()
                         # 【2026-10-22】补音频类型：克隆面板「试听」经本路由播参考
