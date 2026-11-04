@@ -1506,6 +1506,14 @@ agent:
   route_chat: false
   allow_tools_in_chat: false
   require_confirm: true
+  # 【2026-11-04】工具权限五档（见 src/llm/permission.py）：
+  #   explore      只读：写文件与执行一律拒绝
+  #   default      日常：写文件与执行前询问
+  #   accept_edits 改文件放行，执行前询问
+  #   dont_ask     无人值守：写文件放行，执行一律拒绝（问不出来就拒绝）
+  #   bypass       全放行（仅限沙箱/完全信任）
+  # 留空 = 沿用 require_confirm 老逻辑（已有配置行为不变）。
+  permission_mode: ''
   max_steps: 15
   llm:
     # Agent 要规划多步，用 4.7-flash（带 reasoning，实测工具调用正常）

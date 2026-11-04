@@ -496,6 +496,11 @@ GATES: list[tuple[str, str, list[str], bool]] = [
     # 时它们不经确认直接执行。这类漏洞不报错、只静默变松，必须有门守着。
     ("工具权限覆盖", PY_VENV, ["tools/check_tool_permission_coverage.py"], False),
     ("工具权限覆盖变异", PY_VENV, ["tools/_qc_tool_permission_mutation.py"], True),
+    # 【2026-11-04 加】五档权限模式（explore/default/accept_edits/dont_ask/bypass）。
+    # 守的是判定矩阵本身：dont_ask 的执行类必须拒绝、explore 连写文件都拒、
+    # 未知模式回 default 而不是 bypass。这三格错了，用户对"她有多大权力"的判断就全错。
+    ("权限模式矩阵", PY_VENV, ["tools/test_permission_modes.py"], False),
+    ("权限模式矩阵变异", PY_VENV, ["tools/_qc_permission_modes_mutation.py"], True),
 ]
 
 

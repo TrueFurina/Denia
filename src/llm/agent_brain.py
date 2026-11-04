@@ -30,20 +30,10 @@ from typing import Any, Callable, Optional
 
 logger = logging.getLogger(__name__)
 
-# 破坏性 / 高危工具：require_confirm=true 时，执行前必须先经 on_confirm 钩子确认。
-# 覆盖所有会"直接对真实系统产生不可逆或干扰性动作"的工具（键鼠、命令行、文件写/剪贴板）。
-# 注意：须与 agent_tools.TOOL_SPECS 的工具名保持一致；低风险的 set_volume/browse_web/
-# search_web 不在此列（浏览器操作另有 browser.enabled 独立开关）。
-_DESTRUCTIVE_TOOLS = {
-    "click_at", "mouse_move", "mouse_scroll", "key_press", "type_text",
-    "ui_click", "ui_type", "play_song",
-    "open_app", "focus_window", "media_control", "run_command",
-    "write_file", "append_file", "write_clipboard",
-    # 【2026-11-04 补·此前漏网】这两个一直不在名单里 ⇒ require_confirm=true 时
-    # 它们**不经确认直接执行**（实测由 tools/check_tool_permission_coverage.py 抓出）。
-    # 杀进程 / 起进程都是对真实系统的不可逆动作，必须确认。
-    "kill_process", "start_process",
-}
+# 破坏性 / 高危工具：定义已搬到 agent_tools.DESTRUCTIVE_TOOLS（= WRITE ∪ EXEC）。
+# 搬走的原因：五档权限模式要区分"写入类"和"执行类"，只靠这里一份二分名单做不到；
+# 而且名单和 TOOL_SPECS 分处两个文件时，加新工具很容易只改一边（实测漏过
+# kill_process / start_process）。现在只有一处定义，run() 里按需 import。
 
 # 【P0-1 验证回路】会改变界面/系统状态、执行后"凭调用没报错≠真的成功"的工具集合。
 # 这些工具调用成功后，run() 会注入一条自检提示，要求模型在继续/汇报前先复核状态。
@@ -146,6 +136,9 @@ def build_agent_ctx(cfg: Any, repo_root: str = "") -> dict:
     allow_cmd = bool(getattr(agent, "allow_command", False)) if agent else False
     allow_cmds = list(getattr(agent, "allow_commands", []) or []) if agent else []
     require_confirm = bool(getattr(agent, "require_confirm", False)) if agent else False
+    # 【2026-11-04】五档权限模式（explore/default/accept_edits/dont_ask/bypass）。
+    # 空值 = 未配置 = 沿用 require_confirm 老逻辑，已有配置行为不变。
+    permission_mode = (getattr(agent, "permission_mode", "") or "").strip() if agent else ""
     vision_model = (getattr(agent, "vision_model", "") or "").strip() if agent else ""
     plan_first = bool(getattr(agent, "plan_first", True)) if agent else True
     verify_actions = bool(getattr(agent, "verify_actions", True)) if agent else True
@@ -156,6 +149,7 @@ def build_agent_ctx(cfg: Any, repo_root: str = "") -> dict:
         "allow_cmd": allow_cmd,
         "allow_cmds": allow_cmds,
         "require_confirm": require_confirm,
+        "permission_mode": permission_mode,
         "base_url": base,
         "api_key": key,
         "model": model,
@@ -458,6 +452,8 @@ class AgentBrain:
         except Exception:  # noqa: BLE001
             return "电脑代理需要 httpx（pip install httpx）"
         from .agent_tools import TOOL_SPECS, dispatch_tool, available_tool_specs
+        from .agent_tools import DESTRUCTIVE_TOOLS
+        from .permission import decide_tool
         body: dict[str, Any] = {
             "model": self.model,
             "messages": messages,
@@ -630,9 +626,39 @@ class AgentBrain:
                                 })
                             except Exception:  # noqa: BLE001
                                 pass
-                        # 安全闸：破坏性工具 + require_confirm=true + 提供了确认钩子 → 先确认
-                        if (on_confirm is not None and self._ctx.get("require_confirm")
-                                and fname in _DESTRUCTIVE_TOOLS):
+                        # 安全闸（2026-11-04 改·五档权限模式，见 src/llm/permission.py）
+                        # 未配置 permission_mode → 完全走老逻辑（require_confirm + 高危名单），
+                        # 已有配置行为不变；配置了 → allow / ask / deny 三态判定。
+                        _mode = self._ctx.get("permission_mode") or ""
+                        if _mode:
+                            _decision = decide_tool(_mode, fname)
+                        else:
+                            _decision = ("ask" if (on_confirm is not None
+                                                   and self._ctx.get("require_confirm")
+                                                   and fname in DESTRUCTIVE_TOOLS)
+                                         else "allow")
+                        if _decision == "deny":
+                            messages.append({
+                                "role": "tool",
+                                "tool_call_id": tc.get("id", ""),
+                                "content": ("权限模式「%s」禁止执行 %s。"
+                                            "如果确实需要，请用户到设置里调整权限模式。"
+                                            % (_mode, fname)),
+                            })
+                            logger.info("AGENT 工具 %s 被权限模式拒绝（mode=%s）", fname, _mode)
+                            continue
+                        if _decision == "ask":
+                            if on_confirm is None:
+                                # 【2026-11-04】无人值守 + 没有确认通道 → 拒绝，而不是照做。
+                                # 老逻辑这里是直接执行，那正是"没人应答却照样动手"。
+                                messages.append({
+                                    "role": "tool",
+                                    "tool_call_id": tc.get("id", ""),
+                                    "content": ("无法确认（当前没有确认通道），已拒绝执行 %s。"
+                                                % fname),
+                                })
+                                logger.info("AGENT 工具 %s 需确认但无通道，已拒绝", fname)
+                                continue
                             desc = f"{fname}({fargs})"
                             try:
                                 allowed = bool(await on_confirm(desc))
@@ -774,6 +800,8 @@ class AgentBrain:
         allow_cmd = bool(getattr(agent, "allow_command", False)) if agent else False
         allow_cmds = list(getattr(agent, "allow_commands", []) or []) if agent else []
         require_confirm = bool(getattr(agent, "require_confirm", False)) if agent else False
+        # 【2026-11-04】与 from_config 同一套：空值 = 未配置 = 走老逻辑。
+        permission_mode = (getattr(agent, "permission_mode", "") or "").strip() if agent else ""
         vision_model = (getattr(agent, "vision_model", "") or "").strip() if agent else ""
         plan_first = bool(getattr(agent, "plan_first", True)) if agent else True
         verify_actions = bool(getattr(agent, "verify_actions", True)) if agent else True
@@ -784,6 +812,7 @@ class AgentBrain:
             "allow_cmd": allow_cmd,
             "allow_cmds": allow_cmds,
             "require_confirm": require_confirm,
+            "permission_mode": permission_mode,
             "base_url": base,
             "api_key": key,
             "model": model,

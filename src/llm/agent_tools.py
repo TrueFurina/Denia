@@ -1998,7 +1998,30 @@ def _start_process(command: str, cwd: str = "") -> str:
 # 工具 schema（OpenAI function-calling 格式） + 派发
 # --------------------------------------------------------------------------
 
-# 【2026-11-04 加·借鉴 mini-workbuddy 第 7 章】"不需要确认"的工具清单。
+# 【2026-11-04 加·借鉴 mini-workbuddy 第 7 章】工具权限三分类。
+#
+# 五档权限模式（见 src/llm/permission.py）需要区分"写入类"和"执行类"：
+# AgentScope 的 ACCEPT_EDITS 就是"写放行、执行仍询问"，只有二分做不到。
+#
+# 判据（每个工具必须落在且只落在一类里，tools/check_tool_permission_coverage.py 守着）：
+#   · SAFE  —— 读/看/检索/记忆，无系统副作用（set_volume 例外，见下）
+#   · WRITE —— 改文件、改剪贴板：可逆，但确实改了用户的东西
+#   · EXEC  —— 命令行、起停进程、键鼠、开窗、媒体控制：对真实系统产生动作
+WRITE_TOOLS = {
+    "write_file", "append_file", "write_clipboard",
+}
+
+EXEC_TOOLS = {
+    "run_command", "start_process", "kill_process",
+    "key_press", "type_text", "click_at", "ui_click", "ui_type",
+    "mouse_move", "mouse_scroll",
+    "open_app", "focus_window", "media_control", "play_song",
+}
+
+# 高危 = 写入 ∪ 执行。老的"要不要确认"二分就是它，保持向后兼容。
+DESTRUCTIVE_TOOLS = WRITE_TOOLS | EXEC_TOOLS
+
+# "不需要确认"的工具清单。
 #
 # 语义是**要不要经过确认闸**，不是"只读/写入"——比如 set_volume 会改系统音量
 # （有副作用），但可逆、影响小，历史上就明确不确认（见 agent_brain 里的注释）。

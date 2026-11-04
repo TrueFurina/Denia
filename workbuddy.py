@@ -152,6 +152,13 @@ async def _loop(cfg: object, confirm: str, model: str) -> None:
     print("\n" + "╔" + "═" * 54 + "╗")
     print("  Denia · 工作助手模式（无桌宠壳）")
     print(f"  模型：{model}")
+    # 权限档要显式打出来：用户得知道自己给出去多少权力（与"别谎报"同一套要求）
+    try:
+        from src.llm.permission import describe as _perm_desc
+        _agent_ns = getattr(getattr(cfg, "ns", None), "agent", None)
+        print("  权限：%s" % _perm_desc(getattr(_agent_ns, "permission_mode", "") or ""))
+    except Exception:  # noqa: BLE001  横幅失败不影响主流程
+        pass
     print("  输入一句任务回车执行；exit 退出；记录落 data/tasks.jsonl")
     print("╚" + "═" * 54 + "╝\n")
     while True:
@@ -215,6 +222,12 @@ def main(argv: list[str] | None = None) -> int:
                          "用于限流/额度故障转移，如 --model glm-4-flash")
     ap.add_argument("--confirm", choices=["auto", "ask"], default="auto",
                     help="高危操作确认方式：auto=默认放行 / ask=逐项询问")
+    ap.add_argument("--permission", default="",
+                    choices=["", "explore", "default", "accept_edits", "dont_ask", "bypass"],
+                    help="五档权限模式（仅内存，不改 config.yaml）："
+                         "explore=只读 / default=写与执行都问 / accept_edits=写放行执行问 / "
+                         "dont_ask=无人值守（执行一律拒）/ bypass=全放行。"
+                         "留空=沿用配置里的 agent.permission_mode")
     ap.add_argument("--pet", action="store_true",
                     help="同时拉起桌宠浮窗（独立进程，手动开的皮肤层）")
     args = ap.parse_args(argv)
@@ -226,6 +239,14 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     model = _effective_model(cfg)
+    # 【2026-11-04】--permission 只改内存（与 --model 同一套纪律），不动 config.yaml。
+    if args.permission:
+        try:
+            cfg.raw.setdefault("agent", {})["permission_mode"] = args.permission
+            from src.config import _to_ns
+            cfg.ns = _to_ns(cfg.raw)
+        except Exception as e:  # noqa: BLE001
+            print(f"[警告] 权限模式未能应用（沿用配置值）：{e}", file=sys.stderr)
     _setup_logging()
     pet_proc = _spawn_pet() if args.pet else None
     try:
