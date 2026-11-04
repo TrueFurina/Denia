@@ -12,7 +12,6 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 os.chdir(ROOT)
 
 P_TOOLS = "src/llm/agent_tools.py"
-P_BRAIN = "src/llm/agent_brain.py"
 TEST = "tools/check_tool_permission_coverage.py"
 PY = ".venv/Scripts/python.exe"
 
@@ -26,13 +25,13 @@ MUTS = [
      E('    "read_file", "file_search", "list_windows", "list_processes",'),
      E('    "file_search", "list_windows", "list_processes",')),
 
-    (P_BRAIN, "B 高危类漏一个（杀进程不再询问）",
-     E('    "kill_process", "start_process",'),
-     E('    "start_process",')),
+    (P_TOOLS, "B 高危类漏一个（杀进程不再询问）",
+     E('    "run_command", "start_process", "kill_process",'),
+     E('    "run_command", "start_process",')),
 
-    (P_BRAIN, "C 两边重复归类（要不要确认没有答案）",
-     E('_DESTRUCTIVE_TOOLS = {\n    "click_at",'),
-     E('_DESTRUCTIVE_TOOLS = {\n    "read_file",\n    "click_at",')),
+    (P_TOOLS, "C 两边重复归类（要不要确认没有答案）",
+     E('WRITE_TOOLS = {\n    "write_file", "append_file", "write_clipboard",'),
+     E('WRITE_TOOLS = {\n    "read_file",\n    "write_file", "append_file", "write_clipboard",')),
 ]
 
 
