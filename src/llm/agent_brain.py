@@ -39,6 +39,10 @@ _DESTRUCTIVE_TOOLS = {
     "ui_click", "ui_type", "play_song",
     "open_app", "focus_window", "media_control", "run_command",
     "write_file", "append_file", "write_clipboard",
+    # 【2026-11-04 补·此前漏网】这两个一直不在名单里 ⇒ require_confirm=true 时
+    # 它们**不经确认直接执行**（实测由 tools/check_tool_permission_coverage.py 抓出）。
+    # 杀进程 / 起进程都是对真实系统的不可逆动作，必须确认。
+    "kill_process", "start_process",
 }
 
 # 【P0-1 验证回路】会改变界面/系统状态、执行后"凭调用没报错≠真的成功"的工具集合。

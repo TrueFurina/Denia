@@ -1997,6 +1997,36 @@ def _start_process(command: str, cwd: str = "") -> str:
 # --------------------------------------------------------------------------
 # 工具 schema（OpenAI function-calling 格式） + 派发
 # --------------------------------------------------------------------------
+
+# 【2026-11-04 加·借鉴 mini-workbuddy 第 7 章】"不需要确认"的工具清单。
+#
+# 语义是**要不要经过确认闸**，不是"只读/写入"——比如 set_volume 会改系统音量
+# （有副作用），但可逆、影响小，历史上就明确不确认（见 agent_brain 里的注释）。
+#
+# 为什么要有这个显式清单：此前只有一份手写的 _DESTRUCTIVE_TOOLS，
+# 而**没有归属的工具默认是放行的**——实测就漏了 kill_process / start_process
+# （require_confirm=true 时它们直接执行、不询问）。加一个新工具却忘了归类，
+# 不会报错，只会静默变松。
+#
+# 所以改成"每个工具都必须有归属"：要么在 DESTRUCTIVE（要确认），要么在这里。
+# tools/check_tool_permission_coverage.py 断言两者并集 == TOOL_SPECS 全集、
+# 互不相交、没有僵尸项 —— 漏一个就红。
+SAFE_TOOLS = {
+    # 读文件 / 查系统状态
+    "read_file", "file_search", "list_windows", "list_processes",
+    "system_info", "get_volume", "read_clipboard",
+    # 看屏幕（只采集、不操作）
+    "screenshot", "see_screen", "ui_inspect",
+    # 检索（只读网络）
+    "search_web", "fetch_web", "browse_web",
+    # 记忆读写：只改本地记忆库，不动系统
+    "remember", "forget", "recall",
+    # 音量：有副作用但可逆、影响小，历史上就不确认
+    "set_volume",
+    # 纯等待
+    "wait",
+}
+
 TOOL_SPECS = [
     {
         "type": "function",

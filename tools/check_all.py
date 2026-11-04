@@ -491,6 +491,11 @@ GATES: list[tuple[str, str, list[str], bool]] = [
     # 守的是"存在 / 非空壳 / 真格式 / 已入库"四条——清理动作必须撞上它。
     ("必需资产清单", PY_VENV, ["tools/test_bundled_assets.py"], False),
     ("必需资产变异", PY_VENV, ["tools/_qc_bundled_assets_mutation.py"], True),
+    # 【2026-11-04 加·借鉴 mini-workbuddy 第 7 章】每个工具必须有权限归属。
+    # 实测抓出 kill_process / start_process 一直没归类 —— require_confirm=true
+    # 时它们不经确认直接执行。这类漏洞不报错、只静默变松，必须有门守着。
+    ("工具权限覆盖", PY_VENV, ["tools/check_tool_permission_coverage.py"], False),
+    ("工具权限覆盖变异", PY_VENV, ["tools/_qc_tool_permission_mutation.py"], True),
 ]
 
 
