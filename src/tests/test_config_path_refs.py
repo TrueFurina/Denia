@@ -55,9 +55,20 @@ data = {"channels": {"wechat": {"enabled": False,
 problems, notes, n = PR.scan(data)
 check(not problems, f"不判红（实际 {problems}）")
 
+# 【2026-11-04 修·夹具别依赖私有资产】原夹具用的是
+# assets/voices/daniya_ref_0813_24k.wav —— 那是私人参考音，公开仓库里从来没有，
+# 于是这条"路径真的存在→PASS"的检查一直红着（而它红的方式很像"扫描器坏了"，
+# 排查时会往错的方向走）。夹具要自己造一个确定存在的文件，不能指望仓库里恰好有。
+_OK_FILE = os.path.join(tempfile.gettempdir(), "daniya_path_refs_ok_probe.wav")
+try:
+    with open(_OK_FILE, "wb") as _f:
+        _f.write(b"RIFF")
+except OSError:
+    _OK_FILE = os.path.abspath(__file__)
+
 print("\n4) 路径真的存在 → PASS")
 data = {"characters": [{"name": "测试", "voice": {"engine": "pyttsx3",
-                                                "reference_audio": "assets/voices/daniya_ref_0813_24k.wav"}}]}
+                                                "reference_audio": _OK_FILE}}]}
 problems, notes, n = PR.scan(data)
 check(not problems, f"无红（实际 {problems}）")
 check(any("[A ok]" in x for x in notes), "记录了 ok")
@@ -115,7 +126,20 @@ if os.path.exists(P):
     d = yaml.safe_load(open(P, encoding="utf-8"))
     problems, notes, n = PR.scan(d)
     check(not problems, f"模板零红（实际 {problems}）")
-    check(n >= 4, f"确实扫了 {n} 处（不是空转）")
+    # 【2026-11-04 修·反空转别耦合真实数据】原断言是 `n >= 4`——它要求进仓模板里
+    # 恰好有 >=4 处路径引用。而清掉指向不存在 wav 的 3 处坏引用之后，模板变干净、
+    # n 掉到 0，这条断言反过来把"修好了"判成红（实测踩到）。
+    # 反空转要证明的是"扫描器不是空转"，必须用**独立夹具**：造一份确定含引用的
+    # 字典，看它能不能数出来。真实模板只守"零红"，不再承担"数据量"这个职责。
+    _probe = {
+        "characters": [{"voice": {"engine": "pyttsx3",
+                                  "reference_audio": "assets/voices/probe.wav"}}],
+        "ref_audio": "assets/voices/probe2.wav",
+        "model_path": "models/probe",
+        "app": {"log_dir": "logs"},
+    }
+    _pp, _pn, _pc = PR.scan(_probe)
+    check(_pc >= 4, f"扫描器不是空转（夹具扫了 {_pc} 处）")
 
 print()
 if FAIL:

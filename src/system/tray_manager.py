@@ -33,10 +33,22 @@ class TrayManager:
         self.is_running = False
         self.pet_visible = False
         self.main_window_visible = True
+        # 【2026-11-04】静音 / 看屏 的当前状态：菜单文案跟着它变（"静音"↔"取消静音"）。
+        # 状态由 main.py 在启动时灌入、每次点击后按回调返回值刷新。
+        self.muted = False
+        self.watch_enabled = False
+        # 【2026-11-04】状态提供者：返回 (muted, watch_enabled) 的实时读取函数。
+        # 为什么不能只靠上面的缓存字段：用户可能在**设置页**改静音/看屏，
+        # 而托盘这边只在"点托盘"时刷新 —— 于是菜单会显示"静音"却实际静音中，
+        # 点一下反而把想关的打开了。菜单文案在**显示时**求值，这里每次现读。
+        self.state_provider: Optional[Callable] = None
         self.on_exit_callback: Optional[Callable] = None
         self.on_show_main_callback: Optional[Callable] = None
         self.on_show_pet_callback: Optional[Callable] = None
         self.on_minimize_callback: Optional[Callable] = None
+        self.on_open_page_callback: Optional[Callable] = None
+        self.on_toggle_mute_callback: Optional[Callable] = None
+        self.on_toggle_watch_callback: Optional[Callable] = None
         
     def create_icon(self) -> Optional[Any]:
         """创建托盘图标。
@@ -87,6 +99,20 @@ class TrayManager:
             pystray.MenuItem("显示桌宠", self._on_show_pet),
             pystray.MenuItem("隐藏桌宠", self._on_hide_pet),
             pystray.Menu.SEPARATOR,
+            # 【2026-11-04】直达入口：在托盘里就能开记忆库 / 关系档案 / 设置，
+            # 不用先"显示主界面"再自己找导航。
+            pystray.MenuItem("记忆库", self._on_open_memory),
+            pystray.MenuItem("关系档案", self._on_open_relation),
+            pystray.MenuItem("设置", self._on_open_settings),
+            pystray.Menu.SEPARATOR,
+            # 【2026-11-04】静音 / 看屏：文案跟着状态走，点一下立即生效。
+            # 这两项只改配置与运行时闸门、不碰任何窗口对象，所以在托盘线程里调是安全的
+            # （"显示主界面"那种要动窗口的，仍走 main.py 里那套多重兜底）。
+            pystray.MenuItem(lambda item: "取消静音" if self._live_muted() else "静音",
+                             self._on_toggle_mute),
+            pystray.MenuItem(lambda item: "关闭看屏" if self._live_watch() else "开启看屏",
+                             self._on_toggle_watch),
+            pystray.Menu.SEPARATOR,
             pystray.MenuItem("最小化到托盘", self._on_minimize),
             pystray.MenuItem("退出", self._on_exit)
         ]
@@ -117,6 +143,56 @@ class TrayManager:
         if self.on_show_pet_callback:
             self.on_show_pet_callback(hide=True)
     
+    def _on_toggle_mute(self, icon, item):
+        """静音开关回调。
+
+        回调用返回值把"切换后的真实状态"带回来，而不是这边自己取反——
+        取反会在"写盘失败 / 模式冲突"时和真实状态错位（菜单显示"取消静音"
+        但其实是静音的），这类错位用户根本查不出来。
+        """
+        logger.info("托盘菜单: 静音切换")
+        if not self.on_toggle_mute_callback:
+            return
+        try:
+            r = self.on_toggle_mute_callback()
+            if isinstance(r, dict) and "muted" in r:
+                self.muted = bool(r["muted"])
+                self._refresh_menu()
+        except Exception:  # noqa: BLE001  托盘线程里绝不能把异常抛给 pystray
+            logger.warning("托盘静音切换失败", exc_info=True)
+
+    def _on_toggle_watch(self, icon, item):
+        """看屏开关回调（同上：以返回值为准，不本地取反）。"""
+        logger.info("托盘菜单: 看屏切换")
+        if not self.on_toggle_watch_callback:
+            return
+        try:
+            r = self.on_toggle_watch_callback()
+            if isinstance(r, dict) and "watch_enabled" in r:
+                self.watch_enabled = bool(r["watch_enabled"])
+                self._refresh_menu()
+        except Exception:  # noqa: BLE001
+            logger.warning("托盘看屏切换失败", exc_info=True)
+
+    def _on_open_page(self, page: str) -> None:
+        """把"打开某个页面"转给 main.py 注入的回调（那边负责先显示主窗口）。"""
+        logger.info("托盘菜单: 打开页面 %s", page)
+        if not self.on_open_page_callback:
+            return
+        try:
+            self.on_open_page_callback(page)
+        except Exception:  # noqa: BLE001  托盘线程不能把异常抛给 pystray
+            logger.warning("托盘打开页面失败: %s", page, exc_info=True)
+
+    def _on_open_memory(self, icon, item):
+        self._on_open_page("memory")
+
+    def _on_open_relation(self, icon, item):
+        self._on_open_page("relation")
+
+    def _on_open_settings(self, icon, item):
+        self._on_open_page("settings")
+
     def _on_minimize(self, icon, item):
         """最小化到托盘回调。"""
         logger.info("托盘菜单: 最小化到托盘")
@@ -185,6 +261,46 @@ class TrayManager:
         except Exception as e:
             logger.error(f"停止托盘时出错: {e}")
     
+    def _live_muted(self) -> bool:
+        """菜单文案用的实时静音状态：优先问 state_provider，没有就用缓存值。"""
+        if self.state_provider is not None:
+            try:
+                return bool(self.state_provider()[0])
+            except Exception:  # noqa: BLE001  读配置失败就退回缓存，别让菜单炸掉
+                logger.debug("读取实时静音状态失败，用缓存值", exc_info=True)
+        return self.muted
+
+    def _live_watch(self) -> bool:
+        """菜单文案用的实时看屏状态（同上）。"""
+        if self.state_provider is not None:
+            try:
+                return bool(self.state_provider()[1])
+            except Exception:  # noqa: BLE001
+                logger.debug("读取实时看屏状态失败，用缓存值", exc_info=True)
+        return self.watch_enabled
+
+    def _refresh_menu(self) -> None:
+        """按当前状态重建菜单（pystray 只在菜单重新赋值时才会重算文案）。
+
+        抽出来是因为原来 update_pet_visibility / update_main_window_visibility
+        各写了一遍同样的三行——两处维护同一件事，迟早有一处忘了改。
+        """
+        if self.is_running and self.icon:
+            try:
+                self.icon.menu = self.create_menu()
+            except Exception:  # noqa: BLE001  重建菜单失败不该影响托盘存活
+                logger.warning("刷新托盘菜单失败", exc_info=True)
+
+    def set_mute_state(self, muted: bool) -> None:
+        """外部（启动时/其它入口改过静音后）同步静音状态到菜单。"""
+        self.muted = bool(muted)
+        self._refresh_menu()
+
+    def set_watch_state(self, enabled: bool) -> None:
+        """外部同步看屏状态到菜单。"""
+        self.watch_enabled = bool(enabled)
+        self._refresh_menu()
+
     def update_pet_visibility(self, visible: bool) -> None:
         """更新桌宠可见性状态。
         
@@ -192,10 +308,8 @@ class TrayManager:
             visible: 桌宠是否可见
         """
         self.pet_visible = visible
-        if self.is_running and self.icon:
-            # 更新菜单
-            self.icon.menu = self.create_menu()
-    
+        self._refresh_menu()
+
     def update_main_window_visibility(self, visible: bool) -> None:
         """更新主窗口可见性状态。
         
@@ -203,15 +317,16 @@ class TrayManager:
             visible: 主窗口是否可见
         """
         self.main_window_visible = visible
-        if self.is_running and self.icon:
-            # 更新菜单
-            self.icon.menu = self.create_menu()
+        self._refresh_menu()
     
     def set_callbacks(self, 
                      on_exit: Optional[Callable] = None,
                      on_show_main: Optional[Callable] = None,
                      on_show_pet: Optional[Callable] = None,
-                     on_minimize: Optional[Callable] = None) -> None:
+                     on_minimize: Optional[Callable] = None,
+                     on_open_page: Optional[Callable] = None,
+                     on_toggle_mute: Optional[Callable] = None,
+                     on_toggle_watch: Optional[Callable] = None) -> None:
         """设置回调函数。
         
         Args:
@@ -219,8 +334,13 @@ class TrayManager:
             on_show_main: 显示主界面回调
             on_show_pet: 显示/隐藏桌宠回调
             on_minimize: 最小化到托盘回调
+            on_toggle_mute: 静音切换回调（返回 {"muted": bool}）
+            on_toggle_watch: 看屏切换回调（返回 {"watch_enabled": bool}）
         """
         self.on_exit_callback = on_exit
         self.on_show_main_callback = on_show_main
         self.on_show_pet_callback = on_show_pet
         self.on_minimize_callback = on_minimize
+        self.on_open_page_callback = on_open_page
+        self.on_toggle_mute_callback = on_toggle_mute
+        self.on_toggle_watch_callback = on_toggle_watch

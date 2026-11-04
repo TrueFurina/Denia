@@ -260,8 +260,11 @@ def _make_memory_store(cfg: Config) -> Optional[MemoryStore]:
     embed_fn = None
     if semantic:
         try:
-            from src.llm.ollama_client import make_embed_fn
-            embed_fn = make_embed_fn(cfg.ns.ollama.host)  # 嵌入失败时内部降级返回 None
+            # 【2026-11-04】语义检索的向量来源改为"本地 Ollama 优先 + 云端兜底"。
+            # 此前只有本地一条路：没装 Ollama 就静默降级成关键词召回，
+            # 而"她记得你"全靠召回质量撑着。见 src/llm/embed_client.py 的模块说明。
+            from src.llm.embed_client import make_embed_fn_auto
+            embed_fn = make_embed_fn_auto(cfg)  # 两条路都不通时返回 None（关键词召回）
         except Exception:
             logger.warning("记忆语义检索初始化失败，降级为关键词召回", exc_info=True)
     store = MemoryStore(max_items=max_items, mode=mode, embed_fn=embed_fn,
@@ -298,6 +301,53 @@ def _ocr_text_support_enabled(cfg: Config) -> bool:
         return bool(getattr(ocr_cfg, "enabled", False))
     except Exception:  # noqa: BLE001
         return False
+
+
+def _duplex_endpoint_ready(proactive) -> bool:
+    """云端双工是否具备启动条件。
+
+    只读后端自己会读的那几个运行时属性，**不复制一套判定表**——复制必然漂移，
+    而漂移之后横幅和真实行为又会各说一套。
+    属性缺失（配置还没载入）按"未配置"处理，宁可保守。
+    """
+    try:
+        if (getattr(proactive, "_duplex_endpoint", "") or "").strip():
+            return True
+        if (getattr(proactive, "_cloud_duplex_voice_endpoint", "") or "").strip():
+            return True
+        _video_ep = (getattr(proactive, "_cloud_duplex_video_endpoint", "") or "").strip()
+        return bool(_video_ep
+                    and getattr(proactive, "_cloud_duplex_video_enabled", False)
+                    and getattr(proactive, "_duplex_vision_enabled", False))
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def _proactive_status_line(proactive_enabled: bool, proactive) -> str:
+    """主动搭话横幅：如实反映"云端双工到底能不能开口"。
+
+    【2026-11-04 修·横幅谎报】原实现只看 proactive_enabled 与 _duplex_mode 字符串，
+    于是在"云端双工未配端点/Key、启动即失败"的情况下照样打印
+    「✓ 启用（云端真全双工：持续推音画，模型自主开口）」——
+    而同一次启动里 proactive 已经打了 11 次"启动失败"、20 次"未配置"。
+    用户看到 ✓，实际一次都不会开口。这是产品层的假绿：门禁防的是测试假绿，
+    这一处骗的是用户，而且它比 bug 更难发现——因为界面"看起来是好的"。
+    """
+    if not proactive_enabled:
+        return "主动搭话: ✗ 禁用"
+    mode = getattr(proactive, "_duplex_mode", "") or ""
+    if mode == "realtime":
+        if _duplex_endpoint_ready(proactive):
+            return "主动搭话: ✓ 启用（云端真全双工：持续推音画，模型自主开口）"
+        return ("主动搭话: ⚠ 启用但不会开口"
+                "（云端双工未绑定自己的端点/Key，启动即失败——去设置里绑定云端模型）")
+    if mode:
+        try:
+            _iv = float(getattr(proactive, "_duplex_interval_s", 0) or 0)
+        except Exception:  # noqa: BLE001
+            _iv = 0.0
+        return "主动搭话: ✓ 启用（双工模式：模型自主看屏，每%.0fs一查）" % _iv
+    return "主动搭话: ✓ 启用（规则引信模式：OCR确认关键时刻再开口）"
 
 
 def _proactive_game_ai_interaction(cfg: Config) -> bool:
@@ -930,12 +980,33 @@ def _unload_all_local_tts(runtime: RuntimeHolder) -> None:
         setattr(runtime, attr, None)
 
 
+def _voice_info_of(cfg: Config, ch) -> str:
+    """角色列表里显示的"音色"：与运行时同源——绑了音色档就以档为准。
+
+    【2026-11-04 修·横幅谎报（第二处）】原来只读 `ch.voice.engine`（角色内联值），
+    于是绑了音色档的角色仍显示 `pyttsx3()`，而实际发声引擎是
+    `dashscope_cosy / Cherry`。用户会以为"改了没生效"，其实是显示错了。
+    与"主动搭话 ✓ 启用"那一处同型：**横幅读配置原值，不读解析后的实际值**。
+    """
+    try:
+        pid = (getattr(ch, "voice_profile", "") or "").strip()
+        if pid:
+            for p in (cfg.raw.get("voice_profiles") or []):
+                if isinstance(p, dict) and str(p.get("id") or "") == pid:
+                    return "%s(%s) [音色档]" % (p.get("engine") or "?",
+                                                p.get("voice_id") or "")
+    except Exception:  # noqa: BLE001  显示层失败不该影响启动
+        pass
+    v = getattr(ch, "voice", None)
+    return "%s(%s)" % (getattr(v, "engine", "?"), getattr(v, "voice", ""))
+
+
 def _print_characters(cfg: Config, active_id: str) -> None:
     chars = cfg.list_characters()
     console.print("[cyan]可用角色:[/]")
     for i, ch in enumerate(chars, 1):
         mark = "[green]★[/]" if ch.id == active_id else " "
-        voice_info = f"{ch.voice.engine}({ch.voice.voice})"
+        voice_info = _voice_info_of(cfg, ch)
         console.print(f"  {mark} {i}. {ch.name} [{ch.id}] 音色:{voice_info}")
     console.print("[dim]输入 /角色 查看列表，输入 /切换 <id> 切换角色[/]")
     console.print()
@@ -1395,13 +1466,7 @@ async def _build_system(runtime: RuntimeHolder, cfg: Config) -> None:
             analyzer.bind_state_provider(proactive)
         except Exception:  # noqa: BLE001 绑定失败不阻断启动，回退纯视觉
             logger.warning("绑定视觉状态提供者失败，回退纯视觉", exc_info=True)
-    _duplex_desc = "（规则引信模式：OCR确认关键时刻再开口）"
-    if proactive_enabled:
-        if proactive._duplex_mode == "realtime":
-            _duplex_desc = "（云端真全双工：持续推音画，模型自主开口）"
-        elif proactive._duplex_mode:
-            _duplex_desc = f"（双工模式：模型自主看屏，每{proactive._duplex_interval_s:.0f}s一查）"
-    console.print(f"[dim]主动搭话: {'✓ 启用' if proactive_enabled else '✗ 禁用'}[/]" + _duplex_desc)
+    console.print(f"[dim]{_proactive_status_line(proactive_enabled, proactive)}[/]")
     console.print(f"[dim]前台监听: {'✓ 启用' if monitor.enabled else '✗ 禁用(需Windows)'}[/]")
     if game_recognition:
         console.print(f"[dim]游戏OCR: {'✓ 启用' if ocr.enabled else '✗ 禁用'}[/]")
@@ -2607,6 +2672,23 @@ def main() -> None:
 
     # 3. 初始化系统托盘
     runtime.tray = TrayManager()
+    # 【2026-11-04】静音 / 看屏 的菜单文案必须反映**真实**状态，而且是"显示时现读"：
+    # 用户可能在设置页改这两项，而托盘只在点托盘时刷新 —— 只缓存的话菜单会写着
+    # "静音"、点下去却是取消静音（刚好反着）。
+    def _tray_switch_state():
+        raw = cfg.raw if isinstance(cfg.raw, dict) else {}
+        v = raw.get("voice") or {}
+        muted = bool(v.get("muted")) or str(v.get("mode") or "").strip().lower() == "mute"
+        per = ((raw.get("perception") or {}).get("vision") or {})
+        return muted, bool(per.get("desktop_watch_enabled", False))
+
+    runtime.tray.state_provider = _tray_switch_state
+    try:
+        _m0, _w0 = _tray_switch_state()
+        runtime.tray.set_mute_state(_m0)
+        runtime.tray.set_watch_state(_w0)
+    except Exception:  # noqa: BLE001  托盘状态读不出来不该拦住启动
+        logger.debug("托盘初始状态读取失败（忽略）", exc_info=True)
     
     # 设置托盘回调函数
     def on_exit():
@@ -2771,6 +2853,53 @@ def main() -> None:
         if hasattr(runtime, '_main_win') and runtime._main_win:
             runtime._main_win.hide()
     
+    def on_toggle_mute():
+        """静音切换：只翻 voice.muted，返回**真实状态**给托盘刷新菜单。
+
+        返回值而不是让托盘自己取反：写盘失败或 mode=mute 冲突时，取反会让
+        菜单和实际状态错位（显示"取消静音"其实还是静音），这种错位查不出来。
+        """
+        ca = getattr(runtime, "_char_api", None)
+        if ca is None or not hasattr(ca, "toggle_mute"):
+            return {"success": False, "error": "接口未就绪"}
+        return ca.toggle_mute()
+
+    def on_toggle_watch():
+        """看屏切换：翻转 perception.vision.desktop_watch_enabled。"""
+        ca = getattr(runtime, "_char_api", None)
+        if ca is None or not hasattr(ca, "toggle_desktop_watch"):
+            return {"success": False, "error": "接口未就绪"}
+        return ca.toggle_desktop_watch()
+
+    def on_open_page(page: str):
+        """托盘直达某个页面：**先显示主窗口，再导航**。
+
+        顺序不能反：点托盘时窗口可能被最小化到托盘、甚至已关闭重建，
+        直接 Navigate 用户看不到任何变化——表现就是"点了没反应"。
+        """
+        try:
+            on_show_main()
+        except Exception:  # noqa: BLE001  显示失败也要尝试导航，别两件都不做
+            logger.debug("打开页面前显示主窗口失败", exc_info=True)
+        ca = getattr(runtime, "_char_api", None)
+        if ca is None or not hasattr(ca, "open_page"):
+            return {"success": False, "error": "接口未就绪"}
+        r = ca.open_page(page)
+        # 【2026-11-04】控件注册晚于"托盘已启动"（实测启动后约 7s 内点会拿到
+        # "WebView2 控件未注册"）；主窗口被关闭后重建也会重新经历这个窗口期。
+        # 这里补一次延迟重试——否则用户点完什么都不会发生，还以为是坏的。
+        if isinstance(r, dict) and not r.get("success") and "未注册" in str(r.get("error")):
+            def _retry_open():
+                try:
+                    time.sleep(1.0)
+                    ca.open_page(page)
+                except Exception:  # noqa: BLE001
+                    logger.debug("托盘打开页面重试失败", exc_info=True)
+
+            threading.Thread(target=_retry_open, daemon=True,
+                             name="tray-open-page-retry").start()
+        return r
+
     # 绑定回调函数到托盘管理器
     runtime.tray.on_show_main_callback = on_show_main
     runtime.tray.on_show_pet_callback = on_show_pet
@@ -2782,7 +2911,10 @@ def main() -> None:
             on_exit=on_exit,
             on_show_main=on_show_main,
             on_show_pet=on_show_pet,
-            on_minimize=on_minimize
+            on_minimize=on_minimize,
+            on_open_page=on_open_page,
+            on_toggle_mute=on_toggle_mute,
+            on_toggle_watch=on_toggle_watch
         )
         
         # 启动托盘
@@ -2801,7 +2933,14 @@ def main() -> None:
         def _boot_gui() -> None:
             _startup_supervisor(runtime, cfg, progress, char_api, args.debug_gui)
 
-        webview.start(func=_boot_gui, debug=args.debug_gui)
+        # 应用图标：pywebview 会把 icon 设给 WinForms 窗体，任务栏/Alt-Tab/标题栏都用它。
+        # 【2026-11-04 修】此前只有 src/ui/main_window.py 那条启动路径传了 icon，而真正
+        # 的启动走的是这里 → 源码运行时任务栏一直显示 python.exe 的图标（用户可见）。
+        # 两条启动路径必须一致，否则"打包后正常、源码运行难看"这种差异永远查不到根因。
+        _icon_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "app.ico")
+        if not os.path.isfile(_icon_path):
+            _icon_path = None
+        webview.start(func=_boot_gui, debug=args.debug_gui, icon=_icon_path)
     except KeyboardInterrupt:
         console.print("\n[dim]中断退出[/]")
     finally:
@@ -3001,13 +3140,7 @@ async def bootstrap_legacy(cfg: Config, video_path: str | None = None,
             analyzer.bind_state_provider(proactive)
         except Exception:  # noqa: BLE001 绑定失败不阻断启动，回退纯视觉
             logger.warning("绑定视觉状态提供者失败，回退纯视觉", exc_info=True)
-    _duplex_desc = "（规则引信模式：OCR确认关键时刻再开口）"
-    if proactive_enabled:
-        if proactive._duplex_mode == "realtime":
-            _duplex_desc = "（云端真全双工：持续推音画，模型自主开口）"
-        elif proactive._duplex_mode:
-            _duplex_desc = f"（双工模式：模型自主看屏，每{proactive._duplex_interval_s:.0f}s一查）"
-    console.print(f"[dim]主动搭话: {'✓ 启用' if proactive_enabled else '✗ 禁用'}[/]" + _duplex_desc)
+    console.print(f"[dim]{_proactive_status_line(proactive_enabled, proactive)}[/]")
     console.print(f"[dim]前台监听: {'✓ 启用' if monitor.enabled else '✗ 禁用(需Windows)'}[/]")
     if game_recognition:
         console.print(f"[dim]游戏OCR: {'✓ 启用' if ocr.enabled else '✗ 禁用'}[/]")

@@ -408,7 +408,7 @@ characters:
     volume: +0%
     fallback_pyttsx3: true
     api_url: ''
-    reference_audio: assets/voices/daniya_ref_0813_24k.wav
+    reference_audio: ''
     reference_text: ''
     language: zh
     api_key: ''
@@ -423,7 +423,7 @@ characters:
     enabled: false
     format: mmd
     path: ''
-  ref_audio: assets/voices/daniya_ref_0813_24k.wav
+  ref_audio: ''
 - id: 蓝色大肥鱼
   name: 大肥鱼
   character: 大肥鱼，一只住在电脑里的蓝色小鲸鱼。聪明、贪吃、爱面子。喜欢解题，遇到难题会眼睛发亮；真不懂就承认，从不装懂。被夸会得意，但努力绷着不露出来；被叫"大肥鱼"会鼓腮抗议，心里其实不讨厌这个称呼。有自己的判断，不是什么都顺着你。你忙的时候很安静，你有烦恼会先听——不机械打鸡血。
@@ -998,6 +998,15 @@ memory:
   max_items: 100
   mode: jarvis
   semantic_search: true
+  embed:
+    # 语义检索的向量来源：auto=本地 Ollama 优先、不可用转云端；
+    # ollama / dashscope = 只用其一；off = 关闭语义检索（退回关键词召回）。
+    # 为什么要云端兜底：没装 Ollama 时原来会静默降级成关键词召回，
+    # 而"她记得你"完全靠召回质量撑着（见 src/llm/embed_client.py）。
+    provider: auto
+    model: text-embedding-v3
+    base_url: https://dashscope.aliyuncs.com/compatible-mode/v1
+    api_key: ${DASHSCOPE_API_KEY}
 ocr:
   interval_s: 2.5
 ollama:
@@ -1357,7 +1366,7 @@ proactive:
   duplex_local_omni_listen_prob_scale: 0.3
   # 【2026-10-20】原值指向开发机的绝对路径（G: 盘），新用户没有这个盘 →
   # 本地双工一旦启用就找不到参考音。改成随包分发的相对路径（assets/voices 在仓库里）。
-  duplex_local_omni_ref_audio: assets/voices/daniya_ref_0813_24k.wav
+  duplex_local_omni_ref_audio: ''
   duplex_local_omni_unload_on_game: true
   force_kill_omni_on_unload: true
   duplex_max_width: 768

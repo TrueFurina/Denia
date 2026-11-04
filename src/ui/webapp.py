@@ -6566,6 +6566,64 @@ class CharacterAPI(PetAPI, WindowAPI):
             # 跨线程推 JS 失败（窗口已关/序列化失败）不影响主流程
             pass
 
+    # 托盘 / 快捷键能直接跳的页面（键 = 对外语义，值 = web 路由）
+    _PAGE_ROUTES = {
+        "chat": "/index.html",
+        "memory": "/redesign/ui_redesign_memory.html",
+        # 关系面板没有独立页：它是对话页的侧栏（redesign/relation_panel.js 挂在
+        # index.html 里），所以"关系档案"落到对话页 —— 别在这里编一个不存在的路由。
+        "relation": "/index.html",
+        "settings": "/redesign/ui_redesign_settings.html",
+        "characters": "/redesign/ui_redesign_characters.html",
+    }
+
+    def open_page(self, page: str = "chat") -> dict:
+        """把主窗口切到某个页面（托盘菜单 / 快捷键用）。
+
+        为什么不用 `evaluate_js("location.href=...")`：本仓库实测它在渲染进程挂死时
+        会阻塞调用线程（2026-09-03 卡死根因，见 `_toast_if_any` 的注释），已全面弃用。
+        这里改成把 `CoreWebView2.Navigate` **封送进 GUI 线程**执行（与 `_toast_if_any`
+        同一套 BeginInvoke 机制）：既绕开 JS 执行，也不跨线程碰 COM 属性。
+        """
+        route = self._PAGE_ROUTES.get((page or "").strip().lower())
+        if not route:
+            return {"success": False, "error": "未知页面: %s" % page}
+        try:
+            import webview
+            wins = getattr(webview, "windows", [])
+            if not wins:
+                return {"success": False, "error": "主窗口未创建"}
+            win = wins[0]
+            ctrl = STATE.wv2_controls.get(getattr(win, "uid", None))
+            if ctrl is None:
+                return {"success": False, "error": "WebView2 控件未注册"}
+
+            def _nav():
+                try:
+                    cv2 = getattr(ctrl, "CoreWebView2", None)
+                    if cv2 is None or not getattr(cv2, "IsConnected", True):
+                        return
+                    src = str(getattr(cv2, "Source", "") or "")
+                    # origin 从当前 URL 取，不依赖"web 服务端口"这个会变的状态
+                    origin = "/".join(src.split("/")[:3]) if src.startswith("http") else ""
+                    if not origin:
+                        return
+                    if src.split("?")[0].endswith(route):
+                        return  # 已经在这一页：再导航只会白闪一下
+                    cv2.Navigate(origin + route)
+                except Exception:  # noqa: BLE001  导航失败不该影响调用方
+                    pass
+
+            try:
+                from System import Action as _Act
+                ctrl.BeginInvoke(_Act(_nav))
+            except Exception:  # noqa: BLE001  非 WinForms 宿主（无 System）时降级
+                return {"success": False, "error": "无法封送到 GUI 线程"}
+            return {"success": True, "page": page, "route": route}
+        except Exception as e:  # noqa: BLE001
+            logger.warning("open_page 失败: %s", e, exc_info=True)
+            return {"success": False, "error": str(e)}
+
     # 【2026-10-21 删】这里原来有 `get_backend_options()`，返回 4 条写死的 TTS 引擎：
     # `pyttsx3` **出现两次**（"系统语音(本地离线)" / "pyttsx3(离线降级)"），而真正的
     # 引擎表 `src/models/protocols.py: TTS_ENGINES` 有 **10** 个（由 check_models_layer
@@ -7760,6 +7818,63 @@ class CharacterAPI(PetAPI, WindowAPI):
         except Exception as e:  # noqa: BLE001
             logger.exception("设置视觉开关失败")
             return {"success": False, "error": f"写入配置失败: {e}"}
+
+    def toggle_mute(self) -> dict:
+        """托盘 / 全局快捷键用的「静音」开关：只翻 voice.muted，不动语音方案。
+
+        为什么不用 `set_voice_mode("mute")`：那会把 `voice.mode` 改成 mute，用户再
+        切回来时原来的引擎（clone / edge）就丢了——静音是"暂时别出声"，不是
+        "换一套音色方案"。
+
+        反过来也有个坑：如果 mode 本身就是 mute（用户在设置页选了"无声"），
+        只把 voice.muted 置 False 仍然静音（`tts.is_muted()` 两个条件取或）。
+        所以取消静音时必须把 mode 也放回 clone。
+        """
+        if not self._cfg:
+            return {"success": False, "error": "配置未加载"}
+        try:
+            raw = self._cfg.raw
+            v = raw.setdefault("voice", {})
+            if not isinstance(v, dict):
+                v = {}
+                raw["voice"] = v
+            mode = str(v.get("mode") or "").strip().lower()
+            effective = bool(v.get("muted")) or mode == "mute"
+            if effective:
+                v["muted"] = False
+                if mode == "mute":
+                    v["mode"] = "clone"
+            else:
+                v["muted"] = True
+            self._save_config()
+            # TTS 播放循环每轮实时读 raw["voice"].muted，无需重建 ns；
+            # 这里不重建是为了避免顺手把别的运行时状态刷掉。
+            logger.info("静音切换 → %s", "静音" if not effective else "取消静音")
+            return {"success": True, "muted": not effective}
+        except Exception as e:  # noqa: BLE001
+            logger.exception("切换静音失败")
+            return {"success": False, "error": str(e)}
+
+    def toggle_desktop_watch(self) -> dict:
+        """托盘用的「看屏」开关：翻转 perception.vision.desktop_watch_enabled。
+
+        复用 `set_desktop_watch_enabled` 的写盘 + 运行态同步，不在托盘这边再写一套
+        ——两套写入路径各自维护"当前值"正是本仓库踩过的双写缺陷。
+        """
+        if not self._cfg:
+            return {"success": False, "error": "配置未加载"}
+        try:
+            cur = bool(((((self._cfg.raw.get("perception") or {})
+                          .get("vision") or {}))
+                        .get("desktop_watch_enabled", False)))
+            r = self.set_desktop_watch_enabled(not cur)
+            if not isinstance(r, dict):
+                return {"success": False, "error": "设置失败"}
+            r.setdefault("watch_enabled", not cur)
+            return r
+        except Exception as e:  # noqa: BLE001
+            logger.exception("切换看屏失败")
+            return {"success": False, "error": str(e)}
 
     def set_desktop_watch_enabled(self, enabled: bool) -> dict:
         """桌面看屏互动开关（与「视觉感知」分离，各司其职）。
@@ -16210,8 +16325,10 @@ class CharacterAPI(PetAPI, WindowAPI):
                 if semantic:
                     if getattr(store, "_embed_fn", None) is None:
                         try:
-                            from ..llm.ollama_client import make_embed_fn
-                            store.set_embed_fn(make_embed_fn(self._cfg.ns.ollama.host))
+                            # 【2026-11-04】与 main.py 同一套来源选择（本地优先 + 云端兜底），
+                            # 两处各写一份就会出现"重启生效、热切换不生效"的错位。
+                            from ..llm.embed_client import make_embed_fn_auto
+                            store.set_embed_fn(make_embed_fn_auto(self._cfg))
                         except Exception:  # noqa: BLE001
                             logger.warning("语义检索嵌入初始化失败，保持降级", exc_info=True)
                 else:

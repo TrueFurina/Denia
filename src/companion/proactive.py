@@ -4607,6 +4607,30 @@ class ProactiveStrategy:
             await asyncio.sleep(min(0.5, delay - waited))
             waited += 0.5
 
+    async def _cloud_route_backoff_unconfigured(self, reason: str) -> None:
+        """确定性失败（用户还没配端点/Key）的退避：只提醒一次，之后静默长间隔重试。
+
+        为什么要跟 `hard=True`（依赖缺失）和普通指数退避分开：
+
+        · 与 hard 分开：hard 的文案是"SDK 没装、请 pip install dashscope"，
+          把"没配 Key"报成这个会把人引到完全错误的方向；
+        · 与普通退避分开：普通分支每轮打一条 warning（实测 3 分钟 10 条、上限 30s
+          后每 30s 一条），而"没配置"不会因为重试而变好 —— 纯噪声，还会把真正的
+          故障淹掉（本仓库已经有过"狼来了"的先例）。
+        """
+        if not getattr(self, '_cloud_unconfigured_warned', False):
+            self._cloud_unconfigured_warned = True
+            logger.warning('云端双工未启用：%s。这是配置问题不是故障——到设置里绑定'
+                           '自己的云端模型（阿里云 Key）即可，绑定后 60s 内自动生效，无需重启',
+                           reason)
+        delay = 60.0
+        waited = 0.0
+        while waited < delay:
+            if not self._enabled or self._duplex_mode != 'realtime':
+                break
+            await asyncio.sleep(min(0.5, delay - waited))
+            waited += 0.5
+
     async def _run_realtime_duplex(self) -> None:
         """全双工常驻循环（替代 run_loop 的周期性检查）。
 
@@ -4695,10 +4719,13 @@ class ProactiveStrategy:
         # 故走到这里 = 用户确实自己配了云端双工端点，用 MiniCPM 协议客户端连它是合理的。
         ep, _use_video = self._resolve_cloud_duplex_endpoint()
         if not ep:
-            logger.warning('云端双工未配置你自己的端点/Key（cloud_omni 或 cloud_duplex.voice/video），'
-                           '拒绝静默使用免费共享服务；请到设置绑定你自己的云端模型（阿里云 Key）')
+            # 【2026-11-04 修·确定性失败不该指数重试刷屏】"没配端点/Key"不是故障，
+            # 重试一万次结果一样；原实现每轮打一条 warning（实测 3 分钟 10 条），
+            # 日志被噪声淹没，真正的错误反而看不见。改成只提醒一次 + 60s 长间隔
+            # 静默重试（用户在设置里绑好 Key 后，下一次重试自动生效，不必重启）。
             await self._on_duplex_status('云端双工需要你绑定自己的云端模型（阿里云 Key）；未配置时不启动免费共享服务')
-            await self._cloud_route_backoff('cloud_duplex 未配自己的端点/Key')
+            await self._cloud_route_backoff_unconfigured(
+                'cloud_omni 或 cloud_duplex.voice/video 没有配置端点/Key')
             return
         # 【2026-10-04 修】非通话态不自动回落 MiniCPM 网关（主页/启动不自动接入语音）
         if not getattr(self, "_duplex_app_call_active", False):

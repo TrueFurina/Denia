@@ -477,6 +477,15 @@ GATES: list[tuple[str, str, list[str], bool]] = [
     # 用**独立假根**（临时目录的 src/）跑真工具，不碰真仓库模块。约 2s。
     ("导入冒烟复核", PY_VENV, ["tools/test_smoke_import_retry.py"], False),
     ("导入冒烟复核变异", PY_VENV, ["tools/_qc_smoke_retry_mutation.py"], True),
+    # 【2026-11-04 加】记忆语义检索的向量来源：本地 Ollama 优先、云端兜底。
+    # 守的是四条容易悄悄退化的契约：不许偷偷上云、off 要真关、探测失败要降级、
+    # 单次失败不能抛（调用方按 None 处理）。全离线（替换传输层），不碰真网络。
+    ("语义检索兜底", PY_VENV, ["tools/test_embed_fallback.py"], False),
+    ("语义检索兜底变异", PY_VENV, ["tools/_qc_embed_fallback_mutation.py"], True),
+    # 【2026-11-04 加】托盘「静音 / 看屏」两个开关。守的是"菜单文案 = 真实状态"
+    # 和"静音只翻 muted、不动 mode"这两条——它们错了用户只会觉得"点了没反应"。
+    ("托盘开关", PY_VENV, ["tools/test_tray_switch.py"], False),
+    ("托盘开关变异", PY_VENV, ["tools/_qc_tray_switch_mutation.py"], True),
 ]
 
 

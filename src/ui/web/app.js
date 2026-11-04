@@ -184,6 +184,14 @@ async function loadCharacters() {
         const result = await pywebview.api.get_characters();
         if (result.success) {
             characters = result.characters;
+            rebuildCharAvatars();
+            // 主题层（通话页/侧栏）也按最新头像重铺一次：
+            // 此前改完头像只刷新了角色表，通话页仍挂旧图。
+            try {
+                if (window.ThemeManager && window.ThemeManager.applyForActive) {
+                    window.ThemeManager.applyForActive();
+                }
+            } catch (e) { /* 主题层不可用时不影响角色表 */ }
             activeId = result.active_id;
             window.setCompanionName && window.setCompanionName((characters.find(c => c.id === activeId) || {}).name || "达妮娅");
             renderCharacterList();
@@ -1231,7 +1239,27 @@ let chatLastId = 0;
 let chatLastDate = null;   // 最近一条消息的日期键（跨天时插入"今天/昨天"分隔条）
 
 // 角色 → 头像素材（目前只有达妮娅有 Unity 渲染头像；其余角色用首字母渐变占位）
+// 角色头像表：由后端角色表重建，不再写死。
+// 【2026-11-04 修】此前是写死常量 { danya: "assets/danya_avatar.png" }，
+// 导致三件事：① 聊天页/通话记录永远显示那张 10-17 的静态图（改了头像也不变）；
+// ② 换角色（如大肥鱼）查表恒为 undefined → 头像永远不显示；
+// ③ 重载后首帧 activeId 未就绪时会被置 hidden 且无人恢复。
+// 现在由 loadCharacters() 按后端 avatar 字段重建，静态图只作最后兜底。
 const CHAR_AVATARS = { danya: "assets/danya_avatar.png" };
+function rebuildCharAvatars() {
+    // 先清掉非 danya 的旧条目，避免删角色后尸魂残留
+    for (const k of Object.keys(CHAR_AVATARS)) {
+        if (k !== "danya") delete CHAR_AVATARS[k];
+    }
+    for (const c of (characters || [])) {
+        const a = String((c && c.avatar) || "").trim();
+        if (!a) continue;
+        // 已经是 URL / 绝对路径的照旧用，否则走 /local_img 白名单
+        CHAR_AVATARS[c.id] = /^(https?:|data:|\/)/.test(a)
+            ? a
+            : "/local_img?path=" + encodeURIComponent(a);
+    }
+}
 
 function startChatPoll() {
     chatPoll();
@@ -1367,6 +1395,8 @@ function updateChatHeader(activeName) {
     }
     const hAv = document.getElementById("chatAvatarImg");
     if (!hAv) return;
+    // activeId 未就绪时不要把头像藏掉（重载后首帧的竞态）
+    if (!activeId) return;
     const src = CHAR_AVATARS[activeId];
     hAv.style.visibility = src ? "" : "hidden";
     if (src && hAv.getAttribute("src") !== src) hAv.setAttribute("src", src);
