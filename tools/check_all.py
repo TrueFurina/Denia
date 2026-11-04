@@ -501,6 +501,10 @@ GATES: list[tuple[str, str, list[str], bool]] = [
     # 未知模式回 default 而不是 bypass。这三格错了，用户对"她有多大权力"的判断就全错。
     ("权限模式矩阵", PY_VENV, ["tools/test_permission_modes.py"], False),
     ("权限模式矩阵变异", PY_VENV, ["tools/_qc_permission_modes_mutation.py"], True),
+    # 【2026-11-04 加】文件读写的工作区边界。原来越界会「悄悄改名塞进沙箱」并回报
+    # 「已写入」——用户以为改的是那个文件，实际写到了别处。守的是"越界必须明说"。
+    ("工作区边界", PY_VENV, ["tools/test_workspace_guard.py"], False),
+    ("工作区边界变异", PY_VENV, ["tools/_qc_workspace_mutation.py"], True),
 ]
 
 

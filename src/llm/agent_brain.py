@@ -139,6 +139,8 @@ def build_agent_ctx(cfg: Any, repo_root: str = "") -> dict:
     # 【2026-11-04】五档权限模式（explore/default/accept_edits/dont_ask/bypass）。
     # 空值 = 未配置 = 沿用 require_confirm 老逻辑，已有配置行为不变。
     permission_mode = (getattr(agent, "permission_mode", "") or "").strip() if agent else ""
+    # 文件读写的边界目录：空 = repo/agent_sandbox（老行为）；绝对路径 = 对准真实项目
+    workspace_dir = (getattr(agent, "workspace_dir", "") or "").strip() if agent else ""
     vision_model = (getattr(agent, "vision_model", "") or "").strip() if agent else ""
     plan_first = bool(getattr(agent, "plan_first", True)) if agent else True
     verify_actions = bool(getattr(agent, "verify_actions", True)) if agent else True
@@ -150,6 +152,7 @@ def build_agent_ctx(cfg: Any, repo_root: str = "") -> dict:
         "allow_cmds": allow_cmds,
         "require_confirm": require_confirm,
         "permission_mode": permission_mode,
+        "workspace_dir": workspace_dir,
         "base_url": base,
         "api_key": key,
         "model": model,
@@ -452,6 +455,9 @@ class AgentBrain:
         except Exception:  # noqa: BLE001
             return "电脑代理需要 httpx（pip install httpx）"
         from .agent_tools import TOOL_SPECS, dispatch_tool, available_tool_specs
+        # 工作区边界：必须在任何文件类工具调用之前配好
+        from .agent_tools import configure_workspace as _cfg_ws
+        _cfg_ws(str(self._ctx.get("workspace_dir") or ""))
         from .agent_tools import DESTRUCTIVE_TOOLS
         from .permission import decide_tool
         body: dict[str, Any] = {
@@ -802,6 +808,7 @@ class AgentBrain:
         require_confirm = bool(getattr(agent, "require_confirm", False)) if agent else False
         # 【2026-11-04】与 from_config 同一套：空值 = 未配置 = 走老逻辑。
         permission_mode = (getattr(agent, "permission_mode", "") or "").strip() if agent else ""
+        workspace_dir = (getattr(agent, "workspace_dir", "") or "").strip() if agent else ""
         vision_model = (getattr(agent, "vision_model", "") or "").strip() if agent else ""
         plan_first = bool(getattr(agent, "plan_first", True)) if agent else True
         verify_actions = bool(getattr(agent, "verify_actions", True)) if agent else True
@@ -813,6 +820,7 @@ class AgentBrain:
             "allow_cmds": allow_cmds,
             "require_confirm": require_confirm,
             "permission_mode": permission_mode,
+            "workspace_dir": workspace_dir,
             "base_url": base,
             "api_key": key,
             "model": model,

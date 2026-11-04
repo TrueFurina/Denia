@@ -1514,6 +1514,10 @@ agent:
   #   bypass       全放行（仅限沙箱/完全信任）
   # 留空 = 沿用 require_confirm 老逻辑（已有配置行为不变）。
   permission_mode: ''
+  # 【2026-11-04】文件类工具（read/write/append/file_search/截图）的读写边界。
+  # 留空 = <repo>/agent_sandbox；填绝对路径 = 对准真实项目（如 D:/myproj）。
+  # 越界不再「悄悄改名塞进沙箱」，而是明确拒绝并说明原因。
+  workspace_dir: ''
   max_steps: 15
   llm:
     # Agent 要规划多步，用 4.7-flash（带 reasoning，实测工具调用正常）

@@ -54,23 +54,77 @@ def _repo_root() -> str:
     return os.getcwd()
 
 
-def _sandbox_dir() -> str:
-    """文件读写锁定的根目录：repo/agent_sandbox（防越权读写系统文件）。"""
-    d = os.path.join(_repo_root(), "agent_sandbox")
+# 工作区（文件读写的边界）
+#
+# 【2026-11-04 修·越界时的"假绿"】原实现遇到 `../` 或绝对路径时**不报错**，
+# 而是取 basename 塞进沙箱：`write_file("D:/Windows/System32/x.dll")` 会真的
+# 写到 `agent_sandbox/x.dll`，还返回"已写入文件：x.dll"。用户以为改的是那个文件，
+# 实际写到了别处 —— 这正是本仓库一直在防的"假绿"，只不过这次骗的是用户。
+# 现在改成**明确拒绝并说明原因**。
+#
+# 边界本身可配：`agent.workspace_dir` 为空 → `repo/agent_sandbox`；
+# 填绝对路径 → 对准真实项目（"帮我改 D:/project 里的文件"才有意义）。
+
+
+class WorkspaceEscape(Exception):
+    """目标路径越出工作区。"""
+
+
+_WORKSPACE = ""
+
+
+def configure_workspace(path: str) -> None:
+    """由 agent_brain 在构建 ctx 时调用（对应 config 的 agent.workspace_dir）。"""
+    global _WORKSPACE
+    _WORKSPACE = (path or "").strip()
+
+
+def workspace_dir() -> str:
+    """当前工作区的绝对路径（不存在则尝试创建）。"""
+    d = _WORKSPACE or os.path.join(_repo_root(), "agent_sandbox")
+    if not os.path.isabs(d):
+        d = os.path.join(_repo_root(), d)
     try:
         os.makedirs(d, exist_ok=True)
-    except Exception:  # noqa: BLE001
+    except Exception:  # noqa: BLE001  建不出来交给后续 open() 报错，不在这里吞
         pass
-    return d
+    return os.path.abspath(d)
 
 
-def _safe_path(name: str) -> str:
-    """把用户给的文件名约束在 sandbox 内，防 ../ 越权。"""
-    name = (name or "").strip().replace("\\", "/")
-    rel = os.path.normpath(name).lstrip("./\\")
-    if rel.startswith("..") or os.path.isabs(rel):
-        rel = os.path.basename(name)
-    return os.path.join(_sandbox_dir(), rel)
+# 兼容旧名：仓库里还有按 _sandbox_dir() 引用的地方
+_sandbox_dir = workspace_dir
+
+
+def _safe_path(name: str, root: str = "") -> str:
+    """把用户给的路径约束在工作区内；越界抛 `WorkspaceEscape`。
+
+    规则：
+      · 相对路径 → 相对**工作区**解析（不是进程 CWD）；
+      · 绝对路径 → 必须落在工作区内，否则拒绝；
+      · `..` / 符号链接 → 先 realpath 归一，再比前缀，逃不出去；
+      · Windows 大小写不敏感 → 用 normcase 比较；跨盘符直接判越界。
+    """
+    ws = os.path.realpath(os.path.abspath(root or workspace_dir()))
+    raw = (name or "").strip()
+    if not raw:
+        raise WorkspaceEscape("未提供文件名")
+    raw = raw.replace("\\", "/")
+    if os.path.isabs(raw) or (len(raw) > 1 and raw[1] == ":"):
+        cand = os.path.abspath(raw)
+    else:
+        cand = os.path.abspath(os.path.join(ws, raw))
+    cand = os.path.realpath(cand)
+    try:
+        inside = (os.path.commonpath([os.path.normcase(cand), os.path.normcase(ws)])
+                  == os.path.normcase(ws))
+    except ValueError:  # 跨盘符
+        inside = False
+    if not inside:
+        raise WorkspaceEscape(
+            "路径越界：%s 不在工作区内（当前工作区：%s）。要读写别处，"
+            "请把文件放进工作区，或让用户把 agent.workspace_dir 指到那个目录。"
+            % (name, ws))
+    return cand
 
 
 # --------------------------------------------------------------------------
@@ -1314,7 +1368,10 @@ def _write_clipboard(text: str) -> str:
 def _read_file(name: str) -> str:
     if not name:
         return "未提供文件名"
-    p = _safe_path(name)
+    try:
+        p = _safe_path(name)
+    except WorkspaceEscape as e:
+        return str(e)
     try:
         if not os.path.exists(p):
             return f"文件不存在：{os.path.basename(p)}（sandbox：{_sandbox_dir()}）"
@@ -1327,7 +1384,10 @@ def _read_file(name: str) -> str:
 def _write_file(name: str, content: str) -> str:
     if not name:
         return "未提供文件名"
-    p = _safe_path(name)
+    try:
+        p = _safe_path(name)
+    except WorkspaceEscape as e:
+        return str(e)
     try:
         with open(p, "w", encoding="utf-8") as f:
             f.write(content or "")
@@ -1339,7 +1399,10 @@ def _write_file(name: str, content: str) -> str:
 def _append_file(name: str, content: str) -> str:
     if not name:
         return "未提供文件名"
-    p = _safe_path(name)
+    try:
+        p = _safe_path(name)
+    except WorkspaceEscape as e:
+        return str(e)
     try:
         with open(p, "a", encoding="utf-8") as f:
             f.write(content or "")
@@ -1440,7 +1503,10 @@ def _screenshot_save(name: str) -> str:
         import pyautogui  # type: ignore
     except Exception:  # noqa: BLE001
         return "截图未安装：pip install pyautogui Pillow"
-    p = _safe_path(name)
+    try:
+        p = _safe_path(name)
+    except WorkspaceEscape as e:
+        return str(e)
     try:
         pyautogui.screenshot(p)
         return f"截图已保存：{p}"
