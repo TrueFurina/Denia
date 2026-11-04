@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""「UI 心跳恢复策略」的变异验证：五刀，刀刀必须被抓住。
+"""「UI 心跳恢复策略」的变异验证：每把刀都必须被抓住（刀数按 MUTS 动态报）。
 
 跑法：.venv/Scripts/python.exe -u tools/_qc_ui_heartbeat_mutation.py
 """
@@ -40,6 +40,10 @@ MUTS = [
     ("E 心跳恢复不清预算（下次不再恢复）",
      E("        if gap <= self.timeout:\n            self.on_ping(now)\n"),
      E("        if gap <= self.timeout:\n            pass\n")),
+
+    ("F 删掉节流带（60s 节流会被误判卡死并重载）",
+     E("        if gap < self.dead_timeout:\n"),
+     E("        if False:\n")),
 ]
 
 
@@ -72,7 +76,7 @@ def main() -> int:
     print("\n还原字节一致：%s" % ok)
     if not ok:
         bad += 1
-    print("五刀全红" if bad == 0 else "有 %d 处异常" % bad)
+    print("%d 刀全红" % len(MUTS) if bad == 0 else "有 %d 处异常" % bad)
     return 1 if bad else 0
 
 

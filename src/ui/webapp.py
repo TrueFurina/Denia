@@ -436,7 +436,11 @@ class CharacterAPI(PetAPI, WindowAPI):
     # ======== UI 心跳看门狗（2026-09-03 卡死排查） ========
     # 前端主窗口 JS 每 5s 调一次 ui_ping()，后端记录时间戳。若前端渲染进程挂死，
     # JS 定时器停摆 → 心跳中断 → 后端守护线程打 WARNING，日志即可定位「UI 卡死」。
-    UI_PING_TIMEOUT: float = 30.0   # 连续 30s 无心跳才判无响应（模型加载期会饿前端心跳）
+    UI_PING_TIMEOUT: float = 30.0   # 超过 30s 无心跳 = "心跳变慢"（仍会回来，不算死）
+    UI_PING_DEAD_TIMEOUT_S: float = 180.0  # 超过 180s 零心跳才真判 UI 卡死
+    # ↑ 依据（2026-11-04 实测）：launch_run16.log 里隐藏页面的心跳被 WebView2 钳到
+    #   60s 一轮，36 次「无响应约 60s 后重新连接」。按 30s 判死会每分钟重载一次窗口。
+    #   180s = 3 倍余量；渲染进程真死时 gap 单调增长，必然越线。
     UI_RECOVER_GRACE_S: float = 120.0  # 启动宽限期：前 120s 只记日志，绝不触发恢复
     UI_PING_INTERVAL: float = 5.0  # 守护线程自身轮询间隔
     # 【2026-11-04】自动恢复预算：一轮无响应最多试 2 次、间隔 ≥60s，到顶就明确放弃。

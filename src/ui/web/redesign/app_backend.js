@@ -836,6 +836,13 @@ window.Backend = Backend;
 /* UI 心跳上报：每 5s 调一次后端 ui_ping()，供后端看门狗判定前端是否卡死。
    包 try/catch 是因为预览模式/后端未就绪时 call() 可能抛或返回 offline，均忽略。 */
 setInterval(() => { try { Backend.uiPing(); } catch (e) {} }, 5000);
+/* 2026-11-04 修·隐藏页面定时器被钳到 60s（实测 36 次）。
+   页面重新可见时立刻上报一跳，让后端马上清掉“心跳变慢”状态，而不用等到下一个被节流的 60s tick。 */
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') {
+    try { Backend.uiPing(); } catch (e) {}
+  }
+});
 
 /* ============================================================
    主题（深浅模式 + 主题色）

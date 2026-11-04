@@ -125,10 +125,15 @@ class WindowAPI:
         """守护线程：周期性检查前端心跳是否中断，并按预算尝试恢复。
 
         【2026-11-04 修·界面死了就再也回不来】原来默认只记日志
-        （`UI_RELOAD_RECOVER=1` 才动），实测实例跑 2h17m 后前端心跳从 22:06 断到
+        （`UI_RELOAD_RECOVER=1` 才动），实测实例跑 2h17m 后心跳从 22:06 断到
         23:10、期间零恢复动作。现在改成：默认开启有预算的恢复，判定权交给
         `HeartbeatRecoveryPolicy`（纯状态机、可离线测），COM 访问一律留在
         `_recover_stuck_windows` 的 GUI 线程封送里（静态闸门守着这条边界）。
+
+        【2026-11-04 二修·别把后台节流当卡死】同一份日志里 36 次
+        「心跳已恢复（无响应约 60s）」，是 WebView2 把隐藏页面 setInterval 钳到
+        60s。故策略改成两阶段：30s~180s 只判"心跳变慢"（slow，不重载），
+        超过 180s 才真判死并进入恢复预算。否则会每分钟重载一次窗口。
 
         关键前提：_wv2_broadcast 已改为非阻塞推送，即便 UI 真死，后端（双工/聊天/
         心跳）也不再被拖垮，看门狗日志可正常落盘。
@@ -141,6 +146,7 @@ class WindowAPI:
             cooldown=float(getattr(self, "UI_RELOAD_COOLDOWN_S", 60.0)),
             max_attempts=int(getattr(self, "UI_RELOAD_MAX_PER_EPISODE", 2)),
             enabled=bool(getattr(self, "UI_RELOAD_ENABLED", True)),
+            dead_timeout=float(getattr(self, "UI_PING_DEAD_TIMEOUT_S", 180.0)),
         )
         while True:
             try:
@@ -151,12 +157,19 @@ class WindowAPI:
                 decision, why = policy.check(now, last, armed, self._boot_ts)
                 if decision in ("idle", "healthy"):
                     continue
+                if decision == "slow":
+                    # 后台节流不是故障：一轮只记一条 INFO，且**不**置
+                    # _ui_unresponsive_logged（否则 ui_ping 回来时又打一条
+                    # "心跳已恢复" WARNING，60s 一轮刷屏）。
+                    if policy.should_log_slow():
+                        logger.info("[UI心跳] %s；不重载", why)
+                    continue
                 gap = now - last
                 if not self._ui_unresponsive_logged:
                     self._ui_unresponsive_logged = True
                     logger.warning(
-                        "[UI心跳] ⚠️ 前端无响应（心跳中断 %.0fs，阈值 %.0fs）；%s",
-                        gap, self.UI_PING_TIMEOUT, why,
+                        "[UI心跳] ⚠️ 判定 UI 卡死（心跳中断 %.0fs，真死阈值 %.0fs）；%s",
+                        gap, getattr(self, "UI_PING_DEAD_TIMEOUT_S", 180.0), why,
                     )
                 if decision == "reload":
                     logger.warning("[UI心跳] 尝试恢复：%s", why)
@@ -168,9 +181,9 @@ class WindowAPI:
                             why)
                 elif decision not in ("cooldown", "disabled", "grace"):
                     logger.debug("[UI心跳] %s：%s", decision, why)
-                elif decision == "cooldown" and gap < self.UI_PING_TIMEOUT * 3:
-                    # 只在前 90s 周期性提醒，之后交给 give_up，不刷屏
-                    logger.warning("[UI心跳] 前端仍无响应（已中断 %.0fs）；%s", gap, why)
+                elif decision == "cooldown" and gap < self.UI_PING_DEAD_TIMEOUT_S * 1.5:
+                    # 判死后的一段时间内周期性提醒，之后交给 give_up，不刷屏
+                    logger.warning("[UI心跳] 仍无心跳（已中断 %.0fs）；%s", gap, why)
             except Exception as exc:  # 看门狗自身绝不能崩
                 try:
                     logger.error("[UI心跳] 看门狗异常: %s", exc)
