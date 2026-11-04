@@ -43,8 +43,17 @@ def _run_gate() -> tuple[int, str]:
 
 
 def _find_exempt_file() -> str:
-    """现找：tools/ 下 docstring 里带免登标记的**第一个**文件（按文件名排序）。"""
+    """现找：tools/ 下 docstring 里带免登标记的**第一个**文件（按文件名排序）。
+
+    【2026-11-04 修】只认 `check_*` / `test_*`：登记对账闸门的扫描范围就是这两类。
+    曾有一个 `_gate_lock.py`（基础设施，不在扫描范围）在文档里写了「不进闸门：…」
+    说明句，排序又排在 `check_*` 前面 —— M2 撕了它的标记，闸门当然不红，刀就哑了。
+    目标是动态取的，但**动态取也必须先按被测程序的扫描口径过滤**，否则随手一句
+    说明就能把刀弄哑。
+    """
     for fn in sorted(os.listdir(HERE)):
+        if not fn.startswith(("check_", "test_")):
+            continue
         if not fn.endswith(".py"):
             continue
         full = os.path.join(HERE, fn)
