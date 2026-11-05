@@ -45,7 +45,10 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PY = sys.executable
 
 FORBIDDEN_DIRS = ("data", "logs", ".venv", "venv", ".git", "__pycache__", "ort_dml")
-FORBIDDEN_FILES = ("config.yaml", "call_records.json", "user_knowledge.yaml",
+# config.yaml 不在这里：安装版按设计会把 config.release.yaml 改名成 config.yaml
+# 一起打包（make_dist.RENAME）。「见到就判红」会误伤合法产物，改由
+# check_factory_config() 判「它是不是出厂模板」，而不是二态的「有没有」。
+FORBIDDEN_FILES = ("call_records.json", "user_knowledge.yaml",
                    "memory.json", "memory_profile.jsonl")
 REQUIRED_FILES = ("main.py", "tools/doctor.py", "config.release.yaml",
                   "src/version.py", "requirements.txt")
@@ -115,6 +118,37 @@ def make_copy(src: str | None, scratch: str) -> str:
     return dst
 
 
+def _sha(path: str) -> str:
+    import hashlib
+    h = hashlib.sha256()
+    with io.open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def check_factory_config(c: Chain, ws: str) -> None:
+    """config.yaml 允许存在，但必须逐字节等于出厂模板。
+
+    安装版 make_dist.RENAME 把 config.release.yaml 改名成 config.yaml 打包，
+    这是**合法**的出厂配置；开发机实配（带 Key/盘符）才是残留。用「有没有」
+    二态判会误伤安装版，所以这里比 sha，并在模板缺席时给出明确适用说明。
+    """
+    tpl = os.path.join(ws, "config.release.yaml")
+    cfg = os.path.join(ws, "config.yaml")
+    if not os.path.isfile(cfg):
+        c.chk("副本无现成 config.yaml（首启时由模板生成）", True)
+        return
+    if not os.path.isfile(tpl):
+        c.chk("现成 config.yaml 有出厂模板可比对", False,
+              "包内缺 config.release.yaml；含包内运行时的 stage 属内部构建产物，"
+              "本链只验源码包/干净 clone，安装版请用 make_dist.verify_deps")
+        return
+    same = _sha(tpl) == _sha(cfg)
+    c.chk("现成 config.yaml 逐字节等于出厂模板（不是开发机实配）", same,
+          "sha 不同：可能混进了开发机 config.yaml")
+
+
 def check_clean(c: Chain, ws: str) -> None:
     """减法检查必须在跑 doctor 之前（doctor 会在副本里造 logs/）。"""
     found_dirs = [d for d in FORBIDDEN_DIRS
@@ -123,6 +157,10 @@ def check_clean(c: Chain, ws: str) -> None:
                    if os.path.isfile(os.path.join(ws, f))]
     c.chk("副本无开发机/隐私目录残留", not found_dirs, ",".join(found_dirs))
     c.chk("副本无开发机/隐私文件残留", not found_files, ",".join(found_files))
+    check_factory_config(c, ws)
+    bundled = os.path.isfile(os.path.join(ws, "python", "python.exe"))
+    c.chk("本链适用范围（源码包/干净 clone，非安装版 stage）", not bundled,
+          "检测到包内运行时：安装版由 make_dist.verify_deps 覆盖" if bundled else "")
     missing = [f for f in REQUIRED_FILES
                if not os.path.isfile(os.path.join(ws, *f.split("/")))]
     c.chk("运行必需文件齐全", not missing, ",".join(missing))

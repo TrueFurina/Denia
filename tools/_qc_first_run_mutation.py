@@ -81,7 +81,13 @@ def fixture_muts(scratch: str, base: str, bad: list[str]) -> None:
     d = fresh("b")
     with io.open(os.path.join(d, "config.yaml"), "w", encoding="utf-8") as f:
         f.write("app:\n  home: X:\\\\dev\\\\Denia\n")
-    cases.append(("B 副本里带着开发机 config.yaml（新用户不会有的文件）", d))
+    cases.append(("B 副本里的 config.yaml 不是出厂模板（开发机实配）", d))
+
+    d = fresh("g")
+    shutil.copy2(os.path.join(d, "config.release.yaml"), os.path.join(d, "config.yaml"))
+    with io.open(os.path.join(d, "config.yaml"), "a", encoding="utf-8") as f:
+        f.write("\n# one byte changed\n")
+    cases.append(("G config.yaml 只差一个字节（sha 比对必须抓住）", d))
 
     d = fresh("c")
     os.remove(os.path.join(d, "config.release.yaml"))
@@ -94,6 +100,17 @@ def fixture_muts(scratch: str, base: str, bad: list[str]) -> None:
     for name, d in cases:
         rc, lines = run_chain(d, os.path.join(scratch, "report.json"))
         verdict(name, rc, lines, bad)
+
+    # 对照组：安装版按设计把模板改名成 config.yaml，这条合法路径不许误伤
+    # （memory §6「零触发防御层」：只喂红线不够，还要喂不该误伤的路径）
+    d = fresh("control")
+    shutil.copy2(os.path.join(d, "config.release.yaml"), os.path.join(d, "config.yaml"))
+    rc, lines = run_chain(d, os.path.join(scratch, "report.json"))
+    ok = rc == 0
+    print("对照组 出厂模板改名的 config.yaml 应放行")
+    print("   -> " + ("符合预期：判据链放行" if ok else "误伤了合法产物（假红）"))
+    if not ok:
+        bad.append("对照组被误伤")
 
 
 def source_muts(scratch: str, base: str, bad: list[str]) -> None:
@@ -129,7 +146,7 @@ def main() -> int:
     finally:
         shutil.rmtree(scratch, ignore_errors=True)
 
-    total = 4 + len(SOURCE_MUTS)
+    total = 5 + len(SOURCE_MUTS)
     print("\n%d 刀全红" % total if not bad else "有 %d 处异常：%s" % (len(bad), ", ".join(bad)))
     return 1 if bad else 0
 
