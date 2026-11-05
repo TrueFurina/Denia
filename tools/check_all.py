@@ -526,6 +526,11 @@ GATES: list[tuple[str, str, list[str], bool]] = [
     ("发布口径对账变异", PY_VENV, ["tools/_qc_release_numbers_mutation.py"], True),
     ("出包验收时序", PY_VENV, ["tools/check_verify_deps_order.py"], False),
     ("出包验收时序变异", PY_VENV, ["tools/_qc_verify_deps_order_mutation.py"], True),
+    # 【2026-11-05 加·阶段 1】第 3 层判据：陌生人解压后第一次跑 --doctor 起不起得来。
+    # 前 181 项守的都是「代码/模板/包内容静态正确」，这一层此前全靠人肉验包。
+    # 链自带 6 把变异刀（污染 fixture / 忘剥 Key / 抹掉未验清单），先证明自己会红。
+    ("陌生人首启判据链", PY_VENV, ["tools/verify_first_run.py"], False),
+    ("陌生人首启判据链变异", PY_VENV, ["tools/_qc_first_run_mutation.py"], True),
 ]
 
 
