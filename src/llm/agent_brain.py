@@ -358,6 +358,32 @@ def _is_echo(content: str) -> bool:
 _LLM_RETRY_STATUS = (429, 500, 502, 503, 504)
 
 
+def _llm_failure_reply(status_code: int, resp_text: str,
+                       tools_used: list[str]) -> str:
+    """LLM 挂了但工具已经跑过时，给用户一份**本地事实汇报**，而不是原始错误串。
+
+    实证（2026-11-04/07 三次 429）：工具真执行了、notepad 真开了，收尾那次 LLM
+    调用却失败，旧实现把 ``HTTP 429`` 原样丢给用户 —— 屏幕上完全看不出事办过。
+    账本虽补了 partial_execution，可那是事后查的，不解决「当面说了什么」。
+
+    三条纪律：
+      1. **不编造结果**：只列实际执行过的工具，不写「已完成 / 成功」；
+         明确说「是否达成目标未做复核」。
+      2. **保留「LLM 调用失败」标记**：run_agent_task() 靠它触发
+         partial_execution；只顾文案好看会让账本退回失真。
+      3. **没跑过工具就退回原始错误串**，不粉饰「啥也没干」的场景。
+    """
+    base = ("电脑代理 LLM 调用失败（HTTP %d）：%s"
+            % (status_code, (resp_text or "")[:200]))
+    tools = [str(t) for t in (tools_used or []) if t]
+    if not tools:
+        return base
+    names = "、".join(dict.fromkeys(tools))  # 保序去重，次数仍用原始长度
+    return ("已实际执行 %d 次工具调用（%s）。但%s —— 最终回复没能生成；"
+            "上述动作是否达成目标，未做复核。"
+            % (len(tools), names, base))
+
+
 async def _post_llm(cli: Any, url: str, body: dict, headers: dict,
                     retries: int = 2) -> Any:
     """发一次 chat/completions，对瞬时失败做有限退避重试，返回最后一个 response。
@@ -591,8 +617,11 @@ class AgentBrain:
                         self._pending_hint = ""
                     resp = await _post_llm(cli, url, body, headers)
                     if resp.status_code != 200:
-                        return f"电脑代理 LLM 调用失败（HTTP {resp.status_code}）：" \
-                               f"{resp.text[:200]}"
+                        # 【2026-11-07】工具已跑过就给本地事实汇报，不把原始 429
+                        # 原样丢给用户（helper 保留「LLM 调用失败」标记以维持账本口径）。
+                        return _llm_failure_reply(
+                            resp.status_code, resp.text,
+                            list(getattr(self, "_last_tools_used", []) or []))
                     data = resp.json()
                     try:
                         from .quota_meter import record as _qm_record

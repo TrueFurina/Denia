@@ -552,6 +552,9 @@ GATES: list[tuple[str, str, list[str], bool]] = [
     # AgentBrain.run() 多轮循环，验 hint 真的进了发给 LLM 的 messages。
     ("长任务护栏端到端", PY_VENV, ["tools/check_loop_guard_e2e.py"], False),
     ("长任务护栏端到端变异", PY_VENV, ["tools/_qc_loop_guard_e2e_mutation.py"], True),
+    # 【2026-11-07】LLM 收尾失败时给本地事实汇报（不是把原始 429 丢给用户）
+    ("LLM失败本地汇报", PY_VENV, ["tools/check_partial_reply.py"], False),
+    ("LLM失败本地汇报变异", PY_VENV, ["tools/_qc_partial_reply_mutation.py"], True),
 ]
 
 
