@@ -544,6 +544,10 @@ GATES: list[tuple[str, str, list[str], bool]] = [
     # 闸同时查判据真值表与 AgentBrain 接线（防「写了没进门」），6 把变异刀全红。
     ("长任务护栏", PY_VENV, ["tools/check_loop_guard.py"], False),
     ("长任务护栏变异", PY_VENV, ["tools/_qc_loop_guard_mutation.py"], True),
+    # 【2026-11-07】上面两项验「判据对 + 源码里有没有接线」；这两项走完整
+    # AgentBrain.run() 多轮循环，验 hint 真的进了发给 LLM 的 messages。
+    ("长任务护栏端到端", PY_VENV, ["tools/check_loop_guard_e2e.py"], False),
+    ("长任务护栏端到端变异", PY_VENV, ["tools/_qc_loop_guard_e2e_mutation.py"], True),
 ]
 
 
