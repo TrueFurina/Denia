@@ -309,6 +309,7 @@ footer{border-top:1px solid var(--line);margin-top:40px;background:rgba(0,0,0,.2
       <a href="#privacy">隐私</a>
       <a href="#evidence">实测</a>
       <a href="#install">安装</a>
+      <a href="#accept">验收</a>
     </div>
     <a class="nav-dl" href="#download">下载 <span id="nav-ver">v0.2.0</span></a>
   </div>
@@ -687,6 +688,65 @@ footer{border-top:1px solid var(--line);margin-top:40px;background:rgba(0,0,0,.2
   </div>
 </section>
 
+<!-- ===== ACCEPTANCE ===== -->
+<section id="accept" class="rv">
+  <style>
+    .chk { list-style:none; padding-left:0; margin:8px 0 20px; }
+    .chk li { margin:8px 0; }
+    .chk label { display:flex; gap:9px; align-items:flex-start; cursor:pointer; line-height:1.55; }
+    .chk input { margin-top:4px; flex:none; width:15px; height:15px; accent-color:#7aa2ff; }
+  </style>
+  <div class="sec-head">
+    <span class="sec-no">08 · ACCEPTANCE</span>
+    <h2>真机验收清单</h2>
+    <p>代码门禁只验「这台机器 + 逻辑」；下面这些必须换台真机点一遍。每项打勾即过，<b style="color:#c3cbdb">❌ 就记下反馈</b>。</p>
+  </div>
+
+  <div class="notice-grid">
+    <div>
+      <h3>🖥️ A. 安装（第二台干净电脑）</h3>
+      <ul class="chk">
+        <li><label><input type="checkbox"> 双击 <code style="font-family:var(--mono);font-size:11.5px">DaniaAI-Setup-0.2.0-x64.exe</code>，不装 Python、不配环境，默认装完</label></li>
+        <li><label><input type="checkbox"> 桌面 / 开始菜单出现达妮娅，启动后桌宠可见、无报错弹窗</label></li>
+        <li><label><input type="checkbox"> 浏览器 / 系统弹 SmartScreen「未知发布者」→ 点「更多信息 → 仍要运行」（已知限制，非缺陷）</label></li>
+      </ul>
+
+      <h3>👤 B. 首启（陌生人流程）</h3>
+      <ul class="chk">
+        <li><label><input type="checkbox"> 首次启动先建角色 → 体检，全程不要求填 API Key</label></li>
+        <li><label><input type="checkbox"> 体检通过后能对话、能听能说（麦克风 / 扬声器权限点允许）</label></li>
+      </ul>
+
+      <h3>👁️ C. 屏幕感知 / 隐私指示</h3>
+      <ul class="chk">
+        <li><label><input type="checkbox"> 右下角 8px 指示点：在看=青、隐私拦截=琥珀、关闭=不亮</label></li>
+        <li><label><input type="checkbox"> 打开银行 / 密码类窗口时整帧不采集（指示点变琥珀）</label></li>
+      </ul>
+    </div>
+
+    <div>
+      <h3>📐 D. A5 四场景（本机仅 1 屏 / 100%，必须换机）</h3>
+      <ul class="chk">
+        <li><label><input type="checkbox"> <b>150% 缩放</b>：设置改 150% 重启，桌宠位置 / 大小正确、白底边缘不割字</label></li>
+        <li><label><input type="checkbox"> <b>双显示器</b>：拖到达妮娅到副屏，置顶 / 拖动 / 截图隐身正常；主副屏切换不丢窗口</label></li>
+        <li><label><input type="checkbox"> <b>切窗</b>：最小化 / 切到别窗再切回，不卡死、不丢状态</label></li>
+        <li><label><input type="checkbox"> <b>休眠唤醒</b>：睡眠→唤醒后桌宠仍在、心跳恢复（不刷「无响应 60s 后重连」）</label></li>
+      </ul>
+
+      <h3>⏱️ E. 隐藏窗口 ≥30min</h3>
+      <ul class="chk">
+        <li><label><input type="checkbox"> 隐藏达妮娅窗口超 30 分钟再唤起，仍正常、未误判卡死重载</label></li>
+      </ul>
+
+      <h3>📄 F. 已知限制确认（文案与包一致）</h3>
+      <ul class="chk">
+        <li><label><input type="checkbox"> 官网「未签名 / SmartScreen 指引」与安装包一致；下载链接 302→CDN 可下</label></li>
+      </ul>
+    </div>
+  </div>
+  <p style="margin-top:18px;color:var(--dim);font-size:13px">把 ❌ 项反馈到仓库 Issue，我按现象定位。下一步可选：研究低价代码签名证书消掉 SmartScreen 拦截。</p>
+</section>
+
 <!-- ===== FOOTER ===== -->
 <footer>
   <div class="foot-in">
@@ -700,6 +760,7 @@ footer{border-top:1px solid var(--line);margin-top:40px;background:rgba(0,0,0,.2
       <a href="#privacy">隐私</a>
       <a href="#evidence">实测</a>
       <a href="#download">下载</a>
+      <a href="#accept">验收</a>
       <a id="foot-repo" href="#" target="_blank" rel="noopener">GitHub</a>
     </div>
   </div>
