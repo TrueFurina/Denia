@@ -39,27 +39,27 @@ def write(rel: str, data: bytes) -> None:
 MUTS = [
     ("A 页面 CTA 数字改成谎话（改页面没改真值）",
      "site/index.html",
-     E('id="cta-sz">175.5 MB</small>'),
+     E('id="cta-sz">175.0 MB</small>'),
      E('id="cta-sz">999.9 MB</small>')),
 
     ("B 发布文档表格数字改成谎话",
      "site/PUBLISH.md",
-     E("| 175.5 MB | 内置运行时"),
+     E("| 175.0 MB | 内置运行时"),
      E("| 999.9 MB | 内置运行时")),
 
     ("C 真值文件体积变了但站点没同步",
      "site/release.json",
-     E('"setup_size_mb": 175.5,'),
+     E('"setup_size_mb": 175.0,'),
      E('"setup_size_mb": 999.9,')),
 
-    ("D 源码包 SHA 回填错",
+    ("D 安装包 SHA 回填错（shaSetup 与真值不一致）",
      "site/index.html",
-     E("da0aa0f8895e8ea24a97622aa6437e80407c0cec999e254be8e37cce04cebfc0"),
+     E("9ec828efd15617a52a6261ed479c7d14c4bcaaae723ecfdce24728249fae2943"),
      E("0000000000000000000000000000000000000000000000000000000000000000")),
 
     ("E 整块数字被删掉（锚点消失不许静默跳过）",
      "site/index.html",
-     E('<small id="cta-sz">175.5 MB</small>'),
+     E('<small id="cta-sz">175.0 MB</small>'),
      E('<small id="cta-sz"></small>')),
 ]
 
