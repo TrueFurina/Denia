@@ -4,6 +4,9 @@
 判据形状（每刀都断言**具体抓到了注入的那个错**，不是任意非零退出——否则分不清
 「闸门在工作」和「闸门自己崩了」，两者都 exit 1/2）：
   M1 正向·新文件   ：放一个未登记、无免登标记的 test_*.py → 必须红且点名该文件
+  M5 正向·check_分支：放一个未登记、无标记的 check_*.py → 必须红且点名该文件
+                     （LOOKALIKE 同时认两种前缀，M1 只验了 test_；若正则被改成
+                      只认 test_，M1 仍绿而 check_ 类静默漏登记，这把刀钉住它）
   M2 正向·撕标记   ：把某个免登文件的标记行删掉 → 必须红且点名该文件
   M3 反向·登记项失效：把某条登记项指向不存在的脚本 → 必须红且报「不存在」
   M4 去重          ：复制一条登记项 → 必须红且报「重复登记」
@@ -29,6 +32,7 @@ ROOT = os.path.dirname(HERE)
 GATE = os.path.join(HERE, "check_gate_registry.py")
 CHECK_ALL = os.path.join(HERE, "check_all.py")
 TEMP_UNWIRED = os.path.join(HERE, "test_zzz_unwired_probe.py")
+TEMP_UNWIRED_CHECK = os.path.join(HERE, "check_zzz_unwired_probe.py")
 MARKER_RE = re.compile(rb"^\s*" + "不进闸门".encode("utf-8") + rb"[" + "：:".encode("utf-8") + rb"]", re.M)  # 「不进闸门：」
 
 
@@ -97,6 +101,26 @@ def _knife_new_unwired() -> tuple[bool, str]:
     finally:
         if os.path.exists(TEMP_UNWIRED):
             os.remove(TEMP_UNWIRED)
+
+
+def _knife_new_unwired_check() -> tuple[bool, str]:
+    """M5：放一个未登记、无标记的 check_*.py，钉住 LOOKALIKE 的 check_ 分支。"""
+    if os.path.exists(TEMP_UNWIRED_CHECK):
+        return False, "临时文件已存在，拒绝覆盖: %s" % TEMP_UNWIRED_CHECK
+    with io.open(TEMP_UNWIRED_CHECK, "wb") as f:
+        f.write(('"""变异刀临时文件：未登记、无免登标记（check_ 前缀）。"""'
+                 + chr(10)).encode("utf-8"))
+    try:
+        code, out = _run_gate()
+        name = os.path.basename(TEMP_UNWIRED_CHECK)
+        if code != 1:
+            return False, "M5 期望 exit 1，实际 %d" % code
+        if name not in out:
+            return False, "M5 红了但没点名 %s——可能红在别处" % name
+        return True, "M5 抓到未登记的 check_ 新文件"
+    finally:
+        if os.path.exists(TEMP_UNWIRED_CHECK):
+            os.remove(TEMP_UNWIRED_CHECK)
 
 
 def _knife_strip_marker() -> tuple[bool, str]:
@@ -216,6 +240,7 @@ def main() -> int:
     results = []
     for name, fn in (("M1", _knife_new_unwired), ("M2", _knife_strip_marker),
                      ("M3", _knife_missing_path), ("M4", _knife_duplicate),
+                     ("M5", _knife_new_unwired_check),
                      ("对照", _control)):
         try:
             ok, msg = fn()
@@ -234,7 +259,7 @@ def main() -> int:
     if bad:
         print("✗ %d 项不符合" % len(bad))
         return 1
-    print("✓ 四刀全红 + 对照组绿 + 还原后仍绿")
+    print("✓ 五刀全红 + 对照组绿 + 还原后仍绿")
     return 0
 
 
