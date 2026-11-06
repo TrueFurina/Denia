@@ -524,6 +524,10 @@ GATES: list[tuple[str, str, list[str], bool]] = [
     # 「verify_deps 跑在 _pth/DLL 铺设之前」假红悄悄回归。两道都配了变异刀。
     ("发布口径对账", PY_VENV, ["tools/check_release_numbers.py"], False),
     ("发布口径对账变异", PY_VENV, ["tools/_qc_release_numbers_mutation.py"], True),
+    # 【2026-11-07】开发态指标（闸门数）不进 release.json：权威值直接取
+    # len(GATES)，本闸门自身也在其中，新增检查后跑 --fix 即可，不会漂。
+    ("站点闸门数对账", PY_VENV, ["tools/check_site_counts.py"], False),
+    ("站点闸门数对账变异", PY_VENV, ["tools/_qc_site_counts_mutation.py"], True),
     ("出包验收时序", PY_VENV, ["tools/check_verify_deps_order.py"], False),
     ("出包验收时序变异", PY_VENV, ["tools/_qc_verify_deps_order_mutation.py"], True),
     # 【2026-11-05 加·阶段 1】第 3 层判据：陌生人解压后第一次跑 --doctor 起不起得来。

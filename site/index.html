@@ -350,7 +350,7 @@ footer{border-top:1px solid var(--line);margin-top:40px;background:rgba(0,0,0,.2
 <!-- ===== STATS ===== -->
 <div class="stats">
   <div class="stat"><b>175.0<span style="font-size:.5em">MB</span></b><span>安装包体积</span></div>
-  <div class="stat"><b>149</b><span>发布前必须全绿的闸门</span></div>
+  <div class="stat"><b>193</b><span>发布前必须全绿的闸门</span></div>
   <div class="stat"><b>16 / 0</b><span>装完自检 PASS / FAIL</span></div>
   <div class="stat"><b>4.7<span style="font-size:.5em">万行</span></b><span>Python 代码</span></div>
 </div>
@@ -524,7 +524,7 @@ footer{border-top:1px solid var(--line);margin-top:40px;background:rgba(0,0,0,.2
           <tr><td>启动</td><td class="mono">约 7 秒上线</td><td>无 Key 状态</td></tr>
           <tr><td>未捕获异常</td><td class="mono yes">0</td><td>整轮观察窗口</td></tr>
           <tr><td>RPC 稳定性</td><td class="mono">720 次长连接 · 0 失败</td><td>压力测试</td></tr>
-          <tr><td>发布闸门</td><td class="mono">149 道 · 45 把变异刀</td><td>每次发布前必须全绿</td></tr>
+          <tr><td>发布闸门</td><td class="mono">193 道 · 变异刀逐条验证</td><td>每次发布前必须全绿</td></tr>
         </tbody>
       </table>
     </div>
@@ -539,12 +539,12 @@ footer{border-top:1px solid var(--line);margin-top:40px;background:rgba(0,0,0,.2
     <div class="card">
       <span class="ico">🧪</span>
       <h3>变异测试的意义</h3>
-      <p>45 把变异刀会故意把代码改成错的，看闸门会不会红。不红的闸门等于不存在——这是防「假绿」，不是防「报错」。</p>
+      <p>变异刀会故意把代码改成错的，看闸门会不会红。不红的闸门等于不存在——这是防「假绿」，不是防「报错」。</p>
     </div>
     <div class="card">
       <span class="ico">📋</span>
       <h3>还没验的，也写在明面上</h3>
-      <p>首启引导未完整走通、真透明需装 Electron 壳（383MB）、包未签名。这些不是藏着，是记在验包记录第 5 节。</p>
+      <p>首启引导未完整走通、真透明需装 Electron 壳（本机安装后约 383MB）、包未签名。这些不是藏着，是记在验包记录第 5 节。</p>
     </div>
   </div>
 </section>
@@ -652,7 +652,7 @@ footer{border-top:1px solid var(--line);margin-top:40px;background:rgba(0,0,0,.2
       <div class="step">
         <div>
           <h4>想要真透明桌宠：装 Electron 壳</h4>
-          <p><code>cd shell &amp;&amp; npm install</code>（约 383MB）。不装也能跑，但桌宠窗口只能显示、点不到也拖不动——这是 pywebview 的宿主限制，日志会如实告诉你。</p>
+          <p><code>cd shell &amp;&amp; npm install</code>（本机 npm install 后约 383MB；实测 381MB）。不装也能跑，但桌宠窗口只能显示、点不到也拖不动——这是 pywebview 的宿主限制，日志会如实告诉你。</p>
         </div>
       </div>
     </div>
