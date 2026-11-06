@@ -25,8 +25,8 @@ cd D:/Denia
 .venv/Scripts/python.exe tools/make_dist.py
 ```
 
-产物预期：`达妮娅AI桌面伴侣_Setup_v0.2.0.exe`。**2026-11-04 当前 HEAD 实测 175.5 MB**
-（NSIS/LZMA；stage 645.9 MB = Electron 壳 321.9 + python 295.0 + src 27.3）。
+产物预期：`达妮娅AI桌面伴侣_Setup_v0.2.0.exe`。**2026-11-04 当前 HEAD 实测 175.0 MB**
+（NSIS/LZMA；stage 645.1 MB = Electron 壳 321.9 + python 295.0 + src 26.5 + 其余 1.7）。
 体积随依赖档位变化，出包后以 `make_dist.py` 打印的实测值为准，不要沿用旧数字。
 
 **出包后记两个值**（后面要填进网页）：
@@ -54,7 +54,7 @@ certutil -hashfile "达妮娅AI桌面伴侣_安装程序_v0.2.0.exe" SHA256
 3. **Title**：`达妮娅 AI 桌面伴侣 v0.2.0`
 4. **Description**：见下方模板
 5. **上传附件**：
-   - `达妮娅AI桌面伴侣_安装程序_v0.2.0.exe`（175.5MB，安装版）
+   - `达妮娅AI桌面伴侣_安装程序_v0.2.0.exe`（175.0MB，安装版）
    - `达妮娅AI桌面伴侣_源码_v0.2.0_20261104.zip`（17.9MB，源码包）
 6. ⚠️ **不要勾**「Set as a pre-release」（除非你确实想标测试）
 7. 点 **Publish release**
@@ -79,7 +79,7 @@ gh release create v0.2.0 \
 ### 下载
 | 版本 | 文件 | 大小 | 说明 |
 |---|---|---|---|
-| 安装版（推荐） | DaniaAI-Setup-0.2.0-x64.exe | 175.5 MB | 内置运行时，双击就装，不需要 Python |
+| 安装版（推荐） | DaniaAI-Setup-0.2.0-x64.exe | 175.0 MB | 内置运行时，双击就装，不需要 Python |
 | 源码包 | 达妮娅AI桌面伴侣_源码_v0.2.0_20261104.zip | 17.9 MB | 需要 Python 3.12 |
 
 ### 校验值
@@ -282,7 +282,7 @@ site/
 2. **网页上的数字是真的，且各有出处** —— 两组数字来自**两个不同的包**，不可互换引用：
    - **源码包**（17.9 MB / 848 条目 / 16 PASS 3 WARN 0 FAIL / 启动约 7 秒 / 149 道门禁）
      → `docs/验包记录_2026-11-04.md`，包内不含运行时，用户须自建 venv。
-   - **安装包**（175.5 MB / 双击就装 / 包内 doctor 17 PASS 2 WARN 0 FAIL）
+   - **安装包**（175.0 MB / 双击就装 / 包内 doctor 17 PASS 2 WARN 0 FAIL）
      → `docs/deliverables/2026-11-04_当前HEAD出包与验包记录.md`，当前 HEAD 实测，
        内置运行时与 166 项依赖；体积随依赖与 Electron 壳变化，重出包后**必须重测再改**。
    如果后续版本数字变了，记得同步改网页，否则会从「诚实」变成「虚假宣传」。

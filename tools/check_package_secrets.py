@@ -125,8 +125,12 @@ def scan_dir(root: str) -> tuple[list[str], list[str]]:
             if f.lower().endswith((".yaml", ".yml", ".json")) and "config" in f.lower():
                 for no, key in scan_config(os.path.join(root, rel)):
                     blocking.append(f"{rel}:{no} 凭据非空（{key}）")
-            if f.lower().endswith((".log", ".wav", ".mp3")) and "chat_audio" in rel.lower():
-                warnings.append(f"包内含通话录音：{rel}")
+            if f.lower().endswith((".log", ".wav", ".mp3", ".m4a", ".ogg", ".aac", ".flac")) \
+                    and "chat_audio" in rel.lower():
+                # 【2026-11-06 升级为阻断】原来是 WARN，重出包实测 3 个用户通话
+                # 录音被 --force 残留进 stage，闸门却判「✓ 通过」，差点随 public
+                # 仓库的安装包公开发布。用户语音不是「提示一下就行」的东西。
+                blocking.append(f"包内含通话录音（用户语音，严禁发布）：{rel}")
     return blocking, warnings
 
 

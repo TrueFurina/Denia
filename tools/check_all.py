@@ -531,6 +531,14 @@ GATES: list[tuple[str, str, list[str], bool]] = [
     # 链自带 6 把变异刀（污染 fixture / 忘剥 Key / 抹掉未验清单），先证明自己会红。
     ("陌生人首启判据链", PY_VENV, ["tools/verify_first_run.py"], False),
     ("陌生人首启判据链变异", PY_VENV, ["tools/_qc_first_run_mutation.py"], True),
+    # 【2026-11-06 加】A5 可脚本化探针：把 Win32 显示环境与心跳日志基线量出来，
+    # 但明确不宣称 A5 通过（人眼项列在 requires_human 里，链自检非空）。
+    ("A5环境探针", PY_VENV, ["tools/probe_a5_env.py"], False),
+    ("A5环境探针变异", PY_VENV, ["tools/_qc_a5_probe_mutation.py"], True),
+    # 【2026-11-06 加·发布红线】通话录音绝不进包：凭据闸升级为阻断 +
+    # 装配期排除/清理 + main() 接线，三层各有专属变异刀。
+    ("通话录音不进包", PY_VENV, ["tools/check_runtime_audio_guard.py"], False),
+    ("通话录音不进包变异", PY_VENV, ["tools/_qc_runtime_audio_mutation.py"], True),
 ]
 
 

@@ -86,6 +86,13 @@ INCLUDE_TOOLS = [
 IGNORE_DIRS = {"__pycache__", ".git", "node_modules", ".venv", "tests", "test"}
 IGNORE_SUFFIX = (".pyc", ".pyo", ".log", ".map", ".orig", ".rej")
 
+# 【2026-11-06】运行时通话录音绝不进包：src/ui/web/assets/chat_audio/ 是
+# call_audio_merge / webapp 在通话时写 wav 的目录，里面全是用户语音。
+# 2026-11-06 重出包实测：--force 复用旧 stage 时有 3 个 wav 残留，而凭据闸
+# 只打 WARN 不阻断，差点随 public 仓库的安装包一起公开发布。
+RUNTIME_AUDIO_DIRS = {"chat_audio"}
+RUNTIME_AUDIO_SUFFIX = (".wav", ".mp3", ".m4a", ".ogg", ".aac", ".flac")
+
 # 【C11】桌宠 Electron 壳：不进 INCLUDE_DIRS（那里是全量拷贝的源码树），
 # 走下面的专用装配——只拿壳脚本 + electron 运行时，其余 node_modules 一律不进包。
 SHELL_FILES = ["main.js", "preload.js", "package.json"]
@@ -105,10 +112,13 @@ REQUIRED = [
 
 # ============================ 实现 ============================
 
-def _ignore(_dir: str, names: list[str]) -> set[str]:
+def _ignore(dir_path: str, names: list[str]) -> set[str]:
     out = set()
+    in_audio_dir = os.path.basename(os.path.normpath(dir_path)).lower() in RUNTIME_AUDIO_DIRS
     for n in names:
         if n in IGNORE_DIRS or n.endswith(IGNORE_SUFFIX):
+            out.add(n)
+        elif in_audio_dir and n.lower().endswith(RUNTIME_AUDIO_SUFFIX):
             out.add(n)
     return out
 
@@ -800,6 +810,30 @@ def preserve_user_config(out: str, root: str) -> str | None:
     return bak
 
 
+def purge_runtime_audio(out_dir: str) -> list[str]:
+    """删掉交付副本里的运行时通话录音（只碰 out_dir，绝不碰工作目录原件）。
+
+    --force 的语义是「覆盖同名，不删多余」，所以单靠 _ignore 挡不住上一次
+    装配留下的 wav。必须做一次减法，且必须与凭据闸的阻断项成对出现：
+    这边漏删了，那边就会把出包判红，不让脏包流到发布环节。
+    """
+    killed: list[str] = []
+    for cur, dirs, files in os.walk(out_dir):
+        if os.path.basename(os.path.normpath(cur)).lower() not in RUNTIME_AUDIO_DIRS:
+            continue
+        for fn in files:
+            if not fn.lower().endswith(RUNTIME_AUDIO_SUFFIX):
+                continue
+            p = os.path.join(cur, fn)
+            try:
+                os.remove(p)
+                killed.append(os.path.relpath(p, out_dir))
+            except OSError:
+                # 删不掉就留着：凭据闸会把这个包判红，不静默放行
+                pass
+    return killed
+
+
 def copy_items(items: list[tuple[str, str, bool]], out: str) -> None:
     for src, rel, is_dir in items:
         dst = os.path.join(out, rel)
@@ -1204,6 +1238,11 @@ def main() -> int:
         # 说出来而不是默默清掉：这提示"上一次装配后有人在包内跑过东西"
         print(f"  · 清掉 {len(_stale)} 项上次装配的残留（{', '.join(_stale[:3])}"
               f"{' …' if len(_stale) > 3 else ''}）")
+    _audio = purge_runtime_audio(out)
+    if _audio:
+        print(f"  · 清掉 {len(_audio)} 项运行时通话录音（不随包发布）："
+              f"{', '.join(os.path.basename(x) for x in _audio[:3])}"
+              f"{' …' if len(_audio) > 3 else ''}")
     # 这里必须用真实占用而不是 _tree_size：后者为了清单好看会跳过 .pyc/test，
     # 但交付包是要按真实体积上线的。两个数字不一致会让人以为报告算错了。
     sz, n = _dir_size(out)
