@@ -413,6 +413,17 @@ class AgentBrain:
         # 【2026-11-03】本次请求是否为"不需要动手"的闲聊/提问型。
         # 规划阶段判定为 noop 时置 True —— 记账时用它决定"没调工具"算不算失败。
         self._last_is_chat: bool = False
+        # 【2026-11-07】第 8 章长任务护栏（mini-workbuddy）：重复失败注入 +
+        # 上下文预算预警 + 任务清单。纯进程内，不注册新工具、不改 system 层。
+        try:
+            from .loop_guard import RepeatFailureGuard, ContextBudget, TaskList
+            self._repeat_guard = RepeatFailureGuard()
+            self._ctx_budget = ContextBudget()
+            self._task_list = TaskList()
+        except Exception:  # noqa: BLE001
+            self._repeat_guard = None
+            self._ctx_budget = None
+            self._task_list = None
 
     def _system_prompt(self) -> str:
         # 【2026-11-03】_BASE_PROMPT 里原本硬编码"达妮娅"，与 workbuddy 模式的人设冲突
@@ -441,6 +452,18 @@ class AgentBrain:
         self._last_tools_used = []
         self._last_steps = 0
         self._last_is_chat = False
+        # 【2026-11-07】长任务护栏每轮重置，避免上一轮的失败计数串到本轮
+        self._pending_hint: str = ""
+        try:
+            if self._repeat_guard is not None:
+                from .loop_guard import RepeatFailureGuard, ContextBudget, TaskList
+                self._repeat_guard = RepeatFailureGuard()
+                self._ctx_budget = ContextBudget()
+                self._task_list = TaskList()
+        except Exception:  # noqa: BLE001
+            self._repeat_guard = None
+            self._ctx_budget = None
+            self._task_list = None
         # 【2026-10-01 A-3】堵"操作大脑记忆孤岛"。
         # 旧实现 messages 从零构造（只有 system + 本次指令）：既读不到用户在打字/语音里
         # 聊过什么（偏好、习惯、约定），操作完也不写回共享历史 —— 于是她在电脑上帮你
@@ -558,6 +581,14 @@ class AgentBrain:
                         messages.append({"role": "user",
                                          "content": "按上面的计划开始执行。"})
                 for step in range(self.max_steps):
+                    # 【2026-11-07】第 8 章 8.6：上一轮累计出的重复失败 hint，
+                    # 在下一轮请求前以独立 user 消息注入（不碰 system 人设层）。
+                    # 只注入一次，且只在已经有过工具调用时——首轮不该看到"你失败过"。
+                    if self._pending_hint and step > 0:
+                        messages.append({"role": "user", "content": self._pending_hint})
+                        logger.info("AGENT 注入重试护栏 hint: %s",
+                                    self._pending_hint[:60])
+                        self._pending_hint = ""
                     resp = await _post_llm(cli, url, body, headers)
                     if resp.status_code != 200:
                         return f"电脑代理 LLM 调用失败（HTTP {resp.status_code}）：" \
@@ -706,6 +737,16 @@ class AgentBrain:
                                 continue
                         result = await dispatch_tool(fname, fargs, self._ctx)
                         logger.info("AGENT 工具 %s -> %s", fname, result[:120])
+                        # 【2026-11-07】第 8 章 8.6：把工具结果喂给重复失败判据。
+                        # 达到阈值时只记下 hint，下一轮请求前统一注入；
+                        # 护栏任何异常都不能影响工具结果本身。
+                        try:
+                            if self._repeat_guard is not None:
+                                _h = self._repeat_guard.observe(fname, fargs, result)
+                                if _h:
+                                    self._pending_hint = _h
+                        except Exception as _he:  # noqa: BLE001
+                            logger.debug("重试护栏观察失败(忽略): %s", _he)
                         # 任务账本：记录实际执行过的工具（被确认闸拦下的不计入）
                         try:
                             self._last_tools_used.append(fname)

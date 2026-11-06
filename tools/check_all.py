@@ -539,6 +539,11 @@ GATES: list[tuple[str, str, list[str], bool]] = [
     # 装配期排除/清理 + main() 接线，三层各有专属变异刀。
     ("通话录音不进包", PY_VENV, ["tools/check_runtime_audio_guard.py"], False),
     ("通话录音不进包变异", PY_VENV, ["tools/_qc_runtime_audio_mutation.py"], True),
+    # 【2026-11-07 加】搬 mini-workbuddy 第 8 章「长任务不迷路」：
+    # 任务清单三态 / 同参数连续失败注入 / 上下文预算预警 / 时间节流。
+    # 闸同时查判据真值表与 AgentBrain 接线（防「写了没进门」），6 把变异刀全红。
+    ("长任务护栏", PY_VENV, ["tools/check_loop_guard.py"], False),
+    ("长任务护栏变异", PY_VENV, ["tools/_qc_loop_guard_mutation.py"], True),
 ]
 
 
