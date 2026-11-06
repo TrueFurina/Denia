@@ -1,0 +1,864 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>达妮娅 · AI 桌面伴侣 — 她住在你的电脑里</title>
+<meta name="description" content="达妮娅是一个住在 Windows 桌面上的 AI 伴侣。175.0MB 双击就装，不需要 Python，不需要配环境。她能听、能说、能看着你的屏幕接话，也能记住你——而记忆在你自己的硬盘上。">
+<meta property="og:title" content="达妮娅 · AI 桌面伴侣">
+<meta property="og:description" content="175.0MB，双击就装。她住在你的 Windows 里，记忆在你自己的硬盘上。">
+<meta property="og:type" content="website">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🌙</text></svg>">
+<style>
+:root{
+  --bg:#07080d;
+  --bg2:#0b0d14;
+  --panel:#0f1219;
+  --panel2:#131722;
+  --line:#1e2434;
+  --line2:#2a3244;
+  --txt:#e8ecf5;
+  --dim:#8b94a8;
+  --dim2:#5d6779;
+  --accent:#7c9fff;
+  --accent2:#a78bfa;
+  --warm:#f0a868;
+  --ok:#4ade80;
+  --warn:#fbbf24;
+  --mono:'SF Mono',ui-monospace,'Cascadia Code',Consolas,Menlo,monospace;
+  --sans:-apple-system,BlinkMacSystemFont,'Segoe UI','PingFang SC','Hiragino Sans GB','Microsoft YaHei',sans-serif;
+}
+*{margin:0;padding:0;box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{
+  background:var(--bg);color:var(--txt);font-family:var(--sans);
+  line-height:1.75;-webkit-font-smoothing:antialiased;overflow-x:hidden;
+}
+body::before{
+  content:'';position:fixed;inset:0;z-index:0;pointer-events:none;
+  background:
+    radial-gradient(ellipse 60% 50% at 50% -10%,rgba(124,159,255,.13),transparent 70%),
+    radial-gradient(ellipse 40% 40% at 85% 15%,rgba(167,139,250,.08),transparent 70%),
+    radial-gradient(ellipse 50% 40% at 10% 40%,rgba(240,168,104,.045),transparent 70%);
+}
+.wrap{position:relative;z-index:1}
+
+/* ---------- NAV ---------- */
+nav{
+  position:sticky;top:0;z-index:100;backdrop-filter:blur(16px);
+  background:rgba(7,8,13,.82);border-bottom:1px solid var(--line);
+}
+.nav-in{max-width:1180px;margin:0 auto;padding:0 24px;height:60px;display:flex;align-items:center;gap:28px}
+.brand{display:flex;align-items:center;gap:9px;font-weight:700;font-size:15px;letter-spacing:.02em;white-space:nowrap}
+.brand .mark{
+  width:24px;height:24px;border-radius:7px;flex:none;
+  background:linear-gradient(135deg,var(--accent),var(--accent2));
+  display:grid;place-items:center;font-size:12px;color:#0a0d14;font-weight:800;
+}
+.nav-links{display:flex;gap:22px;margin-left:auto;font-size:13.5px}
+.nav-links a{color:var(--dim);text-decoration:none;transition:color .2s;white-space:nowrap}
+.nav-links a:hover{color:var(--txt)}
+.nav-dl{
+  padding:7px 16px;border-radius:8px;background:var(--accent);color:#07080d !important;
+  font-weight:650;font-size:13px;text-decoration:none;transition:.2s;white-space:nowrap;
+}
+.nav-dl:hover{background:#9bb4ff;transform:translateY(-1px)}
+@media(max-width:860px){.nav-links{display:none}}
+
+/* ---------- HERO ---------- */
+header{max-width:1180px;margin:0 auto;padding:76px 24px 40px}
+.eyebrow{
+  display:inline-flex;align-items:center;gap:8px;font-family:var(--mono);font-size:11.5px;
+  color:var(--accent);letter-spacing:.13em;text-transform:uppercase;
+  border:1px solid rgba(124,159,255,.28);background:rgba(124,159,255,.06);
+  padding:5px 12px;border-radius:100px;margin-bottom:26px;
+}
+.eyebrow .dot{width:5px;height:5px;border-radius:50%;background:var(--ok);box-shadow:0 0 8px var(--ok);animation:pulse 2.4s infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+
+.hero-grid{display:grid;grid-template-columns:1fr 340px;gap:48px;align-items:center}
+@media(max-width:900px){.hero-grid{grid-template-columns:1fr;gap:32px}}
+
+h1{
+  font-size:clamp(40px,6.2vw,68px);line-height:1.06;letter-spacing:-.03em;
+  font-weight:800;margin-bottom:8px;
+}
+h1 .thin{font-weight:300;color:var(--dim)}
+h1 .grad{
+  background:linear-gradient(100deg,var(--accent) 0%,var(--accent2) 55%,var(--warm) 100%);
+  -webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent;
+}
+.ver-line{
+  font-family:var(--mono);font-size:12px;color:var(--dim2);letter-spacing:.06em;margin-bottom:22px;
+}
+.lede{font-size:17px;color:#b9c2d4;max-width:600px;margin-bottom:10px}
+.lede strong{color:var(--txt);font-weight:650}
+.lede-2{font-size:14.5px;color:var(--dim);max-width:600px;margin-bottom:30px}
+
+.hero-cta{display:flex;gap:12px;flex-wrap:wrap;align-items:center}
+.btn{
+  display:inline-flex;align-items:center;gap:9px;padding:13px 24px;border-radius:10px;
+  font-size:14.5px;font-weight:650;text-decoration:none;transition:.22s;border:1px solid transparent;
+}
+.btn-p{background:linear-gradient(135deg,var(--accent),#6b8cf5);color:#07080d;box-shadow:0 6px 24px rgba(124,159,255,.26)}
+.btn-p:hover{transform:translateY(-2px);box-shadow:0 10px 32px rgba(124,159,255,.38)}
+.btn-s{background:rgba(255,255,255,.04);color:var(--txt);border-color:var(--line2)}
+.btn-s:hover{background:rgba(255,255,255,.08);border-color:#3a465c}
+.btn small{font-weight:400;opacity:.72;font-family:var(--mono);font-size:11.5px}
+
+/* character */
+.hero-art{position:relative;display:grid;place-items:center}
+.hero-art::before{
+  content:'';position:absolute;width:340px;height:340px;border-radius:50%;
+  background:radial-gradient(circle,rgba(124,159,255,.22),transparent 66%);
+  filter:blur(34px);
+}
+.hero-art img{
+  position:relative;width:100%;max-width:320px;height:auto;
+  filter:drop-shadow(0 24px 52px rgba(0,0,0,.72));
+  animation:float 7s ease-in-out infinite;
+}
+@keyframes float{0%,100%{transform:translateY(0)}50%{transform:translateY(-13px)}}
+.art-cap{
+  position:absolute;bottom:-6px;font-family:var(--mono);font-size:10.5px;
+  color:var(--dim2);letter-spacing:.14em;
+}
+
+/* ---------- STATS ---------- */
+.stats{max-width:1180px;margin:0 auto;padding:34px 24px 20px;display:grid;grid-template-columns:repeat(4,1fr);gap:1px;background:var(--line)}
+@media(max-width:760px){.stats{grid-template-columns:repeat(2,1fr)}}
+.stat{background:var(--bg);padding:26px 20px;text-align:center}
+.stat b{display:block;font-size:clamp(26px,3.4vw,38px);font-weight:800;letter-spacing:-.025em;line-height:1.1;
+  background:linear-gradient(135deg,#fff,#9fb0cc);-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent}
+.stat span{display:block;font-size:11.5px;color:var(--dim2);margin-top:7px;font-family:var(--mono);letter-spacing:.1em;text-transform:uppercase}
+
+/* ---------- SECTION ---------- */
+section{max-width:1180px;margin:0 auto;padding:78px 24px}
+.sec-head{margin-bottom:46px;max-width:720px}
+.sec-no{font-family:var(--mono);font-size:11.5px;color:var(--accent);letter-spacing:.2em;margin-bottom:14px;display:block}
+h2{font-size:clamp(26px,3.7vw,38px);font-weight:750;letter-spacing:-.025em;line-height:1.24;margin-bottom:14px}
+h2 em{font-style:normal;color:var(--accent)}
+.sec-head p{color:var(--dim);font-size:15px}
+
+/* ---------- CARDS ---------- */
+.grid{display:grid;gap:16px}
+.g3{grid-template-columns:repeat(3,1fr)}
+.g2{grid-template-columns:repeat(2,1fr)}
+@media(max-width:880px){.g3,.g2{grid-template-columns:1fr}}
+.card{
+  background:linear-gradient(160deg,var(--panel),var(--bg2));
+  border:1px solid var(--line);border-radius:14px;padding:26px;
+  transition:.24s;position:relative;overflow:hidden;
+}
+.card::after{content:'';position:absolute;inset:0;border-radius:14px;pointer-events:none;
+  background:linear-gradient(160deg,rgba(124,159,255,.07),transparent 42%);opacity:0;transition:.24s}
+.card:hover{border-color:var(--line2);transform:translateY(-3px)}
+.card:hover::after{opacity:1}
+.card .ico{font-size:21px;margin-bottom:14px;display:block;line-height:1}
+.card h3{font-size:15.5px;font-weight:680;margin-bottom:9px;letter-spacing:-.01em}
+.card p{font-size:13.5px;color:var(--dim);line-height:1.72}
+.card .tag{
+  display:inline-block;margin-top:13px;font-family:var(--mono);font-size:10.5px;
+  color:var(--dim2);border:1px solid var(--line2);padding:3px 8px;border-radius:5px;letter-spacing:.05em;
+}
+.card .tag.ok{color:var(--ok);border-color:rgba(74,222,128,.3);background:rgba(74,222,128,.06)}
+
+/* ---------- PRIVACY ---------- */
+.privacy{
+  border:1px solid rgba(124,159,255,.2);border-radius:18px;overflow:hidden;
+  background:linear-gradient(155deg,rgba(124,159,255,.055),rgba(167,139,250,.03) 55%,transparent);
+}
+.privacy-in{padding:42px 40px}
+@media(max-width:640px){.privacy-in{padding:30px 24px}}
+.privacy h2{margin-bottom:8px}
+.privacy .sub{color:var(--dim);font-size:14.5px;margin-bottom:32px;max-width:640px}
+.pv-list{display:grid;gap:0}
+.pv{display:grid;grid-template-columns:26px 1fr;gap:16px;padding:17px 0;border-top:1px solid var(--line)}
+.pv:first-child{border-top:none}
+.pv .k{font-family:var(--mono);font-size:11.5px;color:var(--accent);padding-top:2px}
+.pv b{display:block;font-size:14.5px;font-weight:650;margin-bottom:4px}
+.pv span{font-size:13px;color:var(--dim);line-height:1.68}
+
+/* ---------- QUOTE ---------- */
+.quote{
+  margin:0;padding:36px 38px;border-left:2px solid var(--accent);border-radius:0 12px 12px 0;
+  background:linear-gradient(90deg,rgba(124,159,255,.07),transparent 62%);
+}
+.quote p{font-size:clamp(17px,2.3vw,22px);line-height:1.55;font-weight:560;letter-spacing:-.012em}
+.quote cite{display:block;margin-top:16px;font-size:12.5px;color:var(--dim2);font-style:normal;font-family:var(--mono)}
+
+/* ---------- TABLE ---------- */
+.table-box{border:1px solid var(--line);border-radius:14px;overflow:hidden;background:var(--panel)}
+table{width:100%;border-collapse:collapse;font-size:13.5px}
+th{
+  text-align:left;padding:13px 18px;font-family:var(--mono);font-size:10.5px;font-weight:600;
+  color:var(--dim2);letter-spacing:.12em;text-transform:uppercase;
+  background:rgba(255,255,255,.022);border-bottom:1px solid var(--line);
+}
+td{padding:13px 18px;border-bottom:1px solid var(--line);color:var(--dim);vertical-align:top}
+tr:last-child td{border-bottom:none}
+td:first-child{color:var(--txt);font-weight:560;white-space:nowrap}
+td.mono{font-family:var(--mono);font-size:12.5px;color:#a9b4c8}
+.yes{color:var(--ok)}
+.no{color:#f87171}
+.mid{color:var(--warn)}
+.tbl-scroll{overflow-x:auto}
+
+/* ---------- DOWNLOAD ---------- */
+.dl-wrap{display:grid;grid-template-columns:1.15fr 1fr;gap:18px}
+@media(max-width:880px){.dl-wrap{grid-template-columns:1fr}}
+.dl-card{
+  border:1px solid var(--line2);border-radius:16px;padding:30px;
+  background:linear-gradient(165deg,var(--panel2),var(--bg2));position:relative;
+}
+.dl-card.rec{border-color:rgba(124,159,255,.42);box-shadow:0 0 0 1px rgba(124,159,255,.1),0 18px 52px rgba(0,0,0,.4)}
+.dl-badge{
+  position:absolute;top:-10px;left:26px;background:var(--accent);color:#07080d;
+  font-size:10.5px;font-weight:750;padding:3px 10px;border-radius:5px;letter-spacing:.1em;
+}
+.dl-card h3{font-size:17px;margin-bottom:6px;font-weight:700}
+.dl-card .os{font-family:var(--mono);font-size:11.5px;color:var(--dim2);letter-spacing:.08em;margin-bottom:20px}
+.dl-btn{
+  display:flex;align-items:center;justify-content:space-between;gap:12px;width:100%;
+  padding:14px 18px;border-radius:10px;text-decoration:none;font-size:13.5px;font-weight:620;
+  background:rgba(255,255,255,.045);border:1px solid var(--line2);color:var(--txt);
+  transition:.22s;margin-bottom:10px;
+}
+.dl-btn:hover{background:rgba(124,159,255,.14);border-color:rgba(124,159,255,.5);transform:translateX(2px)}
+.dl-btn .sz{font-family:var(--mono);font-size:11.5px;color:var(--dim);font-weight:400}
+.dl-btn.pend{opacity:.5;cursor:not-allowed}
+.dl-btn.pend:hover{background:rgba(255,255,255,.045);border-color:var(--line2);transform:none}
+.dl-note{font-size:12px;color:var(--dim2);line-height:1.7;margin-top:16px;padding-top:16px;border-top:1px solid var(--line)}
+.hash{
+  font-family:var(--mono);font-size:11px;color:var(--dim);word-break:break-all;
+  background:rgba(0,0,0,.34);border:1px solid var(--line);border-radius:7px;padding:11px 13px;margin-top:9px;line-height:1.6;
+}
+
+/* ---------- STEPS ---------- */
+.steps{counter-reset:s;display:grid;gap:0}
+.step{
+  counter-increment:s;display:grid;grid-template-columns:44px 1fr;gap:18px;
+  padding:24px 0;border-bottom:1px solid var(--line);
+}
+.step:last-child{border-bottom:none}
+.step::before{
+  content:counter(s);font-family:var(--mono);font-size:14px;font-weight:700;
+  width:32px;height:32px;border-radius:9px;display:grid;place-items:center;
+  background:rgba(124,159,255,.1);border:1px solid rgba(124,159,255,.26);color:var(--accent);
+}
+.step h4{font-size:15px;font-weight:660;margin-bottom:6px}
+.step p{font-size:13.5px;color:var(--dim);line-height:1.72}
+.step code{
+  font-family:var(--mono);font-size:12px;background:rgba(0,0,0,.42);
+  border:1px solid var(--line);padding:2px 6px;border-radius:4px;color:#b9c6dd;
+}
+
+/* ---------- ALERT ---------- */
+.alert{
+  display:grid;grid-template-columns:22px 1fr;gap:14px;padding:20px 22px;border-radius:12px;
+  background:rgba(251,191,36,.055);border:1px solid rgba(251,191,36,.26);font-size:13px;line-height:1.75;color:#d4c9a8;
+}
+.alert .ai{font-size:15px;line-height:1.3}
+.alert b{color:var(--warn);font-weight:650}
+.alert code{font-family:var(--mono);font-size:11.5px;background:rgba(0,0,0,.35);padding:2px 5px;border-radius:4px;color:#e2d5ad}
+
+/* ---------- PITFALLS ---------- */
+.pit{display:grid;grid-template-columns:repeat(2,1fr);gap:12px}
+@media(max-width:760px){.pit{grid-template-columns:1fr}}
+.pit-item{
+  display:grid;grid-template-columns:26px 1fr;gap:13px;padding:18px 20px;border-radius:11px;
+  background:var(--panel);border:1px solid var(--line);
+}
+.pit-item .n{font-family:var(--mono);font-size:11px;color:var(--warm);padding-top:2px}
+.pit-item b{display:block;font-size:13.5px;margin-bottom:4px;font-weight:640}
+.pit-item span{font-size:12.5px;color:var(--dim);line-height:1.68}
+
+/* ---------- NOTICE ---------- */
+.notice-grid{display:grid;grid-template-columns:1fr 1fr;gap:28px}
+@media(max-width:820px){.notice-grid{grid-template-columns:1fr}}
+.notice-grid h3{font-size:14.5px;margin-bottom:16px;color:var(--txt);font-weight:660}
+.notice-grid ul{list-style:none;display:grid;gap:11px}
+.notice-grid li{font-size:13px;color:var(--dim);line-height:1.72;padding-left:17px;position:relative}
+.notice-grid li::before{content:'';position:absolute;left:0;top:8px;width:5px;height:5px;border-radius:50%;background:var(--line2)}
+.notice-grid li b{color:#c3cbdb;font-weight:620}
+
+/* ---------- FOOTER ---------- */
+footer{border-top:1px solid var(--line);margin-top:40px;background:rgba(0,0,0,.28)}
+.foot-in{max-width:1180px;margin:0 auto;padding:38px 24px;display:flex;gap:22px;
+  align-items:center;justify-content:space-between;flex-wrap:wrap;font-size:12.5px;color:var(--dim2)}
+.foot-in .l{display:grid;gap:5px}
+.foot-in a{color:var(--dim);text-decoration:none;transition:color .2s}
+.foot-in a:hover{color:var(--accent)}
+.foot-links{display:flex;gap:18px;flex-wrap:wrap}
+
+/* reveal */
+.rv{opacity:0;transform:translateY(18px);transition:opacity .7s cubic-bezier(.2,.7,.3,1),transform .7s cubic-bezier(.2,.7,.3,1)}
+.rv.in{opacity:1;transform:none}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<!-- ===== NAV ===== -->
+<nav>
+  <div class="nav-in">
+    <div class="brand"><span class="mark">达</span>达妮娅</div>
+    <div class="nav-links">
+      <a href="#about">关于</a>
+      <a href="#capability">能力</a>
+      <a href="#privacy">隐私</a>
+      <a href="#evidence">实测</a>
+      <a href="#install">安装</a>
+      <a href="#accept">验收</a>
+    </div>
+    <a class="nav-dl" href="#download">下载 <span id="nav-ver">v0.2.0</span></a>
+  </div>
+</nav>
+
+<!-- ===== HERO ===== -->
+<header>
+  <div class="eyebrow"><span class="dot"></span> Windows 10 / 11 · 64 位 · MIT</div>
+
+  <div class="hero-grid">
+    <div>
+      <h1>她住在<br><span class="grad">你的电脑里</span></h1>
+      <div class="ver-line">DANIYA · AI DESKTOP COMPANION · v0.2.0</div>
+
+      <p class="lede">
+        <strong>175.0MB，双击就装。</strong>不需要 Python，不需要配环境，不需要先注册账号。
+      </p>
+      <p class="lede-2">
+        不是网页里开一个标签页，而是一个<strong style="color:#c3cbdb">桌面上一直在</strong>的角色——
+        能听你说话、能出声、能看着你的屏幕接话，也能记住你。
+      </p>
+
+      <div class="hero-cta">
+        <a class="btn btn-p" href="#download" id="cta-main">
+          下载 <small id="cta-sz">175.0 MB</small>
+        </a>
+        <a class="btn btn-s" href="#evidence">看实测数据</a>
+      </div>
+    </div>
+
+    <div class="hero-art">
+      <img src="assets/stand.png" alt="达妮娅立绘" onerror="this.style.display='none'">
+      <div class="art-cap">LIVE2D · 真透明桌面壳</div>
+    </div>
+  </div>
+</header>
+
+<!-- ===== STATS ===== -->
+<div class="stats">
+  <div class="stat"><b>175.0<span style="font-size:.5em">MB</span></b><span>安装包体积</span></div>
+  <div class="stat"><b>149</b><span>发布前必须全绿的闸门</span></div>
+  <div class="stat"><b>16 / 0</b><span>装完自检 PASS / FAIL</span></div>
+  <div class="stat"><b>4.7<span style="font-size:.5em">万行</span></b><span>Python 代码</span></div>
+</div>
+
+<!-- ===== ABOUT ===== -->
+<section id="about" class="rv">
+  <div class="sec-head">
+    <span class="sec-no">01 · ABOUT</span>
+    <h2>她不是一个聊天窗口，<em>是一个一直在的人</em></h2>
+    <p>大部分 AI 产品你打开才存在，关掉就消失。达妮娅是反过来的：她在桌面上，你不需要打开她。</p>
+  </div>
+
+  <div class="grid g3">
+    <div class="card">
+      <span class="ico">🌙</span>
+      <h3>存在感来自「一直在」</h3>
+      <p>开机就在，托盘常驻，位置记得。你在打游戏、看视频、写文档，她都在旁边——不弹窗，不抢焦点。</p>
+      <span class="tag">开机自启 · 托盘 · 位置持久化</span>
+    </div>
+    <div class="card">
+      <span class="ico">🗂️</span>
+      <h3>记忆是一堆你能打开的 Markdown</h3>
+      <p>她记住的事，可以查看、可以逐条删除、可以导出。不是锁在别人服务器里的黑盒。</p>
+      <span class="tag ok">可查看 · 可删除 · 可导出</span>
+    </div>
+    <div class="card">
+      <span class="ico">🫥</span>
+      <h3>她可以随时消失</h3>
+      <p>静音、隐身、全屏自动退场。你想要安静时，她真的会退到零——隐身状态下 CPU 接近 0，不在后台偷跑。</p>
+      <span class="tag">静音 · 隐身 · 全屏退场</span>
+    </div>
+  </div>
+
+  <div style="margin-top:34px">
+    <blockquote class="quote">
+      <p>「在陪伴这件事上，能对话和被留下是两件独立的事。<br>用户留下来，不是因为她答得好，是因为她一直在那儿。」</p>
+      <cite>—— 调研 28 个消费级陪伴产品后的结论</cite>
+    </blockquote>
+  </div>
+</section>
+
+<!-- ===== CAPABILITY ===== -->
+<section id="capability" class="rv">
+  <div class="sec-head">
+    <span class="sec-no">02 · CAPABILITY</span>
+    <h2>能力表：<em>哪一条都能当场试</em></h2>
+    <p>下面每一项都是可验证的功能，不是规划。</p>
+  </div>
+
+  <div class="grid g2">
+    <div class="card">
+      <span class="ico">💬</span>
+      <h3>文字聊天 · 多模型</h3>
+      <p>阿里云百炼 / 智谱 / OpenAI 兼容 / 自定义。带视觉的模型可以聊天和看屏一起。</p>
+      <span class="tag ok">✅ 可用</span>
+    </div>
+    <div class="card">
+      <span class="ico">🎙️</span>
+      <h3>双工语音通话</h3>
+      <p>云端实时通话，边说边听，可打断。不是说完一句等一下的那种。</p>
+      <span class="tag ok">✅ 可用</span>
+    </div>
+    <div class="card">
+      <span class="ico">🔊</span>
+      <h3>语音合成 · 5 个后端</h3>
+      <p>云端 CosyVoice / MiniMax / Fish，本地 pyttsx3 / edge-tts。支持克隆你自己的音色。</p>
+      <span class="tag ok">✅ 可用 · 可克隆音色</span>
+    </div>
+    <div class="card">
+      <span class="ico">👂</span>
+      <h3>本地语音识别 + 唤醒词</h3>
+      <p>vosk 本地中文模型，唤醒词「达妮娅」带拼音容错——能接住「达尼亚」这种口音偏差。</p>
+      <span class="tag ok">✅ 可用 · 全本地</span>
+    </div>
+    <div class="card">
+      <span class="ico">👁️</span>
+      <h3>看屏接话</h3>
+      <p>你说话时按需看一眼；「每 2 秒实时看」要自己打开。网银、密码管理器、支付页整帧不采集。</p>
+      <span class="tag">默认关 · 需手动开启</span>
+    </div>
+    <div class="card">
+      <span class="ico">🧠</span>
+      <h3>长期记忆</h3>
+      <p>跨会话记住你。可查看、可删除、可导出 Markdown。换电脑能带走。</p>
+      <span class="tag ok">✅ 可用 · 可导出</span>
+    </div>
+  </div>
+
+  <div class="table-box" style="margin-top:22px">
+    <div class="tbl-scroll">
+      <table>
+        <thead>
+          <tr><th>能力</th><th>状态</th><th>说明</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>桌面形象</td><td class="mid">⚠️ 有条件</td><td>Live2D rig 已就绪。真透明需要 Electron 壳（<code style="font-family:var(--mono);font-size:12px">cd shell &amp;&amp; npm install</code>）；回退 pywebview 时只能显示，点不到也拖不动</td></tr>
+          <tr><td>本地模型</td><td class="no">❌ 明确不做</td><td>下 1–2GB、首 token 数秒，陪伴类第一句话就冷场</td></tr>
+          <tr><td>社区表情包</td><td class="mid">🚧 建设中</td><td>安装链路已修好，资源库待上线</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</section>
+
+<!-- ===== PRIVACY ===== -->
+<section id="privacy" class="rv">
+  <div class="privacy">
+    <div class="privacy-in">
+      <span class="sec-no">03 · PRIVACY &amp; DATA</span>
+      <h2>你的对话，<em>不经过我们</em></h2>
+      <p class="sub">这不是一句承诺，是架构决定的：全仓外发域名里没有任何第一方服务器。我们没有你的聊天记录，因为那些数据根本没往我们这儿发。</p>
+
+      <div class="pv-list">
+        <div class="pv">
+          <span class="k">01</span>
+          <div>
+            <b>API Key 只存在这台电脑上</b>
+            <span>写在本地 <code style="font-family:var(--mono);font-size:12px">config.yaml</code>，可选 DPAPI 加密（只有这台机器能解）。模板里用环境变量引用的 Key 不落盘。</span>
+          </div>
+        </div>
+        <div class="pv">
+          <span class="k">02</span>
+          <div>
+            <b>聊天内容直连你选的服务商</b>
+            <span>没有中转服务器，没有转发层。你付给模型商的钱，不经我们的手，我们也不抽成。</span>
+          </div>
+        </div>
+        <div class="pv">
+          <span class="k">03</span>
+          <div>
+            <b>看屏前先判定，不是抓完再丢</b>
+            <span>网银 / 密码管理器 / 支付页面在<b style="color:#e8ecf5">抓屏之前</b>就整帧跳过。桌宠右下角有一个点：青=正在看、琥珀=隐私模式、不亮=关着。</span>
+          </div>
+        </div>
+        <div class="pv">
+          <span class="k">04</span>
+          <div>
+            <b>卸载了也能带走</b>
+            <span>聊天记录、记忆、通话录音都在本地 <code style="font-family:var(--mono);font-size:12px">data/</code>。记忆可导出 Markdown——公司不在了，你的十年对话还在你的硬盘上。</span>
+          </div>
+        </div>
+        <div class="pv">
+          <span class="k">05</span>
+          <div>
+            <b>敏感文件从第一次提交起就没进过仓库</b>
+            <span><code style="font-family:var(--mono);font-size:12px">config.yaml</code> / <code style="font-family:var(--mono);font-size:12px">data/</code> / <code style="font-family:var(--mono);font-size:12px">logs/</code> / <code style="font-family:var(--mono);font-size:12px">.venv/</code> 全在 .gitignore 里。打包脚本还会二次核对，混进隐私文件就直接删包。</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ===== EVIDENCE ===== -->
+<section id="evidence" class="rv">
+  <div class="sec-head">
+    <span class="sec-no">04 · VERIFICATION</span>
+    <h2>实测数据：<em>不手写，全部取自脚本汇总行</em></h2>
+    <p>2026-11-04 完整跑过一遍「陌生人拿到包能不能自己跑起来」。下面每个数字都有可复现命令。</p>
+    <p style="font-size:.88em;opacity:.78">口径说明：本表数字来自 <b>源码包</b> 验包（<code>docs/验包记录_2026-11-04.md</code>，17.9 MB / 848 条目，包内不含运行时、需自建 venv）；页面上方 <b>175.0 MB / 双击就装</b> 指的是另一条产品线的 <b>安装包</b>（<code>docs/deliverables/2026-11-04_当前HEAD出包与验包记录.md</code>，当前 HEAD 实测、内置运行时与依赖）。两者不是同一个包，数字不可互换引用。</p>
+  </div>
+
+  <div class="table-box">
+    <div class="tbl-scroll">
+      <table>
+        <thead><tr><th>环节</th><th>实测结果</th><th>口径</th></tr></thead>
+        <tbody>
+          <tr><td>源码包</td><td class="mono">17.9 MB / 848 条目</td><td>排除 14 个开发期残留页</td></tr>
+          <tr><td>建环境</td><td class="mono">venv 2m08s · pip EXIT=0</td><td>干净目录，全新 venv</td></tr>
+          <tr><td>自检（配置就绪后）</td><td class="mono yes">16 PASS / 3 WARN / 0 FAIL</td><td>3 个 WARN 均为预期内</td></tr>
+          <tr><td>启动</td><td class="mono">约 7 秒上线</td><td>无 Key 状态</td></tr>
+          <tr><td>未捕获异常</td><td class="mono yes">0</td><td>整轮观察窗口</td></tr>
+          <tr><td>RPC 稳定性</td><td class="mono">720 次长连接 · 0 失败</td><td>压力测试</td></tr>
+          <tr><td>发布闸门</td><td class="mono">149 道 · 45 把变异刀</td><td>每次发布前必须全绿</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="grid g3" style="margin-top:18px">
+    <div class="card">
+      <span class="ico">🔍</span>
+      <h3>这轮抓到并修掉的真缺陷</h3>
+      <p>缺 <code style="font-family:var(--mono);font-size:12px">config.yaml</code> 时窗口一个都不出现，只落一个 crash 日志——用户看到的是「双击没反应」。现在改成四态判定，<b style="color:#e8ecf5">已存在绝不覆盖</b>，配 16 条断言 + 3 刀变异。</p>
+    </div>
+    <div class="card">
+      <span class="ico">🧪</span>
+      <h3>变异测试的意义</h3>
+      <p>45 把变异刀会故意把代码改成错的，看闸门会不会红。不红的闸门等于不存在——这是防「假绿」，不是防「报错」。</p>
+    </div>
+    <div class="card">
+      <span class="ico">📋</span>
+      <h3>还没验的，也写在明面上</h3>
+      <p>首启引导未完整走通、真透明需装 Electron 壳（383MB）、包未签名。这些不是藏着，是记在验包记录第 5 节。</p>
+    </div>
+  </div>
+</section>
+
+<!-- ===== DOWNLOAD ===== -->
+<section id="download" class="rv">
+  <div class="sec-head">
+    <span class="sec-no">05 · DOWNLOAD</span>
+    <h2>下载：<em>装完 doctor 会自己告诉你行不行</em></h2>
+    <p>安装版双击即可；源码包给需要改的人。校验值见 Releases 页。</p>
+  </div>
+
+  <div class="dl-wrap">
+    <!-- 安装版 -->
+    <div class="dl-card rec">
+      <div class="dl-badge">推荐</div>
+      <h3>安装版 · Windows</h3>
+      <div class="os">WINDOWS 10 / 11 · x64 · NSIS</div>
+
+      <a class="dl-btn" id="dl-setup" href="#" data-kind="setup">
+        <span>下载安装包</span><span class="sz">175.0 MB</span>
+      </a>
+
+      <div class="dl-note">
+        内置 Python 运行时，<b style="color:#c3cbdd">不需要你装任何环境</b>。按用户安装（免 UAC 提权），升级保留配置，卸载默认保留数据。
+      </div>
+      <div class="hash" id="hash-setup">SHA-256：见 Releases 页</div>
+    </div>
+
+    <!-- 源码包 -->
+    <div class="dl-card">
+      <h3>源码包 · 自行构建</h3>
+      <div class="os">需要 PYTHON 3.12</div>
+
+      <a class="dl-btn" id="dl-source" href="#" data-kind="source">
+        <span>下载源码包</span><span class="sz">17.9 MB</span>
+      </a>
+      <a class="dl-btn" href="#install"><span>查看构建步骤</span><span class="sz">→</span></a>
+
+      <div class="dl-note">
+        3.11 未测，3.13+ 部分依赖还没有 wheel。首次运行会自己从模板生成 <code style="font-family:var(--mono);font-size:11.5px">config.yaml</code>。
+      </div>
+      <div class="hash" id="hash-source">SHA-256：见 Releases 页</div>
+    </div>
+  </div>
+
+  <div style="margin-top:18px">
+    <div class="alert">
+      <span class="ai">⚠️</span>
+      <div>
+        <b>关于「Windows 已保护你的电脑」蓝色提示</b><br>
+        当前分发包<b>未做代码签名</b>，首次运行 SmartScreen 会拦截一次，属正常现象（不是病毒）。点「更多信息」→「仍要运行」即可。建议下载后核对 SHA-256。签名证书已在规划中，签发后此提示会消失。
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ===== INSTALL ===== -->
+<section id="install" class="rv">
+  <div class="sec-head">
+    <span class="sec-no">06 · INSTALL</span>
+    <h2>安装：<em>四个坑，照着避开能省一小时</em></h2>
+    <p>这四个都是真实撞过的，不是预防性提醒。</p>
+  </div>
+
+  <div class="pit">
+    <div class="pit-item">
+      <span class="n">01</span>
+      <div><b>不要装到盘根</b><span>装 <code style="font-family:var(--mono);font-size:11.5px">D:\</code> 根目录会出路径拼接问题，装到 <code style="font-family:var(--mono);font-size:11.5px">D:\Denia</code> 这样的子目录。</span></div>
+    </div>
+    <div class="pit-item">
+      <span class="n">02</span>
+      <div><b>中文路径建议避开</b><span>某些链路对中文路径处理不稳，装到纯英文目录最省事。</span></div>
+    </div>
+    <div class="pit-item">
+      <span class="n">03</span>
+      <div><b>杀软可能误报</b><span>未签名的自编译 exe 常被 360 / 火绒 / Defender 拦。加入信任区即可。</span></div>
+    </div>
+    <div class="pit-item">
+      <span class="n">04</span>
+      <div><b>蓝色警告不是病毒</b><span>SmartScreen 对未签名程序的默认提示，点「更多信息 → 仍要运行」。</span></div>
+    </div>
+  </div>
+
+  <div style="margin-top:30px">
+    <div class="steps">
+      <div class="step">
+        <div>
+          <h4>安装版：双击，跟着向导走</h4>
+          <p>装完自动创建快捷方式。第一次启动会做一次自检（doctor），把缺的东西直接告诉你该装什么、用什么命令装。</p>
+        </div>
+      </div>
+      <div class="step">
+        <div>
+          <h4>首启：建角色 → 体检</h4>
+          <p>只两步。<b style="color:#c3cbdb">不问你要 API Key</b>——Key 在你真想说话的那一刻才会出现，一个小卡片浮在输入框上方，两个出口：去配一个 / 稍后。</p>
+        </div>
+      </div>
+      <div class="step">
+        <div>
+          <h4>源码包：建环境</h4>
+          <p><code>python -m venv .venv</code> → <code>.venv/Scripts/pip install -r requirements.txt</code> → <code>.venv/Scripts/python main.py --doctor</code>（先自检，别等启动失败才排查）→ <code>.venv/Scripts/python main.py</code></p>
+        </div>
+      </div>
+      <div class="step">
+        <div>
+          <h4>想要真透明桌宠：装 Electron 壳</h4>
+          <p><code>cd shell &amp;&amp; npm install</code>（约 383MB）。不装也能跑，但桌宠窗口只能显示、点不到也拖不动——这是 pywebview 的宿主限制，日志会如实告诉你。</p>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ===== NOTICE ===== -->
+<section id="notice" class="rv">
+  <div class="sec-head">
+    <span class="sec-no">07 · NOTICE</span>
+    <h2>授权与声明</h2>
+  </div>
+
+  <div class="notice-grid">
+    <div>
+      <h3>📋 使用边界</h3>
+      <ul>
+        <li><b>开源协议</b>：MIT。可自由使用、修改、分发。</li>
+        <li><b>模型费用</b>：BYOK，用自己的 API Key，费用直接付给模型服务商，本项目不抽成、不经手。</li>
+        <li><b>不做本地模型</b>：下 1–2GB、首 token 数秒，陪伴类的第一句话就冷场——这是明确的设计取舍，不是没做完。</li>
+        <li><b>数据责任</b>：聊天记录与记忆存在本机 <code style="font-family:var(--mono);font-size:11.5px">data/</code>，请自行备份；卸载时需手动删除。</li>
+      </ul>
+    </div>
+    <div>
+      <h3>🤝 关于本项目</h3>
+      <ul>
+        <li><b>定位</b>：本地优先的 Windows 桌面伴侣。不是一个平台，是这一个角色。</li>
+        <li><b>为什么本地优先</b>：云端陪伴的单位经济学不成立——头部产品月运营支出千万美元级，年收入远低于此，最终只能卖身。本地运行 + 用户自担成本，是唯一能长期存在的结构。</li>
+        <li><b>调研基础</b>：横跨 4 类阵营、28 个消费级产品的对比拆解。</li>
+        <li><b>反馈</b>：见页面底部仓库 Issue。</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<!-- ===== ACCEPTANCE ===== -->
+<section id="accept" class="rv">
+  <style>
+    .chk { list-style:none; padding-left:0; margin:8px 0 20px; }
+    .chk li { margin:8px 0; }
+    .chk label { display:flex; gap:9px; align-items:flex-start; cursor:pointer; line-height:1.55; }
+    .chk input { margin-top:4px; flex:none; width:15px; height:15px; accent-color:#7aa2ff; }
+  </style>
+  <div class="sec-head">
+    <span class="sec-no">08 · ACCEPTANCE</span>
+    <h2>真机验收清单</h2>
+    <p>代码门禁只验「这台机器 + 逻辑」；下面这些必须换台真机点一遍。每项打勾即过，<b style="color:#c3cbdb">❌ 就记下反馈</b>。</p>
+  </div>
+
+  <div class="notice-grid">
+    <div>
+      <h3>🖥️ A. 安装（第二台干净电脑）</h3>
+      <ul class="chk">
+        <li><label><input type="checkbox"> 双击 <code style="font-family:var(--mono);font-size:11.5px">DaniaAI-Setup-0.2.0-x64.exe</code>，不装 Python、不配环境，默认装完</label></li>
+        <li><label><input type="checkbox"> 桌面 / 开始菜单出现达妮娅，启动后桌宠可见、无报错弹窗</label></li>
+        <li><label><input type="checkbox"> 浏览器 / 系统弹 SmartScreen「未知发布者」→ 点「更多信息 → 仍要运行」（已知限制，非缺陷）</label></li>
+      </ul>
+
+      <h3>👤 B. 首启（陌生人流程）</h3>
+      <ul class="chk">
+        <li><label><input type="checkbox"> 首次启动先建角色 → 体检，全程不要求填 API Key</label></li>
+        <li><label><input type="checkbox"> 体检通过后能对话、能听能说（麦克风 / 扬声器权限点允许）</label></li>
+      </ul>
+
+      <h3>👁️ C. 屏幕感知 / 隐私指示</h3>
+      <ul class="chk">
+        <li><label><input type="checkbox"> 右下角 8px 指示点：在看=青、隐私拦截=琥珀、关闭=不亮</label></li>
+        <li><label><input type="checkbox"> 打开银行 / 密码类窗口时整帧不采集（指示点变琥珀）</label></li>
+      </ul>
+    </div>
+
+    <div>
+      <h3>📐 D. A5 四场景（本机仅 1 屏 / 100%，必须换机）</h3>
+      <ul class="chk">
+        <li><label><input type="checkbox"> <b>150% 缩放</b>：设置改 150% 重启，桌宠位置 / 大小正确、白底边缘不割字</label></li>
+        <li><label><input type="checkbox"> <b>双显示器</b>：拖到达妮娅到副屏，置顶 / 拖动 / 截图隐身正常；主副屏切换不丢窗口</label></li>
+        <li><label><input type="checkbox"> <b>切窗</b>：最小化 / 切到别窗再切回，不卡死、不丢状态</label></li>
+        <li><label><input type="checkbox"> <b>休眠唤醒</b>：睡眠→唤醒后桌宠仍在、心跳恢复（不刷「无响应 60s 后重连」）</label></li>
+      </ul>
+
+      <h3>⏱️ E. 隐藏窗口 ≥30min</h3>
+      <ul class="chk">
+        <li><label><input type="checkbox"> 隐藏达妮娅窗口超 30 分钟再唤起，仍正常、未误判卡死重载</label></li>
+      </ul>
+
+      <h3>📄 F. 已知限制确认（文案与包一致）</h3>
+      <ul class="chk">
+        <li><label><input type="checkbox"> 官网「未签名 / SmartScreen 指引」与安装包一致；下载链接 302→CDN 可下</label></li>
+      </ul>
+    </div>
+  </div>
+  <p style="margin-top:18px;color:var(--dim);font-size:13px">把 ❌ 项反馈到仓库 Issue，我按现象定位。下一步可选：研究低价代码签名证书消掉 SmartScreen 拦截。</p>
+</section>
+
+<!-- ===== FOOTER ===== -->
+<footer>
+  <div class="foot-in">
+    <div class="l">
+      <div style="color:var(--dim);font-weight:600">达妮娅 · AI 桌面伴侣 <span id="foot-ver" style="font-family:var(--mono);font-size:11.5px"></span></div>
+      <div>MIT License · Windows 10 / 11 (64-bit) · 记忆存在你自己的硬盘上</div>
+    </div>
+    <div class="foot-links">
+      <a href="#about">关于</a>
+      <a href="#capability">能力</a>
+      <a href="#privacy">隐私</a>
+      <a href="#evidence">实测</a>
+      <a href="#download">下载</a>
+      <a href="#accept">验收</a>
+      <a id="foot-repo" href="#" target="_blank" rel="noopener">GitHub</a>
+    </div>
+  </div>
+</footer>
+
+</div>
+
+<script>
+/* ============================================================
+   ↓↓↓ 只改这里 ↓↓↓
+   建好 GitHub Release 后，把三个 URL 填进来。
+   留空则按钮显示「待发布」并不可点击。
+   ============================================================ */
+const RELEASE = {
+  version : 'v0.2.0',
+
+  // 仓库主页（页脚 GitHub 链接）
+  repo    : 'https://github.com/TrueFurina/Denia',
+
+  // 安装版（NSIS，2026-11-04 当前 HEAD 实测 175.0 MB）。例：
+  // 'https://github.com/你的用户名/Denia/releases/download/v0.2.0/DaniaAI-Setup-0.2.0-x64.exe'
+  setup   : 'https://github.com/TrueFurina/Denia/releases/download/v0.2.0/DaniaAI-Setup-0.2.0-x64.exe',
+
+  // 源码包（17.9MB，Release v0.2.0 实际资产名 denia-srcpkg-v0.2.0.zip）。例：
+  // 'https://github.com/你的用户名/Denia/releases/download/v0.2.0/达妮娅AI桌面伴侣_源码_v0.2.0_20261104.zip'
+  source  : 'https://github.com/TrueFurina/Denia/releases/download/v0.2.0/denia-srcpkg-v0.2.0.zip',
+
+  // SHA-256（可选，填了才显示）
+  shaSetup  : '9ec828efd15617a52a6261ed479c7d14c4bcaaae723ecfdce24728249fae2943',
+  shaSource : 'da0aa0f8895e8ea24a97622aa6437e80407c0cec999e254be8e37cce04cebfc0'
+};
+/* ============================================================
+   ↑↑↑ 只改这里 ↑↑↑
+   ============================================================ */
+
+(function () {
+  const set = (id, val, kind) => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    if (val) {
+      el.href = val;
+      el.setAttribute('target', '_blank');
+      el.setAttribute('rel', 'noopener');
+    } else {
+      el.classList.add('pend');
+      el.href = '#download';
+      const s = el.querySelector('span');
+      if (s) s.textContent = kind === 'setup' ? '安装包待发布' : '源码包待发布';
+      el.title = '在 RELEASE 配置里填入下载地址后即可点击';
+    }
+  };
+  set('dl-setup',  RELEASE.setup,  'setup');
+  set('dl-source', RELEASE.source, 'source');
+
+  if (RELEASE.repo) {
+    const r = document.getElementById('foot-repo');
+    r.href = RELEASE.repo; r.textContent = 'GitHub';
+  } else {
+    document.getElementById('foot-repo').style.display = 'none';
+  }
+
+  // 版本号回填
+  ['nav-ver', 'foot-ver'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.textContent = RELEASE.version;
+  });
+
+  // 主 CTA：有安装包指向安装包，否则滚到下载区
+  const cta = document.getElementById('cta-main');
+  if (RELEASE.setup) {
+    cta.href = RELEASE.setup;
+    cta.setAttribute('target', '_blank');
+    cta.setAttribute('rel', 'noopener');
+  }
+
+  // 哈希回填
+  if (RELEASE.shaSetup)  document.getElementById('hash-setup').textContent  = 'SHA-256：' + RELEASE.shaSetup;
+  if (RELEASE.shaSource) document.getElementById('hash-source').textContent = 'SHA-256：' + RELEASE.shaSource;
+
+  // 滚动淡入
+  const io = new IntersectionObserver((es) => {
+    es.forEach(e => { if (e.isIntersecting) { e.target.classList.add('in'); io.unobserve(e.target); } });
+  }, { threshold: 0.09, rootMargin: '0px 0px -40px 0px' });
+  document.querySelectorAll('.rv').forEach(el => io.observe(el));
+
+  // 锚点平滑滚动（带导航栏偏移）
+  document.querySelectorAll('a[href^="#"]').forEach(a => {
+    a.addEventListener('click', ev => {
+      const id = a.getAttribute('href');
+      if (id === '#' || id.length < 2) return;
+      const t = document.querySelector(id);
+      if (!t) return;
+      ev.preventDefault();
+      const y = t.getBoundingClientRect().top + window.pageYOffset - 58;
+      window.scrollTo({ top: y, behavior: 'smooth' });
+    });
+  });
+})();
+</script>
+</body>
+</html>
