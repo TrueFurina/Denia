@@ -65,7 +65,8 @@ def main() -> int:
         print("== 4. sync（config 单一真值对齐） ==")
         autostart.sync(True, root, value_name=TEST_VALUE)
         check(autostart.is_enabled(root, value_name=TEST_VALUE) is True, "sync(True) → 开")
-        autostart.enable(root, value_name=os.path.join(root, "WRONG"))  # 残留旧值模拟
+        wrong_val = os.path.join(root, "WRONG")
+        autostart.enable(root, value_name=wrong_val)  # 残留旧值模拟
         autostart.sync(False, root, value_name=TEST_VALUE)
         check(autostart.is_enabled(root, value_name=TEST_VALUE) is False, "sync(False) → 关")
         # M2 变异的守卫：disable 时值名被换错，TEST_VALUE 仍在 → 这里必须已经是关
@@ -89,6 +90,9 @@ def main() -> int:
     finally:
         try:
             autostart.disable(root, value_name=TEST_VALUE)
+            # 残留旧值模拟（wrong_val）也是测试写入真实键的，必须清掉，否则每次跑门禁
+            # 都在 HKCU Run 泄漏一条指向已删 tempfile 的死命令（登录时报“无法运行”）。
+            autostart.disable(root, value_name=wrong_val)
         except Exception:  # noqa: BLE001
             pass
         # 变异态污染守卫：真实键若被测试改动，按快照还原（原本有值→恢复，原本无→删）
