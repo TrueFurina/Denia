@@ -29,7 +29,7 @@ def check(cond, msg):
 
 
 # ── 假 vosk：KaldiRecognizer 必须支持 (model, sample_rate[, grammar]) 三参数，
-#    以及 SetWords / AcceptWaveform / Result / PartialResult。─────────
+#    以及 SetWords / AcceptWaveform / Result / PartialResult。─────────────
 class FakeRec:
     """每次测试前通过类属性配置：last_grammar 捕获构造时传入的语法字符串，
     text 是 Result() 返回的 {"text": ...}，accept 是 AcceptWaveform 的返回值。"""
