@@ -83,6 +83,30 @@ def main() -> int:
             ok5, why5 = GL.acquire()
             chk("畸形内容按陈旧处理", ok5, why5)
             GL.release()
+
+            print("\n5) 已退出但句柄仍被持有的 PID 必须判为已死（否则锁永远清不掉）")
+            # 复现条件：进程被强杀后，只要父进程/调度器还握着它的句柄，进程对象
+            # 就不会从 PID 表里消失 —— OpenProcess 仍成功，而进程早已退出
+            # （2026-11-08 实测：terminate + wait 之后 poll()=1，OpenProcess 返回
+            # 句柄、GetExitCodeProcess 返回 0）。只看 OpenProcess 会判成"活着"，
+            # 于是 locks 一直堵到 STALE_SECONDS（45 分钟）。
+            import subprocess
+            zombie = subprocess.Popen([sys.executable, "-c",
+                                       "import time; time.sleep(10)"])
+            time.sleep(0.5)
+            zombie.terminate()
+            zombie.wait(timeout=10)
+            chk("子进程已退出（poll() 非 None）", zombie.poll() is not None,
+                "poll()=%r" % (zombie.poll(),))
+            chk("Popen 仍持有句柄（复现条件成立）", zombie._handle is not None,
+                "_handle=%r" % (zombie._handle,))
+            chk("已退出的 PID 判为已死", not GL._pid_alive(zombie.pid),
+                "OpenProcess 成功 ≠ 在跑，须比对 GetExitCodeProcess 的 STILL_ACTIVE")
+            with open(GL.LOCK_PATH, "w", encoding="utf-8") as f:
+                json.dump({"pid": zombie.pid, "ts": time.time()}, f)
+            ok6, why6 = GL.acquire()
+            chk("僵尸 PID 的锁不阻塞新一轮", ok6, why6)
+            GL.release()
         finally:
             GL.LOCK_PATH = real
 
