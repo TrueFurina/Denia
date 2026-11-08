@@ -50,16 +50,28 @@
 
 已知边界（都是**故意**留的）
 ----------------------------
-① 只覆盖「通过子进程调用闸门文件」的套件。
-② 只覆盖登记在 `PAIRS` 里的对，或 `--pair` 显式指定的对。
-   全仓 77 个 `_qc_*` 是**两个族**：16 个验 `check_*.py` 闸门，61 个验
-   `test_*.py` / 特性判定文件。本工具目前只做前者，且 16 个里还有 1 个
-   （`_qc_site_counts_mutation`）是进程内直调、只能 SKIP。
-③ **分两层跑**（`--tier`）：`portable` 进 CI，`dev` 需要 `.venv`。
+① 只覆盖「通过子进程调用判定文件」的套件。
+② 全仓 78 个 `_qc_*` 的着落，现在是**可数的**，不再靠"我记得验过哪些"：
+
+   | 类别 | 数量 | 本工具做什么 |
+   |---|---|---|
+   | 验 `check_*.py` 闸门 | 16 | 全部在 `PAIRS` |
+   | 验 `test_*.py` 特性判定 | 13 | 10 在 `PAIRS`，3 在 `EXCUSED`（写清为什么现在验不了） |
+   | 改源码后进程内断言 | 48 | 没有独立判定文件，本工具不适用 |
+   | 元刀（本工具自己的刀） | 1 | 不适用 |
+
+   48 个里有没有空转风险？有，而且是同一族——但它们的判据写在刀自己身上
+   （`if not caught: bad += 1` 后面没有第二个判据），换文件这个手法用不上。
+   要覆盖它们需要另一种做法，目前没做，**不要读成"验过了"**。
+③ `PAIRS` 里还有 1 个是进程内直调（`_qc_site_counts_mutation`），只能 `SKIP`；
+   `SKIP` 不算通过，所以是 25 而不是 26。
+④ **分两层跑**（`--tier`）：`portable` 进 CI，`dev` 需要 `.venv`。
    分层不是"重要性"分层，是"这台机器能不能跑"分层——dev 层的刀把解释器
    硬编码成 `.venv/Scripts/python.exe`，CI 上没有 venv，混进去会让整道门恒红。
-④ 每个套件要跑 3 次 + 复制一次仓库副本（无 venv 约 1s，有 venv 约 2s）。
+⑤ 每个套件要跑 3 次 + 复制一次仓库副本（无 venv 约 1s，有 venv 约 2s）。
    慢是刻意的：省掉就是省掉证据。
+⑥ **完整性检查只在本仓默认根上做**（`--pair` / `--only` / `--root` 时跳过）：
+   它要回答的是"这个仓里的刀有没有被漏掉"，而 `--root` 指向的桩仓本来就没有这些刀。
 
 用法
 ----
@@ -69,7 +81,7 @@
     python tools/check_knife_vacuity.py --pair _qc_x_mutation.py=check_x.py
     python tools/check_knife_vacuity.py --root <另一个仓根>
 
-退出码：0 无 VACUOUS / 1 有 VACUOUS / 2 无法判定（一对都没跑成）
+退出码：0 无 VACUOUS / 1 有 VACUOUS / 2 无法判定（一对都没跑成，或有刀没着落）
 """
 from __future__ import annotations
 
@@ -127,7 +139,52 @@ PAIRS = [
      "UI 重载边界 —— 本轮查出同类"),
     ("_qc_verify_deps_order_mutation.py", "check_verify_deps_order.py", "dev",
      "出包验收时序 —— 本轮查出同类"),
+    # ---- portable（第二十四轮补：特性族的刀，判定文件是 test_*.py）----
+    ("_qc_gate_lock_mutation.py", "tools/test_gate_lock.py", "portable",
+     "闸门锁：刀的 PY 是 sys.executable，CI 上也能跑"),
+    # ---- dev（第二十四轮补：特性族，判定要 .venv）----
+    # 这一族以前**一次都没被验过**：本工具一律把判定拼成 `tools/<名字>`，而它们的
+    # 判定在 `src/tests/test_*.py` 或 `tools/test_*.py`（带前缀）。13 对全部
+    # ABSENT —— 而 ABSENT 是"不计失败也不计通过"，所以 13 个刀的空转风险
+    # 一直是零覆盖。见 `_resolve()` 与 ABSENT/ERROR 的拆分。
+    ("_qc_asr_mutation.py", "src/tests/test_asr_voice_pipeline.py", "dev",
+     "ASR 语言码 —— 七刀，两个判定文件"),
+    ("_qc_config_bootstrap_mutation.py", "tools/test_config_bootstrap.py", "dev",
+     "首启兜底"),
+    ("_qc_embed_fallback_mutation.py", "tools/test_embed_fallback.py", "dev",
+     "内嵌运行时回退"),
+    ("_qc_pathrefs_mutation.py", "src/tests/test_config_path_refs.py", "dev",
+     "配置路径引用 —— 本轮查出 H 刀的锚点缩进差 4 格"),
+    ("_qc_permission_modes_mutation.py", "tools/test_permission_modes.py", "dev",
+     "权限模式"),
+    ("_qc_run_command_mutation.py", "tools/test_run_command_guard.py", "dev",
+     "run_command 守卫"),
+    ("_qc_ui_heartbeat_mutation.py", "tools/test_ui_heartbeat.py", "dev",
+     "UI 心跳"),
+    ("_qc_voice_mutation.py", "src/tests/test_doctor_voice_backend.py", "dev",
+     "语音后端自检"),
+    ("_qc_workspace_mutation.py", "tools/test_workspace_guard.py", "dev",
+     "工作区守卫"),
 ]
+
+# 声明了判定文件、但**本工具无法判定**的刀。每条都必须写清"为什么"，空理由等于没写。
+#
+# 这一张表不是垃圾桶，是**待办清单**：每一行都说明了一个"这道刀现在守不住自己
+# 声称守住的东西"的具体原因。想加进来，先回答"什么条件下它就能验了"。
+EXCUSED = {
+    "_qc_bundled_assets_mutation.py":
+        "判定 tools/test_bundled_assets.py 用 `git ls-files` 判「在盘上但没进 git」；"
+        "本工具在仓副本里跑，而 .git 被 SKIP_DIRS 排除 → 判定恒红（10 FAIL），无法判定。"
+        "要验它得让副本带上 .git，代价是每对多拷几十 MB。",
+    "_qc_tray_switch_mutation.py":
+        "判定要 config.yaml（在 .gitignore 里，源码包首跑由 CI 的 prepare 步骤生成）；"
+        "本机与仓副本都没有它 → FileNotFoundError，无法判定。"
+        "补齐办法：跑之前先 `cp config.release.yaml config.yaml`。",
+    "_qc_presence_mutation.py":
+        "判定在**干净树上就是红的**（33 PASS / 1 FAIL：`非法的不影响其它绑定 ← []`，"
+        "全局热键注册在无桌面会话时返回空表）→ 恒红的判定让每把刀都变红，无法判定。"
+        "**这条本身是待查项**：要么热键后端在无人值守环境该降级，要么这条断言该带条件。",
+}
 
 # 【坑①】桩必须 import-safe：顶层 sys.exit 会在 import 时把套件带走，exit 0 假绿。
 STUB_ZERO = 'if __name__ == "__main__":\n    raise SystemExit(0)\n'
@@ -145,9 +202,23 @@ FAIL_MARKS = ("✗", "FAIL", "不符合", "没红", "HAS FAIL", "没被抓住", 
 SKIP_DIRS = {"__pycache__", ".git", "node_modules", "dist", "build"}
 
 
+def _resolve(root: str, rel: str) -> str:
+    """把 PAIRS 里的名字解析成真实路径。
+
+    【2026-11-08 修·判定文件不一定在 tools/】第一版一律拼 `tools/<名字>`，
+    于是特性族的刀（判定在 `src/tests/test_*.py` 或 `tools/test_*.py`）全部解析不到。
+    约定：**带 `/` 的一律当仓根相对路径**，不带 `/` 的才按 `tools/` 下的短名解析。
+    这样 `"check_x.py"` 和 `"src/tests/test_x.py"` 两种写法都能用，PAIRS 不必写死前缀。
+    """
+    if "/" in rel or "\\" in rel:
+        return os.path.join(root, rel.replace("/", os.sep))
+    return os.path.join(root, "tools", rel)
+
+
 def imports_gate(suite_path: str, gate: str) -> bool:
     """套件是否在进程内 import 了闸门模块（换文件对它无效）。"""
-    mod = gate[:-3] if gate.endswith(".py") else gate
+    base = os.path.basename(gate.replace("\\", "/"))
+    mod = base[:-3] if base.endswith(".py") else base
     try:
         t = ast.parse(io.open(suite_path, encoding="utf-8", errors="replace").read(),
                       filename=suite_path)
@@ -162,6 +233,22 @@ def imports_gate(suite_path: str, gate: str) -> bool:
             if n.module == mod or (n.module or "").endswith("." + mod):
                 return True
     return False
+
+
+def _declared_judgment(path: str) -> str | None:
+    """刀自己声明的判定文件（模块级 `TEST = "..."`）。没有就返回 None。
+
+    只认**模块级**赋值：嵌在函数里的 `TEST` 不算，那多半是别的用途。
+    """
+    try:
+        t = ast.parse(io.open(path, encoding="utf-8", errors="replace").read(), filename=path)
+    except (OSError, SyntaxError):
+        return None
+    for n in t.body:
+        if isinstance(n, ast.Assign) and any(getattr(x, "id", "") == "TEST" for x in n.targets):
+            if isinstance(n.value, ast.Constant) and isinstance(n.value.value, str):
+                return n.value.value
+    return None
 
 
 def _copy_repo(root: str) -> str:
@@ -220,24 +307,35 @@ def _degenerate(gate_path: str, pristine: bytes, stub: str, suite_path: str,
 def certify(root: str, suite: str, gate: str) -> tuple[str, list[str]]:
     """返回 (分类, 逐阶段说明)。分类 ∈ CERTIFIED/VACUOUS/WEAK/SKIP/ABSENT/ERROR。"""
     log: list[str] = []
-    src_suite = os.path.join(root, "tools", suite)
-    src_gate = os.path.join(root, "tools", gate)
+    src_suite = _resolve(root, suite)
+    src_gate = _resolve(root, gate)
     # 【ABSENT 不是 ERROR】`PAIRS` 是**声明式**的：它可以比本树超前（比如某一对
     # 的闸门还在另一个未合的 PR 里）。这种"本树根本没有这一对"和"有但坏了"必须
     # 分开——混在一起，任何一个只 checkout 了部分目录的人都会看到假红。
     # 它不能用来掩盖删除：`check_gate_registry.py` 会拦住"登记在 GATES 里的脚本
     # 不存在"，而 PAIRS 里的套件都在 GATES 里。
-    if not os.path.isfile(src_suite) or not os.path.isfile(src_gate):
-        missing = [x for x, p in ((suite, src_suite), (gate, src_gate))
-                   if not os.path.isfile(p)]
-        return "ABSENT", ["本树没有 %s —— 不计失败，也不计通过" % " / ".join(missing)]
+    #
+    # 【2026-11-08 修·ABSENT 吞掉了拼错路径】原来是
+    #     if not 套件存在 or not 闸门存在: return ABSENT
+    # 于是一个**拼错的判定文件路径**会被判成"本树没有这一对，不计失败也不计通过"。
+    # 实测：把 13 个特性族的对按 `src/tests/test_x.py` 写进 PAIRS，13 个全部 ABSENT，
+    # 门禁输出 `结果：ABSENT 13`、**exit 0** —— 一个都没验，却什么都没说。
+    # 正确口径：**套件在、判定不在 = 声明错了**（改名 / 拼错 / 路径规则不对），
+    # 这是 ERROR；只有"套件本身都不在"才是 ABSENT。
+    suite_ok = os.path.isfile(src_suite)
+    gate_ok = os.path.isfile(src_gate)
+    if not suite_ok:
+        return "ABSENT", ["本树没有套件 %s —— 不计失败，也不计通过" % suite]
+    if not gate_ok:
+        return "ERROR", ["套件在、判定文件不在（%s → %s）—— PAIRS 声明错了，无法判定"
+                         % (gate, src_gate)]
     if imports_gate(src_suite, gate):
         return "SKIP", ["套件进程内 import 了 %s —— 换文件对它无效，本工具不覆盖" % gate]
 
     repo = _copy_repo(root)
     try:
-        gate_path = os.path.join(repo, "tools", gate)
-        suite_path = os.path.join(repo, "tools", suite)
+        gate_path = _resolve(repo, gate)
+        suite_path = _resolve(repo, suite)
         if not os.path.isfile(gate_path):
             return "ERROR", ["副本里找不到闸门 %s" % gate]
         pristine = io.open(gate_path, "rb").read()
@@ -296,6 +394,38 @@ def main() -> int:
 
     print("仓根：%s" % root)
     print("待检 %d 对\n" % len(pairs))
+
+    # 【2026-11-08 加·完整性】「哪些刀被验过」不能只靠一张手写的名单。
+    # 只要有人新写一把带 `TEST` 的刀、忘了加进 PAIRS，它就自动变成零覆盖，
+    # 而**结果行看起来和全验过一模一样**（这也是第二十三轮那个"层被悄悄漏掉"的同族）。
+    # 口径：模块级声明了 `TEST` 的刀，必须在 PAIRS 里，或者在 EXCUSED 里写清理由；
+    # 没声明 `TEST` 的（改源码后自己在进程内断言的 48 把）本工具不适用，不计。
+    # 只在本仓默认根上做：变异刀用 `--root <tempdir>` 建桩仓，那里不该被这条约束。
+    # （实测：K1–K9 的桩套件都不声明 `TEST`，所以对桩仓跑这条也不会误报；K12 就是
+    #   在桩仓里造一把"声明了 TEST 却没登记"的刀来钉这条判据。）
+    if not args.pair and not args.only:
+        audited = {p[0] for p in PAIRS}
+        missing = []
+        declared = 0
+        for f in sorted(os.listdir(os.path.join(root, "tools"))):
+            if not (f.startswith("_qc_") and f.endswith(".py")):
+                continue
+            if _declared_judgment(os.path.join(root, "tools", f)) is None:
+                continue          # 无独立判定文件，本工具不适用（见 docstring 边界③）
+            declared += 1
+            if f in audited or f in EXCUSED:
+                continue
+            missing.append(f)
+        if missing:
+            print("✗ 这些刀声明了判定文件，却既不在 PAIRS 里、也没写不进的理由：", file=sys.stderr)
+            for f in missing:
+                print("   " + f, file=sys.stderr)
+            print("   （加进 PAIRS，或在 EXCUSED 里写清「为什么现在验不了、什么条件下能验」）",
+                  file=sys.stderr)
+            return 2
+        print("完整性：模块级声明了判定文件的刀 %d 把，全部有着落（PAIRS 共 %d 对；"
+              "EXCUSED %d 条）\n" % (declared, len(audited), len(EXCUSED)))
+
 
     counts: dict[str, int] = {}
     for suite, gate, _tier, why in pairs:
