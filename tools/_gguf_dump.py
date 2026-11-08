@@ -89,8 +89,9 @@ def parse(path, show_tensors=True, tensor_md5=True):
     n_tensor = r.u64()
     n_kv = r.u64()
     print("   文件 %s" % os.path.basename(path))
-    print("   size=%,d B (%.2f MB)".replace(",", "") % (size, size / 1048576)
-          if False else "   size=%s B (%.2f MB)" % (format(size, ","), size / 1048576))
+    # 【2026-11-08】原来是 `"…%,d…".replace(",", "") % … if False else "…%s…" % …`，
+    # 条件恒假，前半段（thousands 分隔符写法）从来没取到过。删掉死的那一半。
+    print("   size=%s B (%.2f MB)" % (format(size, ","), size / 1048576))
     print("   gguf_version=%d  n_tensors=%d  n_kv=%d" % (ver, n_tensor, n_kv))
 
     print("   --- KV 元数据 ---")
