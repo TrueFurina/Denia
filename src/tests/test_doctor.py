@@ -90,10 +90,18 @@ def main() -> int:
         # 后果是「只要 doctor 自己没报 FAIL，别处任何断言失败都不进计数，退出码仍是 0」——
         # 门禁假绿（变异刀 B 让 UCRT 探测恒真时实测：2 条 ✗ 之后照样 PASS、exit 0）。
         fail_rows = [r for r in rows if r[0] == doctor.FAIL]
-        check(not fail_rows,
-              "当前开发机不应有 FAIL（否则说明 doctor 自检查出真问题）"
-              + ("；实际 FAIL: " + " | ".join(
-                  "%s：%s" % (r[1], (r[2] or "")[:100]) for r in fail_rows) if fail_rows else ""))
+        # 【2026-11-08】原断言是 `check(not fail_rows, "当前开发机不应有 FAIL")`，
+        # 但 doctor 的 FAIL 数量随机器而变（干净 runner 缺 config.yaml、缺运行依赖、
+        # 缺 WebView2 注册项都会报 FAIL），这与本文件 docstring「只测与环境无关的
+        # 部分」自相矛盾，也是该用例一直被 ci.yml SKIP 的真正原因。
+        # 改成结构性契约：FAIL 是环境事实，但**每条 FAIL 都必须自带明细与可操作的
+        # 修复提示**；另要求检查项名不重复且数量足够，防止 run_all 退化成空壳。
+        # 这两条与机器无关，且仍会因 doctor 返回结构被破坏而变红（不是永真）。
+        check(all((r[2] or "").strip() and (r[3] or "").strip() for r in fail_rows),
+              "FAIL 行都要给出明细与修复提示（共 %d 条）" % len(fail_rows))
+        names = [r[1] for r in rows]
+        check(len(set(names)) >= 6 and len(names) == len(set(names)),
+              "run_all 检查项齐全且名字不重复：%d 项" % len(names))
 
         print("[4] 桌宠状态：握手文件残留要报 WARN（那是令牌，不该留在盘上）")
         try:

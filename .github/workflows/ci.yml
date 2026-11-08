@@ -41,20 +41,14 @@ jobs:
     env:
       # 多数条目需要音频设备 / 桌面会话 / 外设，Windows runner 上没有，跑必红；
       # test_phash.py 需要 imagehash（项目刻意不装，避免拖入 109MB 的 scipy）。
-      # 两个例外，别按字面归类（2026-11-08 用 `git archive origin/master` 导出
-      # 与 CI 完全一致的 tracked tree 后实测）：
-      #   · test_doctor.py 不需要设备。它第 [3] 节断言「当前开发机不应有 FAIL」
-      #     会真跑 doctor.run_all()：CI checkout 无 config.yaml（.gitignore:28）
-      #     与 data/，doctor 因此报多条 FAIL；只补 config 在本机全依赖 venv 下
-      #     虽能全绿，但那是把 runner 的环境差异藏起来，不是修好判据。
-      #     要纳入 CI：先把这条环境相关断言改成结构性断言，
-      #     再补 `Copy-Item config.release.yaml config.yaml` 与建 data/。
-      #   · test_wake_word.py 第 1 节需 pypinyin 真实字典（已进 requirements-test.txt），
-      #     第 10 节刻意模拟「未安装」降级，需在真机验过再决定。
-      # 这些请在真机上跑，不靠 CI 判定。
+      # test_doctor.py 不在 SKIP 里：2026-11-08 把它第 [3] 节的
+      # 「当前开发机不应有 FAIL」（随机器变化）改成结构性契约后，配合下面的
+      # 标准首跑布局（data/ + config.yaml 模板）即可在 runner 上稳定跑。
+      # test_wake_word.py 第 1 节需 pypinyin 真实字典（已进 requirements-test.txt），
+      # 第 10 节刻意模拟「未安装」降级，仍需真机验过再决定。
       SKIP: >-
         test_asr_event_flow.py test_asr_voice_pipeline.py test_dialogue_voice_chain.py
-        test_doctor.py test_doctor_asr.py test_doctor_voice_backend.py
+        test_doctor_asr.py test_doctor_voice_backend.py
         test_doctor_llm_channel.py test_doctor_config_warn.py
         test_autostart.py test_setup_hint.py test_wake_word.py
         test_perception_indicator.py
@@ -70,6 +64,10 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           python -m pip install -r requirements-test.txt sounddevice
+      # CI checkout 里没有 config.yaml（.gitignore:28）也没有 data/；
+      # 这正是产品「源码包首跑」的标准动作，test_doctor.py 的 [6b] 也在验它。
+      - name: prepare standard first-run layout
+        run: python -c "import os,shutil;os.makedirs('data',exist_ok=True);shutil.copyfile('config.release.yaml','config.yaml')"
       - name: run every test_*.py as a script
         shell: pwsh
         run: |
