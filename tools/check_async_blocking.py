@@ -31,6 +31,11 @@ BLOCKING = {
     ("subprocess", "Popen"), ("os", "system"), ("socket", None),
     ("requests", None), ("shutil", "copy"), ("shutil", "copy2"),
     ("shutil", "copyfile"),
+    # 【2026-11-08 补盲】httpx 同步入口：与 requests 同级，是事件循环杀手。
+    # 注意【只】列同步入口；httpx.AsyncClient（异步安全） deliberately 不列，避免误伤。
+    ("httpx", "get"), ("httpx", "post"), ("httpx", "put"),
+    ("httpx", "patch"), ("httpx", "delete"), ("httpx", "head"),
+    ("httpx", "request"), ("httpx", "Client"),
 }
 WRAPPERS = {"to_thread", "run_in_executor"}
 
