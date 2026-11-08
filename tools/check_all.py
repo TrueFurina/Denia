@@ -637,6 +637,12 @@ GATES: list[tuple[str, str, list[str], bool]] = [
     #   从来没冒出来过。这道闸门把「引用必须指向真实存在的符号」变成可自动判的。
     ("跨模块引用对账", PY_VENV, ["tools/check_cross_ref.py"], False),
     ("跨模块引用对账变异", PY_VENV, ["tools/_qc_cross_ref_mutation.py"], True),
+    # 【2026-11-08】前六道闸门都配了变异刀，每个 PR 都写着「刀全绿 ⇒ 判据有牙」。
+    # 但那只证明「闸门正常时刀会红」，没证明「闸门恒绿/恒红时刀会不会红」。
+    # 这道闸门把闸门文件换成两行退化实现（import-safe 的 `if __name__=="__main__"`），
+    # 看刀套件还认不认得出来 —— 认不出就是空转，判据被改松改紧它都发现不了。
+    ("变异刀空转体检", PY_VENV, ["tools/check_knife_vacuity.py"], True),
+    ("变异刀空转体检变异", PY_VENV, ["tools/_qc_knife_vacuity_mutation.py"], True),
 ]
 
 

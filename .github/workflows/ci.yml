@@ -167,3 +167,12 @@ jobs:
         run: python tools/check_cross_ref.py
       - name: cross-ref mutation (twelve knives)
         run: python tools/_qc_cross_ref_mutation.py
+      # 【2026-11-08】「刀全绿」只证明闸门正常时刀会红，不证明闸门恒绿/恒红时刀会不会红。
+      # 这两步把闸门文件换成 import-safe 的退化实现（`if __name__=="__main__"` 里 exit 0 / 1），
+      # 看刀套件认不认得出来。7 对（unreachable / duplicate-def / finally-jump /
+      # constant-cond / gate-exit / cross-ref / web-js-syntax）实测全 CERTIFIED。
+      # 代价：判据 16s、刀 18s（每对要复制一次仓副本、跑 3 次套件），是本 job 里最慢的两步。
+      - name: knife vacuity judgement
+        run: python tools/check_knife_vacuity.py
+      - name: knife vacuity mutation (ten knives)
+        run: python tools/_qc_knife_vacuity_mutation.py
