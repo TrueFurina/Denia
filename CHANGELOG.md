@@ -2233,6 +2233,83 @@ G: 盘在开发机上早就没了，只是没人去看那张卡。
 
 **验证**：新闸门全绿；变异刀 4/4 全红 + 还原全绿；`check_all.py` 登记对账 ✓；CI 四腿全绿。
 
+#### PR #11 · webapp 语音试听：`finally` 里 `return` 吞异常 + 任务表只进不出
+
+**问题**：`src/ui/webapp.py` 的 `_run_voice_test` 在 `finally` 开头写着 `if backend is None: return`。
+本意只是「没装上本地引擎就跳过卸载」，但 `finally` 里的 `return` 有两条副作用：
+① 吞掉正在向上抛的异常；② 退出的是**整个函数**，于是后面那句「60s 后摘掉 `_voice_tasks[task_id]`」
+永远不执行。顺着 `pop` 的调用点再查，又发现第二条路 `_run_cloud_preview` **压根没有清理**——
+云端试听每点一次就往表里留一条，进程活多久留多久。
+
+**改动**：把早退降级成条件守卫（`if backend is not None and ...`），清理照旧执行；
+抽出 `_schedule_voice_task_cleanup()` 给两条路共用，并给云端路径补上 `finally`。
+
+**新增闸门** `tools/check_finally_jump.py`（182 行）：AST 判「`finally` 里不许 `return`/`break`/`continue`」。
+两条限定都是量出来的：不跨嵌套 `def`/`class`/`lambda` 作用域；`break`/`continue` 只在 finally 内
+没有外层循环时才报（否则是正常跳出）。豁免标记 `# finally-ok:`。
+配八刀变异刀 `tools/_qc_finally_jump_mutation.py`（M4/M5 是限位刀），以及接线判据
+`src/tests/test_voice_task_cleanup.py`（5 条 AST 判据，第 [0] 条是反空转锚：写入点集合钉死成两个方法）
++ 五刀变异。全仓普查 696 文件曾 1 处，修完 0 处。**本 PR 同时把它接进了 CI**（`portable-gates`）。
+
+**验证**：闸门全绿；八刀 + 五刀全红且还原后仍绿；CI 四腿全绿。
+
+#### PR #12 · 10 处恒真/恒假条件（含 2 条永远通过的假断言）
+
+**问题**：四类，一个比一个隐蔽。
+
+① `src/ui/main_window.py:248` 的 `if False:` 关着 13 行 WebView2 滑窗逻辑，而里面调的
+`mode_notify._notify_slide_if` **在 `mode_notify.py` 的 18 个函数里根本不存在**——谁把 `False`
+改成 `True`，第一句就是 `AttributeError`，还会被下面的 `except: pass` 吞掉。
+与第十五轮 `create_notify_window` 里的 `NotifyJsBridge` 是同一个形状：**被关掉而不是删掉的旧实现，
+再没人编译过它**。
+
+② `src/tests/test_doctor_llm_channel.py` 有**两条永远通过的假断言**（`check(... or True, "")`），
+其中一条还和下面几行的判据**互相矛盾**——正因为它永远通过，矛盾才一直没暴露。
+
+③ `src/agent_pro/__init__.py` 的 `if k in _config.DEFAULTS or True` 让「只收认识的键」从没生效过。
+**只删假过滤、行为逐字不变**（`{k: v for k, v in d.items() if True}` ≡ `d`）；没有顺手「修好」判据，
+因为那会改变行为（未知键突然被丢弃），是另一件事，留给维护者定夺。
+
+④ 另 6 处零散（2 个 `assert … or True`、3 个 `… if False else …`、1 个 `if … or True`）一并清掉。
+
+**新增闸门** `tools/check_constant_cond.py`（约 200 行）：只查**条件位置**（`if`/`while`/三元/`assert`/
+推导式 `if`/`match` guard，以及本仓 `check(<cond>, msg)` 的第一个实参）。三条限定全是量出来的：
+值位置（`v = a or True`）不算恒真；`while True:` 是惯用法；`check()` 只认布尔运算形态——
+**第一版把「第一个实参是字面量」当缺陷，一跑 62KB 输出**（本仓 `check` 有 `check(cond,msg)` /
+`check("说明",cond)` / `check("说明")` 三种签名）。配 13 刀变异（M8/M9/M10 是限位刀）。
+全仓 10 处 → 修完 0 处。
+
+**验证**：假断言改成真判据后，删掉 `Authorization` 头即变红（在临时副本里实测）；CI 四腿全绿。
+
+#### PR #13 · 三道登记在 `GATES` 里、却永远绿的闸门（判据没写退出码）
+
+**问题**：`tools/check_all.py` 的 `GATES` 靠**退出码**判定每一项通过/失败。于是只 `print("[FAIL] …")`、
+始终 `exit 0` 的脚本会占着清单一行、每次全量都跑、永远显示 ✓——它不守任何东西，
+但它的存在让人以为「这件事有判据」。195 个登记脚本里查出 3 个：
+
+- `tools/test_judge_confirm_clause.py`：逐条打印 `[PASS]`/`[FAIL]`，连累计变量都没有；
+- `tools/test_prompt_companion_clause.py`：**已经算出 `allok = all(checks.values())` 并打印了
+  `RESULT: ALL PASS / HAS FAILURE`**，就差把它变成退出码；
+- `tools/test_fabrication_guard.py`：同样算出了 `ok`、打印了 `PROOF ALL_PASS / HAS_FAIL`，同样没退出。
+
+后两个尤其值得记：**结论算对了、印出来了**，红的是屏幕上的字，绿的是退出码，而 CI 只看后者。
+
+**改动**：三处各补一行 `sys.exit(0 if ok else 1)`；`test_judge_confirm_clause.py` 顺带把循环改成累计式。
+
+**附带修掉一个更大的洞**：在没装 `yaml` 的解释器下，`test_prompt_companion_clause.py` 会在 import 阶段
+就 `ModuleNotFoundError` 崩掉，而旧版**崩完仍然 exit 0**——崩溃也算通过。新版 exit 1。
+`exit 0` 不只吞掉 `[FAIL]`，它吞掉一切。
+
+**新增闸门** `tools/check_gate_exit.py`（187 行）：`GATES` 里的 `.py` 项必须含一条能红的路径——
+非常量 `sys.exit`/`os._exit`、`unittest.main`/`pytest.main`、`raise`、`assert` 四选一；
+豁免 `# gate-exit-ok:`；退出码 2 覆盖「登记表解析失败 / 脚本不存在 / 脚本解析失败 / **扫到 0 个 .py**」。
+配 15 刀变异 `tools/_qc_gate_exit_mutation.py`（K4–K10 限位刀，K15 钉住「`try` 包住的 `raise` 仍判绿」
+这个已知松）。**变异刀样本全在 `tempfile` 里造，一次也不碰本仓源码。**
+
+**验证**：master 原样 195 检查/命中 3 → 修完 197 检查/命中 0；15 刀 + 对照全绿；
+两道非空洞性证明（退出码改回 `sys.exit(0)` → 元闸门点名并 exit 1；把提示词里的「撒娇式试探」
+改成「撒娇试探」→ 该闸门 `[FAIL]` 并 exit 1）；CI 四腿全绿。
+
 ### 2026-10-22 · 新闸门：后端广播 type 与前端分发分支对账
 
 上面那条死分支的根因是：**两边靠一个字符串 `type` 对上，而没有任何机制保证它对得上。**
