@@ -7714,23 +7714,23 @@ class CharacterAPI(PetAPI, WindowAPI):
 
 
     def get_quota_status(self, force: bool = False) -> dict:
-        """【2026-10-19 新增】模型额度 / Key 可用性状态（**非打扰式**提示用）。
+        """【2026-11-08 墓碑】额度检测已下线；签名保留只为不打断前端调用。
 
-        背景：用户实测主聊天模型 qwen3.8-max 免费额度耗尽（403），而
-        text_chat.mode=manual 不兜底 → 打字聊天完全发不出去，界面只有一句
-        HTTP 403，用户不知道"该换模型"。
+        历史：2026-10-19 这里 `from .quota_guard import build_quota_report`，但
+        `src/ui/quota_guard.py` 从未入库（全仓无此模块）→ 每次调用 ImportError →
+        logger.exception → 返回 success=False。设置页额度角标因此永远不显示，
+        且每进一次设置页就在日志里留一段栈。
 
-        设计（沿用 2026-10-02 决策：额度耗尽是持续状态，不能反复弹模态框）：
-          · 不主动轮询：只在用户打开设置页 / 手动点"检测"时调用
-          · 结果缓存 30 分钟：避免每次进设置页都打网络
-          · 返回"影响 + 修复建议"，前端用角标/细条展示，不打断操作
+        2026-10-22 额度告警三处死代码已按墓碑约定删除（见
+        tools/_qc_quota_tombstone_mutation.py），这个 import 是那次的漏网。
+
+        方法签名保留、不直接删：app_backend.js:141 仍 `call('get_quota_status')`
+        （:731 导出，设置页会调）。删掉会把「静默返回失败」变成「RPC 方法不存在」，
+        前端虽也 catch，日志反而更脏。
+
+        要恢复额度检测：重新实现 quota_guard 并在这里接回去，别只把 import 加回来。
         """
-        try:
-            from .quota_guard import build_quota_report
-            return build_quota_report(self._cfg, force=bool(force))
-        except Exception as e:  # noqa: BLE001
-            logger.exception("get_quota_status 失败")
-            return {"success": False, "error": str(e)}
+        return {"success": False, "error": "额度检测已下线（2026-10-22 墓碑）"}
 
     def get_tts_provider_key(self, data: dict = None) -> dict:
         """【2026-10-19 新增】给引导页克隆弹窗回传百炼 API Key（仅本机 UI 使用）。
