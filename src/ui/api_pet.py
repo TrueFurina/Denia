@@ -512,15 +512,10 @@ class PetAPI:
             return random.choice(available_responses)
         else:
             return random.choice(pool)
-        
-        # 默认回应（理论上不会执行到这里）
-        default_responses = {
-            "click": {"text": "在呢～有什么事吗？", "action": "nod", "expression": "smile"},
-            "double_click": {"text": "哇哦！", "action": "surprised", "expression": "surprise"},
-            "drag": {"text": "嘿嘿～", "action": "sway", "expression": "curious"}
-        }
-        
-        return default_responses.get(context, default_responses["click"])
+        # 【2026-11-08 墓碑】原本这里还有一份 default_responses 字典 + return 兜底，
+        # 但上面 if/else 两条分支都 return，兜底永远到不了（原注释也写了「理论上不会
+        # 执行到这里」）。删掉：random.choice(pool) 已覆盖「池子非空」的全部情况，
+        # 而 pool 由 response_pools.get(context, click_responses) 保证非空。
 
     def _pet_bubble(self, text: str) -> None:
         """把双工看屏互动文本推入桌宠气泡队列（由桌宠窗轮询取走显示）。

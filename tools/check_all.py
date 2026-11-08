@@ -49,6 +49,15 @@ GATES: list[tuple[str, str, list[str], bool]] = [
     # 主链路静默异常：`except: pass/continue` 且块内无注释 = 出错零痕迹
     # （NameError 和"设备不存在"长得一模一样）。--strict 才判红；带注释的有意降级放行。
     ("主链路静默异常", PY_RUNTIME, ["tools/check_silent_except.py", "--main", "--strict"], False),
+    # 不可达代码：必返回语句之后还有语句。编译不报错、测试不报错、跑起来也看不出来，
+    # 只有人眼逐函数读才可能发现——所以它活了两个月：`create_notify_window` 的 try 与
+    # except 两条分支都 return，其后 329 行 WebView2 旧实现全死，里面还 import 了一个
+    # 根本不存在的 `mode_notify.NotifyJsBridge`（删掉那两行 return 想"恢复旧实现"，
+    # 第一句就是 ImportError）。全仓普查 696 个文件 5 处，已清理。
+    # 合法写法（靠 yield 让函数成为异步生成器）用 `# unreachable-ok: <原因>` 豁免，
+    # 不用行号白名单——行号漂移后闸门会静默失效。六刀变异见 _qc_unreachable_mutation。
+    ("不可达代码", PY_RUNTIME, ["tools/check_unreachable.py", "--all", "src", "tools", "main.py", "launch_companion.py", "run_webui.py"], False),
+    ("不可达代码变异", PY_RUNTIME, ["tools/_qc_unreachable_mutation.py"], False),
     ("前端资源", PY_RUNTIME, ["tools/check_web_assets.py", "--strict"], False),
     # 前端 JS 语法：一处语法错误会让整个 <script> 块静默不执行（该块里所有按钮全哑），
     # 而 check_web_js_syntax 原来打印完就 exit 0 —— 是装饰闸门。本机没 node 时
