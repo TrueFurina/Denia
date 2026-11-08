@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""「check_all 互斥锁」的变异验证：四刀，刀刀必须被抓住。
+"""「check_all 互斥锁」的变异验证：五刀，刀刀必须被抓住。
 
 跑法：.venv/Scripts/python.exe -u tools/_qc_gate_lock_mutation.py
 
@@ -7,6 +7,7 @@ A 不清理陈旧锁        → 上次被强杀后所有门禁永久堵死
 B 拿不到锁也报成功    → 两个会话又能同时改源码（锁形同虚设）
 C release 无条件删锁   → 把别人的锁删掉
 D 陈旧阈值改成 0       → 活着的锁也被偷
+E 只看 OpenProcess     → 已退出但句柄仍被持有的 PID 被判"活着"，锁清不掉
 """
 import hashlib
 import os
@@ -42,6 +43,10 @@ MUTS = [
     ("D 陈旧阈值改成 0（活锁也被偷）",
      E("STALE_SECONDS = 45 * 60"),
      E("STALE_SECONDS = 0")),
+
+    ("E 只看 OpenProcess（已退出但句柄未释放 → 判活着，锁永远清不掉）",
+     E("            return code.value == STILL_ACTIVE\n"),
+     E("            return True\n")),
 ]
 
 
@@ -74,7 +79,7 @@ def main() -> int:
     print("\n还原字节一致：%s" % ok)
     if not ok:
         bad += 1
-    print("四刀全红" if bad == 0 else "有 %d 处异常" % bad)
+    print("五刀全红" if bad == 0 else "有 %d 处异常" % bad)
     return 1 if bad else 0
 
 

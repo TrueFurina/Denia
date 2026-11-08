@@ -23,19 +23,44 @@ import time
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 LOCK_PATH = os.path.join(ROOT, "logs", ".check_all.lock")
 STALE_SECONDS = 45 * 60      # 全量门禁约 10 分钟；超过 45 分钟视为上次被强杀
+STILL_ACTIVE = 259           # GetExitCodeProcess 的"还在跑"，只有它代表存活
 
 
 def _pid_alive(pid: int) -> bool:
-    """Windows 下查进程还在不在（OpenProcess + CloseHandle，不发信号）。"""
+    """Windows 下查进程还在不在（OpenProcess + GetExitCodeProcess，不发信号）。
+
+    【2026-11-08 实测】只看 OpenProcess 会把「已退出」判成「还活着」：
+    进程被强杀之后，只要别处仍握着它的句柄（任务调度器 / 父进程 / 调试器），
+    进程对象就不会从 PID 表里消失 —— OpenProcess 照样成功，而进程早已结束。
+    于是陈旧锁永远清不掉，之后每一轮 check_all 都停在「已有 check_all 在跑」，
+    一直堵到 STALE_SECONDS（45 分钟）。实测：子进程 terminate + wait（poll()=1）
+    之后 OpenProcess 仍返回句柄、GetExitCodeProcess 返回 0，`_pid_alive` 判 True。
+    所以判据必须以退出码为准：**STILL_ACTIVE(259) 才是在跑**。
+    """
     if pid <= 0:
         return False
     try:
         k = ctypes.windll.kernel32
-        h = k.OpenProcess(0x1000, False, pid)   # PROCESS_QUERY_LIMITED_INFORMATION
+        # 第三条硬约束：ctypes 调 Win32 必须声明 argtypes/restype，否则 HANDLE
+        # 按 32 位 int 传递，句柄可能被截断（本仓 SetWindowPos 曾因此全部静默失效）。
+        k.OpenProcess.argtypes = (ctypes.c_uint32, ctypes.c_int, ctypes.c_uint32)
+        k.OpenProcess.restype = ctypes.c_void_p
+        k.GetExitCodeProcess.argtypes = (ctypes.c_void_p,
+                                         ctypes.POINTER(ctypes.c_uint32))
+        k.GetExitCodeProcess.restype = ctypes.c_int
+        k.CloseHandle.argtypes = (ctypes.c_void_p,)
+        k.CloseHandle.restype = ctypes.c_int
+        h = k.OpenProcess(0x1000, 0, pid)   # PROCESS_QUERY_LIMITED_INFORMATION
         if not h:
             return False
-        k.CloseHandle(h)
-        return True
+        try:
+            code = ctypes.c_uint32(0)
+            if not k.GetExitCodeProcess(h, ctypes.byref(code)):
+                # 问不到退出码（权限不足等）：退回保守判据，交给时间阈值裁决
+                return True
+            return code.value == STILL_ACTIVE
+        finally:
+            k.CloseHandle(h)
     except Exception:  # noqa: BLE001  非 Windows / 权限不足：退回"只按时间判陈旧"
         return True
 

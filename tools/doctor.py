@@ -19,6 +19,7 @@
 from __future__ import annotations
 
 import argparse
+import ctypes
 import importlib
 import inspect
 import json
@@ -458,6 +459,36 @@ def _system32() -> str:
     return os.path.join(os.environ.get("SystemRoot", r"C:\Windows"), "System32")
 
 
+def _win_dll(name: str):
+    """加载器入口。抽成函数是为了能被测试注入——注入点必须比判据本身更低一层，
+
+    否则测试换掉判据、真实实现就永远没被验过（本仓在别处踩过同样的坑：
+    变异刀打不穿一层被整个替换的函数，等于刀砍在影子上）。
+    """
+    return ctypes.WinDLL(name)
+
+
+def _ucrt_loadable(name: str) -> bool:
+    """这个运行时 DLL 名字**能不能被加载**（这才是依赖它的 PE 实际做的事）。
+
+    【2026-11-08 实测】Win10 19045 的 System32 里 `api-ms-win-crt-*.dll` **一个都没有**
+    （`Get-ChildItem api-ms-win-crt-*.dll` 计数 0），但：
+
+        LoadLibrary("api-ms-win-crt-runtime-l1-1-0.dll") → 成功
+        返回的 handle 与 LoadLibrary("ucrtbase.dll") 完全相同（=140732341026816）
+        numpy 2.5.4 正常 import
+
+    也就是说这些名字在 Win10+ 上是 **API set**，由加载器转发到 ucrtbase.dll，根本不需要
+    实体文件（只有 Win7 装 KB2999226 或 app-local 分发时才会出现真文件）。
+    判据用 os.path.isfile 的话，健康机器会被误判「缺 UCRT」。
+    """
+    try:
+        _win_dll(name)
+        return True
+    except OSError:
+        return False
+
+
 def check_ucrt() -> tuple[str, str, str, str]:
     """Universal CRT —— 实测下来**唯一**真正靠系统的 C 运行时。
 
@@ -469,18 +500,25 @@ def check_ucrt() -> tuple[str, str, str, str]:
         api-ms-win-crt-*     包外，133/84/64 个文件引用 → 靠系统 UCRT
 
     Win10 起 UCRT 是系统组件；Win7/8 需要 KB2999226。
+
+    2026-11-08 修正（与交付包内 0.2.0 的 doctor 对齐）：原判法用 os.path.isfile 查
+    System32 下 api-ms-win-crt-*.dll 物理文件，但 Win10/11 上这些是 Windows **API Set
+    逻辑名**，不一定以物理文件形式存在——由 ucrtbase.dll 经 API Set 转发提供。
+    实测本机 System32 下 api-ms-win-crt-*.dll 物理文件数 = 0，但 ucrtbase.dll 在、
+    两者 ctypes.WinDLL() 均 LOAD OK，numpy C 扩展加载成功即为端到端证明。
+    故改为「试加载」走真实解析路径。判据换成试加载后，Healthy 机器不再被误判 FAIL。
     """
     if not sys.platform.startswith("win"):
         return (WARN, "UCRT", f"非 Windows 平台（{sys.platform}），本项不适用", "")
-    sysdir = _system32()
-    missing = [n for n in ("ucrtbase.dll", "api-ms-win-crt-runtime-l1-1-0.dll")
-               if not os.path.isfile(os.path.join(sysdir, n))]
+    probe = ("api-ms-win-crt-runtime-l1-1-0.dll", "ucrtbase.dll")
+    missing = [n for n in probe if not _ucrt_loadable(n)]
     if not missing:
-        return (PASS, "UCRT", "系统自带 Universal CRT（numpy/scipy 依赖它）", "")
+        return (PASS, "UCRT",
+                "系统 Universal CRT 可加载（API Set 转发正常，numpy 等扩展依赖它）", "")
     return (FAIL, "UCRT",
-            "缺：" + ", ".join(missing) + " —— numpy/scipy 等扩展会 DLL load failed",
+            "无法加载：" + ", ".join(missing) + " —— numpy 等扩展会 DLL load failed",
             "Win7/8 装 KB2999226（Update for Universal C Runtime）；"
-            "Win10+ 也称缺失说明系统组件被裁剪，跑 sfc /scannow")
+            "Win10+ 也加载失败说明系统组件被裁剪，跑 sfc /scannow")
 
 
 def pe_has_signature(path: str) -> tuple[bool, str]:

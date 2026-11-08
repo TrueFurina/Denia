@@ -38,3 +38,9 @@ mss>=9.0
 ollama>=0.4.0
 dashscope>=1.20
 pywebview>=5.0
+# pypinyin：src/tests/test_wake_word.py 第 1 节要验「同音字语法扩张」，必须读
+# pypinyin 的真实字典。它只写在 requirements.txt 的「重要档」里，而 ci.yml 的
+# SKIP 清单把该用例排除了 —— 干净 venv（只装本文件）里跑 check_all 时，
+# `_homophones()` 会直接 NameError，把「测试缺件」伪装成产品缺陷（2026-11-08 实测）。
+# CI 不跑该用例，加这一行不影响它的耗时。
+pypinyin>=0.50
