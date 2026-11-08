@@ -80,7 +80,20 @@ def classify(err: str) -> str:
 
 
 def run_one(exe: str, root: str, mod: str, timeout: int) -> dict:
-    code = f"import {mod}"
+    # 【2026-11-08 修·PYTHONPATH 会被嵌入式运行时静默忽略】原来是
+    #     code = "import %s" % mod
+    #     env["PYTHONPATH"] = root
+    # 两条一起指望"子进程能从 root 导入"。但本仓的 `.venv` 是用**随包的嵌入式运行时**
+    # （`python/python.exe`，带 `python312._pth`）建的，那个运行时 `sys.path` 里
+    # 既没有 `''`（cwd）也不吃 `PYTHONPATH` —— 于是 `--root` 形同虚设，
+    # 所有模块一律 `ModuleNotFoundError`。
+    # 实测（`tools/test_smoke_import_retry.py` 的自建假根）：
+    #     python            → 12 PASS / 0 FAIL
+    #     .venv/Scripts/python → 6 PASS / 6 FAIL（四条夹具全报 No module named 'src.fixturepkg'）
+    # 而 `check_all.py` 给这道门配的正是 `PY_VENV`。
+    # 修法：**不靠环境变量，直接在子进程里插 sys.path** —— 任何解释器都吃这一套。
+    # PYTHONPATH 保留，对吃它的解释器无害。
+    code = "import sys; sys.path.insert(0, %r); import %s" % (root, mod)
     env = dict(os.environ)
     env["PYTHONIOENCODING"] = "utf-8"
     env["PYTHONPATH"] = root
