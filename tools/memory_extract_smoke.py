@@ -154,10 +154,10 @@ async def main() -> int:
         print("[smoke] 聊天模型不可用（未配 Key？）")
         return 1
     print(f"[smoke] 模型={type(llm).__name__}")
-    args = sys.argv[1:]
     await run_case(llm, "常规对话（含'我晚上七点吃的饭'）", CONVO_NORMAL)
-    if "--long" in args or True:   # 默认也跑长版
-        await run_case(llm, "超长上下文（模拟快超限）", CONVO_LONG)
+    # 【2026-11-08】原来写的是 `if "--long" in args or True:` —— `or True` 让条件恒真，
+    # 那个开关从来没起过作用（作者注释自己写着"默认也跑长版"）。既然永远要跑，就直说。
+    await run_case(llm, "超长上下文（模拟快超限）", CONVO_LONG)
     return 0
 
 
