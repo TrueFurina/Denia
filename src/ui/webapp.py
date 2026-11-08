@@ -16179,7 +16179,6 @@ class CharacterAPI(PetAPI, WindowAPI):
                     "manual",
                 )
                 return
-                return
         setlog(f"下载中：{spec['label']}（魔塔国内源，请稍候）…", "running")
         # 关键：把 MODELSCOPE_CACHE 指向各引擎缓存根，
         # 让 modelscope 落到 <root>/models--<ns>--<name>/snapshots/<rev>/ —— 与 server 读取布局一致。
