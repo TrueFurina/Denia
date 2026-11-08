@@ -50,7 +50,15 @@ def _run_test():
 def _baseline_green() -> bool:
     r = _run_test()
     out = (r.stdout or "") + (r.stderr or "")
-    return r.returncode == 0 and "Traceback" not in out
+    # 【2026-11-08 修·这一行比判定本身还严】原来要求"输出里没有 Traceback"。
+    # 但**判定自己故意打出来的** Traceback 也算——比如 `test_presence_controls.py`
+    # 的 A3 就故意让回调抛异常，再验证 listener 没被弄死，那一段会经 logger 打到
+    # stderr。于是测试 41 PASS / 0 FAIL / exit 0，本函数却判"起点不是绿的"，
+    # 整把刀一进来就自爆，而报错信息把矛头指向**产品**。
+    # 判据改成"退出码 0 且没有 FAIL 行"：崩了的判定一定非零退出，
+    # Traceback 本身不能证明任何事。同一轮 `_judged()` 也是这么改的。
+    return r.returncode == 0 and not any(l.strip().startswith("FAIL")
+                                         for l in out.splitlines())
 
 
 
