@@ -183,3 +183,12 @@ jobs:
         run: python tools/check_knife_vacuity.py --tier portable
       - name: knife vacuity mutation (thirteen knives)
         run: python tools/_qc_knife_vacuity_mutation.py
+      # 【2026-11-08 PR #18】**故意不在 CI 跑**：`check_knife_noop.py` 与
+      # `_qc_knife_noop_mutation.py` 要 import 并执行 78 把刀（含它们依赖的
+      # `.venv` 三方包）。本 job 不装依赖，78 把里大多数会卡在
+      # `ModuleNotFoundError` → ERROR，于是这道门在 CI 里只会「绿得毫无内容」；
+      # 而它的对照项 N7 还会因为"一把都没跑成"变成 exit 2 让 job 恒红。
+      # 所以它和 dev 层 18 对一样，**只由本机 `check_all.py` 覆盖**：
+      #     python tools/check_knife_noop.py
+      #     python tools/_qc_knife_noop_mutation.py
+      # 这句话必须留着：CI 全绿不等于空变异体检跑过。
