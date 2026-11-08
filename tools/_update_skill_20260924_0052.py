@@ -9,7 +9,9 @@ NL = '\r\n' if '\r\n' in t else '\n'
 
 ANCHOR = '### D 型：先问「模型实际收到什么」，别只读源码'
 assert ANCHOR in t, '锚点缺失'
-assert '口径' not in t.split(ANCHOR)[0][-3000:] or True
+# 【2026-11-08】这里原来有一条
+#     assert '口径' not in t.split(ANCHOR)[0][-3000:] or True
+# `or True` 让断言恒真 —— 从来没可能失败。删掉（上面那条 assert 才是正确写法）。
 
 SEC = NL.join([
     '### 量化人格改善时，先定死口径（否则两次评估差 2~3 倍，永远对不上账）',
