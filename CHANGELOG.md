@@ -138,6 +138,7 @@
 | `PR#4` | 待合并 | fix | **webapp get_quota_status 指向不存在的 quota_guard 模块**：`src/ui/webapp.py:7729` 在 `try/except Exception` 块里 `import src.ui.quota_guard` 做 API 额度角标数据源，但全仓无 `src/ui/quota_guard.py`（该模块从未提交）→ import 恒走 except、额度角标永远静默不显示，用户看不到剩余调用次数。两条修法：①（本 PR）把 try 块改为直调 `self._get_quota_from_config()` 从 config 读，不依赖缺件；②（备选，未采）等源码仓补发 quota_guard 后从白名单移除。 | 变异验证：临时创建空 quota_guard.py → 改前 import 成功返回 None 改后仍走直调路径不依赖；删掉 quota_guard.py → 改前恒 except 改后正常返回 config 数据 |
 | `PR#5` | 待合并 | chore | **新增交付包发布前闸门 `tools/check_delivery.py`**：本机交付包无 `.git`，改动不能走 git 闭环，需要独立发布前闸门防漏件。七层判据：① 36 个必备文件逐条点名（含来源注释）；② 6 棵资源子树文件数下限；③ AST 扫 `src/**/*.py` 的 145 个 `src.*` 导入目标逐个解析；④ 文件实体 PE `MZ` / HTML 结构 / RIFF / 非空文本 / YAML 映射五类魔数；⑤ 依赖完整性——`site-packages/*.dist-info` 对 `requirements.txt` 核心 12 项 + 重要 13 项；⑥ 出厂模板 `force_first_run=true` + `app.version` 一致 + 38 个 api_key 无明文；⑦ 临时目录复验「误删 config.yaml 能自愈」。可选 `--smoke` 真跑包内解释器做 import 冒烟。 | 32 个变异场景全红（含 `--root` 端到端）+ 4 个按预期 WARN 不误报；交付包实测 8 PASS / 1 WARN / 0 FAIL |
 | `PR#6` | 待合并 | fix | **main.py 解释器守卫——拦「用错 python 跑 --doctor」的误导性 FAIL**：交付包用 `python/python.exe`（isolated 模式）跑 doctor 得 16 PASS / 3 WARN / 0 FAIL；用系统 python 跑得 10 PASS / 5 WARN / 4 FAIL（核心依赖缺失 / 语音坏了 / 唤醒词退化），全是「该解释器没装包依赖」的假象。包内 python 不在系统 PATH，用户极易直接 `python main.py --doctor` 触发假象 → 误判「包是坏的」。改动：`main.py` 的 `--doctor` 截获块加前置检测，交付包存在但当前解释器不是它时打醒目提示（列假象 + 给正确重跑命令），**不阻止运行、不改退出码**。源码仓无 `python/` 目录 → 触发条件恒假 → 守卫整体跳过，零干扰。 | 交付包双向实测：系统 python → 提示 + 4 个误导 FAIL；包内 python → 无提示、干净 16-3-0；`tools/check_delivery.py --smoke` 8 PASS / 0 FAIL 无回归 |
+| `PR#7` | 待合并 | fix | **create_notify_window 329 行不可达代码墓碑**：`src/ui/main_window.py` 的 `create_notify_window()` 里 try 和 except 两条分支都 `return`，其后的 329 行 WebView2 旧实现永远执行不到——死代码占位、误导维护以为那是活跃路径。删掉 return 之后的整段死代码，改用新增回归 `test_notify_dead_path.py` 守住「create_notify_window 真正调到 native_notify.ensure_notify_window()」+ 变异刀 4 刀（try 提前 return / except 吞掉 / 删掉调native_notify / 改坏 return 值），全红 + 还原全绿；登记进 `check_all.py` 门禁。 | 变异 4 刀全红；还原后回归 12/12 全绿；check_all 登记对账 ✓ |
 
 > **\* 夹带说明（必须留档）**：12:10 / 12:2x 两行的内容实际随 `fa86a4c`（E1 开机自启）
 > 入库——13:14 的并发提交把质检工作流未提交的改动一起提交了，未按工作流拆分。
@@ -521,6 +522,30 @@ find_spec 返回 None → 误报「唤醒词退化」；
 包内 python → 无提示、干净 16-3-0；check_delivery --smoke 8 PASS / 0 FAIL 无回归。
 
 ---
+
+#### PR #7 · create_notify_window 329 行不可达代码墓碑
+
+**问题**：`src/ui/main_window.py` 的 `create_notify_window()` 里，try 和 except 两条分支都
+`return`，其后的 329 行 WebView2 旧实现（`import ctypes` / `_notify_geom` 调用链 / WebView2
+窗口创建逻辑）永远执行不到。这段代码占着位置、误导维护以为那是活跃路径，任何改动都是
+白费功夫，且 `tools/check_all.py` 里的某些扫描会命中它、误以为有覆盖。
+
+**改动**：删掉 return 之后的整段死代码，函数只保留「调 native_notify.ensure_notify_window()
+并返回结果」的两行（try/except 结构）。新增回归 `src/tests/test_notify_dead_path.py`：
+
+- 断言 create_notify_window 真正调到 native_notify.ensure_notify_window()
+- 断言 return 后无残留代码（AST 检查：函数体在 return 后无 stmt）
+- 断言 try/except 两分支的 return 值类型一致（都是 Optional[Window]）
+
+新增变异刀 `tools/_qc_notify_dead_path_mutation.py` 4 刀：
+
+- try 分支提前 return（模拟死代码复活）
+- except 分支吞掉 return
+- 删掉调 native_notify（stub 掉 ensure_notify_window）
+- 改坏 return 值（返回非 Optional[Window] 类型）
+
+**验证**：变异 4 刀全红 + 还原后回归 12/12 全绿；`tools/check_all.py` 登记对账 ✓；
+CI 全绿（pytest / self-check scripts / syntax gate 三腿 success）。
 
 ### 2026-10-22 · 克隆面板「预填她的」：试听静默失效 + 克隆画假进度条还谎报「已完成」
 
