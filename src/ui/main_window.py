@@ -21,7 +21,7 @@ import time
 from ctypes import wintypes as _wt
 from typing import Optional
 
-from .notify_geom import _notify_geom, _notify_park_out, _notify_set_pos
+from .notify_geom import _notify_geom, _notify_set_pos
 from .pet_window import _attach_pet_no_taskbar, _pet_find_main_hwnd, _u32
 from .ui_state import STATE
 from .wv2_env import (
@@ -1027,22 +1027,40 @@ def create_desktop_companion(api: Optional[CharacterAPI] = None) -> "webview.Win
 
 
 def create_notify_window(api=None):
-    """创建模式切换通知浮窗（屏幕右上角，frameless + transparent + on_top）。
+    """创建模式切换通知浮窗 —— 兼容壳，渲染由 native_notify（WPF 原生）负责。
 
-    ⚠️ 铁律（2026-09-04 修·与 2026-08-24 黑屏根因同源）：本函数**必须**在 GUI 线程
-    调用（由 webview.start(func=...) 的 _boot_gui 回调创建，与 create_main_window /
-    create_desktop_companion 一致）。绝不可在运行时从后台线程 create_window —— 那会
-    导致窗口建出但内容永不渲染（黑屏/透明），表现为弹窗"不显示"。
+    【2026-11-08 墓碑】本函数曾内联 329 行 WebView2 实现（frameless 窗口 +
+    notify.html + NotifyJsBridge 轮询）。2026-09 通知浮窗改 WPF 原生渲染后，
+    函数体被改成三行转调，旧实现整段留在 `return` 之后——而 try 与 except
+    两条分支**都 return**，其后的 329 行全部不可达：
 
-    【2026-09-04 防卡死·终版·常显 + CSS 显隐】通知窗**启动即常显在右上角**（与桌宠窗
-    一致，hidden=False），WebView2 渲染器恒"热"。卡片**纯 CSS 显隐**（.visible 类），
-    运行时 mode_notify **零 show()/hide()/move()**。两条旧死路都避开：
-      · 旧路① hidden=True + show()：长期 hidden 窗被 show() 唤醒会在 GUI 线程同步初始化
-        渲染器（winforms.py:616）→ 顶停消息泵数秒 → 整 UI 未响应（卡死）。
-      · 旧路② x=-10000 屏外常显 + move()：屏外窗 WebView2 不初始化渲染器 →
-        NotifyAPI 永不定义 → show() 静默失败 → 不弹。
-    常显右上角 + CSS 显隐同时避开两坑：窗口永远热、永不卡；卡片显隐是纯前端动画、必现。
-    另设 WS_EX_TRANSPARENT 点击穿透 + WS_EX_TOOLWINDOW 去任务栏（常显窗空闲时不能挡点击）。
+        try:
+            return native_notify.ensure_notify_window()
+        except Exception:
+            return None
+        import ctypes          # ← 从这里往后，永远执行不到
+        ...
+        return win
+
+    不可达段里还引用了 `mode_notify.NotifyJsBridge` —— 该符号在
+    src/ui/mode_notify.py 里**从未存在**（全文件 0 次命中）。谁哪天删掉那两行
+    return，第一句就是 ImportError，而不是"恢复到旧实现"。
+
+    删除依据：
+      · src/ui/native_notify.py 的 docstring 明写「单后端，无兜底」——旧路是
+        **有意废弃**的，不是待启用的备用分支；
+      · 旧段内 5 个嵌套函数（_notify_apply_clickthrough / _install_gui_heartbeat /
+        _notify_selfcheck / _apply_child_transparent / _walk）全是块内局部定义，
+        外部零引用；
+      · 随之失效的只有模块级 `_notify_park_out` 导入（已一并移除）；
+        notify_geom 模块本身仍被 src/ui/webapp.py 使用，未动；
+      · 全仓无任何 `create_notify_window(` 调用点（main.py 的实调是
+        `native_notify.ensure_notify_window()`，见 main.py:2288）。函数签名因此
+        保留为兼容壳——src/ui/webapp.py:77 与 main.py:169 仍按名字导入它，
+        删函数会打断那两处导入。
+
+    `api` 参数保留：调用方历史上按位置传 CharacterAPI，改签名有打断风险；
+    WPF 路径不消费它。
     """
     try:
         from . import native_notify
@@ -1050,335 +1068,6 @@ def create_notify_window(api=None):
     except Exception as _e:  # noqa: BLE001
         logger.warning("[通知浮窗] 兼容壳 ensure 失败: %s", _e)
         return None
-    import ctypes
-    import webview
-
-    if api is None:
-        # 🔑 2026-09-04 根治 UI 卡死：通知窗改用 NotifyJsBridge（js_api 轮询架构），
-        # 不再用 CharacterAPI。notify.html 不依赖 CharacterAPI 的任何方法，只通过
-        # window.pywebview.api.poll() 单向取命令（Python 推队列 / JS 来取），
-        # 后台线程绝不调 evaluate_js，物理上不可能死锁。
-        from .mode_notify import NotifyJsBridge
-        api = NotifyJsBridge()
-    base = _ensure_web_server()
-    # 模式 O（不透明兜底）时把模式写进 URL，页面据此切换样式（卡片铺满/淡入）
-    # ?v= 版本戳：强制 WebView2 放弃对 notify.html 的磁盘缓存（实测 no-store 头对
-    # 首屏 HTML 加载无效，旧版 width:100% 拉伸样式会一直缓存 → 比例修不好）。改 query
-    # 即换 URL → 必拉最新。每次启动换戳，开发期改 HTML 无需手动清缓存。
-    _v = int(time.time())
-    _q = ("?mode=opaque&v=%d" % _v) if _NOTIFY_OPAQUE else ("?v=%d" % _v)
-    url = base + "/notify.html" + _q
-    w, h = 400, 176
-    # DPI 逻辑像素（与 create_desktop_companion 完全一致）
-    user32 = ctypes.windll.user32
-    gdi32 = ctypes.windll.gdi32
-    sw, sh = user32.GetSystemMetrics(0), user32.GetSystemMetrics(1)
-    hdc = gdi32.CreateDCW("DISPLAY", None, None, None)
-    dpi = gdi32.GetDeviceCaps(hdc, 88) or 96
-    gdi32.DeleteDC(hdc)
-    scale = max(dpi / 96.0, 1.0)
-    lw, lh = int(sw / scale), int(sh / scale)
-    # ⚠️ 常显右上角（非屏外）：渲染器启动即热，避免屏外不初始化 → 不弹。
-    x = lw - w - 24
-    y = 24
-
-    # ⚠️ background_color 只接受 6 位 hex（pywebview 会校验 hex triplet；传 8 位带
-    # alpha 的 "#00000000" 会直接抛异常 → 整个窗口创建失败。23:24 运行实证）。
-    # 透明模式下**不传**该参数（pywebview 自行把控制器背景设为透明）。
-    _kw = {}
-    if _NOTIFY_OPAQUE:
-        _kw["background_color"] = "#0D1018"   # 防加载期白闪
-
-    win = webview.create_window(
-        title="达妮娅通知",   # 留可 FindWindowW 定位的标题（frameless 不显示标题栏）
-        url=url,
-        js_api=_safe_js_api(api, "CharacterAPI-notify"),
-        frameless=True,
-        # 【2026-09-04 23:50 定版·双模·默认 O】
-        #   模式 O（默认）：transparent=False + 深色底防白闪，空闲停在屏幕最右缘留 2px
-        #     （仍在屏内 → 合成器不挂起 → 滑入必有帧），弹出靠窗口位置动画从边缘滑入。
-        #   模式 T（NOTIFY_TRANSPARENT=1 可选）：transparent=True —— 与桌宠窗同款，
-        #     窗口常显右上角、显隐全交给页面 CSS；但本机透明合成曾不稳，故默认关。
-        transparent=not _NOTIFY_OPAQUE,
-        easy_drag=False,
-        text_select=False,
-        # 【2026-09-05 卡死根因修复】on_top 改 False，逐字对齐桌宠窗（桌宠本机从不卡死）。
-        # pywebview 在 BrowserForm.__init__ 的 STA 线程里同步设 TopMost；不透明窗的
-        # WebView2 初始化与之在 STA 线程上重入 → 死锁整 UI。置顶改由 _notify_set_pos
-        # 经 Win32 SetWindowPos(HWND_TOPMOST) 在后台线程完成（不经过 WebView2/STA）。
-        on_top=False,
-        x=x, y=y, width=w, height=h,
-        hidden=False,
-        **_kw,
-    )
-    logger.info("[通知浮窗] 已创建（模式 %s，右上角 %d,%d %dx%d）",
-                "O-不透明(兜底)" if _NOTIFY_OPAQUE else "T-透明(默认·同款桌宠窗)", x, y, w, h)
-
-    # 窗口样式收尾：**完全照抄 _finalize_pet_window 的桌宠配方**（本机实证渲染正常）
-    def _notify_apply_clickthrough():
-        """去任务栏 + 不抢焦点 + 挂属主（桌宠窗同款，渲染正常的关键前提）。
-
-        注意：**不挂 WS_EX_LAYERED / WS_EX_TRANSPARENT / 不做 SetWindowRgn**——
-        LAYERED 会让 WebView2 渲染成纯黑（分层重定向面承载不了 DirectX 合成内容），
-        RGN 会破坏子窗口合成，二者都是今天黑屏的元凶。真正的"点透"由模式 O 的
-        "停在屏幕右缘留 2px" 解决（空闲窗口根本不在屏幕里）。
-        """
-        try:
-            hwnd = _u32.FindWindowW(None, "达妮娅通知")
-            if not hwnd:
-                logger.warning("[通知浮窗] 未找到窗口句柄，跳过样式收尾")
-                return
-            GWL_EXSTYLE = -20
-            GWL_HWNDPARENT = -8
-            WS_EX_TOOLWINDOW = 0x00000080
-            WS_EX_APPWINDOW = 0x00000400
-            WS_EX_NOACTIVATE = 0x08000000
-            # ① 挂属主（无属主的工具窗在 Win11 任务栏预览仍会露出）
-            try:
-                _main = _pet_find_main_hwnd()
-                if _main:
-                    _u32.SetWindowLongW(hwnd, GWL_HWNDPARENT, _main)
-            except Exception:  # noqa: BLE001
-                pass
-            # ② TOOLWINDOW + NOACTIVATE，并剥掉 pywebview 默认的 APPWINDOW
-            cur = _u32.GetWindowLongW(hwnd, GWL_EXSTYLE)
-            new = (cur | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE) & ~WS_EX_APPWINDOW
-            # ③ 常开点击穿透 WS_EX_TRANSPARENT：通知浮窗是无交互的提示层，空闲（卡片
-            #   opacity:0）时窗口不可见但常驻右上角置顶，若不穿透会挡住右上角点击。
-            #   仅改命中测试、不影响渲染（黑屏是 WS_EX_LAYERED 导致的，与此无关）。
-            new |= 0x00000020  # WS_EX_TRANSPARENT
-            if new != cur:
-                _u32.SetWindowLongW(hwnd, GWL_EXSTYLE, new)
-                logger.info("[通知浮窗] 已更新扩展样式(点击穿透/去任务栏)")
-            # ⚠️【2026-09-05 关键修复·黑/白屏根因】这里**绝不**再发 FRAMECHANGED
-            # （0x0020）的 SetWindowPos。WebView2 透明窗靠 WS_EX_LAYERED 承载 DirectX
-            # 合成，创建后再触发 WM_NCCALCSIZE/FRAMECHANGED 会让分层面重排 → 透明像素
-            # 变黑（黑屏）；合成失败时又回退白底（白屏）。桌宠窗从不做此手术故永远正常。
-            # 仅用 NOMOVE|NOSIZE|NOACTIVATE 的"空"SetWindowPos 让 exstyle 改动平稳生效，
-            # 不触发任何重合成（每 5s 兜底重挂时也无害）。
-            _u32.SetWindowPos(hwnd, 0, 0, 0, 0, 0,
-                              0x0001 | 0x0004 | 0x0010)
-            # ④ WebView2 子控件也要点透：不透明(O)模式下整窗无透明像素，仅靠顶层窗
-            # 的 WS_EX_TRANSPARENT 不够——命中测试落在 WebView2 子控件上仍会吃点击。
-            # 子控件也挂 WS_EX_TRANSPARENT 才整窗点透（仅改命中测试，不影响 DirectX 渲染）。
-            # ④ WebView2 子控件点透：不透明(O)模式下整窗无透明像素，仅靠顶层窗
-            # WS_EX_TRANSPARENT 不够——命中测试落在 WebView2 子 HWND 上仍吃点击。
-            # ⚠️【2026-09-05 启动卡死根因修复】原实现在循环里同步读
-            # _child.CoreWebView2（托管 COM 属性）；本函数并非总在 GUI 线程被调用，
-            # 一旦从主加载流程(非 GUI 线程)调用，该读取触发 STA 同步封送 → 与 GUI
-            # 线程互等 → 进程 hang（日志实证：停于「样式收尾完成」后再无输出）。
-            # 改为：纯 Win32 EnumChildWindows 枚举原生子 HWND（零 COM）直接加
-            # WS_EX_TRANSPARENT，整体经 BeginInvoke 投递 GUI 线程异步执行——既不读
-            # COM、也不阻塞启动，且点透比原"只判 CoreWebView2 子控件"更彻底。
-            try:
-                _nf = getattr(win, "native", None)
-
-                def _apply_child_transparent():  # noqa: ANN001
-                    """遍历整棵 HWND 树（含 WebView2 内部 Chromium 子窗）挂 WS_EX_TRANSPARENT。
-
-                    ⚠️ 单层 EnumChildWindows 只覆盖 WebView2 控件本身，漏掉 Chromium 真正
-                    渲染/吃点击的内层 HWND → 卡片区域仍挡点击（用户"右上角一块点不透"真凶）。
-                    改为递归遍历（GetWindow GW_CHILD→GW_HWNDNEXT）整棵树，逐窗挂穿透。
-                    """
-                    try:
-                        from ctypes import wintypes as _wt
-                        _hw = _u32.FindWindowW(None, "达妮娅通知")
-                        if not _hw:
-                            return
-                        _TR = 0x00000020
-                        _GWL_EXSTYLE = -20
-                        try:
-                            _u32.GetWindowW.restype = _wt.HWND
-                            _u32.GetWindowW.argtypes = [_wt.HWND, _ct.c_int]
-                        except Exception:  # noqa: BLE001
-                            pass
-                        _GW_CHILD, _GW_HWNDNEXT = 5, 2
-
-                        def _walk(h):  # noqa: ANN001
-                            try:
-                                _cex = _u32.GetWindowLongW(h, _GWL_EXSTYLE)
-                                if not (_cex & _TR):
-                                    _u32.SetWindowLongW(h, _GWL_EXSTYLE, _cex | _TR)
-                            except Exception:  # noqa: BLE001
-                                pass
-                            _ch = _u32.GetWindowW(h, _GW_CHILD)
-                            while _ch:
-                                _walk(_ch)
-                                _ch = _u32.GetWindowW(_ch, _GW_HWNDNEXT)
-
-                        _walk(_hw)
-                        logger.info("[通知浮窗] 已对整棵窗口树挂点击穿透（含 WebView2 内层子窗）")
-                    except Exception as _e2:  # noqa: BLE001
-                        logger.warning("[通知浮窗] 子控件点透失败（退回顶层点透）: %s", _e2)
-
-                if _nf is not None:
-                    from System import Action as _Act
-                    _nf.BeginInvoke(_Act(_apply_child_transparent))
-                else:
-                    _apply_child_transparent()
-            except Exception as _e:  # noqa: BLE001
-                logger.warning("[通知浮窗] WebView2 子控件点透失败（退回顶层点透）: %s", _e)
-        except Exception as e:  # noqa: BLE001
-            logger.warning("[通知浮窗] 样式收尾失败: %s", e)
-
-    def _install_gui_heartbeat():
-        """在 GUI 线程建 WinForms.Timer 作 v3 探针心跳源（每 2s 刷新 mode_notify._last_poll）。
-
-        关键：Timer 由 WinForms 消息泵直接驱动，不依赖 notify 窗的 JS setTimeout。
-        WebView2 对后台/被遮挡的窗会节流 JS 计时器 → 曾导致 poll() 心跳假中断、误报
-        「窗口未响应」。Timer 不受节流影响：只要 GUI 线程活着就持续 Tick；一旦真卡死，
-        Tick 停 → 探针才准确报死。失败则优雅退回 notify 窗 poll 心跳（现有行为）。
-        """
-        try:
-            import clr  # pywebview 已加载 pythonnet
-            clr.AddReference("System.Windows.Forms")
-            from System.Windows.Forms import Timer as _WinTimer
-            from . import mode_notify
-            import time as _tmod
-
-            _last_mon = [None]
-            _beat_n = [0]
-            def _beat(s, e):
-                mode_notify._last_poll[0] = _tmod.time()
-                _beat_n[0] += 1
-                # 🔑 兜底推送：页面内 setTimeout 可能被 WebView2 对非活动/屏外窗节流，
-                # 导致 poll 不跑、弹窗不显示。由 GUI 线程 Timer 主动注入 __notifyFlush
-                # （ExecuteScriptAsync 不受页面节流影响），确保命令必送达。仅当队列非空时调用。
-                try:
-                    if getattr(mode_notify, "_cmd_q", None):
-                        _n = len(getattr(mode_notify, "_cmd_q", None))
-                        win.evaluate_js("window.__notifyFlush && window.__notifyFlush()")
-                        logger.info("[通知浮窗] GUI 心跳兜底推送 %d 条命令（绕开页面节流）", _n)
-                except Exception as _e:  # noqa: BLE001
-                    logger.warning("[通知浮窗] 兜底推送失败: %s", _e)
-                # 🔧【2026-09-05 修·窗口复位到(0,0)】WebView2 初始化会把 transparent 窗
-                # 复位到 (0,0) 左上角（日志实证：启动钉位 3204 后 1s 自检又变 (0,0)）。
-                # 每拍自愈：确认窗口钉在右上角 x_in，偏离即重设（不日志刷屏）。
-                try:
-                    _chk = _u32.FindWindowW(None, "达妮娅通知")
-                    if _chk:
-                        _rct = _wt.RECT()
-                        if _u32.GetWindowRect(_chk, _ct.byref(_rct)):
-                            _, _, _, _wpx, _hpx, _xin, _ypx, _ = _notify_geom()
-                            if abs(_rct.left - _xin) > 4 or abs(_rct.top - _ypx) > 4:
-                                _u32.SetWindowPos(_chk, -1, _xin, _ypx, _wpx, _hpx, 0x0010)
-                                logger.info("[通知浮窗] 心跳纠正窗口位置到右上角 (x=%d)", _xin)
-                except Exception:  # noqa: BLE001
-                    pass
-                # 🔍 每 10 拍（约 5s）弹窗可见性自检：窗口实际矩形 + 卡片类名/透明度。
-                # 用于把"命令已送达但不显示"精确定位到层：rect 不对=窗口位置问题；
-                # rect 正常但卡片无 visible/op=0=DOM 渲染层问题。
-                if _beat_n[0] % 10 == 0:
-                    _rc = None
-                    try:
-                        import win32gui as _wg
-                        _hw = _wg.FindWindow(None, "达妮娅通知")
-                        if _hw:
-                            _rc = _wg.GetWindowRect(_hw)
-                    except Exception:  # noqa: BLE001
-                        pass
-                    try:
-                        _st = win.evaluate_js(
-                            "(function(){var c=document.getElementById('card');"
-                            "if(!c)return 'no-card';return c.className+'|op='+"
-                            "getComputedStyle(c).opacity})()")
-                        logger.info("[通知浮窗-自检] rect=%s 卡片=%s", _rc, _st)
-                    except Exception as _e2:  # noqa: BLE001
-                        logger.info("[通知浮窗-自检] 读取失败: %s rect=%s", _e2, _rc)
-                    # 兜底重挂点击穿透：WebView2 子控件就绪晚/被重置时保证仍点透
-                    try:
-                        _notify_apply_clickthrough()
-                    except Exception:  # noqa: BLE001
-                        pass
-                # 【2026-09-05 修复·0.1s 闪现】移除原先的 win.move 跟随前台显示器逻辑：
-                # 它每次切屏/激活都重定位窗口（且坐标换算偶发推到屏外），叠加 events.shown
-                # 重复触发 _notify_selfcheck 把窗口重新泊回右缘外，导致正在显示的卡片被"移出
-                # 屏外"→ 用户看到的就是"弹出又立刻跑路"。多屏跟屏改由 mode_notify 在
-                # 事件触发时调 _notify_show_in() 一次性泊入前台屏，不再持续重定位。
-
-
-            # 【已废弃 2026-09-04 16:40】Timer 建在 events.shown 派发线程（无消息泵）
-            # → 永不 Tick（日志实证：运行 4.5 分钟自检 0 条）。心跳/弹窗兜底推送/
-            # 自检/跟屏已并入 GUI 探针 v4（win.native.BeginInvoke 投递真正 GUI 线程）。
-            logger.info("[GUI探针] 旧心跳 Timer 已废弃（建错线程永不 Tick）；功能并入探针 v4")
-        except Exception as e:  # noqa: BLE001
-            logger.warning("[GUI探针] 心跳 Timer 安装失败（退回 notify 窗 poll 心跳）: %s", e)
-
-    def _notify_selfcheck():
-        # 【2026-09-05 修复·0.1s 闪现】只执行一次：曾同时绑 loaded+shown，shown 在窗口被
-        # 激活/重定位时重复触发 → 把窗口重新泊回右缘外（2px），正在显示的卡片瞬间移出屏外。
-        # 加一次性守卫，且只绑 loaded，避免重复泊位。
-        if getattr(_notify_selfcheck, "_done", False):
-            return
-        _notify_selfcheck._done = True
-        try:
-            v = win.evaluate_js(
-                "(function(){try{return (document.readyState||'')+'|NotifyAPI='"
-                "+(typeof window.NotifyAPI)+'|body='+(document.body?"
-                "document.body.innerHTML.length:-1)}catch(e){return 'ERR:'+e}})()")
-            logger.info("[渲染自检-通知浮窗] %s", v)
-        except Exception as e:  # noqa: BLE001
-            logger.warning("[渲染自检-通知浮窗] 读取失败: %s", e)
-        # 🔑 注册通知窗的 CoreWebView2 控件（此前从未注册 → GUI 探针的
-        # ExecuteScriptAsync 注入/自检通道一直取不到控件、从未生效）。
-        try:
-            if win.uid not in STATE.wv2_controls:
-                _c = None
-                for _child in win.native.Controls:
-                    if getattr(_child, "CoreWebView2", None) is not None:
-                        _c = _child
-                        break
-                if _c is not None:
-                    STATE.wv2_controls[win.uid] = _c
-                    logger.info("[通知浮窗] 已注册 CoreWebView2 控件（uid=%s）", win.uid)
-                else:
-                    logger.warning("[通知浮窗] 未在 native.Controls 中找到 WebView2 控件")
-        except Exception:  # noqa: BLE001
-            logger.warning("[通知浮窗] CoreWebView2 注册失败", exc_info=True)
-        # 🔑【用户设计·固定透明可穿透窗】窗口启动即钉到右上角可见位并**永久固定**：
-        #   卡片用 CSS 显隐/滑入滑出，窗口本身永不移动（不泊屏外、不随事件重定位）。
-        #   这样 WebView2 渲染器始终活跃(窗口可见) → 页面 setInterval poll 不被节流 →
-        #   弹窗 show 命令必达；空闲时卡片 opacity/translateX 隐藏 → 肉眼看不见；
-        #   WS_EX_TRANSPARENT → 点击穿透（空闲/弹窗时都不挡点击）。
-        #   用重试 FindWindowW（窗口刚创建时 WinForms 控件树未就绪，直接找会失败 →
-        #   卡在 pywebview 默认的 (0,0) 左上角，即"左上角黑块"回归根因）。
-        try:
-            _hw2 = None
-            for _ in range(40):
-                _hw2 = _u32.FindWindowW(None, "达妮娅通知")
-                if _hw2:
-                    break
-                time.sleep(0.025)
-            if _hw2:
-                _, _, _, _wpx, _hpx, _xin, _ypx, _ = _notify_geom()
-                # 0x0010(NOACTIVATE)：保持 TOPMOST（hw=-1）且不偷焦点。
-                _u32.SetWindowPos(_hw2, -1, _xin, _ypx, _wpx, _hpx, 0x0010)
-                logger.info("[通知浮窗] 已钉到右上角固定位 (x=%d) %dx%d (scale=%.2f)",
-                            _xin, _wpx, _hpx, _wpx / 400.0)
-            else:
-                logger.warning("[通知浮窗] 启动钉位失败：重试后仍找不到窗口句柄")
-        except Exception:  # noqa: BLE001
-            logger.warning("[通知浮窗] 物理钉位失败", exc_info=True)
-        _notify_apply_clickthrough()
-        # 【23:20 定版·关键】**窗口必须从出生起就保持可见，且永不 hide/屏外停放**：
-        # WebView2 在不可见状态下会停止产帧/丢弃合成表面，之后每次显示都是黑/白交替
-        #（"有时黑有时白"的元凶）。桌宠窗从出生可见、从不做窗口手术，故始终正常。
-        #   模式 T：常显右上角，空闲时页面卡片透明 → 肉眼完全看不见；
-        #   模式 O：钉位后立刻停到屏幕最右缘（只露 2px，仍在屏内 → 合成器存活）。
-        # 【2026-09-05 修复·点击占位】空闲（无卡片）时两种模式都泊到右缘外只露 2px，
-        # 彻底不挡右上角点击；事件触发时由 mode_notify 调 _notify_show_in 泊入可见位。
-        try:
-            _notify_park_out()
-            logger.info("[通知浮窗] 初始泊到右缘外（空闲不挡点击）")
-        except Exception:  # noqa: BLE001
-            logger.warning("[通知浮窗] 初始泊出失败", exc_info=True)
-        # 装 GUI 线程心跳（本回调运行于 GUI 线程，Timer 创建即正确线程）
-        _install_gui_heartbeat()
-    try:
-        win.events.loaded += _notify_selfcheck
-    except Exception:  # noqa: BLE001
-        logger.warning("[渲染自检-通知浮窗] 事件注册失败")
-    return win
 
 
 def run_webview(debug: bool = False,
