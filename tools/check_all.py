@@ -555,6 +555,9 @@ GATES: list[tuple[str, str, list[str], bool]] = [
     # 【2026-11-07】LLM 收尾失败时给本地事实汇报（不是把原始 429 丢给用户）
     ("LLM失败本地汇报", PY_VENV, ["tools/check_partial_reply.py"], False),
     ("LLM失败本地汇报变异", PY_VENV, ["tools/_qc_partial_reply_mutation.py"], True),
+    # 【2026-11-08】并发会话修的 course_recorder 主循环线程自死锁回归。
+    # 合并本地 5 提交时漏登记，check_gate_registry.py 判红后补进 GATES。
+    ("网课录制主循环自死锁回归", PY_VENV, ["src/tests/test_course_recorder_deadlock.py"], False),
 ]
 
 
