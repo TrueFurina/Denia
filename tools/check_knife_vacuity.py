@@ -165,6 +165,11 @@ PAIRS = [
      "语音后端自检"),
     ("_qc_workspace_mutation.py", "tools/test_workspace_guard.py", "dev",
      "工作区守卫"),
+    # ---- dev（第二十六轮补：两条从 EXCUSED 挪进来的）----
+    ("_qc_presence_mutation.py", "test_presence_controls.py", "dev",
+     "在场感增强：缺 pynput 时兜底校验放行拼错的键名 —— 修好后起点第一次是绿的"),
+    ("_qc_tray_switch_mutation.py", "test_tray_switch.py", "dev",
+     "托盘切换：判定不再依赖 gitignore 里的 config.yaml"),
 ]
 
 # 声明了判定文件、但**本工具无法判定**的刀。每条都必须写清"为什么"，空理由等于没写。
@@ -176,14 +181,16 @@ EXCUSED = {
         "判定 tools/test_bundled_assets.py 用 `git ls-files` 判「在盘上但没进 git」；"
         "本工具在仓副本里跑，而 .git 被 SKIP_DIRS 排除 → 判定恒红（10 FAIL），无法判定。"
         "要验它得让副本带上 .git，代价是每对多拷几十 MB。",
-    "_qc_tray_switch_mutation.py":
-        "判定要 config.yaml（在 .gitignore 里，源码包首跑由 CI 的 prepare 步骤生成）；"
-        "本机与仓副本都没有它 → FileNotFoundError，无法判定。"
-        "补齐办法：跑之前先 `cp config.release.yaml config.yaml`。",
-    "_qc_presence_mutation.py":
-        "判定在**干净树上就是红的**（33 PASS / 1 FAIL：`非法的不影响其它绑定 ← []`，"
-        "全局热键注册在无桌面会话时返回空表）→ 恒红的判定让每把刀都变红，无法判定。"
-        "**这条本身是待查项**：要么热键后端在无人值守环境该降级，要么这条断言该带条件。",
+    # 【2026-11-08 删掉两条过时的】`_qc_tray_switch_mutation` 与 `_qc_presence_mutation`
+    # 原来在这里，理由是"判定恒红/缺文件 → 无法判定"。第二十六轮查出**两条理由都不是
+    # 产品缺陷**，而是判定自己依赖了不该依赖的东西：
+    #   · tray：判定要 `config.yaml`，而它在 .gitignore 里 → 新克隆必崩。
+    #     改成缺文件时用出厂模板 `config.release.yaml` 当夹具。
+    #   · presence：判定要 `pynput` 的 parser 来拒掉拼错的键名，而本机没装 pynput
+    #     （`requirements.txt:53` 声明了）→ 兜底只做形状校验 → `<nosuchkey>` 被放行。
+    #     **原来记的原因是错的**（写成"全局热键在无桌面会话时返回空表"，跟 pynput 无关）。
+    #     修法是让兜底自己认识键名（`_fallback_ok` + 白名单），于是不再依赖装没装依赖。
+    # 两条都挪进 `PAIRS` 了 —— 能判的就不该留在"无法判定"里。
 }
 
 # 【坑①】桩必须 import-safe：顶层 sys.exit 会在 import 时把套件带走，exit 0 假绿。
