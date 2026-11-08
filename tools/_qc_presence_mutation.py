@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""「在场感增强」的变异验证：六刀，刀刀必须被抓住。
+"""「在场感增强」的变异验证：七刀，刀刀必须被抓住。
 
 跑法：.venv/Scripts/python.exe -u tools/_qc_presence_mutation.py
 
@@ -10,6 +10,7 @@
   D 非法组合键不再校验（写错就吞掉热键）
   E 重复组合键不再去重（后一个覆盖前一个）
   F 配置关闭也被无视（用户关不掉）
+  G 没装 pynput 时兜底校验放行未知键名（拼错的键静默进映射表，按下去什么都不发生）
 """
 import hashlib
 import os
@@ -55,7 +56,15 @@ def _run_test():
 def _baseline_green() -> bool:
     r = _run_test()
     out = (r.stdout or "") + (r.stderr or "")
-    return r.returncode == 0 and "Traceback" not in out
+    # 【2026-11-08 修·这一行比判定本身还严】原来要求"输出里没有 Traceback"。
+    # 但**判定自己故意打出来的** Traceback 也算——比如 `test_presence_controls.py`
+    # 的 A3 就故意让回调抛异常，再验证 listener 没被弄死，那一段会经 logger 打到
+    # stderr。于是测试 41 PASS / 0 FAIL / exit 0，本函数却判"起点不是绿的"，
+    # 整把刀一进来就自爆，而报错信息把矛头指向**产品**。
+    # 判据改成"退出码 0 且没有 FAIL 行"：崩了的判定一定非零退出，
+    # Traceback 本身不能证明任何事。同一轮 `_judged()` 也是这么改的。
+    return r.returncode == 0 and not any(l.strip().startswith("FAIL")
+                                         for l in out.splitlines())
 
 
 
@@ -87,6 +96,17 @@ MUTS = [
     (P_HOT, "F 配置关了也照起热键",
      E('    if not isinstance(section, dict) or not section.get("hotkeys_enabled", False):\n'),
      E("    if False:\n")),
+
+    # 【2026-11-08 加·G】兜底校验放行未知键名。这一刀打的是"没装 pynput"那条路：
+    # 它坏了的症状是**热键绑不上还一声不响**（用户以为绑上了，按下去什么都不发生）。
+    # 之所以现在能判到，是因为判定文件直接调 `_fallback_ok` 这个纯函数，
+    # 而不是隔着 `_validate`（装了 pynput 时那条路根本不走）。
+    (P_HOT, "G 兜底校验放行未知键名（拼错的键静默进映射表）",
+     E("        if part.startswith(\"<\") and part.endswith(\">\"):\n"
+       "            if part[1:-1].strip().lower() not in _NAMED_KEYS:\n"
+       "                return False\n"),
+     E("        if False:\n"
+       "            return False\n")),
 ]
 
 
@@ -130,7 +150,7 @@ def main() -> int:
     print("\n还原字节一致：%s" % ok)
     if not ok:
         bad += 1
-    print("六刀全红" if bad == 0 else "有 %d 处异常" % bad)
+    print("%d 刀全红" % len(MUTS) if bad == 0 else "有 %d 处异常" % bad)
     return 1 if bad else 0
 
 
