@@ -1592,8 +1592,23 @@ def _asyncio_thread_target(runtime: RuntimeHolder, cfg: Config) -> None:
         # 冻结。注册 2s 一次存活心跳 + 独立 daemon 线程监控，卡死超 30s 自动 dump
         # 全栈，精确定位卡在哪一行（faulthandler 打印阻塞线程的 Python 调用链）。
         import faulthandler as _fh
-        _fh.enable()
-        import time as _t, threading as _th
+        import time as _t, threading as _th, sys as _sys, logging as _logging
+        # 【2026-11-08 诊断加固】把看门狗 dump 落到 run 日志文件。
+        # ⚠️ 关键坑：faulthandler.dump_traceback() 的 file 参数默认是 sys.stderr
+        # （GUI 模式下直接丢失），【不】沿用 enable(file=...) 的设置。所以这里必须
+        # 【显式】取出 run 日志的 FileHandler 对象，在调用时传给 dump_traceback(file=...)。
+        # faulthandler 只认有 fileno 的真实文件对象（StringIO 不行）。找不到就保持 None→stderr。
+        # 另：此处【不要】再调 _fh.enable()——根 logger 已在启动处（崩溃守卫）把信号转储
+        # 设到 logs/crash_<ts>.log，重复 enable() 会把它覆盖回 stderr，丢失崩溃现场。
+        loop_dump_handler = None
+        for _lg in (_logging.getLogger(), _logging.getLogger("__main__")):
+            for _h in _lg.handlers:
+                if isinstance(_h, _logging.FileHandler) and getattr(_h, "stream", None) is not None:
+                    loop_dump_handler = _h
+                    break
+            else:
+                continue
+            break
         loop._loop_tick = _t.time()
 
         def _loop_tick():
@@ -1608,7 +1623,29 @@ def _asyncio_thread_target(runtime: RuntimeHolder, cfg: Config) -> None:
                 if _lag > 30:
                     logger.error("【主循环看门狗】asyncio 主循环疑似卡死 %.1fs，"
                                  "dump 调用栈定位卡死行：", _lag)
-                    _fh.dump_traceback()  # 所有线程 C 级栈（含采样/executor 线程）
+                    # 【2026-11-08 诊断加固】dump 全线程 C+Python 栈。显式传 run 日志的
+                    # FileHandler.stream，确保栈进日志而非丢失的 stderr（文件名随轮转刷新）。
+                    try:
+                        _fh.dump_traceback(all_threads=True,
+                                           file=getattr(loop_dump_handler, "stream", None))
+                    except Exception:  # noqa: BLE001
+                        # 极少数情况（日志被轮转关闭）回退 stderr，不阻断诊断
+                        try:
+                            _fh.dump_traceback(all_threads=True)
+                        except Exception:  # noqa: BLE001
+                            pass
+                    # 单独高亮【循环线程阻塞瞬间的那一帧】：sys._current_frames 直接取阻塞点，
+                    # 比 asyncio.all_tasks 更直接（后者只能打 parked 的任务帧，打不出真阻塞行）。
+                    _tid = getattr(loop, "_loop_thread_ident", None)
+                    if _tid is not None:
+                        _fr = _sys._current_frames().get(_tid)
+                        _d = 0
+                        while _fr is not None and _d < 40:
+                            logger.error("  LOOP %s:%d in %s",
+                                         _fr.f_code.co_filename, _fr.f_lineno,
+                                         _fr.f_code.co_name)
+                            _fr = _fr.f_back
+                            _d += 1
                     try:
                         for _tk in asyncio.all_tasks(loop):
                             logger.error("  TASK=%s done=%s", _tk.get_name(), _tk.done())
@@ -1623,6 +1660,9 @@ def _asyncio_thread_target(runtime: RuntimeHolder, cfg: Config) -> None:
         if ui is not None:
             threading.Thread(target=_console_input_loop, args=(ui, runtime),
                              daemon=True, name="console_input").start()
+
+        # 记录循环线程 ident，供看门狗精准定位阻塞帧（sys._current_frames 取阻塞瞬间那一帧）
+        loop._loop_thread_ident = _th.current_thread().ident
 
         # 保活：run_forever()，直到 stop_loop 被调用
         try:
