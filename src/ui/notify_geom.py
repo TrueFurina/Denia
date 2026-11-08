@@ -179,20 +179,8 @@ def _notify_park_out():
     会让 WebView2 节流页面轮询 → show 命令送不到 → 弹窗不显示）。
     """
     return
-    try:
-        rc = None
-        try:
-            import win32api
-            hw = _u32.FindWindowW(None, "达妮娅通知")
-            if hw:
-                hmon = win32api.MonitorFromWindow(hw, 2)
-                if hmon:
-                    rc = win32api.GetMonitorInfo(hmon)["Monitor"]
-        except Exception:  # noqa: BLE001
-            rc = None
-        if rc is None:
-            rc = (0, 0, _u32.GetSystemMetrics(0), _u32.GetSystemMetrics(1))
-        _, y_in, w, h, x_out = _notify_rects_for_monitor(rc)
-        _notify_set_pos(x_out, y_in, w, h)
-    except Exception as _e:  # noqa: BLE001
-        logger.warning("[通知浮窗] 泊出右缘失败: %s", _e)
+    # 【2026-11-08 墓碑】原实现：取窗口当前所在显示器 → 算右缘外坐标 → _notify_set_pos()。
+    # 上面那行裸 `return` 是 2026-09-05 定版时加的（「两种模式都 no-op」），加完之后
+    # 这 17 行就再没执行过。本函数全仓**零调用点**（只有 __all__ 与 src/ui/webapp.py
+    # 的导入提到它）。签名与 no-op 行为保留：notify_geom 模块仍被 webapp.py 使用
+    # （_notify_show_in / _notify_current_monitor_rect / _notify_geom 都在用）。
