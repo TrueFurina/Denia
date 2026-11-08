@@ -137,3 +137,25 @@ jobs:
         run: python tools/check_finally_jump.py --all src tools main.py launch_companion.py run_webui.py
       - name: finally-jump mutation (eight knives)
         run: python tools/_qc_finally_jump_mutation.py
+      # 【2026-11-08 补接线】下面六步是 PR #9 / #12 / #13 里**明确推迟**的接线：
+      # 三个 PR 都要往本 job 末尾追加，同时追加必然互相冲突，所以各自在 body 里留了
+      # 待办。三道闸门现在都已合入 master，且在本机实测全绿、纯 stdlib、总耗时 17s，
+      # 符合本 job 的收录口径（不需要 .venv / 音频设备 / 桌面会话）。
+      #
+      # 为什么必须接：这三道闸门守的都是「代码看起来对、其实没生效」——
+      #   · unreachable      ：必返回语句之后还排着代码（#7 删了 329 行，全仓曾 5 处）
+      #   · constant-cond    ：`if False:` / `a or True` 这类恒真恒假条件（全仓曾 10 处）
+      #   · gate-exit        ：登记在 GATES 里却永远 exit 0 的闸门（曾 3 处，永远绿）
+      # 只登记进 GATES 而 CI 不跑，等于「本机才守」；接进 CI 才挡得住别人合进来。
+      - name: unreachable judgement
+        run: python tools/check_unreachable.py
+      - name: unreachable mutation (six knives)
+        run: python tools/_qc_unreachable_mutation.py
+      - name: constant-cond judgement
+        run: python tools/check_constant_cond.py --all src tools main.py launch_companion.py run_webui.py
+      - name: constant-cond mutation (thirteen knives)
+        run: python tools/_qc_constant_cond_mutation.py
+      - name: gate exit judgement
+        run: python tools/check_gate_exit.py
+      - name: gate exit mutation (fifteen knives)
+        run: python tools/_qc_gate_exit_mutation.py
