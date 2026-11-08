@@ -38,8 +38,19 @@ import sys
 import tempfile
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-if ROOT not in sys.path:
-    sys.path.insert(0, ROOT)
+# 【2026-11-08 修·import 路径】这里原来只加了 ROOT，而 `check_bridge_methods` 在
+# tools/ 里、不在 ROOT 里 —— 它靠的是「解释器会把脚本所在目录塞进 sys.path[0]」。
+# 正常 CPython / venv 确实会塞，所以一直没暴露；**内置运行时不会**：
+# 交付包自带的 `python/` 是可嵌入版（embeddable），`python312._pth` 一旦存在，
+# 解释器就**不再**把脚本目录加进 sys.path。于是同一个文件：
+#     python  tools/check_web_js_syntax.py  → ModuleNotFoundError: check_bridge_methods
+#     .venv/Scripts/python.exe tools/...     → 正常
+# 这不是本文件独有的写法问题，而是本目录里**唯一**没把 tools/ 显式加进去的那个：
+# check_api_wiring / check_bridge_guards / check_broadcast_types /
+# check_runtime_audio_guard / check_site_counts 五个都加了。补齐即可。
+for _p in (ROOT, os.path.dirname(os.path.abspath(__file__))):
+    if _p not in sys.path:
+        sys.path.insert(0, _p)
 
 # 排除规则只有一份真身（见 check_bridge_methods 里那两个函数的说明）
 from check_bridge_methods import is_draft_html, is_draft_js  # noqa: E402
