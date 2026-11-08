@@ -139,6 +139,7 @@
 | `PR#5` | 待合并 | chore | **新增交付包发布前闸门 `tools/check_delivery.py`**：本机交付包无 `.git`，改动不能走 git 闭环，需要独立发布前闸门防漏件。七层判据：① 36 个必备文件逐条点名（含来源注释）；② 6 棵资源子树文件数下限；③ AST 扫 `src/**/*.py` 的 145 个 `src.*` 导入目标逐个解析；④ 文件实体 PE `MZ` / HTML 结构 / RIFF / 非空文本 / YAML 映射五类魔数；⑤ 依赖完整性——`site-packages/*.dist-info` 对 `requirements.txt` 核心 12 项 + 重要 13 项；⑥ 出厂模板 `force_first_run=true` + `app.version` 一致 + 38 个 api_key 无明文；⑦ 临时目录复验「误删 config.yaml 能自愈」。可选 `--smoke` 真跑包内解释器做 import 冒烟。 | 32 个变异场景全红（含 `--root` 端到端）+ 4 个按预期 WARN 不误报；交付包实测 8 PASS / 1 WARN / 0 FAIL |
 | `PR#6` | 待合并 | fix | **main.py 解释器守卫——拦「用错 python 跑 --doctor」的误导性 FAIL**：交付包用 `python/python.exe`（isolated 模式）跑 doctor 得 16 PASS / 3 WARN / 0 FAIL；用系统 python 跑得 10 PASS / 5 WARN / 4 FAIL（核心依赖缺失 / 语音坏了 / 唤醒词退化），全是「该解释器没装包依赖」的假象。包内 python 不在系统 PATH，用户极易直接 `python main.py --doctor` 触发假象 → 误判「包是坏的」。改动：`main.py` 的 `--doctor` 截获块加前置检测，交付包存在但当前解释器不是它时打醒目提示（列假象 + 给正确重跑命令），**不阻止运行、不改退出码**。源码仓无 `python/` 目录 → 触发条件恒假 → 守卫整体跳过，零干扰。 | 交付包双向实测：系统 python → 提示 + 4 个误导 FAIL；包内 python → 无提示、干净 16-3-0；`tools/check_delivery.py --smoke` 8 PASS / 0 FAIL 无回归 |
 | `PR#7` | 待合并 | fix | **create_notify_window 329 行不可达代码墓碑**：`src/ui/main_window.py` 的 `create_notify_window()` 里 try 和 except 两条分支都 `return`，其后的 329 行 WebView2 旧实现永远执行不到——死代码占位、误导维护以为那是活跃路径。删掉 return 之后的整段死代码，改用新增回归 `test_notify_dead_path.py` 守住「create_notify_window 真正调到 native_notify.ensure_notify_window()」+ 变异刀 4 刀（try 提前 return / except 吞掉 / 删掉调native_notify / 改坏 return 值），全红 + 还原全绿；登记进 `check_all.py` 门禁。 | 变异 4 刀全红；还原后回归 12/12 全绿；check_all 登记对账 ✓ |
+| `PR#9` | 待合并 | fix | **4 处不可达代码清理 + 新增「必返回之后不许有语句」闸门**：`create_notify_window` 的 329 行死代码（#7）暴露出一个类目——必返回语句之后还有语句，编译不报错、测试不报错、跑起来也看不出来，只有人眼逐函数读才发现，所以能潜伏两个月。本轮全仓扫出并清理 4 处：`proactive.py` 一条「已停止」日志写在 try/after 全 return 之后→从未打印，移进 finally 才真会在每条退出路径打印；`api_pet.py` 一份 default_responses 兜底字典，上面 if/else 两分支都 return→永远到不了；`notify_geom.py` 17 行旧实现，前面一行裸 return（2026-09-05 定版加的）后全部死代码；`webapp.py` 1 行同类。新增闸门 `tools/check_unreachable.py`（AST 判「必返回后不许有语句」，`unreachable-ok` 注释豁免故意不可达），+218 行变异刀 `tools/_qc_unreachable_mutation.py` 证明判据有牙齿，登记进 `check_all.py`。 | 新闸门全绿（4 处清理 + 豁免标记认得）；变异刀 4/4 全红 + 还原全绿；check_all 登记对账 ✓；CI 四腿全绿 |
 
 > **\* 夹带说明（必须留档）**：12:10 / 12:2x 两行的内容实际随 `fa86a4c`（E1 开机自启）
 > 入库——13:14 的并发提交把质检工作流未提交的改动一起提交了，未按工作流拆分。
@@ -2158,6 +2159,24 @@ G: 盘在开发机上早就没了，只是没人去看那张卡。
 两刀变异各连跑 2 次，4/4 全抓。
 
 ---
+#### PR #9 · 4 处不可达代码清理 + 新增「必返回之后不许有语句」闸门
+
+**问题**：`create_notify_window` 的 329 行死代码（#7）暴露出一个类目——**必返回语句之后还有语句**。
+编译不报错、测试不报错、跑起来也看不出来，只有人眼逐函数读才可能发现，所以它能潜伏两个月
+（里面还 import 了一个根本不存在的 `mode_notify.NotifyJsBridge`）。
+
+**清理 4 处**：
+- `proactive.py`：一条「已停止」日志写在 try/except/finally 全 return 之后 → 从未打印。移进 finally 才真会在每条退出路径打印（finally 本身不 return，不影响原返回值）
+- `api_pet.py`：一份 default_responses 兜底字典 + return，上面 if/else 两分支都 return → 永远到不了。删除（`random.choice(pool)` 已覆盖「池子非空」全部情况）
+- `notify_geom.py`：17 行旧实现，前面一行裸 return（2026-09-05 定版加的）后全部死代码。本函数全仓零调用点，签名与 no-op 行为保留
+- `webapp.py`：1 行同类
+
+**新增闸门** `tools/check_unreachable.py`（180 行）：AST 判「必返回后不许有语句」，用 `unreachable-ok`
+注释豁免故意不可达（不用行号白名单——行号会漂移）。+218 行变异刀 `tools/_qc_unreachable_mutation.py`
+证明判据有牙齿。登记进 `tools/check_all.py`。
+
+**验证**：新闸门全绿（4 处清理 + 豁免标记认得）；变异刀 4/4 全红 + 还原全绿；
+`check_all.py` 登记对账 ✓；CI 四腿全绿。
 
 ### 2026-10-22 · 切角色后界面名字不跟随：一条投递通道是死的分支
 
