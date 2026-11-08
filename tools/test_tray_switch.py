@@ -115,7 +115,18 @@ def main() -> int:
 
     tmp = tempfile.mkdtemp(prefix="tray_sw_")
     cfg_copy = os.path.join(tmp, "config.yaml")
-    shutil.copy2(os.path.join(ROOT, "config.yaml"), cfg_copy)
+    # 【2026-11-08 修·判据依赖 gitignore 里的运行时文件】原来一律 copy `ROOT/config.yaml`，
+    # 而 `config.yaml` 在 `.gitignore` 里（它由首启/CI 的 prepare 步骤生成）。
+    # **新克隆的树上没有这个文件** → FileNotFoundError → 整套自测一进来就崩，
+    # 这道登记在 check_all 里的门对每个新人恒红，而红的原因和 `toggle_mute` 毫无关系
+    # （空变异体检里 `_qc_tray_switch_mutation` 一直是 ERROR，就是这么来的）。
+    # 本文件测的是 `toggle_mute` 的状态机，不测"用户的配置长什么样"——
+    # 所以运行时配置不在时，用**在 git 里的出厂模板**当夹具，并在输出里说明。
+    src_cfg = os.path.join(ROOT, "config.yaml")
+    if not os.path.isfile(src_cfg):
+        src_cfg = os.path.join(ROOT, "config.release.yaml")
+        print("  （本机没有 config.yaml，用出厂模板 config.release.yaml 当夹具）")
+    shutil.copy2(src_cfg, cfg_copy)
     api = CharacterAPI(cfg_copy)
     api._cfg = load_config(cfg_copy)
     v = api._cfg.raw.setdefault("voice", {})
