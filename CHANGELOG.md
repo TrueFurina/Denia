@@ -13,6 +13,7 @@
 
 | commit | 时间 | 类型 | 一句话 | 验证 |
 |---|---|---|---|---|
+| `PR#18c` | 17:1x | fix | **「缺环境」被报成「判据失败」：四个红点，四个都不是产品坏了**：① `A5环境探针` 扫 `logs/launch_run*.log`，而 `logs/` 在 `.gitignore` 里 → **新克隆的树上恒红**；改为三态（有样本逐条判 / 有日志扫出 0 份=FAIL / 没日志=WARN+exit 77），并加 `--root` 让判据能被夹具驱动。② `_qc_a5_probe_mutation` 起点恒红 → 六把刀"全红"白送；改用 tempfile 合成日志当夹具 + `_judged()` + 三把限位（77 / FAIL / 0）。③ `_qc_tray_switch_mutation` 要 `config.yaml`（也在 gitignore 里）→ 缺文件时回落到出厂模板 `config.release.yaml`。④ `hotkeys._validate` 在**没装 pynput** 时只做形状校验，`<ctrl>+<alt>+<nosuchkey>` 静默进映射表（**用户以为绑上了，按下去什么都不发生**）；新增 `_fallback_ok` + 键名白名单。**并更正上一轮的错误归因**（原写成"无桌面会话返回空表"，与桌面会话无关）。⑤ 17 把刀的 `_baseline_green()` 比判定还严（禁 `Traceback`），把"判定故意打的异常日志"判成起点红 → 改为"退出码 0 且无 FAIL 行"。⑥ `KNOWN_VACUOUS` 清空 + 额度对账（N8 指向空气 / N9 表在说谎 / N10 限位）。 | 空转变检 **CERTIFIED 29 / SKIP 50，VACUOUS 0 / ERROR 0**（上轮 26 / 1 / 50 / 2）；空转体检 27 / SKIP 1（上轮 25 / 1）；A5 探针 7/0/2 未验证 exit 77、夹具下 9/0 exit 0；A5 刀 6 刀 + 3 限位全过；在场感 33/1 → **41/0**；托盘 29/0；四腿 CI 全绿 |
 | `PR#18b` | 16:4x | test | **空变异体检：另外 48 把刀的空转风险一直是零覆盖**：上一道工具靠「把判定文件换成退化实现」，前提是刀有独立判定文件——79 把里只有 26 对有，另外 48 把在进程内断言，换文件完全无效。本轮换方向：**退化变异本身**（`(old,new)` → `(old,old)`，即"什么都没改"），判定有牙就该绿 → 刀必须报「没抓住」→ `exit != 0`；若仍 `exit 0` 就是没在看变异。这个方向不需要知道判定在哪，对 79 把一视同仁。普查中修掉自己仪器的两处假发现（`_noop()` 盲取最后两个元素，把「说明」当成 `new_thunk`，5 把刀被误判 VACUOUS；runner 的 `sys.path[0]` 不是 `tools/`，让 `_qc_api_wiring_mutation` 白记 ERROR）。**顺带查出真缺陷**：`导入冒烟复核` 在 `PY_VENV` 下一直是 6 FAIL——`smoke_import` 的 `env["PYTHONPATH"]=root` 在随包嵌入式运行时下是死代码（`._pth` 固定 sys.path），且夹具的 `src/` 少了 `__init__.py` 成了命名空间包、被 `DaniaAI\src` 这个常规包压住。 | `check_knife_noop.py` CERTIFIED 26 / VACUOUS 1（已知）/ SKIP 50 / ERROR 2，exit 0（5m56s）；七刀 + 对照全 PASS；`导入冒烟复核` venv 6 PASS/6 FAIL → **12 PASS/0 FAIL**，刀在 venv 下也 3 刀全红 + 起点绿；`GATES` 215→217，站点 4 处锚点同步（7 PASS/0 FAIL） |
 | `PR#18` | 16:0x | fix | **18 把变异刀是空转的：判定崩了也被算成「抓住了」**：`caught = r.returncode != 0` 把「判出了问题」和「根本没跑起来」当同一件事——把判定整个换成 `raise RuntimeError(...)`，套件照样印「已抓住：<无输出>」「N 刀全红」并 exit 0。18 把刀补 `_judged()`（非零退出 **且** 有 FAIL/✗）+ `_baseline_green()`（起点不绿直接 FAIL）。工具补 `_resolve()`（判定不一定在 `tools/` 下）、ABSENT/ERROR 拆分、完整性检查、`--tier` 分层。顺带查出 `_qc_pathrefs_mutation` H 刀锚点缩进差 4 格、`count(old)==1` 拦不住子串匹配。 | `--tier portable` 8 / `dev` 17+SKIP1 / `all` 25+SKIP1；13 刀 + 对照全 PASS；修前旧版被体检判 VACUOUS、注入崩溃后仍 exit 0，修后 exit 1 并点名「起点就不是绿的」 |
 | `PR#17` | 15:2x | fix | **`check_web_js_syntax` 在交付包运行时下从未跑过 + 新增「变异刀空转体检」**：该闸门只把仓根塞进 `sys.path`，而 `check_bridge_methods` 在 `tools/` 下；正常 CPython 会补脚本目录，交付包自带的可嵌入运行时（`python312._pth`）不会 → `ModuleNotFoundError` 一启动就崩，87 段 JS/HTML 从未被检查。补齐 `tools/` 路径。另新增把闸门换成退化实现的体检工具（D0 原样 / D1 恒 0 / D2 恒 1），7 对全 CERTIFIED。 | 修后 87 段 / 0 错 / exit 0（修前崩溃）；7 对全 CERTIFIED；十刀 + 对照全 PASS |
@@ -632,14 +633,160 @@ _qc_knife_vacuity_mutation.py            → 13 刀 + 对照 全 PASS    exit 0
 |---|---|
 | `_qc_bundled_assets_mutation` | 判定用 `git ls-files` 判「在盘上但没进 git」；本工具在仓副本里跑，`.git` 被排除 → 判定恒红（10 FAIL） |
 | `_qc_tray_switch_mutation` | 判定要 `config.yaml`（在 `.gitignore` 里，CI 由 prepare 步骤生成）→ `FileNotFoundError` |
-| `_qc_presence_mutation` | 判定在**干净树上就红**：33 PASS / 1 FAIL（`非法的不影响其它绑定 ← []`，全局热键注册在无桌面会话时返回空表）。**这条本身是待查项** |
+| `_qc_presence_mutation` | 判定在**干净树上就红**：33 PASS / 1 FAIL（`非法的不影响其它绑定 ← []`）。**这条本身是待查项** |
 
-前两条是环境，第三条是真红——**而它一直是红的，所以那 6 把刀从来不需要抓住任何东西**。
+前两条是环境，第三条当时记成"真红"——**而它一直是红的，所以那 6 把刀从来不需要抓住任何东西**。
 这就是"起点必须先绿"存在的理由。
+
+> **【2026-11-08 更正】上表第三条的归因是错的。** 当时写的是"全局热键注册在无桌面会话时
+> 返回空表"，实际跟桌面会话毫无关系：本机 `.venv` 里**没有装 `pynput`**（`requirements.txt:53`
+> 有声明），于是 `hotkeys._validate` 走到"没装依赖"的兜底分支，只做形状校验 →
+> `<nosuchkey>` 被当成合法键名 → `why3` 为空 → 那条断言红。
+> 也就是说这**不是产品缺陷**，是"判定依赖了一个可能不存在的依赖，却把它报成断言失败"。
+> 真正的修法在第二十六轮：让兜底自己认识键名（`_fallback_ok` + 白名单），
+> 于是判定不再依赖装没装依赖；`_qc_presence_mutation` 也从 `EXCUSED` 挪进了 `PAIRS`。
+> **一条错误的归因比没有归因更贵**：它会让下一个人去查热键后端和桌面会话。
 
 **已知边界**：78 个 `_qc_*` 里还有 **48 把**是"改源码后自己在进程内断言"，没有独立判定
 文件，换文件这个手法用不上。它们的空转风险与这 26 对完全相同，只是需要另一种做法，
 本轮没做——**不要把这 25 个 CERTIFIED 读成"全部刀都验过了"**。
+
+#### PR #18（续二）· 「缺环境」被报成「判据失败」：四个红点，四个都不是产品坏了
+
+上一轮把「空转」和「无法判定」两个计数器压到 1 和 2。这一轮把那 3 个读数**逐个查清**，
+结论是它们同源：**判定依赖了某个"这台机器上可能没有"的东西，然后把它报成断言失败。**
+
+| 红点 | 表面症状 | 真实原因 |
+|---|---|---|
+| `A5环境探针` 闸门 | 7 PASS / 2 FAIL，exit 1 | `logs/` 在 `.gitignore` 里 → 新克隆的树上一份 `launch_run*.log` 都没有 |
+| `_qc_a5_probe_mutation` | 六把刀"全红" | 起点恒红（同上）→ 红是白送的 |
+| `_qc_tray_switch_mutation` | 起点就红 | 判定要 `config.yaml`，而它也在 `.gitignore` 里 |
+| `_qc_presence_mutation` | 33 PASS / 1 FAIL | 本机没装 `pynput` → `_validate` 走兜底只做形状校验 → 拼错的键名被放行 |
+
+四个都不是产品缺陷，也都不该记成"待查项"。**它们的共同点是：判定把"我没法判"说成了"它坏了"。**
+
+**① A5 探针：给"没有样本"一个自己的状态**
+
+原来两条硬 FAIL：
+
+```python
+chk("至少扫到 1 份 launch_run 日志", len(heartbeat["files"]) >= 1)
+chk("至少 1 条 [UI心跳] 被分类", heartbeat["total_lines"] >= 1)
+```
+
+`logs/` 是 gitignore 的，所以这两条**对每个新克隆的人恒红**。现在分三态：
+
+| 现场 | 判据 | 退出码 |
+|---|---|---|
+| 有日志、扫得到 | 逐条判 | 0 / 1 |
+| 有日志、扫出 0 份 | **FAIL**（探针坏了） | 1 |
+| 压根没有日志 | **WARN 未验证** | **77** |
+
+`77` 是本仓既有约定，`check_all` 会把它单列成「未验证」而不是「通过」；探针还会打一行
+`[SKIP] …`，因为 `check_all` 正是从这一行摘原因——不写就会显示「未说明原因」，
+那等于把"为什么没验"又丢一次。
+
+顺带给探针加了 `--root`：**判据得能被夹具驱动**，否则"探针在缺样本时怎么说话"永远
+只能靠"这台机器碰巧有没有日志"来验。
+
+**② A5 刀：先修起点，再修刀**
+
+只补 `_judged()` + `_baseline_green()` 没用——起点本来就是红的，补完只会诚实地说
+"起点不是绿的"。所以两件事一起做：探针加 `--root`（见上），刀在 tempfile 里造一份
+合成日志当夹具。判据从此不依赖本机日志。
+
+加了**三把限位刀**：
+
+```
+G 夹具里没有日志            → 77 + WARN（未验证 ≠ 失败）
+H 日志在、但没有 [UI心跳] 行 → 1 + FAIL（有样本却量不到，是真失败）
+I 夹具正常                  → 0（起点必须绿）
+```
+
+G 和 H 必须成对：只加 G 会让人把 H 也放宽成 77，只加 H 会让 G 退回硬 FAIL。
+
+**③ 托盘：缺 `config.yaml` 时用出厂模板当夹具**
+
+判定里 `shutil.copy2(ROOT/config.yaml, …)`，而 `config.yaml` 在 `.gitignore` 里。
+本文件测的是 `toggle_mute` 的状态机，**不测"用户的配置长什么样"**——所以缺文件时
+回落到 `config.release.yaml`（在 git 里的出厂模板），并打印一句说明。
+29 PASS / 0 FAIL。
+
+**④ 在场感：修产品，不修测试**
+
+`hotkeys._validate` 在没有 `pynput` 时的兜底是：
+
+```python
+return all(part.strip() for part in combo.split("+"))    # 每段非空就算合法
+```
+
+于是 `<ctrl>+<alt>+<nosuchkey>` 通过校验、进映射表，`skipped` 里一个字都不记——
+**用户以为绑上了，按下去什么都不发生，日志里也没有线索**。这是本仓反复出现的
+「静默失效」，只不过触发条件是"pynput 没装成"。
+
+修法是让兜底自己认识键名：`<...>` 形态必须在 `_NAMED_KEYS` 白名单里（modifier /
+功能键 f1–f20 / 媒体键），非 `<>` 形态（`a` / `7`）保持原来的宽松。抽成纯函数
+`_fallback_ok`，于是**判定不再依赖装没装 pynput**，在任何机器上都能判。
+测试 33 PASS / 1 FAIL → **41 PASS / 0 FAIL**，另加 7 条兜底断言和一把新刀 G
+（兜底放行未知键名 → 必须红）。
+
+> **同时更正上一轮的一处错误归因。** 我当时把这条记成"全局热键注册在无桌面会话时
+> 返回空表"，**跟桌面会话毫无关系**。错误的归因比没有归因更贵：它会让下一个人
+> 去查热键后端和会话状态。更正已写进 PR #18 的对应小节，并在原处留了说明。
+
+**⑤ 顺带：17 把刀的 `_baseline_green()` 比判定本身还严**
+
+它们都写着 `return r.returncode == 0 and "Traceback" not in out`。但**判定自己故意打出来
+的** Traceback 也算——`test_presence_controls.py` 的 A3 就故意让回调抛异常、再验证
+listener 没被弄死，那一段经 logger 打到 stderr。于是测试 41 PASS / 0 FAIL / exit 0，
+刀却判"起点不是绿的"，整把刀一进来就自爆，**而报错信息把矛头指向产品**。
+
+判据改成"退出码 0 且没有 `FAIL` 行"：崩了的判定一定非零退出，Traceback 本身不证明
+任何事。这与第二十四轮 `_judged()` 的改法是同一条道理，只是当时只改了一半。
+
+**⑥ 额度表清空，并给它加对账**
+
+`KNOWN_VACUOUS` 从 1 条变成**空表**。空表是有意义的读数：它说的是"没有已知空转"，
+不是"没有空转"。为了让这张表不至于重新变成遮羞布，加了两道对账 + 一把限位：
+
+```
+N8  额度指向不存在的刀        → exit 2 并点名（额度对着空气）
+N9  额度指向已经不空转的刀    → exit 2 并点名（表在说谎）
+N10 限位：额度指向真的空转的刀 → exit 0（不许把额度表判成恒错）
+```
+
+没有 N10，N8/N9 可以靠"永远 exit 2"满足——结果是没人再敢往表里写东西，
+空转又变回没人管。
+
+**结果**
+
+```
+check_knife_vacuity.py --tier all   → CERTIFIED 27 / SKIP 1        exit 0（上轮 25 / 1）
+_qc_knife_vacuity_mutation.py       → 13 刀 + 对照 全 PASS          exit 0
+check_knife_noop.py                 → CERTIFIED 29 / SKIP 50        exit 0（上轮 26 / 1 / 50 / 2）
+_qc_knife_noop_mutation.py          → 9 刀 + 对照 全 PASS           exit 0
+A5 探针（无日志）                    → 7 PASS / 0 FAIL / 2 未验证    exit 77
+A5 探针（夹具）                      → 9 PASS / 0 FAIL               exit 0
+A5 刀                                → 6 刀 + 3 限位 全过            exit 0
+在场感                               → 41 PASS / 0 FAIL              exit 0
+托盘                                 → 29 PASS / 0 FAIL              exit 0
+```
+
+**`VACUOUS 0 / ERROR 0` 是这一轮唯一值得说的读数**：79 把刀里 29 把判完且不是空转，
+50 把没有模块级 `MUTS`（本工具不覆盖），**没有一把是"不知道"**。上一轮那张表还写着
+1 把已知空转、2 把无法判定。
+
+`SKIP 50` 仍然不算通过——它们要另一种做法，这 29 个 CERTIFIED 依旧不许读成"全部验过"。
+
+**这一轮踩的两个坑（都写进代码注释了）**
+
+1. **`io.open(path, "wb").write(compute())` 会先把文件清空。** Python 先求值
+   `io.open(...)`（那一刻文件已被截断），再求值 `compute()`。我的 `compute()` 抛了，
+   于是 `tools/check_knife_noop.py` 被清成 **0 字节**，只能从远端重新取回来。
+   教训：**先算好要写什么，再打开文件。**
+2. **`"FAIL" in out` 会命中汇总行 `结果: 9 PASS / 0 FAIL`。** 起点明明是绿的，
+   却被判成"有 FAIL"。和第四轮那个 `count(old) == 1` 是同一类：**子串命中不等于语义命中**。
+   改成逐行 `startswith("FAIL")`。
 
 #### PR #18（续）· 空变异体检：另外 48 把刀的空转风险一直是零覆盖
 
