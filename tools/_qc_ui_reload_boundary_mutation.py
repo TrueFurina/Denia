@@ -18,6 +18,31 @@ TEST = "tools/check_ui_reload_boundary.py"
 PY = ".venv/Scripts/python.exe"
 
 
+# 【2026-11-08 修·刀自己会空转】原来只判 `r.returncode != 0`，于是闸门**崩了**
+# 也被算成"抓住"。实测：把 check_ui_reload_boundary.py 整个换成一句
+# `raise RuntimeError("闸门自己崩了")`，本刀仍然逐条打印「已抓住：<无输出>」、
+# 最后打印「N 刀全红」并 exit 0 —— **一个根本跑不起来的闸门被认证成"四刀全抓"**。
+# 崩了和识别是两件事：前者说明闸门没跑，后者才说明判据在工作。
+# 起点也必须先绿：恒红的闸门能让**每一把**刀都变红，那种"全红"什么都不证明。
+def _judged(r) -> bool:
+    """闸门是「判出了问题」而不是「崩了」或「什么都没说」。"""
+    out = (r.stdout or "") + (r.stderr or "")
+    if "Traceback (most recent call last)" in out:
+        return False
+    return r.returncode != 0 and ("FAIL" in out or "✗" in out)
+
+
+def _run_test():
+    return subprocess.run([PY, "-u", TEST], capture_output=True, text=True,
+                          encoding="utf-8", errors="replace")
+
+
+def _baseline_green() -> bool:
+    r = _run_test()
+    out = (r.stdout or "") + (r.stderr or "")
+    return r.returncode == 0 and "Traceback" not in out
+
+
 def E(s: str) -> bytes:
     return s.encode("utf-8")
 
@@ -47,6 +72,10 @@ def main() -> int:
     orig = open(P, "rb").read()
     h0 = hashlib.sha256(orig).hexdigest()
     bad = 0
+    if not _baseline_green():
+        print("FAIL 起点就不是绿的 —— 恒红的闸门能让每把刀都变红，这种\"全红\"不证明任何事")
+        return 1
+    print("  PASS 起点绿")
     for name, old, new in MUTS:
         n = orig.count(old)
         if n != 1:
@@ -57,7 +86,7 @@ def main() -> int:
         try:
             r = subprocess.run([PY, "-u", TEST], capture_output=True,
                                text=True, encoding="utf-8", errors="replace")
-            caught = r.returncode != 0
+            caught = _judged(r)
             lines = [l for l in (r.stdout or "").splitlines() if l.strip()]
             why = [l for l in lines if l.strip().startswith("FAIL")]
             why = (why or lines or ["<无输出>"])[-1].strip()[:88]
