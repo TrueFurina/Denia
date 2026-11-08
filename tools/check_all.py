@@ -630,13 +630,12 @@ GATES: list[tuple[str, str, list[str], bool]] = [
     # 这里挂的是它的变异刀：32 个场景自建夹具、在源码仓里也能跑，
     # 证明「判据真的会红」——而不是把一道永远跳过的门算成通过。
     ("交付包闸门变异", PY_RUNTIME, ["tools/_qc_delivery_mutation.py"], True),
-    # 【2026-11-08】同一个形状第三次出现，都在通知窗那条线上：
-    #   第十五轮 `NotifyJsBridge`（无此类）／第十九轮 `_notify_slide_if`（无此函数）／
-    #   第二十一轮 `_push_cmd`（无此函数）。根因都是「通知窗从 WebView2 迁到 WPF 后，
-    #   旧 API 的调用点没跟着删」，三次都被 except / if False 包着，所以 AttributeError
-    #   从来没冒出来过。这道闸门把「引用必须指向真实存在的符号」变成可自动判的。
-    ("跨模块引用对账", PY_VENV, ["tools/check_cross_ref.py"], False),
-    ("跨模块引用对账变异", PY_VENV, ["tools/_qc_cross_ref_mutation.py"], True),
+    # 【2026-11-08】前六道闸门都配了变异刀，每个 PR 都写着「刀全绿 ⇒ 判据有牙」。
+    # 但那只证明「闸门正常时刀会红」，没证明「闸门恒绿/恒红时刀会不会红」。
+    # 这道闸门把闸门文件换成两行退化实现（import-safe 的 `if __name__=="__main__"`），
+    # 看刀套件还认不认得出来 —— 认不出就是空转，判据被改松改紧它都发现不了。
+    ("变异刀空转体检", PY_VENV, ["tools/check_knife_vacuity.py"], True),
+    ("变异刀空转体检变异", PY_VENV, ["tools/_qc_knife_vacuity_mutation.py"], True),
 ]
 
 
