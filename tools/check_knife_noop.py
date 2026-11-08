@@ -70,13 +70,18 @@ SKIP_DIRS = {"__pycache__", ".git", "node_modules", "dist", "build"}
 #
 # 为什么要这张表而不是"修完再上线"：这些刀的空转原因各不相同，有的要等真机样本，
 # 有的要改判定的写法。把它们一次性修完不现实，但**让数量只减不增**是现实的。
+#
+# 【2026-11-08 清空】上一轮唯一的条目 `_qc_a5_probe_mutation.py` 已经修好了。
+# 修法留在这里，当作"下次遇到同类怎么写"的样本：
+#   它的判定 `tools/probe_a5_env.py` 原来直接扫本仓 `logs/`，而 `logs/` 在 `.gitignore`
+#   里 → 新克隆的树上必然没有 launch_run*.log → 两条硬 FAIL → 判定恒红 → 六把刀
+#   "全红"是白送的。只补 `_judged()` + `_baseline_green()` 没用（起点本来就是红的），
+#   必须**让判定不再依赖"这台机器碰巧有没有日志"**：给探针加 `--root`，刀在 tempfile
+#   里造一份合成日志当夹具。同一天本工具自己造桩仓、第二十四轮 `_qc_pathrefs_mutation`
+#   造 tempfile 样本，都是这个路子。
+# **空表是有意义的读数**：它说的是"没有已知空转"，不是"没有空转"。真要新增条目，
+# 必须同时写清原因和修法，否则下一次它就成了遮羞布。
 KNOWN_VACUOUS = {
-    "_qc_a5_probe_mutation.py":
-        "判定 `tools/probe_a5_env.py` 在**本机就是红的**（7 PASS / 2 FAIL，"
-        "`至少 1 条 [UI心跳] 被分类 ← 0`：本机 logs/ 里没有 UI 心跳样本）。"
-        "判定恒红 → 任何变异之后它都会红 → 6 把刀'全红'是白送的。"
-        "修法：给这把刀补 `_judged()` + `_baseline_green()`（第二十三/二十四轮那套），"
-        "补完它会诚实地说'起点不是绿的'；再让 probe 在无样本时降级成 WARN 而不是 FAIL。",
 }
 
 # 在**子进程**里跑：import 刀 → 把 MUTS 改成空变异 → 调 main()。
@@ -266,6 +271,20 @@ def main() -> int:
     print("仓根：%s" % root)
     print("待检 %d 把刀\n" % len(knives))
 
+    # 【2026-11-08 加·表会腐烂】KNOWN_VACUOUS 是"允许空转"的额度。额度只减不增还不够，
+    # 它还得**跟得上现实**，否则会以两种方式变成遮羞布：
+    #   ① 名字还在表里、刀已经删了/改名了 → 这条额度永远用不上，却一直占着名额；
+    #   ② 名字还在表里、刀已经被修好不再空转 → 表在说"我知道它坏着"，其实已经不坏了。
+    # 两种都是"声称的现状 ≠ 实际现状"。所以全量跑时对账一次：对不上就 exit 2。
+    # （`--knife` / `--only` 时跳过：那时只跑子集，表里其它条目当然不会出现。）
+    if not args.knife and not args.only and KNOWN_VACUOUS:
+        dead = [k for k in KNOWN_VACUOUS if not os.path.isfile(os.path.join(tdir, k))]
+        if dead:
+            print("✗ KNOWN_VACUOUS 里有不存在的刀（额度指向空气）：", file=sys.stderr)
+            for k in dead:
+                print("   " + k, file=sys.stderr)
+            return 2
+
     counts: dict[str, int] = {}
     vacuous: list[str] = []
     for k in knives:
@@ -292,6 +311,18 @@ def main() -> int:
     if counts.get("ERROR"):
         print("\n（另有 %d 把**无法判定** —— 不计失败，也不计通过；"
               "上面每把都写了原因）" % counts["ERROR"])
+    # ② 表里的刀本轮不再空转 → 这条额度已经失效，删掉它（理由见上面 ① 的注释）
+    if not args.knife and not args.only:
+        stale = sorted(set(KNOWN_VACUOUS) - set(vacuous))
+        if stale:
+            print("\n✗ KNOWN_VACUOUS 里有已经不空转的刀 —— 表在说「我知道它坏着」，"
+                  "其实已经不坏了：", file=sys.stderr)
+            for k in stale:
+                print("   " + k, file=sys.stderr)
+            print("   删掉这些条目。额度留着不用不会变安全，只会变成遮羞布。",
+                  file=sys.stderr)
+            return 2
+
     if vacuous:
         new = [k for k in vacuous if k not in KNOWN_VACUOUS]
         known = [k for k in vacuous if k in KNOWN_VACUOUS]
