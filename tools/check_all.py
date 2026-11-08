@@ -144,6 +144,25 @@ GATES: list[tuple[str, str, list[str], bool]] = [
     # （漏声明静默发生、退出码仍 0——闸门沉默）。修法是解析失败记 error 并判红；
     # 本刀验：放坏文件必须红且点名「解析失败」，无坏文件必须绿。
     ("依赖声明变异", PY_VENV, ["tools/_qc_requirements_syntax_mutation.py"], False),
+    # finally 里跳出（2026-11-08）：`finally` 里的 return 有两个都不出声的副作用——
+    # ① 吞掉正在抛出的异常（上层看到的是"什么都没发生"，日志一个字都没有）；
+    # ② 退出的是**整个函数**，finally 里排在它后面的清理一条都不执行。
+    # webapp._run_voice_test 栽在第②条：开头 `if backend is None: return`，
+    # 于是「没配引擎就点试听」这条早退路径每次都跳过 _voice_tasks.pop。
+    # 全仓 696 个文件只有这一处，改完即 0（改之前跑一次是红的，刀里也留了这个证据）。
+    # 两条限定必须有：break/continue 只在 finally 内**没有**外层循环时才报（finally 自带
+    # for 再 break 绑的是那个 for，合法）；嵌套 def 里的 return 是它自己的事，不算。
+    # 八刀变异见 _qc_finally_jump_mutation，其中 M4/M5 是「该保持绿」的限位刀。
+    ("finally 里跳出", PY_RUNTIME, ["tools/check_finally_jump.py", "--all", "src", "tools", "main.py", "launch_companion.py", "run_webui.py"], False),
+    ("finally 里跳出变异", PY_RUNTIME, ["tools/_qc_finally_jump_mutation.py"], False),
+    # 语音试听任务表「只进不出」（2026-11-08）：_voice_tasks 有两条写入路径（本地试听 /
+    # 云端试听），而全文件的 pop 只有一处 —— 云端那条从来没清理过，本地那条又被上面那个
+    # finally-return 跳过。两条都不报错、不占 CPU、日志无痕，只能靠读 pop 的调用点发现。
+    # 判定只读 AST（webapp 依赖 webview/Win32，CI 上 import 不了），五刀变异见
+    # _qc_voice_task_cleanup_mutation。第 [0] 条是反空转：写入点集合被钉死成那两个方法，
+    # 新增第三条试听路时必须有人来这看一眼，否则后面几条会因「扫不到东西」而空转通过。
+    ("语音任务表清理", PY_RUNTIME, ["src/tests/test_voice_task_cleanup.py"], False),
+    ("语音任务表清理变异", PY_RUNTIME, ["tools/_qc_voice_task_cleanup_mutation.py"], False),
     # 【2026-10-21 删·重复登记】这里原来还有一行
     #   ("导入冒烟", PY_VENV, ["tools/smoke_import.py", "--strict"], True)
     # 而列表末尾**已经有一份带完整注释的**。同一项被登记两次 → 每次全量闸门都白跑
