@@ -131,7 +131,17 @@ class TextChatRouter(LLMClient):
             try:
                 client = _build_client(cfg, item)
             except Exception as e:  # noqa: BLE001 单条目构造失败不拖垮整个路由
-                logger.warning("文本聊天条目构造失败: %s", e)
+                # 【2026-11-08 质检】模板里「api_key 留空、base_url 也留空」的端口
+                # （用户尚未启用）会在 _build_client 因缺 base_url 抛错；旧代码一律按
+                # WARNING 报「构造失败」，每次启动刷一条红字，可实际什么都没坏——
+                # 空 key 端口本来就该被下面的保护跳过。区分两种情形：没配 key 是
+                # 正常未启用（INFO），配了 key 却构造失败才是真故障（WARNING 必须留着，
+                # 否则用户会以为端口配好了却始终不生效）。控制流不变，仍 continue。
+                if not str(getattr(item, "api_key", "") or "").strip():
+                    logger.info("文本聊天端口 %s 尚未启用（api_key 为空），跳过",
+                                getattr(item, "id", "?"))
+                else:
+                    logger.warning("文本聊天条目构造失败: %s", e)
                 continue
             _prov = str(getattr(item, "provider", "") or "").strip().lower()
             # 【2026-10-04 18:55 破耦合·provider 别名归一】
