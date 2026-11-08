@@ -396,43 +396,24 @@ def disclosure_line(st: dict) -> str:
     return "你们还不算熟，她保持着分寸，不会主动讲自己的私事"
 
 
-def relation_block_text_v2(st: dict, tier: str = "cloud") -> str:
-    """v2 关系块：心情(14) + 细进度(8档) + 分寸 + 原型 + 底线。UI 与提示词同源。"""
-    mood = st.get("mood") or {}
-    label = str(mood.get("label") or "平静")
-    if label not in MOOD_PROMPT_V2:
-        label = "平静"
-    mword = R._intensity_word(int(mood.get("intensity") or 1))
-    arch_key = str(st.get("archetype") or "") or R.DEFAULT_ARCHETYPE
-    arch_guide = R.ARCHETYPE_PROMPT.get(arch_key, R.ARCHETYPE_PROMPT[R.DEFAULT_ARCHETYPE])
-
-    if label in ("炸毛", "闹别扭", "委屈", "失落", "不安"):
-        bottom = "本轮底线：心情不好时别装高兴，允许沉默和短句，但别真的伤人，也别翻旧账。"
-    elif label in ("雀跃", "心动", "柔软", "想你"):
-        bottom = "本轮可以比平时更亲昵、更主动一点。"
-    elif label in ("困倦", "蔫蔫的"):
-        bottom = "本轮她没什么劲，话少一点、慢一点，不用硬找话题。"
-    else:
-        bottom = "按你平常的语气就好。"
-
-    rel_line = f"- 你们的关系：{progress_label_v2(st)}"
-    gap = R._gap_hint(st)
-    if gap:
-        rel_line += f"，{gap}"
-
-    lines = [
-        "【当前关系状态（内部参考，别复述、别提\"好感度\"这种词）】",
-        f"- 她现在的心情：{label}（{mword}）。{MOOD_PROMPT_V2[label]}",
-        rel_line,
-        f"- {disclosure_line(st)}",
-        f"- 语气分寸：{_tone_directive(st)}",
-        f"- 你的性格：{arch_key}——{arch_guide}",
-        f"- {bottom}",
-    ]
-    if tier != "cloud":
-        # 轻量端只留核心：状态头 + 心情 + 分寸 + 本轮底线（性格已在人设里）
-        lines = [lines[0], lines[1], lines[3], lines[4], lines[6]]
-    return "\n".join(lines)
+# 【2026-11-08 墓碑】这里曾有一份 `relation_block_text_v2()` 的旧实现（37 行），被本文件
+# 后半段的同名定义**静默覆盖**——Python 在 import 时把模块级同名函数重绑到后一个，
+# 所以这 37 行从写下那天起就没执行过。改这里不会有任何效果，正是最坑人的那种死代码。
+#
+# 为什么后一个更好（删前逐行比对过）：
+#   · 旧版 `tier != "cloud"` 时把「你们的关系」整行砍掉（lines[2] 被剔除），而本地双工 /
+#     主动搭话恰恰是最需要知道两人到哪一步的场景；
+#   · 旧版底线句按 3 类心情分（坏 / 好 / 困），17 种心情共用 3 句；新版 `BOTTOM_BY_MOOD`
+#     给每种心情一句自己的底线；
+#   · 旧版 `MOOD_PROMPT_V2[label]` 是硬索引，新版 `.get(label, '')` 兜底。
+#
+# ⚠️ 一处需要人定夺的差异（本 PR 不替维护者决定）：旧版有一行
+#   `f"- 语气分寸：{_tone_directive(st)}"`，**新版没有这一行**。
+# 也就是说 `_tone_directive()`（本文件前段，25 行「把好感度总分翻成语气硬指令」）
+# 现在是**孤儿**——全文件只剩定义、没有任何调用者。两种可能：
+#   (a) 改写时无意丢的 → 应把该行加回新版（否则「语气分寸」这个特性静默消失）；
+#   (b) 有意控 token 删的 → 应把 `_tone_directive()` 一并删掉。
+# 判据 `tools/check_duplicate_def.py` 只钉「同名定义静默覆盖」，不判断该留哪一行。
 
 
 # ══════════════════════════════════════════════════════════ 引擎 v2
