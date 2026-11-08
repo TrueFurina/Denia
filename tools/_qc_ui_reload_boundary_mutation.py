@@ -25,10 +25,18 @@ PY = ".venv/Scripts/python.exe"
 # 崩了和识别是两件事：前者说明闸门没跑，后者才说明判据在工作。
 # 起点也必须先绿：恒红的闸门能让**每一把**刀都变红，那种"全红"什么都不证明。
 def _judged(r) -> bool:
-    """闸门是「判出了问题」而不是「崩了」或「什么都没说」。"""
+    """判定文件是「判出了问题」而不是「崩了」或「什么都没说」。
+
+    【2026-11-08 第二版·第一版太严】第一版还要求「输出里没有 Traceback」，
+    实测把**先印 FAIL、随后收尾时崩掉**的判定判成了"没抓住"：
+      · `_qc_asr_mutation` ①②：印了 `FAIL lang='zh-cn'`，随后 vosk 桩抛
+        `AttributeError: 'Model' object has no attribute '_handle'`
+      · `_qc_config_bootstrap_mutation` B：印了 `FAIL 状态 created`，随后读临时
+        `config.yaml` 抛 `FileNotFoundError`
+    两次都是**仪器太窄**（本轮第三次）。真正的判别是**有没有点名**：
+    退化桩只印一个 `exit 1`，一个字都没有 —— 那才叫"什么都没说"。
+    """
     out = (r.stdout or "") + (r.stderr or "")
-    if "Traceback (most recent call last)" in out:
-        return False
     return r.returncode != 0 and ("FAIL" in out or "✗" in out)
 
 
