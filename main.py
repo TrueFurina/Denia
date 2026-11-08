@@ -1617,23 +1617,40 @@ def _asyncio_thread_target(runtime: RuntimeHolder, cfg: Config) -> None:
         loop.call_soon(_loop_tick)
 
         def _loop_watchdog():
+            # 【2026-11-08 诊断加固·改进】独立冻结快照文件：run 日志是 RotatingFileHandler，
+            # 38h 反复卡死会刷爆并轮转、把关键 dump 冲掉。另开一份不被轮转的快照文件，
+            # 保证真机复跑拿到栈。faulthandler 只认有 fileno 的真实文件（open() 满足）。
+            import os as _os
+            _freeze_path = _os.path.join(
+                "logs", f"loop_freeze_{_t.strftime('%Y%m%d_%H%M%S')}.log")
+            try:
+                _freeze_f = open(_freeze_path, "a", encoding="utf-8", errors="replace")
+            except Exception:  # noqa: BLE001
+                _freeze_f = None
+            _lagged_before = False   # 只在「健康→卡死」跳变瞬间 dump 一次，避免噪音刷屏
+
             while True:
                 _t.sleep(10)
                 _lag = _t.time() - getattr(loop, "_loop_tick", 0)
                 if _lag > 30:
+                    if _lagged_before:
+                        continue        # 同一停顿只 dump 一次（首帧即真阻塞帧）
+                    _lagged_before = True
                     logger.error("【主循环看门狗】asyncio 主循环疑似卡死 %.1fs，"
                                  "dump 调用栈定位卡死行：", _lag)
-                    # 【2026-11-08 诊断加固】dump 全线程 C+Python 栈。显式传 run 日志的
-                    # FileHandler.stream，确保栈进日志而非丢失的 stderr（文件名随轮转刷新）。
-                    try:
-                        _fh.dump_traceback(all_threads=True,
-                                           file=getattr(loop_dump_handler, "stream", None))
-                    except Exception:  # noqa: BLE001
-                        # 极少数情况（日志被轮转关闭）回退 stderr，不阻断诊断
+
+                    def _dump_to(fileobj):
+                        if fileobj is None:
+                            return
                         try:
-                            _fh.dump_traceback(all_threads=True)
+                            _fh.dump_traceback(all_threads=True, file=fileobj)
+                            fileobj.flush()
                         except Exception:  # noqa: BLE001
                             pass
+
+                    # dump 到 run 日志 + 独立冻结文件（后者保证不被轮转冲掉）
+                    _dump_to(getattr(loop_dump_handler, "stream", None))
+                    _dump_to(_freeze_f)
                     # 单独高亮【循环线程阻塞瞬间的那一帧】：sys._current_frames 直接取阻塞点，
                     # 比 asyncio.all_tasks 更直接（后者只能打 parked 的任务帧，打不出真阻塞行）。
                     _tid = getattr(loop, "_loop_thread_ident", None)
@@ -1646,6 +1663,22 @@ def _asyncio_thread_target(runtime: RuntimeHolder, cfg: Config) -> None:
                                          _fr.f_code.co_name)
                             _fr = _fr.f_back
                             _d += 1
+                    # 在冻结文件里再写一份可读摘要（含 LOOP 阻塞帧），便于快速定位
+                    if _freeze_f is not None:
+                        try:
+                            _freeze_f.write(f"[loop_freeze] lag={_lag:.1f}s loop_tid={_tid}\n")
+                            if _tid is not None:
+                                _fr = _sys._current_frames().get(_tid)
+                                _d = 0
+                                while _fr is not None and _d < 40:
+                                    _freeze_f.write(
+                                        f"  LOOP {_fr.f_code.co_filename}:"
+                                        f"{_fr.f_lineno} in {_fr.f_code.co_name}\n")
+                                    _fr = _fr.f_back
+                                    _d += 1
+                            _freeze_f.flush()
+                        except Exception:  # noqa: BLE001
+                            pass
                     try:
                         for _tk in asyncio.all_tasks(loop):
                             logger.error("  TASK=%s done=%s", _tk.get_name(), _tk.done())
@@ -1653,6 +1686,8 @@ def _asyncio_thread_target(runtime: RuntimeHolder, cfg: Config) -> None:
                                 logger.error("      %s", _fr)
                     except Exception:  # noqa: BLE001
                         pass
+                else:
+                    _lagged_before = False
         _th.Thread(target=_loop_watchdog, daemon=True, name="loop_watchdog").start()
 
         # 启动控制台输入循环（在独立线程中，因为 input() 是阻塞的）
