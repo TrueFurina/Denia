@@ -11,14 +11,17 @@
 
 样本全建在 tempfile，每个刀一套独立小仓，**不碰仓库一个字节**。
 
-七刀 + 对照
------------
+七刀 + 对照 + 三把额度刀
+-------------------------
   N1 刀恒 exit 0（不看变异）      → VACUOUS
   N2 刀检查变异是否真的改了东西    → CERTIFIED（不许误判）
   N3 刀起点就红                   → ERROR（无法判定）
   N4 刀没有 MUTS                  → SKIP（不算通过）
   N5 嵌套形状 ("名字", [(old,new)]) → CERTIFIED（形状二也要认）
   N6 全部 SKIP                    → exit 2（一把都没跑成 ≠ 通过）
+  N8 额度指向不存在的刀            → exit 2 并点名（额度对着空气）
+  N9 额度指向已经不空转的刀        → exit 2 并点名（表在说谎）
+  N10 限位：额度指向真的空转的刀   → exit 0（不许把额度表判成恒错）
   N7 对照：真实仓                 → exit 码与"有没有**新**空转"一致
 
 用法：python tools/_qc_knife_noop_mutation.py
@@ -122,6 +125,44 @@ def kind_of(out: str) -> str:
     return found
 
 
+# ---------------------------------------------------------------- 额度对账（N8–N10）
+#
+# `KNOWN_VACUOUS` 是"允许空转"的额度。这三刀打的是额度本身：
+# 名字指向不存在的刀（额度对着空气）、名字指向已经修好的刀（额度在说谎）、
+# 名字指向真的还空转的刀（额度该放行 —— 限位，否则"把表清空"也能让前两刀过）。
+#
+# 它们是**改工具文件**的刀（不是造桩仓），所以必须字节还原。
+ANCHOR = "KNOWN_VACUOUS = {\n}"
+
+
+def _patched_tool(entries: dict) -> bytes:
+    """返回一份把 KNOWN_VACUOUS 换成 `entries` 的工具源码。"""
+    src = io.open(TOOL, encoding="utf-8").read()
+    n = src.count(ANCHOR)
+    if n != 1:
+        raise RuntimeError("锚点 `KNOWN_VACUOUS = {\n}` 命中 %d 次（期望 1）" % n)
+    body = "".join('    "%s": "空转额度对账用",\n' % k for k in entries)
+    return src.replace(ANCHOR, "KNOWN_VACUOUS = {\n" + body + "}", 1).encode("utf-8")
+
+
+def _run_with_table(entries: dict, root: str) -> tuple[int, str]:
+    orig = io.open(TOOL, "rb").read()
+    # 【2026-11-08 踩的坑·先开文件后算内容会清空源文件】
+    # 原来写的是 `io.open(TOOL, "wb").write(_patched_tool(entries))`。
+    # Python 先求值 `io.open(TOOL, "wb")` —— **那一刻文件就被截断成 0 字节** ——
+    # 然后才去算 `_patched_tool(entries)`；而它一抛（锚点没命中），finally 里的还原
+    # 拿到的 `orig` 已经是空的了……实际上更糟：`orig` 是在前面读的，所以还原能成功，
+    # 但**这一版把 orig 读在了 truncate 之前**纯属运气。真正发生的是：锚点不匹配时
+    # 文件被清空、异常直接冒出去，`tools/check_knife_noop.py` 变成 0 字节。
+    # 教训：**先算好要写什么，再打开文件**。
+    patched = _patched_tool(entries)
+    io.open(TOOL, "wb").write(patched)
+    try:
+        return run_tool(root)
+    finally:
+        io.open(TOOL, "wb").write(orig)
+
+
 def check(tag: str, got: tuple[int, str], want_kind: str | None,
           want_rc: int | None) -> int:
     rc, out = got
@@ -194,6 +235,53 @@ def main() -> int:
             bad += 1
         else:
             print("  PASS N6 全 SKIP：exit 2（一把都没跑成不算通过）")
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
+
+    # ---- N8 额度指向不存在的刀 → exit 2 并点名 ----
+    d = make_repo({"_qc_sound.py": KNIFE_SOUND})
+    try:
+        rc, out = _run_with_table({"_qc_ghost.py": 1}, d)
+        ok8 = rc == 2 and "_qc_ghost.py" in out
+        print("  %s N8 额度指向不存在的刀：exit %d%s"
+              % ("PASS" if ok8 else "FAIL", rc,
+                 "" if ok8 else "（期望 2 且点名 _qc_ghost.py）"))
+        if not ok8:
+            for l in out.strip().splitlines()[-5:]:
+                print("    " + l[:150])
+            bad += 1
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
+
+    # ---- N9 额度指向已经修好的刀 → exit 2（表在说谎）----
+    d = make_repo({"_qc_sound.py": KNIFE_SOUND})
+    try:
+        rc, out = _run_with_table({"_qc_sound.py": 1}, d)
+        ok9 = rc == 2 and "_qc_sound.py" in out
+        print("  %s N9 额度指向已经不空转的刀：exit %d%s"
+              % ("PASS" if ok9 else "FAIL", rc,
+                 "" if ok9 else "（期望 2 且点名 _qc_sound.py）"))
+        if not ok9:
+            for l in out.strip().splitlines()[-5:]:
+                print("    " + l[:150])
+            bad += 1
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
+
+    # ---- N10 限位：额度指向真的还空转的刀 → 放行 exit 0 ----
+    # 没有这一刀，N8/N9 可以靠"永远 exit 2"满足 —— 那就是把额度表判成恒错，
+    # 结果是没人再敢往表里写东西，空转又变回没人管。
+    d = make_repo({"_qc_vacuous.py": KNIFE_VACUOUS})
+    try:
+        rc, out = _run_with_table({"_qc_vacuous.py": 1}, d)
+        ok10 = rc == 0 and "已知空转" in out
+        print("  %s N10 限位：额度指向真的空转的刀 → 放行：exit %d%s"
+              % ("PASS" if ok10 else "FAIL", rc,
+                 "" if ok10 else "（期望 0 且打出「已知空转」）"))
+        if not ok10:
+            for l in out.strip().splitlines()[-5:]:
+                print("    " + l[:150])
+            bad += 1
     finally:
         shutil.rmtree(d, ignore_errors=True)
 
