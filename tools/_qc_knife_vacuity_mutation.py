@@ -24,13 +24,17 @@
   K9 **输出里有闸门的 Traceback，但套件自己报了失败** → 仍判 CERTIFIED
      这一刀钉的是本工具真踩的坑③：第一版把"输出里有 Traceback"当成套件崩溃，
      于是 `_qc_silent_mutation.py` 明明印了「FAIL：5 刀未抓住」却被判 WEAK。
+  K11 **分层不许漏**：PAIRS 里 portable 恰好 7 对、dev 恰好 9 对，且两层互不混入
+     分层是"这台机器能不能跑"的分层，最怕的是某一层被悄悄漏掉（少跑几对没人发现），
+     或者 dev 的对混进 portable（CI 上全 ERROR，把整道门变成恒红）。
   K10 对照：真实仓的 PAIRS       → exit 0 且 CERTIFIED 7
 
 用法：python tools/_qc_knife_vacuity_mutation.py
-退出码 0 = 十刀 + 对照全部符合预期。
+退出码 0 = 十一刀 + 对照全部符合预期。
 """
 from __future__ import annotations
 
+import importlib.util
 import io
 import os
 import shutil
@@ -299,6 +303,51 @@ def main() -> int:
                      run_tool(d, "_qc_noisy.py=check_hit.py"), "CERTIFIED", 0)
     finally:
         shutil.rmtree(d, ignore_errors=True)
+
+    # ---- K11 分层不许漏 ----
+    # 分层最怕的不是跑错，是**某一层被悄悄漏掉**：少跑几对没人发现，而
+    # 「结果：CERTIFIED 7」和「跑全了」长得一模一样。
+    # 这里查三件事，都便宜：
+    #   ① PAIRS 的静态计数（portable 7 / dev 9，合计 16）—— 直接读，不跑
+    #   ② `--tier` 的过滤真的生效（dev 层挑一对，看「待检」行是 1）
+    #   ③ 不该进 portable 的对，portable 真的不选（`--only release_numbers`
+    #      在 portable 层应为 0 对 → exit 2 且没有「待检」行）
+    # 为什么不用 `--tier all` 数「待检」：那会把 9 对 dev 全跑一遍（每对一次仓副本
+    # + 3 次套件），CI 上还没有 `.venv`，白等十几秒换一屏 ERROR。计数要便宜才对。
+    spec = importlib.util.spec_from_file_location("_kv_under_test", TOOL)
+    kv = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(kv)
+    tiers: dict[str, int] = {}
+    for _p in kv.PAIRS:
+        tiers[_p[2]] = tiers.get(_p[2], 0) + 1
+
+    def picked(*extra) -> int | None:
+        r = subprocess.run([sys.executable, TOOL, *extra], capture_output=True, text=True,
+                           encoding="utf-8", errors="replace", timeout=900)
+        for line in (r.stdout or "").splitlines():
+            if line.startswith("待检 ") and line.endswith(" 对"):
+                return int(line[3:].split()[0])
+        return None
+
+    n_dev = picked("--tier", "dev", "--only", "release_numbers")
+    n_leak = picked("--tier", "portable", "--only", "release_numbers")
+    if tiers.get("portable") != 7 or tiers.get("dev") != 9:
+        print("  FAIL K11 分层计数：portable %r / dev %r（期望 7 / 9）"
+              % (tiers.get("portable"), tiers.get("dev")))
+        bad += 1
+    elif sum(tiers.values()) != 16:
+        print("  FAIL K11 总对数 %d（期望 16；PAIRS 里有未知层 %r）"
+              % (sum(tiers.values()), sorted(tiers)))
+        bad += 1
+    elif n_dev != 1:
+        print("  FAIL K11 dev 层选择：%r 对（期望 1，dev 过滤没生效）" % n_dev)
+        bad += 1
+    elif n_leak is not None:
+        print("  FAIL K11 dev 的对混进了 portable 层：%r 对（期望 0 对 → exit 2）" % n_leak)
+        bad += 1
+    else:
+        print("  PASS K11 分层：portable %d / dev %d，互不混入"
+              % (tiers["portable"], tiers["dev"]))
 
     # ---- K10 对照：真实仓 ----
     p = subprocess.run([sys.executable, TOOL], capture_output=True, text=True,
