@@ -242,22 +242,18 @@ def _ensure_web_server() -> str:
                     _q = parse_qs(urlparse(self.path).query)
                     _st = unquote(_q.get("state", ["hidden"])[0])
                     STATE.notify_ui_state[0] = _st  # 保留原始值（show/hidden/complete）
-                    # 🔑 连上(complete)后约 1.8s 自动滑出窗口：事件驱动、只触发一次，
-                    # 不靠心跳轮询（轮询每 0.5s 重驱动滑窗会在多次切换时闪动）。同时消除
-                    # "卡片经 JS 2.2s 隐藏后、窗口仍停在屏内"的空深色框窗口。
-                    if False:  # 已废弃：原生窗不再需要 WebView2 滑窗
-                        try:
-                            from . import mode_notify as _mn
-                            if _st == "complete":
-                                _th = threading.Timer(1.8, _mn._notify_slide_if,
-                                                      args=(False,), daemon=True)
-                                _th.start()
-                            elif _st == "show":
-                                # 前端已渲染好卡片内容并回报 show → 整窗带着内容滑入，
-                                # 避免"黑底先到、UI 后显"的割裂观感（配合卡片 opacity:1）。
-                                _mn._notify_slide_if(True)
-                        except Exception:  # noqa: BLE001
-                            pass
+                    # 【2026-11-08 墓碑】这里原本还有一段「complete 后 1.8s 自动滑出 /
+                    # show 时整窗滑入」的 WebView2 滑窗逻辑，整段被 `if False:` 关着
+                    # （原注释：已废弃，原生窗不再需要 WebView2 滑窗），13 行从 2026-09
+                    # 起没执行过。删掉的理由不是"看着像死的"：
+                    #   ① 它确实是死的 —— `if False:` 恒假，编译、测试、运行都不报错；
+                    #   ② 它**已经坏了** —— 里面两处调 `mode_notify._notify_slide_if(...)`，
+                    #      而该符号在 mode_notify.py 的 18 个函数里**根本不存在**
+                    #      （全仓只剩这里两处引用 + 一处注释）。谁把 False 改成 True，
+                    #      第一句就是 AttributeError，还被包在外层的 except 里吞掉
+                    #      → 静默什么都不发生，排查时连日志都没有。
+                    # 现在的滑窗由 native_notify（WPF 原生）负责，这条 HTTP 回调只需要
+                    # 把原始状态记进 STATE.notify_ui_state。
                 except Exception:  # noqa: BLE001
                     pass
                 try:

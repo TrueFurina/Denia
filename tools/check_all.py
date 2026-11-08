@@ -200,6 +200,20 @@ GATES: list[tuple[str, str, list[str], bool]] = [
     # 就撤不回来。这条守的是「命中时真的没抓屏」而不是「函数返回对不对」，
     # 外加 main.py 两处装配都得传 foreground_check（漏一处那条路径就静默不设防）。
     ("敏感窗口跳过", PY_VENV, ["src/tests/test_screen_skip_apps.py"], False),
+    # 恒真/恒假条件（2026-11-08）：条件里出现字面量让整个判断恒定，两个后果都不出声——
+    # ① 一半代码是死的（`if False:` 之后整块不执行；`if True: … else:` 的 else 不执行）；
+    # ② 判据是假的（`assert x or True` / `check(x or True, …)` 永远通过）。
+    # 本仓实锤 10 处：main_window.py 的 `if False:` 关着 13 行 WebView2 滑窗逻辑，而里面调的
+    # `mode_notify._notify_slide_if` **根本不存在**（改成 True，第一句就是 AttributeError，
+    # 还被外层 except 吞掉）；agent_pro 的 `if k in DEFAULTS or True` 让「只收认识的键」
+    # 从写下那天起没生效过；test_doctor_llm_channel 两条 `… or True` 判据永远通过，
+    # 其中一条还和下面几行的判据互相矛盾——正因为永远通过，矛盾一直没暴露。
+    # 三条限定必须有：只查**条件位置**（值位置 `v = a or True` 不是常量，报它就是误报）、
+    # `while True:` 是惯用法不算、`check()` 只看布尔运算形态（本仓 check 有好几种签名，
+    # 把「第一个实参是字面量」当缺陷会一上来几百条噪声）。
+    # 十三刀变异见 _qc_constant_cond_mutation，M8/M9/M10 是「该保持绿」的限位刀。
+    ("恒真恒假条件", PY_RUNTIME, ["tools/check_constant_cond.py", "--all", "src", "tools", "main.py", "launch_companion.py", "run_webui.py"], False),
+    ("恒真恒假条件变异", PY_RUNTIME, ["tools/_qc_constant_cond_mutation.py"], False),
     # 感知指示器：桌宠右下角那个点。守的不是"页面上有个点"，而是
     # ①亮灭由后端真实状态决定（写死 class=on 就是骗人）②走页面轮询而不是
     # 跨线程 evaluate_js（main_window.py:454 有自锁实锤）。

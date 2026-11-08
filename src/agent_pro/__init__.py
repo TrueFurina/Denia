@@ -28,7 +28,14 @@ def _flags(host, override=None):
         cfg_ns = getattr(host, "cfg_ns", None) or getattr(host, "_cfg_ns", None)
     flags = _config.load_flags(cfg_ns)
     if override:
-        flags.update({k: v for k, v in dict(override).items() if k in _config.DEFAULTS or True})
+        # 【2026-11-08 墓碑】这里原本是
+        #     flags.update({k: v for k, v in dict(override).items()
+        #                   if k in _config.DEFAULTS or True})
+        # `... or True` 让那个过滤条件恒真 —— 这段从写下那天起等价于 `dict(override)`，
+        # 「只接受 DEFAULTS 里认识的键」这一层从来没生效过（未知键一直能塞进 flags）。
+        # 本次只删掉这层假过滤，行为逐字不变；真要收窄键空间，请把判据写成真的、
+        # 并补一条用例说明哪些键该被丢掉——不要再用一个恒真的条件假装在过滤。
+        flags.update(dict(override))
     return flags
 
 
