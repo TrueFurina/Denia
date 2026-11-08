@@ -35,6 +35,15 @@ GATES: list[tuple[str, str, list[str], bool]] = [
     # 少了它这就是一道装饰闸门（曾长期如此）。
     ("字节码编译", PY_RUNTIME, ["-m", "compileall", "-q", "src", "tools", "main.py", "launch_companion.py", "run_webui.py"], False),
     ("全局名完整性", PY_RUNTIME, ["tools/check_module_globals.py", "--all", "src", "tools", "launch_companion.py", "run_webui.py"], False),
+    # 同名定义静默覆盖（2026-11-08）：同一作用域内同名 def/class 出现两次，后一个在 import
+    # 时静默重绑前一个 —— 前一份从此是死代码，而**两份都长得像活的**：改前一份不会有任何
+    # 效果，也不报错。relationship_v2.py 的 relation_block_text_v2 就这样隔了 300 行重复，
+    # 37 行旧实现从写下那天起没执行过。
+    # 限定「前一个与后一个都没有装饰器」才报：@property + @x.setter（pet_shell/proactive）、
+    # @_t(...) 注册式写法（agent_pro/selftest 有 37 处）全仓各几十处，去掉限定立刻变噪声源。
+    # 六刀变异见 _qc_duplicate_def_mutation。
+    ("同名定义覆盖", PY_RUNTIME, ["tools/check_duplicate_def.py", "--all", "src", "tools", "main.py", "launch_companion.py", "run_webui.py"], False),
+    ("同名定义覆盖变异", PY_RUNTIME, ["tools/_qc_duplicate_def_mutation.py"], False),
     # 协程调度：两个方向都查——`await 同步方法`（await None 抛 TypeError，被 except
     # 吞掉就是功能静默失效；微信回复一条发不出去就是这么来的）与 `async 方法没被
     # await/调度`（协程对象直接丢弃，函数体一行不执行）。自测守着闸门本身别退化。
