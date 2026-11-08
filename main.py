@@ -124,6 +124,38 @@ from typing import Any, Callable, Optional
 # tools/doctor.py 只 import 标准库，所以这一支在零三方依赖的机器上也能跑。
 if "--doctor" in sys.argv[1:]:
     import runpy as _runpy
+
+    # ── 解释器守卫（2026-11-08）───────────────────────────────────────────
+    # 交付包内置 `python/python.exe`（isolated 模式），包内 site-packages 齐全。
+    # 用户若用系统 python 跑 `main.py --doctor`，会看到误导性 FAIL（核心依赖
+    # 缺失 / 语音坏了 / 唤醒词退化）——那些是「用错解释器」的假象，包内全好。
+    # 这里做前置提醒，让 doctor 输出不再误导用户。源码仓无 python/ 目录，此
+    # 条件不成立、守卫整体跳过，零干扰。
+    _here = os.path.dirname(os.path.abspath(__file__))
+    _bundled_python = os.path.join(_here, "python", "python.exe")
+    _using_bundled = (
+        os.path.isfile(_bundled_python)
+        and os.path.abspath(sys.executable).lower()
+        == os.path.abspath(_bundled_python).lower()
+    )
+    if os.path.isfile(_bundled_python) and not _using_bundled:
+        print("=" * 70)
+        print("⚠  你正在用非交付包内置的解释器跑 --doctor，结果可能是误导的。")
+        print()
+        print(f"  当前解释器：{sys.executable}")
+        print(f"  内置解释器：{_bundled_python}")
+        print()
+        print("  非内置解释器跑 --doctor 会看到：")
+        print("    · [FAIL] 核心依赖缺失（sounddevice / pywebview / dashscope…）")
+        print("    · [FAIL] 语音合成 / 识别坏了（pyttsx3 / vosk 未装）")
+        print("    · [FAIL] 唤醒词退化（pypinyin 未装）")
+        print("  这些全是「用错解释器」的假象，包内解释器里都是好的。")
+        print()
+        print("  请换用内置解释器重跑：")
+        print(f"    {_bundled_python} main.py --doctor")
+        print("=" * 70)
+        print()
+
     _doctor_py = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                               "tools", "doctor.py")
     if not os.path.isfile(_doctor_py):
