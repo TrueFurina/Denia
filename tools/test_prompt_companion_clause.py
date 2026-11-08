@@ -55,3 +55,7 @@ print(">> PROACTIVE 模板占位符 name 存在：", "{name}" in PROACTIVE_SYSTE
 allok = all(checks.values())
 print("=" * 60)
 print("RESULT:", "ALL PASS" if allok else "HAS FAILURE")
+# 【2026-11-08】上面这行 `RESULT:` 原本是这条脚本的**唯一**结论输出，而它始终 exit 0 ——
+# 登记在 GATES 的「陪伴话术条款」一项里，于是条款掉了也永远 ✓。
+# 已经算出了 allok，差的就是把它变成退出码。
+sys.exit(0 if allok else 1)

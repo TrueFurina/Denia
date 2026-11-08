@@ -616,6 +616,13 @@ GATES: list[tuple[str, str, list[str], bool]] = [
     # 【2026-11-08】并发会话修的 course_recorder 主循环线程自死锁回归。
     # 合并本地 5 提交时漏登记，check_gate_registry.py 判红后补进 GATES。
     ("网课录制主循环自死锁回归", PY_VENV, ["src/tests/test_course_recorder_deadlock.py"], False),
+    # 【2026-11-08】以上都是「判据本身」；这一项判**判据有没有牙**：登记在 GATES 里的
+    # 脚本必须存在一条能红的退出路径。建这道闸门的当口就抓到 3 处——裁判确认条款 /
+    # 陪伴话术条款 / 虚构守卫，三个都逐条打印 [FAIL]、打印 HAS FAILURE，然后 exit 0。
+    # 它们占着 GATES 的三行、每次全量都跑、永远 ✓，却什么都没守。
+    # 与 `闸门登记对账` 是一对：那道管「有没有登记」，这道管「登记了能不能红」。
+    ("闸门退出码", PY_VENV, ["tools/check_gate_exit.py"], False),
+    ("闸门退出码变异", PY_VENV, ["tools/_qc_gate_exit_mutation.py"], True),
 ]
 
 
