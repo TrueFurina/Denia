@@ -67,6 +67,15 @@ finally:
     else:
         sys.modules.pop("vosk", None)
 
+# 前置：第 1 节验的是「同音字语法扩张」，必须读 pypinyin 的真实字典。
+# 本机没有 pypinyin 时，make_det(pinyin=True) 会走到 _homophones() 里的
+# _PINYIN_DICT_RAW → NameError（2026-11-08 在只装 requirements-test 的干净
+# venv 里实测），看起来像产品缺陷，其实是用例缺件。早说清楚，别甩 traceback。
+# 依赖已在 requirements-test.txt 声明；这里只负责把缺失原因点到人脸上。
+if not ww._HAS_PINYIN:
+    print("FAIL 本用例需要 pypinyin：pip install pypinyin（requirements-test.txt 已声明）")
+    sys.exit(1)
+
 
 def make_det(wake_words, text="", accept=True, pinyin=True):
     """构造一个用假 recognizer 的 WakeWordDetector，并预设识别结果。"""
@@ -137,7 +146,11 @@ det, _ = make_det(["达妮娅"], text="达妮娅", pinyin=False)
 check(det.detect(b"x") == "达妮娅", "降级模式下整字精确匹配仍有效")
 
 print("\n10) 模块在无 pypinyin 时也能 import（降级路径不崩）")
+# reload 会重新执行模块顶部的 `from vosk import KaldiRecognizer`，而本用例从没装
+# 真 vosk（识别器一直是 FakeRec）；不把假 vosk 放回去，这里报的是
+# ModuleNotFoundError: vosk —— 验不到本意要验的 pypinyin 降级（2026-11-08 实测）。
 sys.modules["pypinyin"] = None  # 让 import 失败
+sys.modules["vosk"] = FakeVosk("vosk")
 try:
     importlib.reload(ww)
     check(getattr(ww, "_HAS_PINYIN", True) is False, "无 pypinyin → _HAS_PINYIN=False，import 不崩")
@@ -145,7 +158,12 @@ except Exception as e:  # noqa: BLE001
     check(False, f"无 pypinyin 时 import 抛异常：{type(e).__name__}: {e}")
 finally:
     sys.modules.pop("pypinyin", None)
-    importlib.reload(ww)  # 恢复成真实 pypinyin
+    sys.modules["vosk"] = FakeVosk("vosk")   # 恢复成真实 pypinyin 的那次 reload 同样要它
+    importlib.reload(ww)
+    if _orig_vosk is not None:
+        sys.modules["vosk"] = _orig_vosk
+    else:
+        sys.modules.pop("vosk", None)
 
 print()
 if FAIL:

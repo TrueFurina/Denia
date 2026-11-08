@@ -85,11 +85,23 @@ def main() -> int:
         # 【2026-10-24】断言要"摘错在哪"：跑闸负载下这一条间歇红过三次，而旧断言
         # 只说"不应有 FAIL"不说是哪项 → 每次都得重跑半小时才能定位。现在把 FAIL 行
         # 直接写进消息里（下次红了一行定位）。
-        _fails = [r for r in rows if r[0] == doctor.FAIL]
-        check(not _fails,
-              "当前开发机不应有 FAIL（否则说明 doctor 自检查出真问题）"
-              + ("；实际 FAIL: " + " | ".join(
-                  "%s：%s" % (r[1], (r[2] or "")[:100]) for r in _fails) if _fails else ""))
+        # 【2026-11-08】这里**不能**叫 _fails：本函数里一旦给 _fails 赋值，Python 作用域
+        # 规则会让整个 main() 里的 _fails 都变成局部变量，而 check() 追加的是模块级那份。
+        # 后果是「只要 doctor 自己没报 FAIL，别处任何断言失败都不进计数，退出码仍是 0」——
+        # 门禁假绿（变异刀 B 让 UCRT 探测恒真时实测：2 条 ✗ 之后照样 PASS、exit 0）。
+        fail_rows = [r for r in rows if r[0] == doctor.FAIL]
+        # 【2026-11-08】原断言是 `check(not fail_rows, "当前开发机不应有 FAIL")`，
+        # 但 doctor 的 FAIL 数量随机器而变（干净 runner 缺 config.yaml、缺运行依赖、
+        # 缺 WebView2 注册项都会报 FAIL），这与本文件 docstring「只测与环境无关的
+        # 部分」自相矛盾，也是该用例一直被 ci.yml SKIP 的真正原因。
+        # 改成结构性契约：FAIL 是环境事实，但**每条 FAIL 都必须自带明细与可操作的
+        # 修复提示**；另要求检查项名不重复且数量足够，防止 run_all 退化成空壳。
+        # 这两条与机器无关，且仍会因 doctor 返回结构被破坏而变红（不是永真）。
+        check(all((r[2] or "").strip() and (r[3] or "").strip() for r in fail_rows),
+              "FAIL 行都要给出明细与修复提示（共 %d 条）" % len(fail_rows))
+        names = [r[1] for r in rows]
+        check(len(set(names)) >= 6 and len(names) == len(set(names)),
+              "run_all 检查项齐全且名字不重复：%d 项" % len(names))
 
         print("[4] 桌宠状态：握手文件残留要报 WARN（那是令牌，不该留在盘上）")
         try:
@@ -326,6 +338,7 @@ def main() -> int:
     _orig_wv2_reg = doctor._wv2_registry_version
     _orig_wv2_exe = doctor._wv2_executable
     _orig_system32 = doctor._system32
+    _orig_win_dll = doctor._win_dll
 
     class _FakeSysPlatform:
         def __init__(self, platform):
@@ -363,24 +376,50 @@ def main() -> int:
         lvl2, _, _, _ = doctor.check_webview2()
         check(lvl2 == doctor.WARN, f"非 Windows 上 WebView2 应 WARN（实得 {lvl2}）")
 
-        # 9.5 UCRT：在空的假 System32 上必须 FAIL，且点名缺了哪个文件
+        # 9.5 UCRT：判据是"能不能加载"，不是"文件在不在"。
+        # 【2026-11-08 实测】Win10 19045 的 System32 里 api-ms-win-crt-*.dll 一个都没有
+        # （计数 0），但 LoadLibrary("api-ms-win-crt-runtime-l1-1-0.dll") 成功、handle 与
+        # ucrtbase.dll 相同（API Set 转发），numpy 2.5.4 正常 import。旧实现用 isfile 判，
+        # 健康机器被判「缺 UCRT」，这条门禁因此在开发机上红（本仓 [9] 就是为这种假红写的）。
+        # 注入点在**加载器**（_win_dll）而不是判据（_ucrt_loadable）：换掉判据等于绕开
+        # 真实实现，变异刀砍在影子上（第一版就这么写的，刀 B 没抓住）。
+        def _loader_failing_on(*bad):
+            def _loader(name):
+                if name in bad:
+                    raise OSError("LoadLibrary failed: " + name)
+                return object()
+            return _loader
+
+        _all_names = ("api-ms-win-crt-runtime-l1-1-0.dll", "ucrtbase.dll")
         doctor.sys = _FakeSysPlatform("win32")
         doctor._system32 = lambda: _fake_empty
+
+        # 9.5a 两个名字都加载不了（Win7 无 KB2999226 的形态）→ FAIL + 补丁号
+        doctor._win_dll = _loader_failing_on(*_all_names)
         lvl, _, detail, hint = doctor.check_ucrt()
         check(lvl == doctor.FAIL, f"缺 UCRT 必须 FAIL（实得 {lvl}）")
         check("ucrtbase.dll" in detail, f"要指出缺的是哪个文件：{detail}")
         check("KB2999226" in hint, f"修复提示要给出补丁号：{hint}")
-        # 只缺 api-ms-win-crt-runtime（ucrtbase 在）也要红：前者才是导入表实际引用的名字
-        os.makedirs(_fake_empty, exist_ok=True)
-        open(os.path.join(_fake_empty, "ucrtbase.dll"), "wb").close()
+
+        # 9.5b 只有 api-ms-win-crt-runtime 加载不了 → FAIL，且点名它
+        doctor._win_dll = _loader_failing_on("api-ms-win-crt-runtime-l1-1-0.dll")
         lvl, _, detail, _ = doctor.check_ucrt()
         check(lvl == doctor.FAIL and "api-ms-win-crt-runtime" in detail,
               f"只缺 api-ms-win-crt-runtime 也要 FAIL（实得 {lvl}：{detail}）")
+
+        # 9.5c 真机形态：System32 里没有那两个实体文件，但加载器能解析 → 必须 PASS。
+        # 这条就是本机被误判的那一次：目录空、文件不在、numpy 却跑得好好的。
+        os.makedirs(_fake_empty, exist_ok=True)
+        doctor._win_dll = lambda name: object()
+        lvl, _, detail, _ = doctor.check_ucrt()
+        check(lvl == doctor.PASS and "API Set" in detail,
+              f"文件不在但能加载 → 必须 PASS（实得 {lvl}：{detail}）")
     finally:
         doctor.sys = sys
         doctor._wv2_registry_version = _orig_wv2_reg
         doctor._wv2_executable = _orig_wv2_exe
         doctor._system32 = _orig_system32
+        doctor._win_dll = _orig_win_dll
 
     print("[10] PE 签名块解析：偏移写错会读出假的「已签名」")
     # 真事故（2026-10-18）：第一版把数据目录起始偏移写反了（PE32 该 +0x60、
