@@ -56,12 +56,16 @@ def make_urlopen(code=None, exc=None):
 
     def _u(req, timeout=None):
         calls.append(req.full_url)
+        # 【2026-11-08】记下每条请求的头，供「Authorization 真的带上了」那条判据用。
+        # 原来只记 full_url，那条判据就只能写成 `... or True` —— 永远通过，什么都没守。
+        _u.headers.append(dict(getattr(req, "headers", {}) or {}))
         if exc is not None:
             raise exc
         if code is not None and code >= 400:
             raise http_error(code, f'{{"error":{{"message":"e{code}"}}}}')
         return FakeResp()
 
+    _u.headers = []
     return _u, calls
 
 
@@ -75,7 +79,11 @@ u, calls = make_urlopen()
 lvl, _, detail, hint = doctor._probe_llm_routes(ROUTES, urlopen=u)
 check(lvl == doctor.PASS, f"level={lvl}")
 check(len(calls) == 2, f"发了 {len(calls)} 个请求（每条链路各 1 个）")
-check("Authorization" in u.__name__ or True, "")
+# 【2026-11-08】原来这里是 `check("Authorization" in u.__name__ or True, "")` ——
+# `u` 是上面那个假 urlopen，`u.__name__` 是字符串 "_u"，这条判据恒真，从来没守过任何东西。
+# 现在改成真判据：每条请求都必须带 `Authorization: Bearer <key>`（key 来自 ROUTES）。
+check(all(h.get("Authorization", "").startswith("Bearer sk-") for h in u.headers),
+      f"每条请求都带 Authorization: Bearer <key>（实际 {u.headers}）")
 
 print("② 429 → PASS（限流说明 key 有效，不是故障）")
 u, _ = make_urlopen(429)
@@ -173,8 +181,13 @@ print("⑩ 接线在位（run_all 里必须真的调用它——写成工具却�
 import inspect  # noqa: E402
 src = inspect.getsource(doctor.run_all)
 check("check_llm_channel" in src, "check_llm_channel 已注册进 run_all")
-check("check_llm_channel" in src.split("(check_disk")[0].split("check_secret_storage")[0]
-      or True, "")
+# 【2026-11-08 删】这里原来还有一条
+#     check("check_llm_channel" in src.split("(check_disk")[0]
+#                                       .split("check_secret_storage")[0] or True, "")
+# 两个毛病叠在一起：①`or True` 让判据恒真，它从来没可能失败；②就算去掉 `or True`，
+# 它要求「出现在 check_disk 之前、且在 check_secret_storage 之前」，与下面那条
+# 「位置在 check_secret_storage 之后」互相矛盾 —— 两条不可能同时成立。
+# 顺序判据保留下一条（与注释写明的意图一致），这条删掉。
 show = [ln.strip() for ln in src.splitlines() if "check_llm_channel" in ln]
 check(bool(show), f"run_all 中出现：{show[:1]}")
 check(src.index("check_llm_channel") > src.index("check_secret_storage"),
