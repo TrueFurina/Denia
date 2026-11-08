@@ -13,6 +13,10 @@
 
 | commit | 时间 | 类型 | 一句话 | 验证 |
 |---|---|---|---|---|
+| `PR#18` | 15:4x | fix | **五把变异刀是空转的：闸门崩了也被算成「抓住了」**：`caught = r.returncode != 0` 把「判出了问题」和「根本没跑起来」当同一件事——把闸门整个换成 `raise RuntimeError(...)`，套件照样印「已抓住：<无输出>」「5 刀全红」并 exit 0。五把刀补 `_judged()`（非零退出 **且** 有 FAIL/✗ **且** 无 Traceback）+ `_baseline_green()`（起点不绿直接 FAIL，因为恒红的闸门能让每把刀都变红）；体检工具加 `--tier portable\|dev\|all` 分层（按「这台机器能不能跑」分，不是按重要性），CI 显式跑 7 对、本机 `check_all` 跑 16 对。 | `--tier portable` CERTIFIED 7 / `dev` CERTIFIED 8+SKIP 1 / `all` CERTIFIED 15+SKIP 1；11 刀 + 对照全 PASS；修前旧版被体检判 VACUOUS、注入崩溃后仍 exit 0，修后 exit 1 并点名「起点就不是绿的」 |
+| `PR#17` | 15:2x | fix | **`check_web_js_syntax` 在交付包运行时下从未跑过 + 新增「变异刀空转体检」**：该闸门只把仓根塞进 `sys.path`，而 `check_bridge_methods` 在 `tools/` 下；正常 CPython 会补脚本目录，交付包自带的可嵌入运行时（`python312._pth`）不会 → `ModuleNotFoundError` 一启动就崩，87 段 JS/HTML 从未被检查。补齐 `tools/` 路径。另新增把闸门换成退化实现的体检工具（D0 原样 / D1 恒 0 / D2 恒 1），7 对全 CERTIFIED。 | 修后 87 段 / 0 错 / exit 0（修前崩溃）；7 对全 CERTIFIED；十刀 + 对照全 PASS |
+| `PR#16` | 14:5x | fix | **通知线第三处跨模块死引用（`_push_cmd`）+ 新增「跨模块引用对账」闸门**：`notify_geom._notify_slide()` 调的 `_mn._push_cmd` 全仓无定义——WebView2→WPF 迁移后旧 API 调用点没删（前两处是 `NotifyJsBridge` / `_notify_slide_if`）。新增 AST 闸门：`from M import y` 与 `mod.attr` 必须指向真实存在的本地符号（外部包 / star 污染 / rebound 别名 / `hasattr` 声明过的一律不判）。顺带修 `real_software_drive.py` 里一条一直往裸 `except` 里抛 `ImportError` 的探针。 | 跨模块引用 0 命中（全仓 700+ 文件）；十二刀 + 对照全 PASS；`--root` 建 tempfile 样本，不碰仓库 |
+| `PR#14` | 14:3x | ci | **补上 #9/#12/#13 推迟的三道闸门接线**（unreachable / constant-cond / gate-exit）：三个 PR 都要往 `portable-gates` 末尾追加、同时追加必然互相冲突，所以各自在 body 里留了待办。只登记进 `GATES` 而 CI 不跑 = 「本机才守」，接进 CI 才挡得住别人合进来。 | `portable-gates` 6 族 / 12 步；三道闸门本机实测全绿、纯 stdlib、总耗时 17s |
 | `30dddf9` | 10:2x | fix | **设置页切麦热切换 守卫写错名（写了没接线）**：`webapp.setCallAudioDevice` 用 `hasattr(self._proactive, "set_duplex_mic")` 守卫，但 `ProactiveStrategy` 上**没有** `set_duplex_mic`（全仓零定义），守卫恒 False → 注释承诺的「让运行中的双工立即用新设备（不必重开整通电话）」**从未生效**（用户切麦后当前通话仍用旧设备）。真名是 `apply_call_settings(mic_device=...)`：更新 `_duplex_mic_device` 并对当前双工客户端调 `set_mic_device()` 热切换（webapp 另三处扬声器/通用设置早就在用这个真名，唯独切麦这条写错）。修为真名直调 + `logger.debug` 兜底；守卫去掉（真名 + try/except 足够，与本仓 17243 那条「幽灵调用」墓碑同一修法）。 | 新增回归 `src/tests/test_duplex_mic_hotswitch_wiring.py` 7/7（真方法写字段+调 client.set_mic_device / None 不动客户端 / 无客户端不炸 / tokenize 剥注释后代码含精确调用串 / 旧名已不在代码）；**变异刀**：改回 `set_duplex_mic` → 两条源码判据全红、还原字节一致；门禁对账 `✓ 全部有着落` |
 | `XXXXXXXX` | 03:1x | test | **补齐「感知指示器」变异刀（隐私门此前无变异=装饰品）+ TODO 审计口径纠正**：`test_perception_indicator.py` 早已登记为门，但其 docstring 提到的「变异刀3」从未提交——按「加门必须同时加变异」补 `_qc_perception_indicator_mutation.py` 四刀（watching 写死 true / privacy 恒 false / 静态 class=on / toggle 改无条件 add），全红 + 还原全绿，登记为慢项。另：此前「21 处 TODO」是口径错误，剥掉 `XXX` 占位符后**真 TODO 仅 1 处**（qzone.py 图片发布「需联调」，qzone 默认关、dormant），无隐藏债。 | 感知门 EXIT=0；变异四刀全红 + 还原全绿；登记对账「全部有着落」；py_compile 通过 |
 | `XXXXXXXX` | 17:5x | test | **主动搭话「去重 + 冷却时间戳守卫」单测（26 项）+ 变异刀**：proactive.py 的「不刷屏骚扰」靠 `_screen_activity_repeat`/`_similar_summary` 输入轨迹去重、`_similar_to_recent` 输出去重、`_last_proactive_or_zero` 冷却时间戳守卫撑着，此前零断言只靠人工。新增 `src/tests/test_proactive_dedup_cooldown.py` 26 项；变异刀 `tools/_qc_proactive_dedup_mutation.py` 三刀（子串判定恒假 / 轨迹去重恒 None / None→None 重演旧 bug）全红、还原 26 全绿；已登记进 check_all（测试门走 OpenBLAS 串行复核包装器，变异刀标慢项）。 | 测试 26/26；变异三刀全红 + 还原全绿；登记对账「全部有着落」；py_compile 通过 |
@@ -548,6 +552,79 @@ find_spec 返回 None → 误报「唤醒词退化」；
 
 **验证**：变异 4 刀全红 + 还原后回归 12/12 全绿；`tools/check_all.py` 登记对账 ✓；
 CI 全绿（pytest / self-check scripts / syntax gate 三腿 success）。
+
+#### PR #18 · 五把变异刀是空转的：闸门崩了也被算成「抓住了」
+
+**问题**：第二十二轮新增「变异刀空转体检」，做法是把闸门换成退化实现（恒 exit 0 / 恒 exit 1），
+看刀套件认不认得出来。那一轮只覆盖了 7 对 `portable` 的。本轮把剩下 9 对也过了一遍
+（这 9 把刀的 `TEST` 同样指向 `check_*.py`，只是要 `.venv`）——**5 对在 D2 方向
+（闸门恒 exit 1）判据失效**。
+
+根因是同一句：
+
+```python
+caught = r.returncode != 0
+```
+
+它把两件事当成一件事：**闸门判出了问题** 和 **闸门根本没跑起来**。
+实测：把 `check_release_numbers.py` 整个换成一句 `raise RuntimeError("闸门自己崩了")`，
+`_qc_release_numbers_mutation.py` 仍然逐条打印「已抓住：<无输出>」、最后打印
+「5 刀全红」并 **exit 0** —— 一个连第一行都跑不完的闸门，被认证成"五刀全抓"。
+
+更隐蔽的一层：**恒红的闸门能让每一把刀都变红**。所以"全红"这个读数，在起点不绿的时候
+什么都不证明；而旧版套件从来不检查起点。
+
+**改动**：五把刀（release_numbers / runtime_audio / tool_permission / ui_reload_boundary /
+verify_deps_order）统一加三个小函数：
+
+- `_judged(r)`：闸门是「判出了问题」——`returncode != 0` **且** 输出里有 `FAIL`/`✗`，
+  **且**输出里没有 `Traceback`（崩了 ≠ 识别）
+- `_run_test()`：跑一次闸门
+- `_baseline_green()`：起点必须绿，否则直接 `FAIL 起点就不是绿的` 并 `return 1`
+
+并把 `caught = r.returncode != 0` 换成 `caught = _judged(r)`。
+
+工具侧（`tools/check_knife_vacuity.py`）：
+
+- `PAIRS` 从 3 元组改成 4 元组，加 `tier` 字段；新增 `--tier portable|dev|all`
+- `.venv` 不再从仓副本里排除（dev 层的刀把解释器硬编码成 `.venv/Scripts/python.exe`，
+  副本里没有它就跑不起来，会全判 ERROR）
+- `FAIL_MARKS` 补 `没抓住` / `未抓住`：这五把刀说的是「没抓住（闸门失效）」，
+  第一版只有「没被抓住」，于是它们被判成 WEAK —— 又一次"仪器太窄"
+
+**分层不是按重要性分的，是按「这台机器能不能跑」分的。** dev 层需要 `.venv`，
+CI 上不装依赖、没有 venv，混进 CI 只会全 ERROR、把整道门变成恒红。所以 CI 显式写
+`--tier portable`（7 对），本机 `check_all.py` 显式写 `--tier all`（16 对）。
+`ci.yml` 里留了一句话说明 CI 只覆盖这 7 对——免得有人把 CI 全绿读成"16 对都验过了"。
+
+**验证**：
+
+```
+check_knife_vacuity.py --tier portable   → CERTIFIED 7            exit 0
+check_knife_vacuity.py --tier dev        → CERTIFIED 8 / SKIP 1   exit 0
+check_knife_vacuity.py --tier all        → CERTIFIED 15 / SKIP 1  exit 0（58s）
+_qc_knife_vacuity_mutation.py            → 11 刀 + 对照 全 PASS    exit 0
+```
+
+修前/修后的对照（同一把刀、同一个注入）：
+
+```
+# 闸门 = `raise RuntimeError("闸门自己崩了")`
+旧版 → 5 刀全红                                          exit 0   ← 假绿
+新版 → FAIL 起点就不是绿的 —— 恒红的闸门能让每把刀都变红   exit 1
+
+# 体检工具对旧版的判定
+✗ D2 闸门≡1：套件仍然 exit 0 —— 判据这样退化它发现不了
+→ VACUOUS
+```
+
+`_qc_knife_vacuity_mutation.py` 新增 K11（分层不许漏）：`PAIRS` 必须 portable 7 / dev 9、
+合计 16，且 dev 的对不许混进 portable（用 `--only` 各挑一对验证，不真跑整层——
+跑整层要十几秒，CI 上还换一屏 ERROR，计数要便宜才对）。
+
+**已知边界**：本轮只覆盖 `_qc_*` 里验 `check_*.py` 的 16 对（其中
+`_qc_site_counts_mutation` 是进程内直调 → SKIP，本工具不适用）。另外 61 个验
+`test_*.py` / 特性判定的刀**仍未验过**，不要读成"全部刀都验过了"。
 
 ### 2026-10-22 · 克隆面板「预填她的」：试听静默失效 + 克隆画假进度条还谎报「已完成」
 
