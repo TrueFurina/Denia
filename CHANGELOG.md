@@ -13,6 +13,7 @@
 
 | commit | 时间 | 类型 | 一句话 | 验证 |
 |---|---|---|---|---|
+| `PR#18b` | 16:4x | test | **空变异体检：另外 48 把刀的空转风险一直是零覆盖**：上一道工具靠「把判定文件换成退化实现」，前提是刀有独立判定文件——79 把里只有 26 对有，另外 48 把在进程内断言，换文件完全无效。本轮换方向：**退化变异本身**（`(old,new)` → `(old,old)`，即"什么都没改"），判定有牙就该绿 → 刀必须报「没抓住」→ `exit != 0`；若仍 `exit 0` 就是没在看变异。这个方向不需要知道判定在哪，对 79 把一视同仁。普查中修掉自己仪器的两处假发现（`_noop()` 盲取最后两个元素，把「说明」当成 `new_thunk`，5 把刀被误判 VACUOUS；runner 的 `sys.path[0]` 不是 `tools/`，让 `_qc_api_wiring_mutation` 白记 ERROR）。**顺带查出真缺陷**：`导入冒烟复核` 在 `PY_VENV` 下一直是 6 FAIL——`smoke_import` 的 `env["PYTHONPATH"]=root` 在随包嵌入式运行时下是死代码（`._pth` 固定 sys.path），且夹具的 `src/` 少了 `__init__.py` 成了命名空间包、被 `DaniaAI\src` 这个常规包压住。 | `check_knife_noop.py` CERTIFIED 26 / VACUOUS 1（已知）/ SKIP 50 / ERROR 2，exit 0（5m56s）；七刀 + 对照全 PASS；`导入冒烟复核` venv 6 PASS/6 FAIL → **12 PASS/0 FAIL**，刀在 venv 下也 3 刀全红 + 起点绿；`GATES` 215→217，站点 4 处锚点同步（7 PASS/0 FAIL） |
 | `PR#18` | 16:0x | fix | **18 把变异刀是空转的：判定崩了也被算成「抓住了」**：`caught = r.returncode != 0` 把「判出了问题」和「根本没跑起来」当同一件事——把判定整个换成 `raise RuntimeError(...)`，套件照样印「已抓住：<无输出>」「N 刀全红」并 exit 0。18 把刀补 `_judged()`（非零退出 **且** 有 FAIL/✗）+ `_baseline_green()`（起点不绿直接 FAIL）。工具补 `_resolve()`（判定不一定在 `tools/` 下）、ABSENT/ERROR 拆分、完整性检查、`--tier` 分层。顺带查出 `_qc_pathrefs_mutation` H 刀锚点缩进差 4 格、`count(old)==1` 拦不住子串匹配。 | `--tier portable` 8 / `dev` 17+SKIP1 / `all` 25+SKIP1；13 刀 + 对照全 PASS；修前旧版被体检判 VACUOUS、注入崩溃后仍 exit 0，修后 exit 1 并点名「起点就不是绿的」 |
 | `PR#17` | 15:2x | fix | **`check_web_js_syntax` 在交付包运行时下从未跑过 + 新增「变异刀空转体检」**：该闸门只把仓根塞进 `sys.path`，而 `check_bridge_methods` 在 `tools/` 下；正常 CPython 会补脚本目录，交付包自带的可嵌入运行时（`python312._pth`）不会 → `ModuleNotFoundError` 一启动就崩，87 段 JS/HTML 从未被检查。补齐 `tools/` 路径。另新增把闸门换成退化实现的体检工具（D0 原样 / D1 恒 0 / D2 恒 1），7 对全 CERTIFIED。 | 修后 87 段 / 0 错 / exit 0（修前崩溃）；7 对全 CERTIFIED；十刀 + 对照全 PASS |
 | `PR#16` | 14:5x | fix | **通知线第三处跨模块死引用（`_push_cmd`）+ 新增「跨模块引用对账」闸门**：`notify_geom._notify_slide()` 调的 `_mn._push_cmd` 全仓无定义——WebView2→WPF 迁移后旧 API 调用点没删（前两处是 `NotifyJsBridge` / `_notify_slide_if`）。新增 AST 闸门：`from M import y` 与 `mod.attr` 必须指向真实存在的本地符号（外部包 / star 污染 / rebound 别名 / `hasattr` 声明过的一律不判）。顺带修 `real_software_drive.py` 里一条一直往裸 `except` 里抛 `ImportError` 的探针。 | 跨模块引用 0 命中（全仓 700+ 文件）；十二刀 + 对照全 PASS；`--root` 建 tempfile 样本，不碰仓库 |
@@ -639,6 +640,100 @@ _qc_knife_vacuity_mutation.py            → 13 刀 + 对照 全 PASS    exit 0
 **已知边界**：78 个 `_qc_*` 里还有 **48 把**是"改源码后自己在进程内断言"，没有独立判定
 文件，换文件这个手法用不上。它们的空转风险与这 26 对完全相同，只是需要另一种做法，
 本轮没做——**不要把这 25 个 CERTIFIED 读成"全部刀都验过了"**。
+
+#### PR #18（续）· 空变异体检：另外 48 把刀的空转风险一直是零覆盖
+
+上面那套「换判定文件」有个前提：刀得有一个**独立的判定文件**。79 把刀里只有 26 对有，
+另外 48 把是「改完源码自己在进程内断言」——换文件这招对它们完全无效，也就是说这 48 把
+的空转风险一直是零覆盖。本轮换方向：**不退化判定，退化变异本身**。
+
+```
+空变异 = 把 MUTS 里的 (old, new) 换成 (old, old)
+```
+
+它等于"什么都没改"。此时判定有牙 → 判定该是绿的 → 刀必须报「没抓住」→ `exit != 0`；
+判定空转 → 刀照样报「N 刀全红」→ `exit 0`。**这个方向不需要知道判定在哪**，对 79 把一视同仁。
+
+两个方向是互补的两半，缺哪一半，那一半的空转就没人管：
+
+| 手法 | 证明什么 | 覆盖 |
+|---|---|---|
+| 换判定文件（第二十二/二十三/二十四轮） | 判定变坏时刀会红 | 26 对（有独立判定文件的） |
+| 空变异（本轮） | 没东西可抓时刀不会假红 | 79 把里 29 把能判定 |
+
+**第一次普查就是 5 个假发现——仪器自己没自检**
+
+`_noop()` 第一版一律取「最后两个元素」当 `(old, new)`。实测 `_qc_about_tier_mutation`
+的形状是 `(名字, old_thunk, new_thunk, 说明)`，于是它把 **说明** 换成了 `new_thunk`：
+空变异根本没发生，刀照常跑、照常全红，工具却判它 `VACUOUS`。**一个假发现，来自没自检的仪器。**
+改成按"载荷类型"定位（两个可调用对象 / 两个 bytes / 嵌套对），并且改完用 `is` 验证
+old 与 new 是同一个对象——宁可 `SKIP`，也不产出一个假的 `VACUOUS`。修完 6 把里 5 把变 `CERTIFIED`。
+
+**第二次是仪器比现实窄**
+
+runner 从临时目录跑刀，`sys.path[0]` 变成了 runner 所在目录。于是
+`_qc_api_wiring_mutation` 一进来就 `ModuleNotFoundError: No module named 'check_api_wiring'`，
+被记成 `ERROR`（无法判定）——**这不是刀的缺陷，是仪器把刀换了个环境跑**：刀平时是
+`python tools/_qc_x.py` 跑的，那时 `sys.path[0]` 就是 `tools/`。补一行 `sys.path.insert`
+之后，这把刀从 `ERROR` 变成 `CERTIFIED`。本轮第二次「仪器太窄」。
+
+**顺带查出的真缺陷：`导入冒烟复核` 在 `PY_VENV` 下一直是 6 FAIL**
+
+普查里 `_qc_smoke_retry_mutation` 报「起点就红」，可直接 `python tools/test_smoke_import_retry.py`
+是 12 PASS / 0 FAIL。差别只在解释器——而 `check_all.py` 给这道门配的正是 `PY_VENV`。两层原因：
+
+1. **`env["PYTHONPATH"] = root` 在随包嵌入式运行时下是死代码。** `python/` 是带 `._pth` 的
+   嵌入式运行时：`sys.path` 固定、不吃 `PYTHONPATH`、也不加 cwd。实测
+   `PYTHONPATH=<root> .venv/Scripts/python.exe -c "import src.fixturepkg.ok"` →
+   `ModuleNotFoundError`；改成在子进程里 `sys.path.insert(0, root)` → `rc 0`。
+   后果不止夹具：`--root` 指向的树**可能根本不是被 import 的那棵树**（`._pth` 里有包根 `DaniaAI`）。
+2. **夹具的 `src/` 少了 `__init__.py`**，成了**命名空间包**。命名空间包是兜底——只有所有
+   `sys.path` 条目里都没找到常规包时才用它；而 `DaniaAI\src` 是常规包，直接胜出，
+   `src.fixturepkg` 永远解析不到。
+
+修法：子进程显式插 `sys.path`（`PYTHONPATH` 保留，对吃它的解释器无害）；夹具补 `src/__init__.py`
+让夹具和真仓库同构。结果：
+
+```
+                                    before            after
+.venv/Scripts/python.exe            6 PASS / 6 FAIL   12 PASS / 0 FAIL   exit 0
+python                              12 PASS / 0 FAIL  12 PASS / 0 FAIL   exit 0
+_qc_smoke_retry_mutation（venv）     起点就红           3 刀全红 + 起点绿 + 还原后绿  exit 0
+```
+
+**这两处没有变异刀，而且不该硬造**：在常规 CPython 下把它们改回去，整套自测仍然全绿
+（没有第二个 `src` 来抢，`PYTHONPATH` 也照常生效），刀抓不到任何东西——那就是一把空转刀。
+能钉住它们的只有「换一个把包根放进 `sys.path` 的解释器跑」，也就是上面那三行实测。
+
+**`KNOWN_VACUOUS`：只许减不许增**
+
+唯一一把 `_qc_a5_probe_mutation`：它的判定 `tools/probe_a5_env.py` 在**本机就是红的**
+（7 PASS / 2 FAIL，`至少 1 条 [UI心跳] 被分类 ← 0`：`logs/` 里没有 UI 心跳样本）。
+判定恒红 → 任何变异之后它都会红 → 6 把刀「全红」是白送的。
+这张表不是垃圾桶，是待办清单，每条都写清"为什么现在还空转、什么条件下能修"。
+
+**结果**
+
+```
+check_knife_noop.py          → CERTIFIED 26 / VACUOUS 1 / SKIP 50 / ERROR 2   exit 0（5m56s）
+_qc_knife_noop_mutation.py   → 7 刀 + 对照 全 PASS                            exit 0（5m21s）
+```
+
+`ERROR` 两把都是环境，不是新缺陷：`_qc_presence_mutation`（上一轮就记过：干净树上
+33 PASS / 1 FAIL）与 `_qc_tray_switch_mutation`（判定要 `config.yaml`，在 `.gitignore` 里）。
+`SKIP` 五十把是没有模块级 `MUTS` 的——**SKIP 不算通过**。
+
+**边界（必须连着结果一起读）**：空变异只证明「没东西可抓时它不会假红」，
+**不证明「有东西可抓时它抓得住」**——后者仍靠每把刀自己的正向刀，以及上一轮那道
+`check_knife_vacuity.py`。**这 26 个 CERTIFIED 不许读成"全部刀都验过了"**：79 把里
+50 把本工具看不见。
+
+**登记**：`tools/check_knife_noop.py` + `tools/_qc_knife_noop_mutation.py` 进 `check_all.GATES`
+（都标慢项），`GATES` 从 215 涨到 217，`site/index.html` 与 `site/PUBLISH.md` 的 4 处锚点
+同步改（`check_site_counts.py` 先红后绿，7 PASS / 0 FAIL）。
+**这两步故意不进 `ci.yml`**：它们要 `.venv`，CI 里 79 把大多卡在 `ModuleNotFoundError` →
+`ERROR`，N7 对照还会因"一把都没跑成"变成 `exit 2` 让 job 恒红。所以它和 dev 层 18 对一样，
+只由本机 `check_all.py` 覆盖——`ci.yml` 里写了这句话，免得下次有人把 CI 全绿读成"空变异体检跑过"。
 
 ### 2026-10-22 · 克隆面板「预填她的」：试听静默失效 + 克隆画假进度条还谎报「已完成」
 
