@@ -156,8 +156,8 @@ def measure_processes() -> dict:
     return {"available": True, "counts": counts}
 
 
-def analyze_heartbeat() -> dict:
-    logs = sorted(glob.glob(os.path.join(ROOT, "logs", "launch_run*.log")),
+def analyze_heartbeat(root: str) -> dict:
+    logs = sorted(glob.glob(os.path.join(root, "logs", "launch_run*.log")),
                   key=os.path.getmtime)[-6:]
     per_file = []
     heartbeat_hits: list[str] = []
@@ -180,15 +180,16 @@ def analyze_heartbeat() -> dict:
     fix_ts = None
     try:
         p = subprocess.run(["git", "log", "-1", "--format=%ct", FIX_COMMIT],
-                           cwd=ROOT, capture_output=True, text=True,
+                           cwd=root, capture_output=True, text=True,
                            encoding="utf-8", errors="replace")
         fix_ts = int((p.stdout or "0").strip())
     except Exception:
         pass
     post_fix = bool(fix_ts) and any(
-        os.path.getmtime(os.path.join(ROOT, "logs", e["file"])) > fix_ts
+        os.path.getmtime(os.path.join(root, "logs", e["file"])) > fix_ts
         for e in per_file)
-    return {"files": per_file, "total_lines": len(heartbeat_hits),
+    return {"files": per_file, "found": len(logs),
+            "total_lines": len(heartbeat_hits),
             "fix_commit": FIX_COMMIT, "post_fix_run_available": post_fix,
             "last_lines": heartbeat_hits[-5:],
             "note": "修复前日志只能当基线；post_fix_run_available=false 表示两阶段策略上线后没有长跑样本"}
@@ -197,22 +198,30 @@ def analyze_heartbeat() -> dict:
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--report", default="logs/a5_env_probe.json")
+    # 【2026-11-08 加·让探针可被判据驱动】原来 ROOT 写死成脚本上两级目录，
+    # 于是「日志基线」这一节只能在**恰好有 logs/launch_run*.log 的那台机器**上被验。
+    # 加 --root 之后变异刀可以在 tempfile 里造一份合成日志当夹具，
+    # 「探针在缺样本时怎么说话」也才第一次变成可判的。
+    ap.add_argument("--root", default=ROOT,
+                    help="仓根（默认本仓；日志与报告路径都相对它解析）")
     args = ap.parse_args()
+    root = os.path.abspath(args.root)
 
     display = measure_display()
     processes = measure_processes()
-    heartbeat = analyze_heartbeat()
+    heartbeat = analyze_heartbeat(root)
     report = {
         "schema_version": 1,
         "generated_at": datetime.datetime.now().isoformat(timespec="seconds"),
         "scope": "本机测量，不等于 A5 验收通过；人眼项见 requires_human",
+        "root": root,
         "display": display,
         "processes": processes,
         "heartbeat": heartbeat,
         "requires_human": list(HUMAN_ONLY),
         "post_fix_long_run_verified": heartbeat["post_fix_run_available"],
     }
-    path = args.report if os.path.isabs(args.report) else os.path.join(ROOT, args.report)
+    path = args.report if os.path.isabs(args.report) else os.path.join(root, args.report)
     os.makedirs(os.path.dirname(path), exist_ok=True)
     # 先删旧报告：否则「不落盘」的变异会被上一轮残留产物满足（残留产物假绿）。
     # 判据「报告已落盘」必须只能由本次运行满足。
@@ -221,7 +230,7 @@ def main() -> int:
     with io.open(path, "w", encoding="utf-8") as f:
         f.write(json.dumps(report, ensure_ascii=False, indent=2) + "\n")
 
-    ok, fail = 0, 0
+    ok, fail, skip = 0, 0, 0
 
     def chk(name: str, cond: bool, detail: str = "") -> None:
         nonlocal ok, fail
@@ -231,6 +240,12 @@ def main() -> int:
         else:
             fail += 1
             print("  FAIL %s  <- %s" % (name, detail))
+
+    def unverified(name: str, why: str) -> None:
+        """样本不存在 ≠ 探针坏了。这条口径是本轮补的，见文件尾的退出码说明。"""
+        nonlocal skip
+        skip += 1
+        print("  WARN %s  <- %s（未验证，不计通过也不计失败）" % (name, why))
 
     print("1) Win32 显示环境")
     mons = display["monitors"]
@@ -249,9 +264,25 @@ def main() -> int:
             m["dpi_scale_pct"]))
 
     print("\n2) 心跳日志基线")
-    chk("至少扫到 1 份 launch_run 日志", len(heartbeat["files"]) >= 1)
-    chk("至少 1 条 [UI心跳] 被分类", heartbeat["total_lines"] >= 1,
-        str(heartbeat["total_lines"]))
+    # 【2026-11-08 修·「本机没有样本」被报成「探针坏了」】原来这两条是硬 FAIL：
+    #   chk("至少扫到 1 份 launch_run 日志", len(heartbeat["files"]) >= 1)
+    #   chk("至少 1 条 [UI心跳] 被分类", heartbeat["total_lines"] >= 1)
+    # 可 `logs/` 在 .gitignore 里，**新克隆的树上必然一份都没有** —— 于是这道登记在
+    # check_all 里的闸门对每个新人都恒红，而红的原因和探针质量毫无关系。
+    # 更糟的是它污染了变异刀：起点恒红 → 六把刀"全红"是白送的（第二十五轮记为
+    # KNOWN_VACUOUS 的那一把就是这个）。
+    # 现在分三种状态：有样本 → 判；有日志但扫出 0 份 → **FAIL**（那是探针坏了）；
+    # 压根没有日志 → **WARN 未验证**。
+    if heartbeat["found"] == 0:
+        unverified("至少扫到 1 份 launch_run 日志", "本机 logs/ 下没有 launch_run*.log")
+        unverified("至少 1 条 [UI心跳] 被分类", "同上，无样本可分类")
+    else:
+        chk("扫描份数与发现份数一致",
+            len(heartbeat["files"]) == heartbeat["found"],
+            "发现 %d 份，只扫了 %d 份" % (heartbeat["found"],
+                                          len(heartbeat["files"])))
+        chk("至少 1 条 [UI心跳] 被分类", heartbeat["total_lines"] >= 1,
+            str(heartbeat["total_lines"]))
     for e in heartbeat["files"]:
         print("   · %s 共 %d 条 %s" % (e["file"], e["total"], e["counts"]))
     print("   修复后长跑样本：%s" % ("有" if heartbeat["post_fix_run_available"] else "无（待真机补）"))
@@ -264,8 +295,22 @@ def main() -> int:
     chk("报告已落盘且可解析", os.path.isfile(path) and
         json.load(io.open(path, "r", encoding="utf-8"))["schema_version"] == 1)
     print("\n报告：%s" % path)
-    print("\n结果: %d PASS / %d FAIL" % (ok, fail))
-    return 0 if fail == 0 else 1
+    print("\n结果: %d PASS / %d FAIL / %d 未验证" % (ok, fail, skip))
+    # 退出码：
+    #   0  = 全部判完且全绿
+    #   1  = 有真 FAIL
+    #   77 = 没有 FAIL，但有心跳样本没验（本机 logs/ 为空）——**不是通过**
+    # 77 是本仓既有约定（check_delivery / 拿不到锁都这么走），check_all 会把它
+    # 单列成「未验证」而不是「通过」。
+    # `[SKIP]` 那一行是给 check_all 摘原因用的：它从 `[SKIP]` 开头的行取文本，
+    # 没有这一行就会显示「未说明原因」——那等于把"为什么没验"又丢了一次。
+    if fail:
+        return 1
+    if skip:
+        print("[SKIP] 本机 logs/ 下没有 launch_run*.log —— 心跳基线 %d 项未验证（不是通过）"
+              % skip)
+        return 77
+    return 0
 
 
 if __name__ == "__main__":
