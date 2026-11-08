@@ -140,6 +140,7 @@
 | `PR#6` | 待合并 | fix | **main.py 解释器守卫——拦「用错 python 跑 --doctor」的误导性 FAIL**：交付包用 `python/python.exe`（isolated 模式）跑 doctor 得 16 PASS / 3 WARN / 0 FAIL；用系统 python 跑得 10 PASS / 5 WARN / 4 FAIL（核心依赖缺失 / 语音坏了 / 唤醒词退化），全是「该解释器没装包依赖」的假象。包内 python 不在系统 PATH，用户极易直接 `python main.py --doctor` 触发假象 → 误判「包是坏的」。改动：`main.py` 的 `--doctor` 截获块加前置检测，交付包存在但当前解释器不是它时打醒目提示（列假象 + 给正确重跑命令），**不阻止运行、不改退出码**。源码仓无 `python/` 目录 → 触发条件恒假 → 守卫整体跳过，零干扰。 | 交付包双向实测：系统 python → 提示 + 4 个误导 FAIL；包内 python → 无提示、干净 16-3-0；`tools/check_delivery.py --smoke` 8 PASS / 0 FAIL 无回归 |
 | `PR#7` | 待合并 | fix | **create_notify_window 329 行不可达代码墓碑**：`src/ui/main_window.py` 的 `create_notify_window()` 里 try 和 except 两条分支都 `return`，其后的 329 行 WebView2 旧实现永远执行不到——死代码占位、误导维护以为那是活跃路径。删掉 return 之后的整段死代码，改用新增回归 `test_notify_dead_path.py` 守住「create_notify_window 真正调到 native_notify.ensure_notify_window()」+ 变异刀 4 刀（try 提前 return / except 吞掉 / 删掉调native_notify / 改坏 return 值），全红 + 还原全绿；登记进 `check_all.py` 门禁。 | 变异 4 刀全红；还原后回归 12/12 全绿；check_all 登记对账 ✓ |
 | `PR#9` | 待合并 | fix | **4 处不可达代码清理 + 新增「必返回之后不许有语句」闸门**：`create_notify_window` 的 329 行死代码（#7）暴露出一个类目——必返回语句之后还有语句，编译不报错、测试不报错、跑起来也看不出来，只有人眼逐函数读才发现，所以能潜伏两个月。本轮全仓扫出并清理 4 处：`proactive.py` 一条「已停止」日志写在 try/after 全 return 之后→从未打印，移进 finally 才真会在每条退出路径打印；`api_pet.py` 一份 default_responses 兜底字典，上面 if/else 两分支都 return→永远到不了；`notify_geom.py` 17 行旧实现，前面一行裸 return（2026-09-05 定版加的）后全部死代码；`webapp.py` 1 行同类。新增闸门 `tools/check_unreachable.py`（AST 判「必返回后不许有语句」，`unreachable-ok` 注释豁免故意不可达），+218 行变异刀 `tools/_qc_unreachable_mutation.py` 证明判据有牙齿，登记进 `check_all.py`。 | 新闸门全绿（4 处清理 + 豁免标记认得）；变异刀 4/4 全红 + 还原全绿；check_all 登记对账 ✓；CI 四腿全绿 |
+| `PR#10` | 待合并 | fix | **relationship_v2 删掉被静默覆盖的 37 行同名函数 + 新增同名覆盖闸门**：`src/companion/relationship_v2.py` 里有一个函数被**同名函数定义静默覆盖**——Python 里后一个 `def` 会覆盖前一个，前一个 37 行函数体从定义那一刻起就永远不可达（编译/测试/运行都不报错，只有逐行读才看出）。删掉被覆盖的 37 行死函数体，保留真正生效的那个；新增闸门 `tools/check_duplicate_def.py`（AST 判「同作用域内不许有同名函数定义」，`duplicate-ok` 注释豁免故意覆盖如重载兼容垫），+220 行变异刀 `tools/_qc_duplicate_def_mutation.py` 证明判据有牙齿，登记进 `check_all.py`。 | 新闸门全绿；变异刀 4/4 全红 + 还原全绿；check_all 登记对账 ✓；CI 四腿全绿 |
 
 > **\* 夹带说明（必须留档）**：12:10 / 12:2x 两行的内容实际随 `fa86a4c`（E1 开机自启）
 > 入库——13:14 的并发提交把质检工作流未提交的改动一起提交了，未按工作流拆分。
@@ -2218,6 +2219,19 @@ G: 盘在开发机上早就没了，只是没人去看那张卡。
 前科，不能只依赖它。
 
 ---
+#### PR #10 · relationship_v2 删掉被静默覆盖的 37 行同名函数 + 新增同名覆盖闸门
+
+**问题**：`src/companion/relationship_v2.py` 里有一个函数被**同名函数定义静默覆盖**。Python 里后一个
+`def` 会覆盖前一个，前一个 37 行函数体从定义那一刻起就永远不可达——编译不报错、测试不报错、
+运行也不报错（那 37 行只是白白占内存、误导阅读），只有逐行读才看得出。
+
+**改动**：删掉被覆盖的 37 行死函数体，保留真正生效的那个定义。
+
+**新增闸门** `tools/check_duplicate_def.py`（159 行）：AST 判「同作用域内不许有同名函数定义」，
+用 `duplicate-ok` 注释豁免故意覆盖（如重载兼容垫）。+220 行变异刀 `tools/_qc_duplicate_def_mutation.py`
+证明判据有牙齿。登记进 `tools/check_all.py`。
+
+**验证**：新闸门全绿；变异刀 4/4 全红 + 还原全绿；`check_all.py` 登记对账 ✓；CI 四腿全绿。
 
 ### 2026-10-22 · 新闸门：后端广播 type 与前端分发分支对账
 
