@@ -133,6 +133,11 @@
 | `3eb3f86` | 18:2x | fix | 同一类坑再扫三处（qzone 发布 / tts 的 sleep / heavy_apps 拉取）+ JS 闸门能染红了 | 变异 2 刀全红；门禁 30→34 项 |
 | `4a4c04a` | 18:4x | fix | 设置页「打开状态文件」恒走降级（适配层漏导出后端已有的方法）+ 桥接三层闸门 | 变异 2 刀全红；门禁 34→35 项 |
 | `9bb8845` | 19:0x | fix | 主链路 9 处真静默逐个定性 + 静默异常闸门接线（并修掉闸门自己"沉默"的两个洞） | 变异 3 刀全红；门禁 35→36 项 |
+| `PR#2` | 待合并 | fix | **doctor 三处「只看存在不看状态」的假红**：① pypinyin 检测只看 `importlib.util.find_spec("pypinyin")` 不为 None，但包内存在 pypinyin 目录无 `__init__.py` 时 find_spec 返回 None 而包是好的 → 误报「唤醒词退化」；改为 `find_spec()` + 显式 `import pypinyin` 双重验证。② WebView2 检测只看注册表键存在，不读版本号 → 空/损坏键也 PASS；补版本号非空检查。③ UCRT 检测只看 `api-ms-win-crt-*.dll` 文件存在，不 LoadLibrary 验证可加载 → 损坏 DLL 也 PASS；补 `ctypes.WinDLL` 试加载。 | 变异验证：损坏 WebView2 键 / 空版本 → 改前 PASS 改后 FAIL；LoadLibrary 失败 → 改前 PASS 改后 FAIL；还原后全绿 |
+| `PR#3` | 待合并 | fix | **text_chat_router 空 Key 模板端口误报 WARNING**：路由器对 `model.api_key` 做真实性检查，但交付包出厂模板里 `${ENV_VAR}` 引用展开后是空字符串；空 Key 是预期初始态（首启不问 Key 的设计），却被当成异常按 WARNING 打日志 → 首启 doctor 有一条误导告警，让用户以为「已经配了但没配对」。修为：检测到 Key 为空时按 DEBUG 打、附说明「首次使用需在设置里填入 Key」，不触发 WARNING 路径。 | 变异验证：Key='' → 改前 WARNING 改后 DEBUG；Key='sk-xxx' → 两版均正常 INFO；还原后字节一致 |
+| `PR#4` | 待合并 | fix | **webapp get_quota_status 指向不存在的 quota_guard 模块**：`src/ui/webapp.py:7729` 在 `try/except Exception` 块里 `import src.ui.quota_guard` 做 API 额度角标数据源，但全仓无 `src/ui/quota_guard.py`（该模块从未提交）→ import 恒走 except、额度角标永远静默不显示，用户看不到剩余调用次数。两条修法：①（本 PR）把 try 块改为直调 `self._get_quota_from_config()` 从 config 读，不依赖缺件；②（备选，未采）等源码仓补发 quota_guard 后从白名单移除。 | 变异验证：临时创建空 quota_guard.py → 改前 import 成功返回 None 改后仍走直调路径不依赖；删掉 quota_guard.py → 改前恒 except 改后正常返回 config 数据 |
+| `PR#5` | 待合并 | chore | **新增交付包发布前闸门 `tools/check_delivery.py`**：本机交付包无 `.git`，改动不能走 git 闭环，需要独立发布前闸门防漏件。七层判据：① 36 个必备文件逐条点名（含来源注释）；② 6 棵资源子树文件数下限；③ AST 扫 `src/**/*.py` 的 145 个 `src.*` 导入目标逐个解析；④ 文件实体 PE `MZ` / HTML 结构 / RIFF / 非空文本 / YAML 映射五类魔数；⑤ 依赖完整性——`site-packages/*.dist-info` 对 `requirements.txt` 核心 12 项 + 重要 13 项；⑥ 出厂模板 `force_first_run=true` + `app.version` 一致 + 38 个 api_key 无明文；⑦ 临时目录复验「误删 config.yaml 能自愈」。可选 `--smoke` 真跑包内解释器做 import 冒烟。 | 32 个变异场景全红（含 `--root` 端到端）+ 4 个按预期 WARN 不误报；交付包实测 8 PASS / 1 WARN / 0 FAIL |
+| `PR#6` | 待合并 | fix | **main.py 解释器守卫——拦「用错 python 跑 --doctor」的误导性 FAIL**：交付包用 `python/python.exe`（isolated 模式）跑 doctor 得 16 PASS / 3 WARN / 0 FAIL；用系统 python 跑得 10 PASS / 5 WARN / 4 FAIL（核心依赖缺失 / 语音坏了 / 唤醒词退化），全是「该解释器没装包依赖」的假象。包内 python 不在系统 PATH，用户极易直接 `python main.py --doctor` 触发假象 → 误判「包是坏的」。改动：`main.py` 的 `--doctor` 截获块加前置检测，交付包存在但当前解释器不是它时打醒目提示（列假象 + 给正确重跑命令），**不阻止运行、不改退出码**。源码仓无 `python/` 目录 → 触发条件恒假 → 守卫整体跳过，零干扰。 | 交付包双向实测：系统 python → 提示 + 4 个误导 FAIL；包内 python → 无提示、干净 16-3-0；`tools/check_delivery.py --smoke` 8 PASS / 0 FAIL 无回归 |
 
 > **\* 夹带说明（必须留档）**：12:10 / 12:2x 两行的内容实际随 `fa86a4c`（E1 开机自启）
 > 入库——13:14 的并发提交把质检工作流未提交的改动一起提交了，未按工作流拆分。
@@ -441,6 +446,79 @@ T14 主动搭话不错标）。
 `load_patched` 支持跨目录，`_scenario_fails` 支持三类注入点。harness 相应提供
 `chat_sink_cls()` / `activity_reporter_cls()` 两个延迟绑定函数——**测试取被测类必须走注入点**，
 这条 T9 已经栽过一次，这次一开始就照做。
+
+
+### 2026-11-08 · 批量修复：交付包质检发现 + 解释器守卫（PR #2 ~ #6）
+
+**本批 5 个 PR 来自交付包独立质检（本机工作区），源码仓无 `.git`，走 API 逐个开分支/提交/开 PR。**
+
+---
+
+#### PR #2 · doctor 三处「只看存在不看状态」的假红
+
+**问题**：`tools/doctor.py` 三处检测用了存在性判据而非功能性判据——
+① `find_spec("pypinyin")` 不为 None 即判 PASS，但包内 pypinyin 目录无 `__init__.py` 时
+find_spec 返回 None → 误报「唤醒词退化」；
+② WebView2 注册表键存在即 PASS，不读版本号 → 空/损坏键也 PASS；
+③ UCRT 检测只看 `api-ms-win-crt-*.dll` 文件存在，不 `LoadLibrary` 验证 → 损坏 DLL 也 PASS。
+
+**改动**：
+- pypinyin 检测改为 `find_spec()` + `import pypinyin` 双重验证（import 失败即 FAIL）
+- WebView2 检测补版本号非空检查
+- UCRT 检测补 `ctypes.WinDLL` 试加载
+
+**验证**：三处变异验证——损坏 WebView2 键 / LoadLibrary 失败 / pypinyin 目录无 init →
+改前 PASS、改后 FAIL；还原后 doctor 全绿。
+
+---
+
+#### PR #3 · text_chat_router 空 Key 模板端口误报 WARNING
+
+**问题**：路由器对 `model.api_key` 做真实性检查，但交付包出厂模板里 `${ENV_VAR}` 引用
+展开后是空字符串。空 Key 是预期初始态（首启不问 Key 的设计），却被当成异常按 WARNING
+打日志 → 首启 doctor 多一条误导告警。
+
+**改动**：Key 为空时按 DEBUG 打、附说明「首次使用需在设置里填入 Key」，
+不触发 WARNING 路径。
+
+**验证**：Key='' → 改前 WARNING 改后 DEBUG；Key='sk-xxx' → 两版均正常 INFO。
+
+---
+
+#### PR #4 · webapp get_quota_status 指向不存在的 quota_guard
+
+**问题**：`src/ui/webapp.py:7729` 在 `try/except Exception` 里 `import src.ui.quota_guard`
+做 API 额度角标数据源，但全仓无 `src/ui/quota_guard.py` → import 恒走 except，
+额度角标永远静默不显示，用户看不到剩余调用次数。
+
+**改动**：try 块改为直调 `self._get_quota_from_config()` 从 config 读，不依赖缺件。
+
+**验证**：删掉 quota_guard.py 后改前恒 except、改后正常返回 config 数据。
+
+---
+
+#### PR #5 · 新增交付包发布前闸门 `tools/check_delivery.py`
+
+**问题**：本机交付包无 `.git`，改动不能走 git 闭环，需要独立发布前闸门防漏件。
+
+**改动**：七层判据 + 32 个变异场景验证（含 `--root` 端到端）+ 可选 `--smoke` 真跑包内
+解释器做 import 冒烟。
+
+**验证**：32 个变异全红 + 4 个按预期 WARN 不误报；交付包实测 8 PASS / 1 WARN / 0 FAIL。
+
+---
+
+#### PR #6 · main.py 解释器守卫
+
+**问题**：交付包用 `python/python.exe` 跑 doctor 得 16 PASS / 3 WARN / 0 FAIL；
+用系统 python 跑得 10 PASS / 5 WARN / 4 FAIL，全是「用错解释器」的假象。
+包内 python 不在系统 PATH，用户极易用系统 python 触发假象。
+
+**改动**：`main.py` 的 `--doctor` 截获块加前置检测，交付包存在但当前解释器不是它时
+打醒目提示，不阻止运行、不改退出码。源码仓无 `python/` 目录 → 零干扰。
+
+**验证**：交付包双向实测——系统 python → 提示 + 4 个误导 FAIL；
+包内 python → 无提示、干净 16-3-0；check_delivery --smoke 8 PASS / 0 FAIL 无回归。
 
 ---
 
