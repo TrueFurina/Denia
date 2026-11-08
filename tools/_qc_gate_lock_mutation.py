@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """「check_all 互斥锁」的变异验证：五刀，刀刀必须被抓住。
 
-跑法：.venv/Scripts/python.exe -u tools/_qc_gate_lock_mutation.py
+跑法：python -u tools/_qc_gate_lock_mutation.py（用当前解释器，不依赖 .venv）
 
 A 不清理陈旧锁        → 上次被强杀后所有门禁永久堵死
 B 拿不到锁也报成功    → 两个会话又能同时改源码（锁形同虚设）
@@ -19,7 +19,7 @@ os.chdir(ROOT)
 
 P = "tools/_gate_lock.py"
 TEST = "tools/test_gate_lock.py"
-PY = ".venv/Scripts/python.exe"
+PY = sys.executable  # 干净 runner 上没有 .venv；子进程复用当前解释器
 
 
 def E(s: str) -> bytes:

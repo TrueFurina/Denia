@@ -99,3 +99,25 @@ jobs:
           python -m pip install -r requirements-test.txt sounddevice
       - name: pytest
         run: python -m pytest src/tests -q -p no:cacheprovider
+
+  portable-gates:
+    name: portable gates (stdlib only)
+    runs-on: windows-latest
+    needs: syntax
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      # 只放纯 stdlib、不依赖 .venv / 音频设备 / 桌面会话的判据。
+      # 2026-11-08 合并 PR #1 时发现：原 self-check 只遍历 src/tests/，
+      # 且 SKIP 列表跳过该 PR 修的 test_doctor.py / test_wake_word.py，
+      # tools/ 下 195 道 GATES 一道都没进 CI —— CI 全绿曾是零覆盖。
+      # 其余 tools/ 闸门多硬编码开发机 venv 解释器或需要外设，仍由本机
+      # check_all.py --fast 负责，整体塞进 CI 只会制造假红。
+      # 拆成两个 step：Windows 默认 shell 的多行脚本里，前一条命令失败
+      # 会被后一条的退出码覆盖，合并写会漏报红。
+      - name: gate lock judgement
+        run: python tools/test_gate_lock.py
+      - name: gate lock mutation (five knives)
+        run: python tools/_qc_gate_lock_mutation.py
