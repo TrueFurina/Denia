@@ -148,3 +148,7 @@ for s in self_safe:
     print(("  PASS " if not r else "  FAIL ") + repr(s[:24]))
 
 print("\nPROOF " + ("ALL_PASS" if ok else "HAS_FAIL"))
+# 【2026-11-08】这里原本只打印结论、始终 exit 0 —— 它登记在 GATES 的「虚构守卫」一项里，
+# 于是无论漏抓多少条编造句，全量闸门都是 ✓。打印出来的 PROOF 只有人眼在看，
+# 而这一项恰恰是"没人会天天看"的那类。补上退出码，它才真的在守。
+sys.exit(0 if ok else 1)
