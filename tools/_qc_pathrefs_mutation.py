@@ -20,6 +20,40 @@ TEST = "src/tests/test_config_path_refs.py"
 PY = ".venv/Scripts/python.exe"
 
 
+# 【2026-11-08 修·刀自己会空转】原来只判 `r.returncode != 0`，于是判定文件**崩了**
+# 也被算成"抓住"。实测：把 `src/tests/test_config_path_refs.py` 整个换成一句 `raise RuntimeError("自己崩了")`，
+# 本刀仍然逐条打印「已抓住：<无输出>」、最后打印「N 刀全红」并 exit 0 ——
+# **一个连第一行都跑不完的判定，被认证成"全抓"**。
+# 崩了和识别是两件事：前者说明判定没跑，后者才说明判据在工作。
+# 起点也必须先绿：恒红的判定能让**每一把**刀都变红，那种"全红"什么都不证明。
+def _judged(r) -> bool:
+    """判定文件是「判出了问题」而不是「崩了」或「什么都没说」。
+
+    【2026-11-08 第二版·第一版太严】第一版还要求「输出里没有 Traceback」，
+    实测把**先印 FAIL、随后收尾时崩掉**的判定判成了"没抓住"：
+      · `_qc_asr_mutation` ①②：印了 `FAIL lang='zh-cn'`，随后 vosk 桩抛
+        `AttributeError: 'Model' object has no attribute '_handle'`
+      · `_qc_config_bootstrap_mutation` B：印了 `FAIL 状态 created`，随后读临时
+        `config.yaml` 抛 `FileNotFoundError`
+    两次都是**仪器太窄**（本轮第三次）。真正的判别是**有没有点名**：
+    退化桩只印一个 `exit 1`，一个字都没有 —— 那才叫"什么都没说"。
+    """
+    out = (r.stdout or "") + (r.stderr or "")
+    return r.returncode != 0 and ("FAIL" in out or "✗" in out)
+
+
+def _run_test():
+    return subprocess.run([PY, "-u", TEST], capture_output=True, text=True,
+                          encoding="utf-8", errors="replace")
+
+
+def _baseline_green() -> bool:
+    r = _run_test()
+    out = (r.stdout or "") + (r.stderr or "")
+    return r.returncode == 0 and "Traceback" not in out
+
+
+
 def E(s: str) -> bytes:
     return s.encode("utf-8")
 
@@ -64,8 +98,18 @@ MUTS = [
        "        v = None")),
 
     ("H 端口探测的异常被静默吞掉（服务没起连提示都没有）",
-     E("                    except OSError:"),
-     E("                    except OSError:\n                        pass\n                    if False:")),
+     # 【2026-11-08 修·锚点缩进差 4 格，变异出来的是语法错误】
+     # 原来写的是 20 空格的 `except OSError:`，而 `tools/_qc_path_refs.py:144` 是
+     # **24 空格**。`orig.count(old) != 1` 这道锚点守卫**没能拦住**它：20 空格的串
+     # 正好是 24 空格那一行的**子串**，命中次数还是 1。于是 replace 之后 `except`
+     # 掉到第 4 列、缩进全乱 → `IndentationError: expected an indented block
+     # after 'except' statement on line 144`。
+     # 而本刀当时只判 `r.returncode != 0`，所以**把"变异把代码改坏了"算成了"抓住了"**。
+     # 教训：`count(old) == 1` 只保证"只出现一次"，**不保证从行首开始**。
+     E("                        except OSError:"),
+     E("                        except OSError:\n"
+       "                            pass\n"
+       "                        if False:")),
 
     ("I 不认 web 根（随包素材 _role_assets/* 被误判成裂图）",
      J('    _web = os.path.join(ROOT, "src", "ui", "web", p)',
@@ -80,6 +124,10 @@ def main() -> int:
     orig = open(P, "rb").read()
     h0 = hashlib.sha256(orig).hexdigest()
     bad = 0
+    if not _baseline_green():
+        print("FAIL 起点就不是绿的 —— 恒红的判定能让每把刀都变红，这种\"全红\"不证明任何事")
+        return 1
+    print("  PASS 起点绿")
     for name, old, new in MUTS:
         if orig.count(old) != 1:
             print(f"[跳过] {name}：锚点命中 {orig.count(old)} 次")
@@ -89,7 +137,7 @@ def main() -> int:
         try:
             r = subprocess.run([PY, "-u", TEST], capture_output=True,
                                text=True, encoding="utf-8", errors="replace")
-            caught = r.returncode != 0
+            caught = _judged(r)
             lines = [l for l in (r.stdout or "").splitlines() if l.strip()]
             why = [l for l in lines if l.strip().startswith("FAIL")]
             why = (why or lines or ["<无输出>"])[-1].strip()[:88]
