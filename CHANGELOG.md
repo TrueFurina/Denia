@@ -13,7 +13,7 @@
 
 | commit | 时间 | 类型 | 一句话 | 验证 |
 |---|---|---|---|---|
-| `PR#18` | 15:4x | fix | **五把变异刀是空转的：闸门崩了也被算成「抓住了」**：`caught = r.returncode != 0` 把「判出了问题」和「根本没跑起来」当同一件事——把闸门整个换成 `raise RuntimeError(...)`，套件照样印「已抓住：<无输出>」「5 刀全红」并 exit 0。五把刀补 `_judged()`（非零退出 **且** 有 FAIL/✗ **且** 无 Traceback）+ `_baseline_green()`（起点不绿直接 FAIL，因为恒红的闸门能让每把刀都变红）；体检工具加 `--tier portable\|dev\|all` 分层（按「这台机器能不能跑」分，不是按重要性），CI 显式跑 7 对、本机 `check_all` 跑 16 对。 | `--tier portable` CERTIFIED 7 / `dev` CERTIFIED 8+SKIP 1 / `all` CERTIFIED 15+SKIP 1；11 刀 + 对照全 PASS；修前旧版被体检判 VACUOUS、注入崩溃后仍 exit 0，修后 exit 1 并点名「起点就不是绿的」 |
+| `PR#18` | 16:0x | fix | **18 把变异刀是空转的：判定崩了也被算成「抓住了」**：`caught = r.returncode != 0` 把「判出了问题」和「根本没跑起来」当同一件事——把判定整个换成 `raise RuntimeError(...)`，套件照样印「已抓住：<无输出>」「N 刀全红」并 exit 0。18 把刀补 `_judged()`（非零退出 **且** 有 FAIL/✗）+ `_baseline_green()`（起点不绿直接 FAIL）。工具补 `_resolve()`（判定不一定在 `tools/` 下）、ABSENT/ERROR 拆分、完整性检查、`--tier` 分层。顺带查出 `_qc_pathrefs_mutation` H 刀锚点缩进差 4 格、`count(old)==1` 拦不住子串匹配。 | `--tier portable` 8 / `dev` 17+SKIP1 / `all` 25+SKIP1；13 刀 + 对照全 PASS；修前旧版被体检判 VACUOUS、注入崩溃后仍 exit 0，修后 exit 1 并点名「起点就不是绿的」 |
 | `PR#17` | 15:2x | fix | **`check_web_js_syntax` 在交付包运行时下从未跑过 + 新增「变异刀空转体检」**：该闸门只把仓根塞进 `sys.path`，而 `check_bridge_methods` 在 `tools/` 下；正常 CPython 会补脚本目录，交付包自带的可嵌入运行时（`python312._pth`）不会 → `ModuleNotFoundError` 一启动就崩，87 段 JS/HTML 从未被检查。补齐 `tools/` 路径。另新增把闸门换成退化实现的体检工具（D0 原样 / D1 恒 0 / D2 恒 1），7 对全 CERTIFIED。 | 修后 87 段 / 0 错 / exit 0（修前崩溃）；7 对全 CERTIFIED；十刀 + 对照全 PASS |
 | `PR#16` | 14:5x | fix | **通知线第三处跨模块死引用（`_push_cmd`）+ 新增「跨模块引用对账」闸门**：`notify_geom._notify_slide()` 调的 `_mn._push_cmd` 全仓无定义——WebView2→WPF 迁移后旧 API 调用点没删（前两处是 `NotifyJsBridge` / `_notify_slide_if`）。新增 AST 闸门：`from M import y` 与 `mod.attr` 必须指向真实存在的本地符号（外部包 / star 污染 / rebound 别名 / `hasattr` 声明过的一律不判）。顺带修 `real_software_drive.py` 里一条一直往裸 `except` 里抛 `ImportError` 的探针。 | 跨模块引用 0 命中（全仓 700+ 文件）；十二刀 + 对照全 PASS；`--root` 建 tempfile 样本，不碰仓库 |
 | `PR#14` | 14:3x | ci | **补上 #9/#12/#13 推迟的三道闸门接线**（unreachable / constant-cond / gate-exit）：三个 PR 都要往 `portable-gates` 末尾追加、同时追加必然互相冲突，所以各自在 body 里留了待办。只登记进 `GATES` 而 CI 不跑 = 「本机才守」，接进 CI 才挡得住别人合进来。 | `portable-gates` 6 族 / 12 步；三道闸门本机实测全绿、纯 stdlib、总耗时 17s |
@@ -553,12 +553,11 @@ find_spec 返回 None → 误报「唤醒词退化」；
 **验证**：变异 4 刀全红 + 还原后回归 12/12 全绿；`tools/check_all.py` 登记对账 ✓；
 CI 全绿（pytest / self-check scripts / syntax gate 三腿 success）。
 
-#### PR #18 · 五把变异刀是空转的：闸门崩了也被算成「抓住了」
+#### PR #18 · 18 把变异刀是空转的：判定崩了也被算成「抓住了」
 
-**问题**：第二十二轮新增「变异刀空转体检」，做法是把闸门换成退化实现（恒 exit 0 / 恒 exit 1），
-看刀套件认不认得出来。那一轮只覆盖了 7 对 `portable` 的。本轮把剩下 9 对也过了一遍
-（这 9 把刀的 `TEST` 同样指向 `check_*.py`，只是要 `.venv`）——**5 对在 D2 方向
-（闸门恒 exit 1）判据失效**。
+**问题**：第二十二轮新增「变异刀空转体检」——把判定文件换成退化实现（恒 exit 0 / 恒 exit 1），
+看刀认不认得出来。那一轮只覆盖 7 对 `portable` 的，body 里明确留了"另外 9 个闸门族 +
+61 个特性族的刀没验"。本轮把这两块都过了一遍，**18 把刀在「判定恒红」方向判据失效**。
 
 根因是同一句：
 
@@ -566,65 +565,80 @@ CI 全绿（pytest / self-check scripts / syntax gate 三腿 success）。
 caught = r.returncode != 0
 ```
 
-它把两件事当成一件事：**闸门判出了问题** 和 **闸门根本没跑起来**。
-实测：把 `check_release_numbers.py` 整个换成一句 `raise RuntimeError("闸门自己崩了")`，
+它把两件事当成一件事：**判定判出了问题** 和 **判定根本没跑起来**。
+实测把 `check_release_numbers.py` 换成一句 `raise RuntimeError("闸门自己崩了")`，
 `_qc_release_numbers_mutation.py` 仍然逐条打印「已抓住：<无输出>」、最后打印
-「5 刀全红」并 **exit 0** —— 一个连第一行都跑不完的闸门，被认证成"五刀全抓"。
+「5 刀全红」并 **exit 0** —— 一个连第一行都跑不完的判定，被认证成"五刀全抓"。
 
-更隐蔽的一层：**恒红的闸门能让每一把刀都变红**。所以"全红"这个读数，在起点不绿的时候
+更隐蔽的一层：**恒红的判定能让每一把刀都变红**。所以"全红"这个读数，在起点不绿的时候
 什么都不证明；而旧版套件从来不检查起点。
 
-**改动**：五把刀（release_numbers / runtime_audio / tool_permission / ui_reload_boundary /
-verify_deps_order）统一加三个小函数：
+**改动**：18 把刀统一加 `_judged()` + `_baseline_green()`：
 
-- `_judged(r)`：闸门是「判出了问题」——`returncode != 0` **且** 输出里有 `FAIL`/`✗`，
-  **且**输出里没有 `Traceback`（崩了 ≠ 识别）
-- `_run_test()`：跑一次闸门
+- `_judged(r)`：判定是「判出了问题」——`returncode != 0` **且** 输出里有 `FAIL`/`✗`
 - `_baseline_green()`：起点必须绿，否则直接 `FAIL 起点就不是绿的` 并 `return 1`
 
-并把 `caught = r.returncode != 0` 换成 `caught = _judged(r)`。
+**这个判据改了两版，第二版更值钱**。第一版还要求「输出里没有 `Traceback`」，
+实测把**先印 FAIL、随后收尾时崩掉**的判定判成了"没抓住"：
 
-工具侧（`tools/check_knife_vacuity.py`）：
+- `_qc_asr_mutation` ①②：印了 `FAIL lang='zh-cn'`，随后 vosk 桩抛
+  `AttributeError: 'Model' object has no attribute '_handle'`
+- `_qc_config_bootstrap_mutation` B：印了 `FAIL 状态 created`，随后读临时
+  `config.yaml` 抛 `FileNotFoundError`
 
-- `PAIRS` 从 3 元组改成 4 元组，加 `tier` 字段；新增 `--tier portable|dev|all`
-- `.venv` 不再从仓副本里排除（dev 层的刀把解释器硬编码成 `.venv/Scripts/python.exe`，
-  副本里没有它就跑不起来，会全判 ERROR）
-- `FAIL_MARKS` 补 `没抓住` / `未抓住`：这五把刀说的是「没抓住（闸门失效）」，
-  第一版只有「没被抓住」，于是它们被判成 WEAK —— 又一次"仪器太窄"
+两次都是**仪器太窄**（本轮第三次）。真正的判别是**有没有点名**：退化桩只印一个
+`exit 1`，一个字都没有——那才叫"什么都没说"。
 
-**分层不是按重要性分的，是按「这台机器能不能跑」分的。** dev 层需要 `.venv`，
-CI 上不装依赖、没有 venv，混进 CI 只会全 ERROR、把整道门变成恒红。所以 CI 显式写
-`--tier portable`（7 对），本机 `check_all.py` 显式写 `--tier all`（16 对）。
-`ci.yml` 里留了一句话说明 CI 只覆盖这 7 对——免得有人把 CI 全绿读成"16 对都验过了"。
+**工具侧**：
 
-**验证**：
+- `PAIRS` 加 `tier` 字段（`--tier portable|dev|all`）。分层不是"重要性"分层，
+  是"这台机器能不能跑"分层：dev 层要 `.venv`，CI 上没有，混进去只会全 ERROR。
+- `.venv` 不再从仓副本里排除（dev 层靠副本里的 venv 跑）。
+- `FAIL_MARKS` 补 `没抓住` / `未抓住`。
+- **`_resolve()`：判定文件不一定在 `tools/` 下**。第一版一律拼 `tools/<名字>`，
+  于是特性族的 13 对（判定在 `src/tests/test_*.py` 或 `tools/test_*.py`）
+  **全部 ABSENT** —— 而 ABSENT 是"不计失败也不计通过"，`结果：ABSENT 13`、
+  **exit 0**：一个都没验，却什么都没说。
+- **ABSENT / ERROR 拆开**：套件在、判定不在 = **PAIRS 声明错了**（改名/拼错/路径规则不对），
+  是 ERROR；只有"套件本身都不在"才是 ABSENT。
+- **完整性检查**：模块级声明了 `TEST` 的刀，必须在 `PAIRS` 里，或者在 `EXCUSED` 里
+  写清"为什么现在验不了、什么条件下能验"。空理由等于没写。
+  这样"哪些刀被验过"是可数的，不再靠"我记得验过哪些"。
+
+**顺带查出的一处变异失效**：`_qc_pathrefs_mutation.py` 的 H 刀锚点写的是 **20 空格**
+的 `except OSError:`，而 `tools/_qc_path_refs.py:144` 是 **24 空格**。
+`orig.count(old) != 1` 这道锚点守卫**没能拦住**它——20 空格的串正好是 24 空格那一行的
+**子串**，命中次数还是 1。于是 replace 之后缩进全乱，产出
+`IndentationError: expected an indented block after 'except' statement on line 144`，
+而刀把"变异把代码改坏了"算成了"抓住了"。
+**教训：`count(old) == 1` 只保证"只出现一次"，不保证从行首开始。**
+
+**结果**：
 
 ```
-check_knife_vacuity.py --tier portable   → CERTIFIED 7            exit 0
-check_knife_vacuity.py --tier dev        → CERTIFIED 8 / SKIP 1   exit 0
-check_knife_vacuity.py --tier all        → CERTIFIED 15 / SKIP 1  exit 0（58s）
-_qc_knife_vacuity_mutation.py            → 11 刀 + 对照 全 PASS    exit 0
+check_knife_vacuity.py --tier portable   → CERTIFIED 8            exit 0
+check_knife_vacuity.py --tier dev        → CERTIFIED 17 / SKIP 1  exit 0
+check_knife_vacuity.py --tier all        → CERTIFIED 25 / SKIP 1  exit 0（2m07s）
+_qc_knife_vacuity_mutation.py            → 13 刀 + 对照 全 PASS    exit 0
 ```
 
-修前/修后的对照（同一把刀、同一个注入）：
+唯一的 `SKIP` 是 `_qc_site_counts_mutation`：它 `import check_site_counts as C`
+进程内直调，换文件对它无效。**SKIP 不算通过**，所以是 25 而不是 26。
 
-```
-# 闸门 = `raise RuntimeError("闸门自己崩了")`
-旧版 → 5 刀全红                                          exit 0   ← 假绿
-新版 → FAIL 起点就不是绿的 —— 恒红的闸门能让每把刀都变红   exit 1
+**三把刀起点就是红的**（已列进 `EXCUSED`，每条写明原因）：
 
-# 体检工具对旧版的判定
-✗ D2 闸门≡1：套件仍然 exit 0 —— 判据这样退化它发现不了
-→ VACUOUS
-```
+| 刀 | 为什么验不了 |
+|---|---|
+| `_qc_bundled_assets_mutation` | 判定用 `git ls-files` 判「在盘上但没进 git」；本工具在仓副本里跑，`.git` 被排除 → 判定恒红（10 FAIL） |
+| `_qc_tray_switch_mutation` | 判定要 `config.yaml`（在 `.gitignore` 里，CI 由 prepare 步骤生成）→ `FileNotFoundError` |
+| `_qc_presence_mutation` | 判定在**干净树上就红**：33 PASS / 1 FAIL（`非法的不影响其它绑定 ← []`，全局热键注册在无桌面会话时返回空表）。**这条本身是待查项** |
 
-`_qc_knife_vacuity_mutation.py` 新增 K11（分层不许漏）：`PAIRS` 必须 portable 7 / dev 9、
-合计 16，且 dev 的对不许混进 portable（用 `--only` 各挑一对验证，不真跑整层——
-跑整层要十几秒，CI 上还换一屏 ERROR，计数要便宜才对）。
+前两条是环境，第三条是真红——**而它一直是红的，所以那 6 把刀从来不需要抓住任何东西**。
+这就是"起点必须先绿"存在的理由。
 
-**已知边界**：本轮只覆盖 `_qc_*` 里验 `check_*.py` 的 16 对（其中
-`_qc_site_counts_mutation` 是进程内直调 → SKIP，本工具不适用）。另外 61 个验
-`test_*.py` / 特性判定的刀**仍未验过**，不要读成"全部刀都验过了"。
+**已知边界**：78 个 `_qc_*` 里还有 **48 把**是"改源码后自己在进程内断言"，没有独立判定
+文件，换文件这个手法用不上。它们的空转风险与这 26 对完全相同，只是需要另一种做法，
+本轮没做——**不要把这 25 个 CERTIFIED 读成"全部刀都验过了"**。
 
 ### 2026-10-22 · 克隆面板「预填她的」：试听静默失效 + 克隆画假进度条还谎报「已完成」
 
