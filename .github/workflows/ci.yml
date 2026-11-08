@@ -131,3 +131,11 @@ jobs:
         run: python tools/test_gate_lock.py
       - name: gate lock mutation (five knives)
         run: python tools/_qc_gate_lock_mutation.py
+      # 【2026-11-08 PR #11】纯 stdlib、只读 AST、699 个文件约 2s，符合本 job 的收录口径。
+      # 判据：`finally` 里出现 return / break / continue —— 它会吞掉正在抛出的异常，
+      # 并且退出的是整个函数（其后排着的清理一条都不执行）。全仓曾经只有一处
+      # （webapp._run_voice_test），修完 0 处；这两步就是防它回潮。
+      - name: finally-jump judgement
+        run: python tools/check_finally_jump.py --all src tools main.py launch_companion.py run_webui.py
+      - name: finally-jump mutation (eight knives)
+        run: python tools/_qc_finally_jump_mutation.py
