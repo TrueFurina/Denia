@@ -99,14 +99,33 @@ def _notify_slide(showing: bool) -> None:
                 _notify_set_pos(x, y_in, w, h)
                 time.sleep(0.012)
             _notify_set_pos(x_in if showing else x_out, y_in, w, h)
-            if not showing:
-                # 滑出完成、窗口已在屏外 → 通知前端复位卡片（此时复位不可见，
-                # 避免"先黑再飞"；也保证下次 show 能重新初始化）。
-                try:
-                    from . import mode_notify as _mn
-                    _mn._push_cmd({"type": "reset"})
-                except Exception:  # noqa: BLE001
-                    pass
+            # 【2026-11-08 删·跨模块死引用】这里原本是：
+            #
+            #     if not showing:
+            #         try:
+            #             from . import mode_notify as _mn
+            #             _mn._push_cmd({"type": "reset"})
+            #         except Exception:
+            #             pass
+            #
+            # 意图是「滑出完成、窗口已在屏外 → 通知前端复位卡片」（复位不可见，避免
+            # "先黑再飞"；也保证下次 show 能重新初始化）。
+            #
+            # 但它**从来没有生效过**：`mode_notify` 里没有 `_push_cmd`，全仓也没有任何
+            # 地方定义过它。通知窗从 WebView2 迁到 WPF 原生窗之后，`mode_notify._win`
+            # 被显式置 None（见该模块 2026-09-06 兼容垫片注释），**已经没有任何 JS 通道**，
+            # 所以 `_push_cmd` 这种 WebView2 时代的接口不可能存在。
+            # 每次滑出都会抛 AttributeError，被下面那个 `except Exception: pass` 吃掉，
+            # 于是"复位"这件事静默地什么都没做——不报错、不日志、功能就是不发生。
+            #
+            # 这是同一个迁移留下的**第三处**残留，前两处已清：
+            #   · 第十五轮 `create_notify_window` 的 `NotifyJsBridge`（无此类）
+            #   · 第十九轮 `main_window.py:248` 的 `_notify_slide_if`（无此函数）
+            # 三处都在通知窗这条线上，根因都是「迁到 WPF 后旧调用点没跟着删」。
+            #
+            # 处置：删掉这个死调用，行为逐字不变（原本就是抛异常→被吞→无事发生）。
+            # **复位本身是否还需要，留给维护者定夺**——若仍需要，得走 WPF 原生窗的新通道，
+            # 那是产品改动，不在质检范围内，不替人做决定。
             logger.info("[通知浮窗] 模式O 已%s（x=%d）",
                         "滑入" if showing else "滑出", x_in if showing else x_out)
         except Exception as _e:  # noqa: BLE001

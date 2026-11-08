@@ -159,3 +159,11 @@ jobs:
         run: python tools/check_gate_exit.py
       - name: gate exit mutation (fifteen knives)
         run: python tools/_qc_gate_exit_mutation.py
+      # 【2026-11-08】纯 stdlib、只读 AST、715 个文件约 3s。判据：`from X import y` 与
+      # `mod.attr` 指向的符号必须真实存在（只判本地模块；外部包 / star 污染 / rebound 别名 /
+      # hasattr 声明过的一律不判）。守的是「WebView2 → WPF 迁移后旧调用点没删」这一族，
+      # 已在本仓出现过三次（NotifyJsBridge / _notify_slide_if / _push_cmd）。
+      - name: cross-ref judgement
+        run: python tools/check_cross_ref.py
+      - name: cross-ref mutation (twelve knives)
+        run: python tools/_qc_cross_ref_mutation.py

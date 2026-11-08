@@ -191,8 +191,12 @@ async def main() -> None:
             log("  （文件不存在 —— 说明对话未落到共享上下文）")
         # 直接问 dialogue 历史桶
         try:
-            from src.companion.conversation_history import get_history
-            h = get_history()
+            # 【2026-11-08 修·跨模块死引用】原来写的是 `from ... import get_history`，
+            # 但 conversation_history 里**没有** get_history —— 这个探针从写下那天起
+            # 每次都抛 ImportError，被下面那个 except 接住，永远只打印「读取跳过」。
+            # 真正的入口是 `shared_history()`（返回 ConversationHistory，它有 get_recent）。
+            from src.companion.conversation_history import shared_history
+            h = shared_history()
             recent = h.get_recent(8) if h else []
             log(f"  conversation_history.get_recent(8)={len(recent)} 条")
         except Exception:
