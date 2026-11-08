@@ -6,7 +6,7 @@
 A 不清理陈旧锁        → 上次被强杀后所有门禁永久堵死
 B 拿不到锁也报成功    → 两个会话又能同时改源码（锁形同虚设）
 C release 无条件删锁   → 把别人的锁删掉
-D 陈旧阈值改成 0       → 活着的锁也被偷
+D 陈旧阈值改成 -1      → 活着的锁也被偷（不能写 0，见 MUTS 内注释）
 E 只看 OpenProcess     → 已退出但句柄仍被持有的 PID 被判"活着"，锁清不掉
 """
 import hashlib
@@ -40,9 +40,13 @@ MUTS = [
      E("    if not info or int(info.get(\"pid\") or 0) == os.getpid():\n"),
      E("    if True:\n")),
 
-    ("D 陈旧阈值改成 0（活锁也被偷）",
+    # D 必须是 -1 不能是 0：_gate_lock.py 判 `age > STALE_SECONDS`，
+    # 而 Windows 时钟分辨率下连续两次 time.time() 差为 0 的比例实测 75.4%，
+    # 写 0 时 `age > 0` 大概率不成立 ⇒ 这把刀时灵时不灵（2026-11-08 CI 实证：
+    # 本机连中三次、windows-latest runner 上直接没抓住）。写 -1 则恒为真。
+    ("D 陈旧阈值改成 -1（活锁也被偷）",
      E("STALE_SECONDS = 45 * 60"),
-     E("STALE_SECONDS = 0")),
+     E("STALE_SECONDS = -1")),
 
     ("E 只看 OpenProcess（已退出但句柄未释放 → 判活着，锁永远清不掉）",
      E("            return code.value == STILL_ACTIVE\n"),
@@ -67,7 +71,7 @@ def main() -> int:
             caught = r.returncode != 0
             lines = [l for l in (r.stdout or "").splitlines() if l.strip()]
             why = [l for l in lines if l.strip().startswith("FAIL")]
-            why = (why or lines or ["<无输出>"])[-1].strip()[:88]
+            why = (why or lines or ["<无输出>"])[0].strip()[:88]
             print(name)
             print("   -> " + ("已抓住：" + why if caught else "没抓住（测试失效）"))
             if not caught:
