@@ -246,12 +246,31 @@ class CourseRecorder:
         self._listener = fn
 
     def stop(self) -> None:
-        """停止记录循环。正在录的课时长达标则自动出笔记，否则丢弃。"""
+        """停止记录循环。正在录的课时长达标则自动出笔记，否则丢弃。
+
+        【2026-11-08 死锁修复配套】_stop_session 已改为 async。本方法可能从 UI 线程
+        （用户点停止）或主循环线程调用：从非循环线程时按原行为阻塞等收尾（只冻 UI 不
+        冻循环）；若恰在主循环线程上则改用 fire-and-forget，避免「循环线程等自己的协程」
+        自死锁。
+        """
         self._running = False
-        if self._session is not None and time.time() - self._session_started >= self._min_duration_s:
-            self._stop_session(finalize=True)
+        loop = self._loop
+        session = self._session
+        if session is None or loop is None or not loop.is_running():
+            return
+        finalize = time.time() - self._session_started >= self._min_duration_s
+        try:
+            running_loop = asyncio.get_running_loop()
+        except RuntimeError:
+            running_loop = None
+        if running_loop is loop:
+            loop.create_task(self._stop_session(finalize=finalize))  # 已在循环线程：不阻塞
         else:
-            self._stop_session(finalize=False)
+            try:
+                asyncio.run_coroutine_threadsafe(
+                    self._stop_session(finalize=finalize), loop).result(timeout=90)
+            except Exception:  # noqa: BLE001
+                logger.exception("网课收尾失败")
 
     def snapshot(self) -> dict:
         """运行状态快照（供调试台/记忆页轮询）。"""
@@ -297,7 +316,7 @@ class CourseRecorder:
                     self._min_duration_s, self._keyframe_interval_s, self._summarize_every_min)
         while self._running:
             try:
-                self._tick()
+                await self._tick()
             except Exception:  # noqa: BLE001
                 logger.exception("网课记录 tick 异常")
             await asyncio.sleep(self._tick_interval)
@@ -310,7 +329,7 @@ class CourseRecorder:
                 logger.warning("转写缓冲已满，累计丢弃 %d 段（主循环跟不上）",
                                self._text_dropped)
 
-    def _tick(self) -> None:
+    async def _tick(self) -> None:
         # 1) 消费转写队列（线程 → 主循环，保证 session 写操作单线程）
         drained = False
         while True:
@@ -323,7 +342,7 @@ class CourseRecorder:
                 self._session.append_transcript(text)
                 self._transcripted_lines += 1
         if drained:
-            self._maybe_summarize(force=False)
+            await self._maybe_summarize(force=False)
 
         # 2) 场景检测（开课/下课）
         if self._session is None:
@@ -333,11 +352,11 @@ class CourseRecorder:
         else:
             evidence = _looks_like_course(self._last_title, self._last_hint, self._last_summary)
             if not self._stabilizer.observe(evidence):
-                self._stop_session(finalize=True)
+                await self._stop_session(finalize=True)
             else:
                 # 3) 记录中：关键帧 + 定时总结
-                self._maybe_keyframe()
-                self._maybe_summarize(force=False)
+                await self._maybe_keyframe()
+                await self._maybe_summarize(force=False)
 
     # ---------- 开课 / 下课 ----------
     def _start_session(self) -> None:
@@ -368,7 +387,7 @@ class CourseRecorder:
         self._emit("started", {"id": session.state.id, "title": title})
         self._log_activity("开始网课记录：" + title)
 
-    def _stop_session(self, *, finalize: bool) -> None:
+    async def _stop_session(self, *, finalize: bool) -> None:
         session = self._session
         if session is None:
             return
@@ -383,7 +402,7 @@ class CourseRecorder:
         if finalize and duration >= self._min_duration_s:
             try:
                 # 最后再滚动总结一次（若有新转写）
-                self._maybe_summarize(force=True, session=session)
+                await self._maybe_summarize(force=True, session=session)
                 output = session.finalize(self._output_dir)
                 logger.info("网课记录完成: %s（%.0f 分钟，%d 张关键帧）→ %s",
                             title, duration / 60, len(session.state.keyframes), output)
@@ -402,7 +421,7 @@ class CourseRecorder:
                     duration, self._min_duration_s, title)
 
     # ---------- 关键帧 ----------
-    def _maybe_keyframe(self) -> None:
+    async def _maybe_keyframe(self) -> None:
         now = time.time()
         # 抓屏节流（每 tick 最多抓一次屏）
         if now - self._last_grab_ts < self._keyframe_interval_s:
@@ -430,7 +449,7 @@ class CourseRecorder:
                 return
             buf = io.BytesIO()
             img.save(buf, format="PNG")
-            note = self._maybe_keyframe_note(buf.getvalue())
+            note = await self._maybe_keyframe_note(buf.getvalue())
             session.add_keyframe(
                 buf.getvalue(),
                 timestamp_ms=int((now - self._session_started) * 1000),
@@ -441,34 +460,42 @@ class CourseRecorder:
         except Exception:  # noqa: BLE001
             logger.debug("关键帧抓取失败", exc_info=True)
 
-    def _maybe_keyframe_note(self, frame: bytes) -> str:
-        """给关键帧生成画面说明（视觉模型，节流）。失败/超时返回空串。"""
+    async def _maybe_keyframe_note(self, frame: bytes) -> str:
+        """给关键帧生成画面说明（视觉模型，节流）。失败/超时返回空串。
+
+        【2026-11-08 死锁修复】原实现用 run_coroutine_threadsafe(coro, self._loop)
+        .result(timeout=20) 同步等协程——而本方法经 _maybe_keyframe → _tick 跑在
+        主循环线程上，等于「循环线程等自己的协程」，自死锁把主循环冻至多 20s。
+        现 _tick 已改 async，直接 await 即可（await 会正常让出，不冻结循环）。
+        """
         now = time.time()
         if self._vision is None or now - self._last_note_ts < self._keyframe_note_interval_s:
             return ""
-        if self._loop is None:
-            return ""
         self._last_note_ts = now
         try:
-            note = asyncio.run_coroutine_threadsafe(
+            note = await asyncio.wait_for(
                 self._vision.vision_describe(
                     frame, "这是网课直播画面，用一句话说明这页幻灯片/画面在讲什么知识点。"),
-                self._loop,
-            ).result(timeout=20)
+                timeout=20)
             return (note or "").strip()[:80]
         except Exception:  # noqa: BLE001
             logger.debug("关键帧画面说明生成失败", exc_info=True)
             return ""
 
     # ---------- 滚动总结 ----------
-    def _maybe_summarize(self, *, force: bool = False, session: Optional[CourseSession] = None) -> None:
+    async def _maybe_summarize(self, *, force: bool = False, session: Optional[CourseSession] = None) -> None:
         """滚动归纳转写为知识点摘要。
 
         force=False：新转写 >=5 条且距上次总结达到间隔才总结（定时滚动）；
         force=True：课程结束前调用，有新转写就总结一次（收尾）。
+
+        【2026-11-08 死锁修复】原实现用 run_coroutine_threadsafe(self._call_llm(prompt),
+        self._loop).result(timeout=60) 同步等协程——而本方法经 _tick 跑在主循环线程上，
+        等于「循环线程等自己的协程」，自死锁把主循环冻至多 60s（看门狗会报「主循环疑似
+        卡死」）。现 _tick 已改 async，直接 await 即可（await 正常让出，不冻结循环）。
         """
         session = session or self._session
-        if session is None or self._llm is None or self._loop is None:
+        if session is None or self._llm is None:
             return
         now = time.time()
         new_lines = self._transcripted_lines - self._last_summarize_lines
@@ -487,8 +514,7 @@ class CourseRecorder:
                 "要求：把转写归并、去重，提炼核心知识点，输出结构化的简明要点列表"
                 "（Markdown 列表，每条一行，别复述转写原文，别编造没讲的内容）。"
             )
-            new_summary = asyncio.run_coroutine_threadsafe(
-                self._call_llm(prompt), self._loop).result(timeout=60)
+            new_summary = await asyncio.wait_for(self._call_llm(prompt), timeout=60)
             if new_summary:
                 session.update_summary(new_summary.strip())
                 logger.info("课程滚动总结已更新（%d 行转写）", self._transcripted_lines)
