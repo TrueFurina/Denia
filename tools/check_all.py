@@ -380,6 +380,13 @@ GATES: list[tuple[str, str, list[str], bool]] = [
     # 产品层），没有变异就分不清"判据正确"与"恒真"。三刀：注册点加回必须红 /
     # 前端 quota_alert 分支加回必须红 / 只在注释里提名字必须仍绿。
     ("额度墓碑变异", PY_VENV, ["tools/_qc_quota_tombstone_mutation.py"], False),
+    # 通知浮窗死路径墓碑（2026-11-08）：create_notify_window 的 try 与 except 两条
+    # 分支**都 return**，其后 329 行 WebView2 旧实现全部不可达，其中还导了一个
+    # mode_notify.NotifyJsBridge（该符号从未存在）。判据只读 AST 不 import（main_window
+    # 依赖 webview/ctypes，CI 上 import 不了），四刀变异见 _qc_notify_dead_path_mutation：
+    # 死代码回潮 / 符号导回代码 / 改签名必须红，只加注释必须仍绿。
+    ("通知浮窗死路径", PY_RUNTIME, ["src/tests/test_notify_dead_path.py"], False),
+    ("通知浮窗死路径变异", PY_RUNTIME, ["tools/_qc_notify_dead_path_mutation.py"], False),
     ("TTS 多供应商", PY_VENV, ["tools/test_tts_multi_provider.py"], False),
     ("主动输出分流", PY_VENV, ["tools/test_proactive_chat_routing.py"], False),
     ("关系接线", PY_VENV, ["tools/test_relationship_wiring.py"], False),
