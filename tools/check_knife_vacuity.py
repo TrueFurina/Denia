@@ -53,15 +53,21 @@
 ① 只覆盖「通过子进程调用闸门文件」的套件。
 ② 只覆盖登记在 `PAIRS` 里的对，或 `--pair` 显式指定的对。
    全仓 77 个 `_qc_*` 是**两个族**：16 个验 `check_*.py` 闸门，61 个验
-   `test_*.py` / 特性判定文件。本工具目前只做前者。
-③ 每个套件要跑 3 次 + 复制 36MB 仓库副本（约 1s）。慢是刻意的：省掉就是省掉证据。
+   `test_*.py` / 特性判定文件。本工具目前只做前者，且 16 个里还有 1 个
+   （`_qc_site_counts_mutation`）是进程内直调、只能 SKIP。
+③ **分两层跑**（`--tier`）：`portable` 进 CI，`dev` 需要 `.venv`。
+   分层不是"重要性"分层，是"这台机器能不能跑"分层——dev 层的刀把解释器
+   硬编码成 `.venv/Scripts/python.exe`，CI 上没有 venv，混进去会让整道门恒红。
+④ 每个套件要跑 3 次 + 复制一次仓库副本（无 venv 约 1s，有 venv 约 2s）。
+   慢是刻意的：省掉就是省掉证据。
 
 用法
 ----
-    python tools/_qc_knife_vacuity.py                  # 跑 PAIRS 全部
-    python tools/_qc_knife_vacuity.py --only cross     # 名字含 cross 的
-    python tools/_qc_knife_vacuity.py --pair _qc_x_mutation.py=check_x.py
-    python tools/_qc_knife_vacuity.py --root <另一个仓根>
+    python tools/check_knife_vacuity.py                 # portable 层（CI 跑这个）
+    python tools/check_knife_vacuity.py --tier all      # 两层都跑（需要 .venv）
+    python tools/check_knife_vacuity.py --only cross    # 名字含 cross 的
+    python tools/check_knife_vacuity.py --pair _qc_x_mutation.py=check_x.py
+    python tools/check_knife_vacuity.py --root <另一个仓根>
 
 退出码：0 无 VACUOUS / 1 有 VACUOUS / 2 无法判定（一对都没跑成）
 """
@@ -79,22 +85,48 @@ import tempfile
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 
-# (刀套件, 它验的闸门, 为什么它必须在名单里)
+# (刀套件, 它验的判定文件, 层, 为什么它必须在名单里)
+#
+# 层的含义：
+#   portable  纯 stdlib、不需要 .venv / 音频设备 / 桌面会话 —— CI 跑这一层
+#   dev       刀自己把解释器硬编码成 `.venv/Scripts/python.exe` —— 只有装了 venv
+#             的机器能跑。**不是"不重要"，是"这台机器跑不了"**，所以不能混进 CI，
+#             否则 CI 上全 ERROR、整道门恒红。
 PAIRS = [
-    ("_qc_unreachable_mutation.py", "check_unreachable.py",
+    # ---- portable ----
+    ("_qc_unreachable_mutation.py", "check_unreachable.py", "portable",
      "第十五/十六轮：M2/M3 是限位刀，必须被 D2 抓住"),
-    ("_qc_duplicate_def_mutation.py", "check_duplicate_def.py",
+    ("_qc_duplicate_def_mutation.py", "check_duplicate_def.py", "portable",
      "第十七轮：M3/M4 钉住「两边都没装饰器才报」这个限定"),
-    ("_qc_finally_jump_mutation.py", "check_finally_jump.py",
+    ("_qc_finally_jump_mutation.py", "check_finally_jump.py", "portable",
      "第十八轮：八刀里 M4/M5 是限位刀"),
-    ("_qc_constant_cond_mutation.py", "check_constant_cond.py",
+    ("_qc_constant_cond_mutation.py", "check_constant_cond.py", "portable",
      "第十九轮：十三刀里 M8/M9/M10 是限位刀"),
-    ("_qc_gate_exit_mutation.py", "check_gate_exit.py",
+    ("_qc_gate_exit_mutation.py", "check_gate_exit.py", "portable",
      "第二十轮：十五刀里 K4–K10 是限位刀"),
-    ("_qc_cross_ref_mutation.py", "check_cross_ref.py",
+    ("_qc_cross_ref_mutation.py", "check_cross_ref.py", "portable",
      "第二十一轮：十二刀里 K4–K10 是限位刀"),
-    ("_qc_web_js_syntax_mutation.py", "check_web_js_syntax.py",
-     "本轮修好 import 路径之后才第一次能跑；三刀都是正向，下限位靠「起点绿」"),
+    ("_qc_web_js_syntax_mutation.py", "check_web_js_syntax.py", "portable",
+     "第二十二轮修好 import 路径之后才第一次能跑"),
+    # ---- dev（第二十三轮补：这九对的 `TEST` 也指向 check_*.py，是同一族）----
+    ("_qc_loop_guard_mutation.py", "check_loop_guard.py", "dev",
+     "长任务护栏：刀的 TEST 直接是闸门"),
+    ("_qc_loop_guard_e2e_mutation.py", "check_loop_guard_e2e.py", "dev",
+     "长任务护栏端到端"),
+    ("_qc_partial_reply_mutation.py", "check_partial_reply.py", "dev",
+     "半截回复检测"),
+    ("_qc_release_numbers_mutation.py", "check_release_numbers.py", "dev",
+     "发布口径对账 —— 本轮查出它**没有基线检查**"),
+    ("_qc_runtime_audio_mutation.py", "check_runtime_audio_guard.py", "dev",
+     "运行时音频守卫 —— 本轮查出同类"),
+    ("_qc_site_counts_mutation.py", "check_site_counts.py", "dev",
+     "站点计数对账"),
+    ("_qc_tool_permission_mutation.py", "check_tool_permission_coverage.py", "dev",
+     "工具权限覆盖 —— 本轮查出同类"),
+    ("_qc_ui_reload_boundary_mutation.py", "check_ui_reload_boundary.py", "dev",
+     "UI 重载边界 —— 本轮查出同类"),
+    ("_qc_verify_deps_order_mutation.py", "check_verify_deps_order.py", "dev",
+     "出包验收时序 —— 本轮查出同类"),
 ]
 
 # 【坑①】桩必须 import-safe：顶层 sys.exit 会在 import 时把套件带走，exit 0 假绿。
@@ -102,8 +134,15 @@ STUB_ZERO = 'if __name__ == "__main__":\n    raise SystemExit(0)\n'
 STUB_ONE = 'if __name__ == "__main__":\n    raise SystemExit(1)\n'
 
 # 套件自己报失败时用的标记；`Traceback` 不算（崩溃 ≠ 识别）
-FAIL_MARKS = ("✗", "FAIL", "不符合", "没红", "HAS FAIL", "没被抓住", "期望 exit")
-SKIP_DIRS = {"__pycache__", ".git", ".venv", "node_modules", "dist", "build"}
+# 套件自己报失败时用的说法。这张表是**实测补出来的**，不是想当然：
+# `_qc_release_numbers_mutation` 等五把刀说的是「没抓住（闸门失效）」，
+# 而第一版只有「没被抓住」，于是它们被判成 WEAK —— 又一次"仪器太窄"。
+FAIL_MARKS = ("✗", "FAIL", "不符合", "没红", "HAS FAIL", "没被抓住", "没抓住",
+              "期望 exit", "未抓住")
+# 【2026-11-08】`.venv` **不能**排除：dev 层的刀把解释器硬编码成
+# `.venv/Scripts/python.exe`，副本里没有它就跑不起来（会全判 ERROR）。
+# 代价是副本大一倍（有 venv 的机器约 60MB）；CI 上没有 venv，不受影响。
+SKIP_DIRS = {"__pycache__", ".git", "node_modules", "dist", "build"}
 
 
 def imports_gate(suite_path: str, gate: str) -> bool:
@@ -226,6 +265,8 @@ def certify(root: str, suite: str, gate: str) -> tuple[str, list[str]]:
 def main() -> int:
     ap = argparse.ArgumentParser(description="变异刀空转体检")
     ap.add_argument("--root", default=ROOT, help="仓根（默认本仓）")
+    ap.add_argument("--tier", default="portable", choices=["portable", "dev", "all"],
+                    help="跑哪一层（默认 portable；CI 只跑这一层）")
     ap.add_argument("--only", default="", help="只跑套件名包含该子串的对")
     ap.add_argument("--pair", action="append", default=[],
                     help="显式指定 suite.py=gate.py，可重复；给了就不看 PAIRS")
@@ -243,9 +284,11 @@ def main() -> int:
                 print("✗ --pair 需要 suite.py=gate.py：%s" % spec, file=sys.stderr)
                 return 2
             s, g = spec.split("=", 1)
-            pairs.append((s.strip(), g.strip(), "命令行指定"))
+            pairs.append((s.strip(), g.strip(), "portable", "命令行指定"))
     else:
-        pairs = [p for p in PAIRS if args.only in p[0]]
+        want = {"portable"} if args.tier == "portable" else \
+               ({"dev"} if args.tier == "dev" else {"portable", "dev"})
+        pairs = [p for p in PAIRS if p[2] in want and args.only in p[0]]
 
     if not pairs:
         print("✗ 一对都没跑（--only 过滤掉了全部？）无法判定", file=sys.stderr)
@@ -255,7 +298,7 @@ def main() -> int:
     print("待检 %d 对\n" % len(pairs))
 
     counts: dict[str, int] = {}
-    for suite, gate, why in pairs:
+    for suite, gate, _tier, why in pairs:
         print("== %s → %s" % (suite, gate))
         print("   （%s）" % why)
         kind, log = certify(root, suite, gate)
