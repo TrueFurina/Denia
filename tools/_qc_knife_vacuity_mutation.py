@@ -19,7 +19,9 @@
   K4 退化时崩溃的套件            → WEAK（不算 VACUOUS，也不算 CERTIFIED）
   K5 进程内 import 闸门的套件    → SKIP（本工具不覆盖，不能算通过）
   K6 基线本来就红的套件          → ERROR（无法判定）
-  K7 闸门文件不存在              → ABSENT / exit 2（本树没有这一对 ≠ 通过）
+  K7 **套件本身**不存在          → ABSENT / exit 2（本树没有这一对 ≠ 通过）
+  K12 声明了 TEST 却没登记的刀    → exit 2 并点名（零覆盖不许长得像全覆盖）
+  K13 套件在、判定不在            → ERROR（不是 ABSENT：那是 PAIRS 声明错了）
   K8 全部 SKIP                   → exit 2（一对都没跑成 ≠ 通过）
   K9 **输出里有闸门的 Traceback，但套件自己报了失败** → 仍判 CERTIFIED
      这一刀钉的是本工具真踩的坑③：第一版把"输出里有 Traceback"当成套件崩溃，
@@ -270,13 +272,16 @@ def main() -> int:
     finally:
         shutil.rmtree(d, ignore_errors=True)
 
-    # ---- K7 闸门文件不存在 → ABSENT（本树没有这一对，不是"有但坏了"）----
+    # ---- K7 **套件本身**不存在 → ABSENT（本树没有这一对，不是"有但坏了"）----
     # 单独一对 ABSENT 时 ran==0，所以还必须是 exit 2：ABSENT 不能被当成通过。
+    # 【2026-11-08 改】原来这一刀造的是"套件在、判定不在"，而那个口径在第二十四轮
+    # 被改正了：套件在、判定不在 = **PAIRS 声明错了**，是 ERROR（见 K13）。
+    # ABSENT 只剩一种情况：套件都不在本树。K7 现在钉这一种。
     d = make_repo({"check_hit.py": GATE_HIT},
                   {"_qc_both2.py": SUITE_BOTH})
     try:
-        bad += check("K7 闸门不存在 → ABSENT / exit 2",
-                     run_tool(d, "_qc_both2.py=check_missing.py"), "ABSENT", 2)
+        bad += check("K7 套件不存在 → ABSENT / exit 2",
+                     run_tool(d, "_qc_nope.py=check_hit.py"), "ABSENT", 2)
     finally:
         shutil.rmtree(d, ignore_errors=True)
 
@@ -331,12 +336,12 @@ def main() -> int:
 
     n_dev = picked("--tier", "dev", "--only", "release_numbers")
     n_leak = picked("--tier", "portable", "--only", "release_numbers")
-    if tiers.get("portable") != 7 or tiers.get("dev") != 9:
-        print("  FAIL K11 分层计数：portable %r / dev %r（期望 7 / 9）"
+    if tiers.get("portable") != 8 or tiers.get("dev") != 18:
+        print("  FAIL K11 分层计数：portable %r / dev %r（期望 8 / 18）"
               % (tiers.get("portable"), tiers.get("dev")))
         bad += 1
-    elif sum(tiers.values()) != 16:
-        print("  FAIL K11 总对数 %d（期望 16；PAIRS 里有未知层 %r）"
+    elif sum(tiers.values()) != 26:
+        print("  FAIL K11 总对数 %d（期望 26；PAIRS 里有未知层 %r）"
               % (sum(tiers.values()), sorted(tiers)))
         bad += 1
     elif n_dev != 1:
@@ -348,6 +353,35 @@ def main() -> int:
     else:
         print("  PASS K11 分层：portable %d / dev %d，互不混入"
               % (tiers["portable"], tiers["dev"]))
+
+    # ---- K12 完整性：声明了 TEST 却没登记的刀，必须被点出来 ----
+    # 这一刀钉的是"零覆盖长得像全覆盖"：新写一把带 `TEST` 的刀、忘了加进 PAIRS，
+    # 它就从没被验过，而结果行照样是绿的。
+    d = make_repo({"check_hit.py": GATE_HIT},
+                  {"_qc_orphan.py": 'TEST = "check_hit.py"\n'})
+    try:
+        rc, out = run_tool(d)          # 不带 --pair，才走完整性检查
+        if rc != 2 or "_qc_orphan.py" not in out:
+            print("  FAIL K12 未登记的刀：exit %d，输出%s点名" % (rc, "有" if "_qc_orphan.py" in out else "没"))
+            for l in out.strip().splitlines()[-8:]:
+                print("    " + l[:150])
+            bad += 1
+        else:
+            print("  PASS K12 未登记的刀 → exit 2 并点名：_qc_orphan.py")
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
+
+    # ---- K13 套件在、判定不在 = 声明错了，不是「本树没有」 ----
+    # 第一版把这两种情况都判 ABSENT，而 ABSENT「不计失败也不计通过」。
+    # 实测代价：13 个特性族的对按 `src/tests/test_*.py` 写进 PAIRS 后全部 ABSENT，
+    # `结果：ABSENT 13`、exit 0 —— 一个都没验，却什么都没说。
+    d = make_repo({"check_hit.py": GATE_HIT},
+                  {"_qc_ghost.py": SUITE_NOISY})
+    try:
+        bad += check("K13 判定路径拼错 → ERROR（不是 ABSENT）",
+                     run_tool(d, "_qc_ghost.py=src/tests/nope.py"), "ERROR", 2)
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
 
     # ---- K10 对照：真实仓 ----
     p = subprocess.run([sys.executable, TOOL], capture_output=True, text=True,
