@@ -172,7 +172,13 @@ jobs:
       # 看刀套件认不认得出来。7 对（unreachable / duplicate-def / finally-jump /
       # constant-cond / gate-exit / cross-ref / web-js-syntax）实测全 CERTIFIED。
       # 代价：判据 16s、刀 18s（每对要复制一次仓副本、跑 3 次套件），是本 job 里最慢的两步。
+      #
+      # 【2026-11-08 PR #18】`--tier portable` 是**显式**写的，不靠默认值：
+      # 另有 9 对 `dev` 层的刀把解释器硬编码成 `.venv/Scripts/python.exe`，
+      # 本 job 不装依赖、没有 venv，跑它们只会全 ERROR、把整道门变成恒红。
+      # 所以 CI 只覆盖 7 对，另外 9 对由本机 `check_all.py`（`--tier all`）覆盖。
+      # **这句话必须留在这里**：CI 全绿只说明这 7 对不是空转，不说明全部 16 对。
       - name: knife vacuity judgement
-        run: python tools/check_knife_vacuity.py
-      - name: knife vacuity mutation (ten knives)
+        run: python tools/check_knife_vacuity.py --tier portable
+      - name: knife vacuity mutation (eleven knives)
         run: python tools/_qc_knife_vacuity_mutation.py
