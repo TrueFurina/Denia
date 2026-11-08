@@ -623,6 +623,13 @@ GATES: list[tuple[str, str, list[str], bool]] = [
     # 与 `闸门登记对账` 是一对：那道管「有没有登记」，这道管「登记了能不能红」。
     ("闸门退出码", PY_VENV, ["tools/check_gate_exit.py"], False),
     ("闸门退出码变异", PY_VENV, ["tools/_qc_gate_exit_mutation.py"], True),
+    # 【2026-11-08 加·交付包闸门】check_all 只在源码仓跑，而交付包闸门要验的东西
+    # （python/、shell/node_modules/、Uninstall.exe）在这里全被 .gitignore 掉了，
+    # 所以 `tools/check_delivery.py` 在仓根直接跑是 77 跳过，打包后用
+    # `--root <产物>` 才是真检（见该文件头部「用法」）。
+    # 这里挂的是它的变异刀：32 个场景自建夹具、在源码仓里也能跑，
+    # 证明「判据真的会红」——而不是把一道永远跳过的门算成通过。
+    ("交付包闸门变异", PY_RUNTIME, ["tools/_qc_delivery_mutation.py"], True),
 ]
 
 
