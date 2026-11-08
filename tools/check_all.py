@@ -641,7 +641,12 @@ GATES: list[tuple[str, str, list[str], bool]] = [
     # 但那只证明「闸门正常时刀会红」，没证明「闸门恒绿/恒红时刀会不会红」。
     # 这道闸门把闸门文件换成两行退化实现（import-safe 的 `if __name__=="__main__"`），
     # 看刀套件还认不认得出来 —— 认不出就是空转，判据被改松改紧它都发现不了。
-    ("变异刀空转体检", PY_VENV, ["tools/check_knife_vacuity.py"], True),
+    # 【2026-11-08 修·本地全量只跑一层】这里原来没带 `--tier`，于是默认的
+    # `portable` 层（7 对）是跑了的，而第二十三轮补进来的 `dev` 层（9 对）
+    # **只在本轮手工跑过一次** —— 手工跑出来的结论不会回潮检测，等于白测。
+    # 本机（装了 `.venv` 的开发机）能跑两层，就必须跑两层；CI 跑不了 dev 层，
+    # 由 `.github/workflows/ci.yml` 显式写 `--tier portable`，不靠默认值。
+    ("变异刀空转体检", PY_VENV, ["tools/check_knife_vacuity.py", "--tier", "all"], True),
     ("变异刀空转体检变异", PY_VENV, ["tools/_qc_knife_vacuity_mutation.py"], True),
 ]
 
