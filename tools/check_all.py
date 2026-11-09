@@ -558,6 +558,10 @@ GATES: list[tuple[str, str, list[str], bool]] = [
     # 【2026-11-08】并发会话修的 course_recorder 主循环线程自死锁回归。
     # 合并本地 5 提交时漏登记，check_gate_registry.py 判红后补进 GATES。
     ("网课录制主循环自死锁回归", PY_VENV, ["src/tests/test_course_recorder_deadlock.py"], False),
+    # 【2026-11-09】试听播放生命周期：防孤儿 ffplay（关 App 后继续响）/ 叠播 / 线程堆积。
+    # 判据用真实子进程哨兵 + 真实线程验可观测后果，非查标志位。
+    ("试听播放生命周期回归", PY_VENV, ["src/tests/test_voice_playback_lifecycle.py"], False),
+    ("试听播放生命周期变异", PY_VENV, ["tools/_qc_voice_playback_mutation.py"], True),
 ]
 
 

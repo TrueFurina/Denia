@@ -19,6 +19,7 @@ import sys
 import tempfile
 import threading
 import time
+import atexit
 import queue
 import base64
 import io
@@ -319,6 +320,17 @@ class CharacterAPI(PetAPI, WindowAPI):
         self._voice_tasks: dict = {}            # task_id -> {phase, done, success, error, message}
         self._voice_task_seq: int = 0
         self._voice_task_lock = threading.Lock()
+        # 【2026-11-08 试听播放生命周期管理】`_play_audio_system` 内用 `subprocess.Popen`
+        # 启动 ffplay，句柄存于此；daemon 线程被强杀时 ffplay 不会自动死，必须显式 kill，
+        # 否则 App 关闭后孤儿 ffplay 继续出声。提供「新试听抢占 + 进程退出清理」能力。
+        self._voice_play_lock = threading.Lock()
+        self._voice_play_proc: Optional[subprocess.Popen] = None
+        if not getattr(type(self), "_voice_play_atexit_registered", False):
+            try:
+                atexit.register(self._kill_voice_playback)
+                type(self)._voice_play_atexit_registered = True
+            except Exception:  # noqa: BLE001
+                pass
         self._calib_thread: Optional[threading.Thread] = None  # OCR 区域校准悬浮窗线程
         self._calib_stop: Optional[threading.Event] = None     # OCR 校准悬浮窗关闭信号
         # 对话悬浮层（游戏内透明文本框：显示 AI 的话 + 语音文字）
@@ -5763,6 +5775,10 @@ class CharacterAPI(PetAPI, WindowAPI):
         backend = None
         preview_api_url = None
 
+        # 【2026-11-08】新试听开始：先抢占上一段可能仍在播放的试听（避免多 ffplay 叠播
+        # 与后台线程堆积）。daemon 线程里的旧播放子进程会被一并终结。
+        self._kill_voice_playback()
+
         try:
             from ..voice.tts_backends import create_backend
             # 【2026-10-18 修复·试听报 AttributeError】
@@ -5966,7 +5982,9 @@ class CharacterAPI(PetAPI, WindowAPI):
         # 真正出声：系统音频设备播放（wav 直播 / mp3 经 ffmpeg 解码后播）。
         # 临时文件生命周期交给 _play_audio_system 延迟清理，避免 winsound 异步加载前被删。
         if play:
-            self._play_audio_system(tmp.name)
+            # 非阻塞播放：在独立 daemon 线程跑，避免 voice_test 任务线程被整段播放卡住；
+            # 子进程由 `_voice_play_proc` 追踪，可被新试听抢占或进程退出清理。
+            self._start_voice_playback(tmp.name)
         else:
             try:
                 os.unlink(tmp.name)
@@ -5974,6 +5992,37 @@ class CharacterAPI(PetAPI, WindowAPI):
                 # 不外播时删临时文件，删不掉由临时目录回收（结果已拿到）
                 pass
         return {"b64": b64, "ext": ext}
+
+    def _kill_voice_playback(self) -> None:
+        """终结正在进行的试听播放子进程（防孤儿 ffplay 在 App 退出后继续出声）。
+
+        试听播放经 `_play_audio_system` 用 `subprocess.Popen(ffplay)` 启动，句柄存于
+        `self._voice_play_proc`。本方法在两种时机被调用：① 新试听开始（`_start_voice_playback`
+        抢占上一段）；② 进程退出（atexit 注册）。daemon 线程被强杀时 ffplay 不会自动死亡，
+        必须显式 kill，否则关 App 后仍在响。
+        """
+        with self._voice_play_lock:
+            proc = self._voice_play_proc
+            self._voice_play_proc = None
+        if proc is None:
+            return
+        try:
+            if proc.poll() is None:
+                proc.kill()
+        except Exception:  # noqa: BLE001
+            pass
+
+    def _start_voice_playback(self, path: str) -> None:
+        """非阻塞启动试听播放：在独立 daemon 线程跑 `_play_audio_system`。
+
+        让 voice_test 任务线程立即返回（不再被整段播放卡住），避免重复点试听时的后台线程
+        堆积；播放子进程由 `self._voice_play_proc` 追踪，可被新试听抢占或进程退出清理。
+        """
+        self._kill_voice_playback()  # 抢占上一段
+        threading.Thread(
+            target=self._play_audio_system, args=(path,),
+            daemon=True, name="voice_playback",
+        ).start()
 
     def _play_audio_system(self, path: str) -> None:
         """把合成好的音频通过【系统默认音频设备】播出去（绕过 webview 自动播放限制）。
@@ -6068,14 +6117,30 @@ class CharacterAPI(PetAPI, WindowAPI):
                         break
             if _ffplay:
                 _log(f"ffplay 独立进程播放 {target} (预估 {dur:.1f}s)")
-                subprocess.run(
-                    [_ffplay, "-nodisp", "-autoexit", "-loglevel", "quiet", target],
-                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                    timeout=dur + 60,
-                    creationflags=(0x08000000 if os.name == "nt" else 0),  # CREATE_NO_WINDOW
-                )
-                _log("ffplay 播放完成")
-                played = True
+                # 【2026-11-08】用 Popen 替代 subprocess.run：把句柄交给 `self._voice_play_proc`，
+                # 可被新试听抢占或 App 退出时清理（避免 daemon 线程被强杀后孤儿 ffplay 继续出声）。
+                _proc = None
+                try:
+                    _proc = subprocess.Popen(
+                        [_ffplay, "-nodisp", "-autoexit", "-loglevel", "quiet", target],
+                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                        creationflags=(0x08000000 if os.name == "nt" else 0),  # CREATE_NO_WINDOW
+                    )
+                    with self._voice_play_lock:
+                        self._voice_play_proc = _proc
+                    try:
+                        _proc.wait(timeout=dur + 60)
+                    except subprocess.TimeoutExpired:
+                        _log("ffplay 播放超时，强制结束")
+                        _proc.kill()
+                    _log("ffplay 播放完成")
+                    played = True
+                except Exception as e:  # noqa: BLE001
+                    _log(f"ffplay 播放失败: {e}")
+                finally:
+                    with self._voice_play_lock:
+                        if _proc is not None and self._voice_play_proc is _proc:
+                            self._voice_play_proc = None
             else:
                 _log("未找到 ffplay，回退 python 音频库")
         except Exception as e:  # noqa: BLE001
