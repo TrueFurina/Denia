@@ -629,7 +629,12 @@ GATES: list[tuple[str, str, list[str], bool]] = [
     # `--root <产物>` 才是真检（见该文件头部「用法」）。
     # 这里挂的是它的变异刀：32 个场景自建夹具、在源码仓里也能跑，
     # 证明「判据真的会红」——而不是把一道永远跳过的门算成通过。
-    ("交付包闸门变异", PY_RUNTIME, ["tools/_qc_delivery_mutation.py"], True),
+    # 【2026-11-09】这里改回 PY_VENV：源码仓内置运行时 python/Lib/site-packages
+    # 只有 2 项、没有 yaml，用它跑这把刀会让 _read_yaml 抛 ModuleNotFoundError，
+    # 连带 check_template/check_template_secrets/check_file_integrity 假红 7 场景。
+    # 这道门验的是「判据有没有牙」（32 场景自建夹具），不是「交付包运行时能不能跑」；
+    # 后者由发布前手动 check_delivery.py --root <产物> 验（该文件本就「不进闸门」）。
+    ("交付包闸门变异", PY_VENV, ["tools/_qc_delivery_mutation.py"], True),
     # 【2026-11-08】同一个形状第三次出现，都在通知窗那条线上：
     #   第十五轮 `NotifyJsBridge`（无此类）／第十九轮 `_notify_slide_if`（无此函数）／
     #   第二十一轮 `_push_cmd`（无此函数）。根因都是「通知窗从 WebView2 迁到 WPF 后，

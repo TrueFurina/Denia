@@ -59,7 +59,10 @@ MARKER = "crossref-ok"
 # 模块自带的 dunder 属性，AST 里没有定义但一定存在
 DUNDER = {"__file__", "__name__", "__doc__", "__package__", "__spec__", "__loader__",
           "__dict__", "__path__", "__builtins__", "__all__", "__cached__", "__annotations__"}
-SKIP_DIRS = {"__pycache__", ".git", ".venv", "node_modules", "dist", "build"}
+# 【2026-11-09】python/ 是【内置运行时 + 标准库】（本机 933 个 .py），不是项目源码；
+# 扫它会把 `from python.Lib.multiprocessing import ...` 这类标准库内部导入当成跨模块
+# 引用误报 11 处。交付包里它是被分发物，源码仓里它只是运行时副本，一律跳过。
+SKIP_DIRS = {"__pycache__", ".git", ".venv", "node_modules", "dist", "build", "python"}
 
 
 def _collect(root: str) -> list[str]:

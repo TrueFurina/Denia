@@ -28,6 +28,16 @@ import tempfile
 REAL_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 GATE = os.path.join(REAL_ROOT, "tools", "check_delivery.py")
 
+# 【2026-11-09 环境守卫】check_delivery._read_yaml 依赖 PyYAML。若解释器缺它，
+# 场景会连坐假红（A 正常态都 FAIL），看起来像「判据坏了」其实是环境坏了。
+# 必须先自检仪器：缺依赖直接判红退出，别让 32 个场景给出误导性结论。
+try:
+    import yaml as _yaml  # noqa: F401
+except ImportError:
+    print("ENV_FAIL: 当前解释器缺 PyYAML，_read_yaml 不可用；请用 .venv 跑本刀")
+    sys.exit(1)
+
+
 # 最小包里放一份「行为正确」的自愈实现。第九轮起闸门验的是目标包这份文件，
 # 而不是脚本所在包的 src.config —— 所以占位文件不能再是空文件。
 FAITHFUL_CONFIG_PY = (
