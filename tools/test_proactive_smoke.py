@@ -136,8 +136,10 @@ if cold_arch:
     r_cold = dec(base_state(archetype=cold_arch,
                             last_interaction_ts=NOW - (REL.COLD_GAP_H * 3600 + 10)), NOW)
     ok("B6 冷落+原型不主动 → 拒", r_cold == (False, "冷落且原型不主动"), str(r_cold))
-else:
-    ok("B6 冷落+原型不主动 → 跳过（无此类原型）", True, "skip")
+# 【2026-11-10 修·跳过当通过】原来 else 分支写的是 ok(..., True, "skip") ——
+# 一旦原型表里再没有 proactive_when_cold=False 的原型，B6 就永久恒真通过，
+# 而它守的那条闸门"冷落时不主动"其实一次都没验过。前提消失必须报红。
+ok("B6 前提：原型表里仍存在「冷落时不主动」的原型", cold_arch is not None, str(cold_arch))
 
 r_ok = dec(base_state(), NOW)
 ok("B7 正常 → 开口", r_ok == (True, "ok"), str(r_ok))
@@ -205,10 +207,25 @@ async def run_guard():
         REL._proactive_decision = _orig_dec
 
     # 非双工 + 无 llm：应安全提前返回（不崩、不触发）
-    m2 = Mini(False, with_llm=False)
-    await m2.check_and_trigger()
-    ok("C-非双工(无llm)：安全返回不触发",
-       (not m2.reached_decision) and (not m2.reached_emit))
+    # 【2026-11-10 修·恒真断言】原来断言的是
+    #     (not m2.reached_decision) and (not m2.reached_emit)
+    # 而这两个属性只在 Mini.__init__ 里初始化为 False，**全文件没有任何地方把它置 True**
+    # —— 等于断言了两次 `not False`，永远为真。改成观测真实调用面。
+    _orig_dec2 = REL._proactive_decision
+    _seen2 = {"n": 0}
+
+    def _spy_dec2(state, now=None):
+        _seen2["n"] += 1
+        return (False, "test")
+
+    REL._proactive_decision = _spy_dec2
+    try:
+        m2 = Mini(False, with_llm=False)
+        await m2.check_and_trigger()
+    finally:
+        REL._proactive_decision = _orig_dec2
+    ok("C-非双工(无llm)：安全返回且不走到闸门（真的提前 return）",
+       _seen2["n"] == 0, "gate_calls=%d" % _seen2["n"])
 
     # 守卫精确性（核心）：让位判据来自 _in_call()，与引擎档位字符串解耦
     import inspect as _ins
