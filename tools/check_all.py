@@ -652,6 +652,9 @@ GATES: list[tuple[str, str, list[str], bool]] = [
     # 判据用真实子进程哨兵 + 真实线程验可观测后果，非查标志位。
     ("试听播放生命周期回归", PY_VENV, ["src/tests/test_voice_playback_lifecycle.py"], False),
     ("试听播放生命周期变异", PY_VENV, ["tools/_qc_voice_playback_mutation.py"], True),
+    # 【2026-11-10】这道门 21 条判据只验「生产出来的 payload」；当年那个 bug
+    # 却发生在 webapp（一律改道桌宠 + return）。已补 8a/8b 消费端接线断言。
+    ("主动输出分流变异", PY_VENV, ["tools/_qc_proactive_chat_routing_mutation.py"], True),
 ]
 
 

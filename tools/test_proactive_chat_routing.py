@@ -256,6 +256,19 @@ async def main():
     await P.ProactiveStrategy._flush_duplex_emit(s)
     check("7 空缓冲 flush → 不 publish", _payload_of(s) is None)
 
+    # ---------- 8) 消费端：webapp 必须仍然按 to_chat 分道 ----------
+    # 【2026-11-10 加】上面所有判据都只验「生产出来的 payload 对不对」，
+    # 没有一条验「webapp 收下之后怎么走」。而 2026-10-11 那个 bug 恰恰发生在 webapp：
+    # 它当时一律 `is_proactive=True → 改道桌宠气泡 + return`，聊天页永远收不到。
+    # 也就是说：把 webapp 那行改回「只看 is_proactive」，本文件 21 条**照样全绿**。
+    # 这里补一条静态接线断言，把「消费端不许漂移」也钉住。
+    _webapp_path = os.path.join(ROOT, "src", "ui", "webapp.py")
+    _webapp = open(_webapp_path, encoding="utf-8").read()
+    _guard = 'bool(d.get("is_proactive")) or bool(d.get("to_chat") is False)'
+    check("8a webapp 分道判据仍读 to_chat（消费端未漂移）", _guard in _webapp)
+    _n_guard = _webapp.count('bool(d.get("to_chat") is False)')
+    check("8b 该分道判据只有一处（多处改道会各自为政）", _n_guard == 1, f"count={_n_guard}")
+
     print("\n结果: %d PASS / %d FAIL / %d SKIP" % (PASS, FAIL, SKIP))
     return 0 if FAIL == 0 else 1
 
