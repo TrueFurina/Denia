@@ -91,7 +91,10 @@ class WebSocketServer:
             "WebSocket 端口 %s 绑定失败（已重试 %d 次）：%s%s"
             "若这是第二个达妮娅实例，请先退出正在运行的那个（系统托盘右键 → 退出）再启动；"
             "两个实例共用 data/ 目录，不能同时运行。"
-            % (self._port, _BIND_ATTEMPTS, str(last_err).rstrip("。"), holder)
+            # 【2026-11-09 修·两句话粘在一起】原来这里只有 rstrip("。")，把 OSError
+            # 末尾的句号吃掉却不再补，拼出来是「…只允许使用一次若这是第二个达妮娅
+            # 实例…」——崩溃弹窗里就是这么一整句读不通。剥掉再补一个句号即可。
+            % (self._port, _BIND_ATTEMPTS, str(last_err).rstrip("。") + "。", holder)
         ) from last_err
 
     async def stop(self) -> None:

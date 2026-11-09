@@ -178,6 +178,11 @@ PAIRS = [
      "协程调度：五刀，A 刀砍退出码（自测本轮才补上这条判据）"),
     ("_qc_async_blocking_mutation.py", "src/tests/test_check_async_blocking.py", "dev",
      "异步阻塞：五刀，B 刀砍 to_thread 实参豁免（本轮删掉的那个真缺陷）"),
+    # 【2026-11-09 加】WS 端口绑定：八刀。这道门以前**一次都没被变异验过** ——
+    # `check_all.py` 的注释写着「两刀变异已验」，仓库里却没有任何 `_qc_*ws*`。
+    # 本轮读判据时读到两处空转（删重试日志、serve 提出循环），补完判据才有这八刀。
+    ("_qc_ws_port_bind_mutation.py", "src/tests/test_ws_port_bind.py", "dev",
+     "WS 端口绑定：八刀，G 刀「只 bind 一次+空睡 5 次」在补判据之前是全绿的"),
     # ---- dev（第二十六轮补：两条从 EXCUSED 挪进来的）----
     ("_qc_presence_mutation.py", "test_presence_controls.py", "dev",
      "在场感增强：缺 pynput 时兜底校验放行拼错的键名 —— 修好后起点第一次是绿的"),

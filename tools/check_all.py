@@ -183,9 +183,17 @@ GATES: list[tuple[str, str, list[str], bool]] = [
     ("壳层能力", PY_VENV, ["src/tests/test_win_shell.py"], True),
     ("RPC 通道", PY_VENV, ["src/tests/test_rpc_server.py"], False),
     # WS 端口绑定契约（2026-10-20 03:11 启动崩溃的回归）：空闲一次起、被占先重试
-    # 再报人话（PID/退出指引）、占用探测不扰民。两刀变异已验：删重试→「确有重试」
-    # 红；改回裸 raise→三条诊断断言红。
+    # 再报人话（PID/退出指引）、占用探测不扰民。
+    # 【2026-11-09 修·这条注释曾经是假的】它原来写着「两刀变异已验：删重试→
+    # 「确有重试」红；改回裸 raise→三条诊断断言红」，但仓库里**没有任何
+    # `_qc_*ws*` 文件** —— 那两刀是手工跑过一次、没提交，验完就蒸发了，
+    # 此后一年谁改坏了都不会红。手工验过的刀不会回潮，注释也不会。
+    # 现在有 `tools/_qc_ws_port_bind_mutation.py`（八刀，已进 PAIRS）。
     ("WS 端口绑定", PY_VENV, ["src/tests/test_ws_port_bind.py"], False),
+    # 上面那道门的刀：八刀。补判据之前它有两处空转（删重试日志 / serve 提出循环
+    # 只 bind 一次空睡 5 次），见 `_qc_ws_port_bind_mutation.py` 的模块注释。
+    # 慢：每刀都要真占端口 + 走满重试预算，八刀约 60s。
+    ("WS 端口绑定变异", PY_VENV, ["tools/_qc_ws_port_bind_mutation.py"], True),
     # README/文档的本地链接不悬空。坏法很安静——**没人会点**，断了也不会有人报错，
     # 直到新来的人照着点一次 404。而"文档搬家"正是最容易制造悬空的动作。
     # 变异 3 刀全红：搬家没改链接 / 图片路径写错 / 指向不存在的文档。
