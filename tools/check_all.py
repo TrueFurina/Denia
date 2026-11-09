@@ -663,6 +663,19 @@ GATES: list[tuple[str, str, list[str], bool]] = [
     # 此时刀还报 PASS 就是空转。三个方向合起来才覆盖全部 61 把。
     ("变异刀空写体检", PY_VENV, ["tools/check_knife_nowrite.py"], True),
     ("变异刀空写体检变异", PY_VENV, ["tools/_qc_knife_nowrite_mutation.py"], True),
+    # 【2026-11-09 加·闸门自己起不来这件事没人守】前三道体检判的是「刀有没有牙」，
+    # 这一道判的是更靠前的一步：**闸门在推荐解释器下能不能起来**。
+    # 交付包自带的是可嵌入运行时（python/python312._pth），它的 sys.path 只有
+    # python/ 下的几个目录加一个 `..`（仓根），**不含 tools/**；普通 CPython 会
+    # 把脚本目录塞进 sys.path[0]，可嵌入版不会。于是 `python tools/x.py` 能跑、
+    # `.venv/Scripts/python.exe tools/x.py` 直接 ModuleNotFoundError —— 而 .venv
+    # 才是要三方依赖时的推荐解释器。
+    # 2026-11-09 实证：check_all.py 自己就中招（尾巴的 `from _gate_lock import`），
+    # 全量跑一行闸门没执行就崩，报的是 ModuleNotFoundError，看起来像环境坏了。
+    # 同族还有 PR #17 的 check_web_js_syntax、以及本轮这道门抓出来的
+    # _qc_api_wiring_mutation（函数里的 `from check_api_wiring import`）。
+    ("工具脚本导入路径", PY_VENV, ["tools/check_tool_sys_path.py"], False),
+    ("工具脚本导入路径变异", PY_VENV, ["tools/_qc_tool_sys_path_mutation.py"], False),
 ]
 
 
@@ -684,15 +697,33 @@ def main(argv: list[str]) -> int:
 
     results: list[tuple[str, bool, float, str]] = []
     skips: list[tuple[str, str]] = []
-    for name, py, args, _slow in todo:
+    for name, py, args, slow in todo:
         exe = _pick_python(py)
         if not os.path.exists(exe):
             results.append((name, False, 0.0, f"解释器不存在：{exe}"))
             print(f"  ✗ {name:14s}  解释器不存在")
             continue
+        # 【2026-11-09 修·超时会静默吃掉一道闸门】这里原来是写死的 timeout=600。
+        # 慢项（`slow=True`，原来只用来给 `--fast` 跳过）根本跑不完 —— 实测
+        # `check_knife_nowrite.py` 要 14 分钟，全量跑时必然在第 600 秒被 kill，
+        # 而 `subprocess.TimeoutExpired` 没被接住，**整轮 check_all 直接抛异常退出**，
+        # 前面跑完的结果一条都留不下。两处一起修：
+        #   ① 预算按档给：慢项 30 分钟、其余 10 分钟；
+        #   ② 超时不再让整轮崩，记成一条**有名字的失败**（"跑不完" ≠ "判据失败"，
+        #      但两者都不能当通过，所以都进失败列表并写明原因）。
+        budget = 1800 if slow else 600
         t0 = time.time()
-        p = subprocess.run([exe] + args, cwd=ROOT, capture_output=True,
-                           text=True, encoding="utf-8", errors="replace", timeout=600)
+        try:
+            p = subprocess.run([exe] + args, cwd=ROOT, capture_output=True,
+                               text=True, encoding="utf-8", errors="replace",
+                               timeout=budget)
+        except subprocess.TimeoutExpired:
+            cost = time.time() - t0
+            results.append((name, False, cost,
+                            f"超过 {budget}s 被中止 —— **跑不完，不是判据失败**；"
+                            f"要么优化它，要么给它加 slow 档"))
+            print(f"  ✗ {name:14s} {cost:5.1f}s  超时（>{budget}s，跑不完）")
+            continue
         cost = time.time() - t0
         # 退出码 77 = 跳过（环境不满足，且该能力当前不是产品承诺）。
         # **不能当通过**：跳过项会单独列出来，并说明"本轮未验证"。
@@ -766,6 +797,19 @@ if __name__ == "__main__":
     # 【2026-11-04 加·并发护栏】变异刀会临时改源码；两个会话同时跑会互相覆盖
     # 还原结果，把好代码留在工作区，之后每一轮都判红（今天踩到两次）。
     # 拿不到锁时按仓库惯例 exit 77（跳过，不是通过）。
+    #
+    # 【2026-11-09 加·必须显式补 sys.path】交付包自带的是**可嵌入运行时**
+    # （python/python312._pth），它的 sys.path 被 `._pth` 写死成
+    # [python, python/DLLs, python/Lib]，**不含脚本目录、也不含 cwd**。
+    # 普通 CPython 会把脚本目录放进 sys.path[0]，所以这句 `from _gate_lock`
+    # 在 `python tools/check_all.py` 下能过、在 `.venv/Scripts/python.exe
+    # tools/check_all.py` 下直接 ModuleNotFoundError —— 而 .venv 正是本项目
+    # 推荐解释器（要三方依赖）。症状极隐蔽：不是判据失败，是整轮一行没跑就崩。
+    # 同一族问题见 PR #17 的 check_web_js_syntax（只把仓根塞进 sys.path，
+    # 而 check_bridge_methods 在 tools/ 下）。
+    _HERE = os.path.dirname(os.path.abspath(__file__))
+    if _HERE not in sys.path:
+        sys.path.insert(0, _HERE)
     from _gate_lock import acquire, release
     _got, _why = acquire()
     if not _got:

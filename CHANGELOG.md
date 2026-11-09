@@ -13,6 +13,7 @@
 
 | commit | 时间 | 类型 | 一句话 | 验证 |
 |---|---|---|---|---|
+| `PR#18e` | 17:0x | fix | **闸门在推荐解释器下起不来：全量跑一行没执行就退出**：`check_all.py` 尾巴的 `from _gate_lock import` 在 `.venv/Scripts/python.exe` 下必崩（`ModuleNotFoundError`），在普通 `python` 下正常 —— 交付包自带的是**可嵌入运行时**，`python312._pth` 只把 `python/` 下几个目录加一个 `..`（仓根）塞进 sys.path，**不含 `tools/`**；普通 CPython 会补「脚本目录」，可嵌入版不补。而 `.venv` 才是要三方依赖时的推荐解释器 → **这道门在官方姿势下从未跑起来过**。同一族 PR #17 已修过一次（`check_web_js_syntax`），所以这次不只修还补判据：新增 `check_tool_sys_path.py`（纯 stdlib 静态判定，181 脚本 0.2s）——兄弟 import 前必须有由 `__file__` 推导的 sys.path 改写（模块层或更早行号），写死盘符路径判红，接 `ImportError` 的降级导入与免登脚本不计分但必须打印。**它第一次跑就抓到 `_qc_api_wiring_mutation`**（函数里 `from check_api_wiring import`），补完后全量跑里那条 `反向接线变异` 整条挂掉的记录随之消失。顺带把上一轮写死的 600s 闸门超时按档改成 1800/600 并把超时记成有名字的失败。**并记录未修的发现**：交付包工作副本（无 `.git`／无 `config.yaml`）里全量 14/215 红，其中 12 项是「问不到被当成答否」，按约定该报 77 却报了 1。 | `check_all.py` 在 `.venv` 下能拿到锁并跑完（215 项判完 / 4 跳过 / 14 红，红的构成已分类）；`变异刀空写体检` 428.9s < 1800s 预算，不再被 kill；新闸门 **33 PASS / 0 FAIL**；新刀 **11 项全过**；`_qc_api_wiring_mutation` 4 刀恢复全红 + 起点绿；登记对账 ✓（220）；站点 7 PASS/0 FAIL（GATES 219→**221**） |
 | `PR#18d` | 17:4x | test | **第三种空转体检：封住写入口** —— 「SKIP 50 不算通过」这句话压了三轮，这一轮把它拆开：那 50 里 18 个是**一次性探针**（压根不是刀）、28 把是「没有模块级 MUTS 也没有独立判定文件」的真刀、4 把有 MUTS 但形状退化不了。新工具 `check_knife_nowrite.py` 不碰变异，把 `builtins.open`/`io.open` 的**写模式**重定向到临时文件，让「变异根本没发生」：此时刀还 exit 0 就是空转。这个方向与变异长什么样无关 —— 改源码的、往 `src/` 扔坏文件的、复制配置的、删目录的，一视同仁。**三方向闭环**：换判定（判定坏了刀会不会红）/ 空变异（源码没变时会不会假绿）/ 封写（**什么都没变**时会不会假绿）。顺带：`check_knife_vacuity.py` 的仓副本改成「重新 init 一个 git 仓」（`tools/_qc_repo_copy.py`），最后一条 `EXCUSED` 解开、表清空；`check_knife_noop.py` 的刀口径改成 `_qc_*_mutation.py`；**`check_delivery.py:check_template` 还在断言 `force_first_run is True`，而 10-20 的修复故意改成 false —— 它对任何正确打的包都判 FAIL，`_qc_delivery_mutation` 466 行 14 个用例因此永久红、等于从来没在跑**。 | 空写体检 **CERTIFIED 21 / COVERED_ELSEWHERE 33 / META 3 / SKIP 1 / ERROR 4（62 把），VACUOUS 0**，exit 0（14m）；空转变检 **CERTIFIED 33 / SKIP 29 / SHAPE 0**（口径修正后 62 把，原「29 / 50」是 79 个文件混算）；空转体检 **28 CERTIFIED / 1 SKIP**（29 对，上轮 27/1）；**三合一覆盖 54/62（装上 jsdom 后 55/62）**；三道体检的变异刀 16 项 / 13 刀 / 9 刀全过；出厂模板判据修正后 `check_delivery` 该行 PASS；GATES 217→219，站点 7 PASS/0 FAIL |
 | `PR#18c` | 17:1x | fix | **「缺环境」被报成「判据失败」：四个红点，四个都不是产品坏了**：① `A5环境探针` 扫 `logs/launch_run*.log`，而 `logs/` 在 `.gitignore` 里 → **新克隆的树上恒红**；改为三态（有样本逐条判 / 有日志扫出 0 份=FAIL / 没日志=WARN+exit 77），并加 `--root` 让判据能被夹具驱动。② `_qc_a5_probe_mutation` 起点恒红 → 六把刀"全红"白送；改用 tempfile 合成日志当夹具 + `_judged()` + 三把限位（77 / FAIL / 0）。③ `_qc_tray_switch_mutation` 要 `config.yaml`（也在 gitignore 里）→ 缺文件时回落到出厂模板 `config.release.yaml`。④ `hotkeys._validate` 在**没装 pynput** 时只做形状校验，`<ctrl>+<alt>+<nosuchkey>` 静默进映射表（**用户以为绑上了，按下去什么都不发生**）；新增 `_fallback_ok` + 键名白名单。**并更正上一轮的错误归因**（原写成"无桌面会话返回空表"，与桌面会话无关）。⑤ 17 把刀的 `_baseline_green()` 比判定还严（禁 `Traceback`），把"判定故意打的异常日志"判成起点红 → 改为"退出码 0 且无 FAIL 行"。⑥ `KNOWN_VACUOUS` 清空 + 额度对账（N8 指向空气 / N9 表在说谎 / N10 限位）。 | 空转变检 **CERTIFIED 29 / SKIP 50，VACUOUS 0 / ERROR 0**（上轮 26 / 1 / 50 / 2）；空转体检 27 / SKIP 1（上轮 25 / 1）；A5 探针 7/0/2 未验证 exit 77、夹具下 9/0 exit 0；A5 刀 6 刀 + 3 限位全过；在场感 33/1 → **41/0**；托盘 29/0；四腿 CI 全绿 |
 | `PR#18b` | 16:4x | test | **空变异体检：另外 48 把刀的空转风险一直是零覆盖**：上一道工具靠「把判定文件换成退化实现」，前提是刀有独立判定文件——79 把里只有 26 对有，另外 48 把在进程内断言，换文件完全无效。本轮换方向：**退化变异本身**（`(old,new)` → `(old,old)`，即"什么都没改"），判定有牙就该绿 → 刀必须报「没抓住」→ `exit != 0`；若仍 `exit 0` 就是没在看变异。这个方向不需要知道判定在哪，对 79 把一视同仁。普查中修掉自己仪器的两处假发现（`_noop()` 盲取最后两个元素，把「说明」当成 `new_thunk`，5 把刀被误判 VACUOUS；runner 的 `sys.path[0]` 不是 `tools/`，让 `_qc_api_wiring_mutation` 白记 ERROR）。**顺带查出真缺陷**：`导入冒烟复核` 在 `PY_VENV` 下一直是 6 FAIL——`smoke_import` 的 `env["PYTHONPATH"]=root` 在随包嵌入式运行时下是死代码（`._pth` 固定 sys.path），且夹具的 `src/` 少了 `__init__.py` 成了命名空间包、被 `DaniaAI\src` 这个常规包压住。 | `check_knife_noop.py` CERTIFIED 26 / VACUOUS 1（已知）/ SKIP 50 / ERROR 2，exit 0（5m56s）；七刀 + 对照全 PASS；`导入冒烟复核` venv 6 PASS/6 FAIL → **12 PASS/0 FAIL**，刀在 venv 下也 3 刀全红 + 起点绿；`GATES` 215→217，站点 4 处锚点同步（7 PASS/0 FAIL） |
@@ -556,7 +557,99 @@ find_spec 返回 None → 误报「唤醒词退化」；
 **验证**：变异 4 刀全红 + 还原后回归 12/12 全绿；`tools/check_all.py` 登记对账 ✓；
 CI 全绿（pytest / self-check scripts / syntax gate 三腿 success）。
 
+#### PR #18（续四）· 闸门在推荐解释器下起不来：「跑得起来的那个会掩盖跑不起来的那个」
+
+**问题**：`check_all.py` 全量跑，**一行闸门都没执行就退出**，报
+
+```
+File "...\tools\check_all.py", line 787, in <module>
+    from _gate_lock import acquire, release
+ModuleNotFoundError: No module named '_gate_lock'
+```
+
+看起来像环境坏了（少装了什么），实际是这道门**在推荐解释器下从来起不来**：
+`.venv/Scripts/python.exe tools/check_all.py` 必崩，`python tools/check_all.py` 正常。
+
+**根因**：交付包自带的是**可嵌入运行时**，`python/python312._pth` 把 sys.path 写死成
+
+```
+.   DLLs   Lib   Lib\site-packages   …   ..
+```
+
+最后那个 `..` 是仓根 —— 所以 `main.py` 顶部的 `from src.xxx import` 能用，
+但 **`tools/` 不在里面**。普通 CPython 会把「脚本所在目录」放进 `sys.path[0]`，
+可嵌入运行时不补这一条。于是同一份代码：
+
+| 解释器 | `tools/check_all.py` |
+|---|---|
+| `python`（普通 CPython） | 能跑（`sys.path[0] == tools/`） |
+| `.venv/Scripts/python.exe`（推荐解释器） | `ModuleNotFoundError: _gate_lock` |
+
+而 `.venv` 恰恰是要三方依赖时的推荐解释器 —— 也就是说**这道门在官方推荐姿势下从未跑起来过**。
+
+**为什么一直没暴露**：因为这属于「跑得起来的那个解释器会掩盖跑不起来的那个」。
+开发机上两条路都试过，先用普通 `python` 试通了就不再怀疑；而 CI 里 `python` 也是
+普通 CPython。这类故障有个共同特征：**报的是 ModuleNotFoundError，不像判据失败，
+更像环境问题**，于是人第一反应是去装包，越查越远。
+
+**修**：`check_all.py` 尾巴补三行（`sys.path.insert(0, 脚本目录)`）。同一族在
+PR #17 已经修过一次（`check_web_js_syntax` 只把仓根塞进 sys.path，而
+`check_bridge_methods` 在 `tools/` 下）——**同一族第二次复发**，所以这次不只修，
+还补了判据。
+
+**新闸门 `tools/check_tool_sys_path.py`**（纯 stdlib、只读 AST、181 个脚本约 0.2s）
+三条判据：
+
+1. 【正向】`check_*` / `test_*` / `_qc_*` 里凡 import 了兄弟模块（`tools/<名>.py` 存在），
+   就必须在**模块层**、或该 import 之前同一/更外层作用域里，有一次 sys.path 改写。
+2. 【自洽】那次改写的实参必须由本脚本路径推导（`__file__` 或其派生名，
+   含 `for p in (ROOT, …)` 这种一层中转），**不许写死盘符路径** —— 写死的换台机器等于没写。
+3. 【覆盖】必须真的扫到兄弟 import；扫到 0 个 = 判据自己瞎了，不算通过。
+
+两类**不计分**但必须打印：写在接了 `ImportError` 的 `try` 里的「降级导入」
+（如 `check_package_secrets` 找不到 `check_web_assets` 就转警告）、以及带
+「不进闸门：」标记的免登脚本。理由：这两种都不是「起不来」。
+
+为什么不用「跑一遍试试」当判据：那要求每道闸门都真跑起来，而闸门里有一半要声卡 /
+模型 / 14 分钟；更关键的是**试出来的绿是假绿**（见上表第一行）。
+
+**这道门第一次跑就抓到一个真的**：`_qc_api_wiring_mutation.py` 函数里两处
+`from check_api_wiring import KNOWN_UNWIRED`，靠的正是「解释器补脚本目录」。
+补 `sys.path` 后，本轮全量跑里那条 **`反向接线变异` 整条挂掉的记录**（`ModuleNotFoundError:
+No module named 'check_api_wiring'`）随之消失，四把刀（起点绿 / M1 / M2 / M3 / 还原后绿）
+全部回到正常。**先被静态判据指出来、再被真跑确认** —— 这也是新闸门有牙的证据之一。
+
+**顺手发现但本轮没修（记在这里，别让它消失）**：在**交付包工作副本**（无 `.git`、
+无 `config.yaml`）里跑全量，**14/215 项红**，其中 12 项与产品无关：
+
+| 类 | 闸门 | 真实原因 |
+|---|---|---|
+| 无 git 工作树 | 必需资产清单 / 源码包排除规则 / 陌生人首启判据链（+2 把变异刀） | `git ls-files` 失败，脚本**把「问不到」当成了「答否」**，于是报「在磁盘上但没进 git —— 包里会缺」，而文件在上游是跟踪的 |
+| 无实配 | 投影层自检 / ASR 事件流 / 桌面视频 e2e / 抓屏性能闸 D8 | `config.yaml` 在 `.gitignore` 里，工作副本没有 |
+| 缺三方包 | 感知哈希 | venv 里没有 `imagehash` |
+
+这七道闸门全都 `exit 1`，而按本仓既有约定**「缺环境 ≠ 判据失败」应报 77**。
+本轮只记录、不改：改它们要逐道确认「真的缺环境」与「真的判据红」的边界，
+属于下一轮的事；但**现在这 12 个红点会把真红点淹掉**，所以先写进这里。
+
+**验证**：
+
+- `check_all.py` 在 `.venv` 下**能拿到锁并跑完**（本轮全量 215 项判完、4 项跳过、
+  14 项红，红的构成见上表 + 2 项视频用例）；修复前是 5 行 traceback。
+- 全量跑里 **`变异刀空写体检` 428.9s**，远低于新给的 1800s 慢项预算 —— 上一轮
+  「新闸门放进整轮里能跑完」这个断言到此为止才算证实（原来 600s 写死超时会把它 kill）。
+- 新闸门 **33 PASS / 0 FAIL**：扫到 181 个脚本，15 个真 import 兄弟模块，
+  1 个降级导入（`check_package_secrets`），2 个免登跳过。
+- 新变异刀 **11 项全过**：G 正常 / T 路径经 `for` 中转 / M 漏补 / H 写死盘符 /
+  A 先 import 后补 / S 补在函数里 / B 语法错误 / D 降级导入不算红 / K 免登不算红 /
+  X1 空目录 / X2 目录不存在。桩脚本全在临时目录里，不碰仓库。
+- `check_gate_registry` ✓ 全部有着落（220 个登记脚本）；`check_gate_exit` 220 脚本 0 命中；
+  `check_site_counts` 7 PASS / 0 FAIL（GATES 219 → **221**，站点 4 处锚点同步）；
+  `check_open_encoding --strict` 0 处；`check_module_globals` / `check_duplicate_def` /
+  `check_unreachable` 对 `tools` 全干净。
+
 #### PR #18 · 18 把变异刀是空转的：判定崩了也被算成「抓住了」
+
 
 **问题**：第二十二轮新增「变异刀空转体检」——把判定文件换成退化实现（恒 exit 0 / 恒 exit 1），
 看刀认不认得出来。那一轮只覆盖 7 对 `portable` 的，body 里明确留了"另外 9 个闸门族 +

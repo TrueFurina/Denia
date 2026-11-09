@@ -200,3 +200,14 @@ jobs:
       #     python tools/_qc_knife_nowrite_mutation.py
       # 于是三道的覆盖分布是：CI 8 对（换判定·portable）/ 本机 29 对（换判定·全部）
       # + 33 把（空变异）+ 29 把（封写）。**CI 全绿 ≠ 三道都跑过。**
+      #
+      # 【2026-11-09 第二十八轮】**这道必须进 CI**，理由与上面两道相反：
+      # `check_tool_sys_path.py` 纯 stdlib、只读 AST、181 个脚本约 0.2s，没有环境依赖；
+      # 而它守的正是「闸门在推荐解释器下起不来」—— 这个故障只在**特定解释器**下出现
+      # （可嵌入运行时的 `python312._pth` 不补脚本目录，普通 CPython 补），
+      # 恰恰是最容易在 CI 与本机之间**结论相反**的一类，所以两边都要判。
+      # 变异刀用临时目录摆桩脚本、不碰仓库，约 3s。
+      - name: tool sys.path judgement
+        run: python tools/check_tool_sys_path.py
+      - name: tool sys.path mutation (eleven knives)
+        run: python tools/_qc_tool_sys_path_mutation.py
