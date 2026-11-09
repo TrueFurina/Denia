@@ -191,6 +191,11 @@ PAIRS = [
     # 那道门，进程回收与重启恢复状态两条支路上五处关键行为全都没判据。
     ("_qc_pet_shell_mutation.py", "src/tests/test_pet_shell_selfheal.py", "dev",
      "壳自愈：八刀，B 刀「不杀子进程树」= 孤儿 Electron 窗口那个坑，此前零判据"),
+    # 【2026-11-10 加】双工停止与麦克风：十刀。A/B/C 三段测的是手抄的生产代码副本，
+    # 换真实实现后 A 刀（回退成 `await client.stop()`）只在 A5 的日志判据上红 ——
+    # 原 A1 那句「stopped 恒 False」是假的。
+    ("_qc_duplex_stop_mic_mutation.py", "tools/test_duplex_stop_and_mic.py", "dev",
+     "双工停止与麦克风：十刀，A 刀只有 A5 能抓（A1/A2 对回归本来就绿）"),
     # ---- dev（第二十六轮补：两条从 EXCUSED 挪进来的）----
     ("_qc_presence_mutation.py", "test_presence_controls.py", "dev",
      "在场感增强：缺 pynput 时兜底校验放行拼错的键名 —— 修好后起点第一次是绿的"),

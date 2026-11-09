@@ -488,7 +488,17 @@ GATES: list[tuple[str, str, list[str], bool]] = [
     # 五刀：诊断 frames 恒 0 / 不发 frame 阶段 / 诊断不暴露 ffmpeg /
     # 失败抹空错误信息 / 失败不发 error 阶段。
     ("视频进度变异", PY_VENV, ["tools/_qc_video_watch_progress_mutation.py"], True),
+    # 【2026-11-10 加·这道门以前测的是自己抄的一份副本】A/B/C 三段的注释里明写
+    # 「复刻 …的分派核心 / 电平滑化 / engine_ui 判定」，把生产实现手抄进测试再测
+    # 抄件 —— 生产代码怎么改都不会红。同一个文件 D 段的注释早就写对了：
+    # 「不复制逻辑，避免"假绿"——复刻逻辑两次写得一样不算测试」。
+    # 换成调真实实现后，又逼出两件事：① A1 括号里那句「stopped 恒 False」是假的
+    # （`await f()` 先求值 `f()`，客户端真停了；实测回退成 BUG-1 原形 A1/A2 全绿，
+    # 唯一会红的是 A5 的日志判据），生产代码里同一条假因果一并改正；
+    # ② `_watchdog_tick` 的换轮保护 `and self._mic_proc is proc` 一条判据都没有，
+    # 删掉也全绿 → 补 D9。十刀见 tools/_qc_duplex_stop_mic_mutation.py。
     ("双工停止与麦克风", PY_VENV, ["tools/test_duplex_stop_and_mic.py"], False),
+    ("双工停止与麦克风变异", PY_VENV, ["tools/_qc_duplex_stop_mic_mutation.py"], True),
     # 过渡期看门狗接线（2026-10-23）：重连卡死时禁言闸门没有出口 → 她永久静默。
     # 方法 09-08 就写好了但从来没有启动点（注释却一直承诺"配合看门狗兜底"）。
     # 测试守行为两对照组 + 三处接线源码断言 + 死包装墓碑；四刀变异全红。
