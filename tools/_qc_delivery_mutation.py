@@ -73,11 +73,14 @@ def make_root(td: str) -> str:
         os.makedirs(os.path.dirname(p), exist_ok=True)
         if rel == "config.yaml" and not os.path.isfile(os.path.join(REAL_ROOT, rel)):
             # 源码仓里 config.yaml 是 gitignore 的实配。用模板派生一份「跑过一次」
-            # 的等价物：唯一差别就是 force_first_run，check_template 正是比对这两点。
+            # 的等价物：出厂模板 force_first_run=false、无 first_run_done；
+            # 跑过一次的实配补上 first_run_done: true（判级 force or not first_run_done）。
+            # 【2026-11-09】别再假设模板是 true——那是事故 14d4e15 的旧包口径。
             tpl = open(os.path.join(REAL_ROOT, "config.release.yaml"),
                        encoding="utf-8").read()
             with io.open(p, "w", encoding="utf-8", newline="\n") as fh:
-                fh.write(tpl.replace("force_first_run: true", "force_first_run: false", 1))
+                fh.write(tpl.replace("force_first_run: false",
+                                     "force_first_run: false\nfirst_run_done: true", 1))
         elif rel in ("config.yaml", "config.release.yaml", "requirements.txt"):
             shutil.copyfile(os.path.join(REAL_ROOT, rel), p)
         elif rel == "src/config.py":
@@ -160,12 +163,16 @@ case("C 模板夹带明文密钥", leak_key, ["check_template_secrets"])
 
 
 def flip_first_run(r):
+    # 【2026-11-09】判据口径修正后反向注入：给合格出厂模板塞回开发调试开关
+    # force_first_run: true（事故 14d4e15 的形态），check_template 必须判红。
     p = os.path.join(r, "config.release.yaml")
-    s = io.open(p, encoding="utf-8").read().replace("force_first_run: true", "force_first_run: false", 1)
-    io.open(p, "w", encoding="utf-8").write(s)
+    s = io.open(p, encoding="utf-8").read()
+    assert "force_first_run: false" in s, "D 刀锚点漂了：模板里没有 false"
+    io.open(p, "w", encoding="utf-8").write(
+        s.replace("force_first_run: false", "force_first_run: true", 1))
 
 
-case("D 模板不是出厂态", flip_first_run, ["check_template"])
+case("D 模板夹带开发调试开关 force_first_run=true", flip_first_run, ["check_template"])
 
 
 def bump_version(r):

@@ -501,17 +501,25 @@ def check_template(root: str) -> tuple[str, str, str, str]:
     tpl = os.path.join(root, TEMPLATE_NAME)
     if not os.path.isfile(tpl):
         return (FAIL, "出厂模板", f"缺 {TEMPLATE_NAME}——误删 config.yaml 将无法自愈",
-                "打包清单加入 config.release.yaml（出厂态：force_first_run=true）")
+                "打包清单加入 config.release.yaml（出厂态：不带 force_first_run 调试开关）")
     try:
         raw = _read_yaml(tpl)
     except Exception as e:  # noqa: BLE001
         return (FAIL, "出厂模板", f"YAML 解析失败：{e}", "检查模板缩进/编码，别把实配当模板打包")
     if not isinstance(raw, dict):
         return (FAIL, "出厂模板", "模板顶层不是映射", "重新从出厂配置生成模板")
-    if raw.get("force_first_run") is not True:
+    # 【2026-11-09 修正·判据曾写反】true 是【开发调试开关】（反复重启看首启效果用），
+    # 抄进出厂模板会让新用户【每次启动】都被拽回引导页重填 Key（事故 14d4e15）。
+    # 新用户走引导靠「不预置 first_run_done」，判级是 `force or not first_run_done`。
+    # 与源码仓权威判据 src/tests/test_release_template.py 同口径；别改回 true。
+    if raw.get("force_first_run") is True:
         return (FAIL, "出厂模板",
-                f"force_first_run={raw.get('force_first_run')!r}（应为 true 的出厂态）",
-                "模板必须保留 force_first_run: true，否则新装用户不会走引导")
+                f"force_first_run={raw.get('force_first_run')!r}（出厂模板不许带开发调试开关）",
+                "去掉 force_first_run: true；新用户靠缺省 first_run_done 走一次引导")
+    if raw.get("first_run_done") is True:
+        return (FAIL, "出厂模板",
+                "出厂模板预置了 first_run_done=true（新用户会被判成已引导过）",
+                "去掉 first_run_done 或置 false，让新用户真走一次引导")
     # 版本一致性：模板与实配的 app.version 必须同版本，否则恢复出来的配置是旧 schema
     live = os.path.join(root, "config.yaml")
     if os.path.isfile(live):
@@ -524,7 +532,7 @@ def check_template(root: str) -> tuple[str, str, str, str]:
         except Exception as e:  # noqa: BLE001
             return (WARN, "出厂模板", f"无法比对实配版本：{e}", "确认 config.yaml 可解析")
     return (PASS, "出厂模板",
-            f"{TEMPLATE_NAME} 合法（force_first_run=true，app.version={(raw.get('app') or {}).get('version')}）", "")
+            f"{TEMPLATE_NAME} 合法（force_first_run 非 true，app.version={(raw.get('app') or {}).get('version')}）", "")
 
 
 def check_template_secrets(root: str) -> tuple[str, str, str, str]:
