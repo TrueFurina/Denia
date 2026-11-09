@@ -83,7 +83,8 @@ def vocal_tract_ratio(env_a, env_b, f, lo=150.0, hi=7500.0):
     a = a - a.mean()
     best = (0.0, 0.0)
     for r in np.arange(0.60, 1.65, 0.005):
-        b = np.interp(g, f, env_b, left=np.nan, right=np.nan) if False else None
+        # 【2026-11-08】原来是 `b = np.interp(...) if False else None` —— 条件恒假，
+        # 那行只会把 b 置 None，而下一行立刻用 braw 重算 b。整行删掉。
         braw = np.interp(g / r, f, env_b)
         b = braw - braw.mean()
         den = np.linalg.norm(a) * np.linalg.norm(b)

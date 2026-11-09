@@ -177,6 +177,9 @@ async def _scenario_llm_failed_before_output():
 
     async def _boom_stream(messages, options=None):
         raise RuntimeError("injected: llm down")
+        # unreachable-ok: 故意不可达——这行 yield 只为把函数变成**异步生成器**
+        # （没有 yield 时它是普通协程，dlg 走的是流式迭代路径，测不到想测的分支）。
+        # 标记由 tools/check_unreachable.py 认；不用行号白名单，行号会漂移。
         yield ""  # noqa: 让它成为异步生成器
 
     dlg._llm.chat = _boom_chat

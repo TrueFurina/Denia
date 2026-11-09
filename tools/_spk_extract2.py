@@ -125,8 +125,9 @@ def main():
         v = struct.unpack("<%df" % min(n, 6), spk[:min(n, 6) * 4])
         print()
         print("  %s" % name)
-        print("     size=%,d  header_end=%d  data_start=%d  align=%d" .replace(",", "") % (os.path.getsize(p), he, ds, al) if False
-              else "     size=%s  header_end=%d  data_start=%d  align=%d" % (format(os.path.getsize(p), ","), he, ds, al))
+        # 【2026-11-08】原来是 `"…%,d…".replace(",", "") % … if False else "…%s…" % …`，
+        # 条件恒假，前半段从来没取到过。删掉死的那一半。
+        print("     size=%s  header_end=%d  data_start=%d  align=%d" % (format(os.path.getsize(p), ","), he, ds, al))
         print("     spk_cb dims=%s  n=%d  md5=%s" % (dims, n, md5))
         print("     前6值 = %s" % ", ".join("%+.6f" % x for x in v))
         print("     |spk| 模长 = %.5f   均值=%.6f  标准差=%.6f" % (

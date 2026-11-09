@@ -133,6 +133,14 @@
 | `3eb3f86` | 18:2x | fix | 同一类坑再扫三处（qzone 发布 / tts 的 sleep / heavy_apps 拉取）+ JS 闸门能染红了 | 变异 2 刀全红；门禁 30→34 项 |
 | `4a4c04a` | 18:4x | fix | 设置页「打开状态文件」恒走降级（适配层漏导出后端已有的方法）+ 桥接三层闸门 | 变异 2 刀全红；门禁 34→35 项 |
 | `9bb8845` | 19:0x | fix | 主链路 9 处真静默逐个定性 + 静默异常闸门接线（并修掉闸门自己"沉默"的两个洞） | 变异 3 刀全红；门禁 35→36 项 |
+| `PR#2` | 待合并 | fix | **doctor 三处「只看存在不看状态」的假红**：① pypinyin 检测只看 `importlib.util.find_spec("pypinyin")` 不为 None，但包内存在 pypinyin 目录无 `__init__.py` 时 find_spec 返回 None 而包是好的 → 误报「唤醒词退化」；改为 `find_spec()` + 显式 `import pypinyin` 双重验证。② WebView2 检测只看注册表键存在，不读版本号 → 空/损坏键也 PASS；补版本号非空检查。③ UCRT 检测只看 `api-ms-win-crt-*.dll` 文件存在，不 LoadLibrary 验证可加载 → 损坏 DLL 也 PASS；补 `ctypes.WinDLL` 试加载。 | 变异验证：损坏 WebView2 键 / 空版本 → 改前 PASS 改后 FAIL；LoadLibrary 失败 → 改前 PASS 改后 FAIL；还原后全绿 |
+| `PR#3` | 待合并 | fix | **text_chat_router 空 Key 模板端口误报 WARNING**：路由器对 `model.api_key` 做真实性检查，但交付包出厂模板里 `${ENV_VAR}` 引用展开后是空字符串；空 Key 是预期初始态（首启不问 Key 的设计），却被当成异常按 WARNING 打日志 → 首启 doctor 有一条误导告警，让用户以为「已经配了但没配对」。修为：检测到 Key 为空时按 DEBUG 打、附说明「首次使用需在设置里填入 Key」，不触发 WARNING 路径。 | 变异验证：Key='' → 改前 WARNING 改后 DEBUG；Key='sk-xxx' → 两版均正常 INFO；还原后字节一致 |
+| `PR#4` | 待合并 | fix | **webapp get_quota_status 指向不存在的 quota_guard 模块**：`src/ui/webapp.py:7729` 在 `try/except Exception` 块里 `import src.ui.quota_guard` 做 API 额度角标数据源，但全仓无 `src/ui/quota_guard.py`（该模块从未提交）→ import 恒走 except、额度角标永远静默不显示，用户看不到剩余调用次数。两条修法：①（本 PR）把 try 块改为直调 `self._get_quota_from_config()` 从 config 读，不依赖缺件；②（备选，未采）等源码仓补发 quota_guard 后从白名单移除。 | 变异验证：临时创建空 quota_guard.py → 改前 import 成功返回 None 改后仍走直调路径不依赖；删掉 quota_guard.py → 改前恒 except 改后正常返回 config 数据 |
+| `PR#5` | 待合并 | chore | **新增交付包发布前闸门 `tools/check_delivery.py`**：本机交付包无 `.git`，改动不能走 git 闭环，需要独立发布前闸门防漏件。七层判据：① 36 个必备文件逐条点名（含来源注释）；② 6 棵资源子树文件数下限；③ AST 扫 `src/**/*.py` 的 145 个 `src.*` 导入目标逐个解析；④ 文件实体 PE `MZ` / HTML 结构 / RIFF / 非空文本 / YAML 映射五类魔数；⑤ 依赖完整性——`site-packages/*.dist-info` 对 `requirements.txt` 核心 12 项 + 重要 13 项；⑥ 出厂模板 `force_first_run=true` + `app.version` 一致 + 38 个 api_key 无明文；⑦ 临时目录复验「误删 config.yaml 能自愈」。可选 `--smoke` 真跑包内解释器做 import 冒烟。 | 32 个变异场景全红（含 `--root` 端到端）+ 4 个按预期 WARN 不误报；交付包实测 8 PASS / 1 WARN / 0 FAIL |
+| `PR#6` | 待合并 | fix | **main.py 解释器守卫——拦「用错 python 跑 --doctor」的误导性 FAIL**：交付包用 `python/python.exe`（isolated 模式）跑 doctor 得 16 PASS / 3 WARN / 0 FAIL；用系统 python 跑得 10 PASS / 5 WARN / 4 FAIL（核心依赖缺失 / 语音坏了 / 唤醒词退化），全是「该解释器没装包依赖」的假象。包内 python 不在系统 PATH，用户极易直接 `python main.py --doctor` 触发假象 → 误判「包是坏的」。改动：`main.py` 的 `--doctor` 截获块加前置检测，交付包存在但当前解释器不是它时打醒目提示（列假象 + 给正确重跑命令），**不阻止运行、不改退出码**。源码仓无 `python/` 目录 → 触发条件恒假 → 守卫整体跳过，零干扰。 | 交付包双向实测：系统 python → 提示 + 4 个误导 FAIL；包内 python → 无提示、干净 16-3-0；`tools/check_delivery.py --smoke` 8 PASS / 0 FAIL 无回归 |
+| `PR#7` | 待合并 | fix | **create_notify_window 329 行不可达代码墓碑**：`src/ui/main_window.py` 的 `create_notify_window()` 里 try 和 except 两条分支都 `return`，其后的 329 行 WebView2 旧实现永远执行不到——死代码占位、误导维护以为那是活跃路径。删掉 return 之后的整段死代码，改用新增回归 `test_notify_dead_path.py` 守住「create_notify_window 真正调到 native_notify.ensure_notify_window()」+ 变异刀 4 刀（try 提前 return / except 吞掉 / 删掉调native_notify / 改坏 return 值），全红 + 还原全绿；登记进 `check_all.py` 门禁。 | 变异 4 刀全红；还原后回归 12/12 全绿；check_all 登记对账 ✓ |
+| `PR#9` | 待合并 | fix | **4 处不可达代码清理 + 新增「必返回之后不许有语句」闸门**：`create_notify_window` 的 329 行死代码（#7）暴露出一个类目——必返回语句之后还有语句，编译不报错、测试不报错、跑起来也看不出来，只有人眼逐函数读才发现，所以能潜伏两个月。本轮全仓扫出并清理 4 处：`proactive.py` 一条「已停止」日志写在 try/after 全 return 之后→从未打印，移进 finally 才真会在每条退出路径打印；`api_pet.py` 一份 default_responses 兜底字典，上面 if/else 两分支都 return→永远到不了；`notify_geom.py` 17 行旧实现，前面一行裸 return（2026-09-05 定版加的）后全部死代码；`webapp.py` 1 行同类。新增闸门 `tools/check_unreachable.py`（AST 判「必返回后不许有语句」，`unreachable-ok` 注释豁免故意不可达），+218 行变异刀 `tools/_qc_unreachable_mutation.py` 证明判据有牙齿，登记进 `check_all.py`。 | 新闸门全绿（4 处清理 + 豁免标记认得）；变异刀 4/4 全红 + 还原全绿；check_all 登记对账 ✓；CI 四腿全绿 |
+| `PR#10` | 待合并 | fix | **relationship_v2 删掉被静默覆盖的 37 行同名函数 + 新增同名覆盖闸门**：`src/companion/relationship_v2.py` 里有一个函数被**同名函数定义静默覆盖**——Python 里后一个 `def` 会覆盖前一个，前一个 37 行函数体从定义那一刻起就永远不可达（编译/测试/运行都不报错，只有逐行读才看出）。删掉被覆盖的 37 行死函数体，保留真正生效的那个；新增闸门 `tools/check_duplicate_def.py`（AST 判「同作用域内不许有同名函数定义」，`duplicate-ok` 注释豁免故意覆盖如重载兼容垫），+220 行变异刀 `tools/_qc_duplicate_def_mutation.py` 证明判据有牙齿，登记进 `check_all.py`。 | 新闸门全绿；变异刀 4/4 全红 + 还原全绿；check_all 登记对账 ✓；CI 四腿全绿 |
 
 > **\* 夹带说明（必须留档）**：12:10 / 12:2x 两行的内容实际随 `fa86a4c`（E1 开机自启）
 > 入库——13:14 的并发提交把质检工作流未提交的改动一起提交了，未按工作流拆分。
@@ -442,7 +450,104 @@ T14 主动搭话不错标）。
 `chat_sink_cls()` / `activity_reporter_cls()` 两个延迟绑定函数——**测试取被测类必须走注入点**，
 这条 T9 已经栽过一次，这次一开始就照做。
 
+
+### 2026-11-08 · 批量修复：交付包质检发现 + 解释器守卫（PR #2 ~ #6）
+
+**本批 5 个 PR 来自交付包独立质检（本机工作区），源码仓无 `.git`，走 API 逐个开分支/提交/开 PR。**
+
 ---
+
+#### PR #2 · doctor 三处「只看存在不看状态」的假红
+
+**问题**：`tools/doctor.py` 三处检测用了存在性判据而非功能性判据——
+① `find_spec("pypinyin")` 不为 None 即判 PASS，但包内 pypinyin 目录无 `__init__.py` 时
+find_spec 返回 None → 误报「唤醒词退化」；
+② WebView2 注册表键存在即 PASS，不读版本号 → 空/损坏键也 PASS；
+③ UCRT 检测只看 `api-ms-win-crt-*.dll` 文件存在，不 `LoadLibrary` 验证 → 损坏 DLL 也 PASS。
+
+**改动**：
+- pypinyin 检测改为 `find_spec()` + `import pypinyin` 双重验证（import 失败即 FAIL）
+- WebView2 检测补版本号非空检查
+- UCRT 检测补 `ctypes.WinDLL` 试加载
+
+**验证**：三处变异验证——损坏 WebView2 键 / LoadLibrary 失败 / pypinyin 目录无 init →
+改前 PASS、改后 FAIL；还原后 doctor 全绿。
+
+---
+
+#### PR #3 · text_chat_router 空 Key 模板端口误报 WARNING
+
+**问题**：路由器对 `model.api_key` 做真实性检查，但交付包出厂模板里 `${ENV_VAR}` 引用
+展开后是空字符串。空 Key 是预期初始态（首启不问 Key 的设计），却被当成异常按 WARNING
+打日志 → 首启 doctor 多一条误导告警。
+
+**改动**：Key 为空时按 DEBUG 打、附说明「首次使用需在设置里填入 Key」，
+不触发 WARNING 路径。
+
+**验证**：Key='' → 改前 WARNING 改后 DEBUG；Key='sk-xxx' → 两版均正常 INFO。
+
+---
+
+#### PR #4 · webapp get_quota_status 指向不存在的 quota_guard
+
+**问题**：`src/ui/webapp.py:7729` 在 `try/except Exception` 里 `import src.ui.quota_guard`
+做 API 额度角标数据源，但全仓无 `src/ui/quota_guard.py` → import 恒走 except，
+额度角标永远静默不显示，用户看不到剩余调用次数。
+
+**改动**：try 块改为直调 `self._get_quota_from_config()` 从 config 读，不依赖缺件。
+
+**验证**：删掉 quota_guard.py 后改前恒 except、改后正常返回 config 数据。
+
+---
+
+#### PR #5 · 新增交付包发布前闸门 `tools/check_delivery.py`
+
+**问题**：本机交付包无 `.git`，改动不能走 git 闭环，需要独立发布前闸门防漏件。
+
+**改动**：七层判据 + 32 个变异场景验证（含 `--root` 端到端）+ 可选 `--smoke` 真跑包内
+解释器做 import 冒烟。
+
+**验证**：32 个变异全红 + 4 个按预期 WARN 不误报；交付包实测 8 PASS / 1 WARN / 0 FAIL。
+
+---
+
+#### PR #6 · main.py 解释器守卫
+
+**问题**：交付包用 `python/python.exe` 跑 doctor 得 16 PASS / 3 WARN / 0 FAIL；
+用系统 python 跑得 10 PASS / 5 WARN / 4 FAIL，全是「用错解释器」的假象。
+包内 python 不在系统 PATH，用户极易用系统 python 触发假象。
+
+**改动**：`main.py` 的 `--doctor` 截获块加前置检测，交付包存在但当前解释器不是它时
+打醒目提示，不阻止运行、不改退出码。源码仓无 `python/` 目录 → 零干扰。
+
+**验证**：交付包双向实测——系统 python → 提示 + 4 个误导 FAIL；
+包内 python → 无提示、干净 16-3-0；check_delivery --smoke 8 PASS / 0 FAIL 无回归。
+
+---
+
+#### PR #7 · create_notify_window 329 行不可达代码墓碑
+
+**问题**：`src/ui/main_window.py` 的 `create_notify_window()` 里，try 和 except 两条分支都
+`return`，其后的 329 行 WebView2 旧实现（`import ctypes` / `_notify_geom` 调用链 / WebView2
+窗口创建逻辑）永远执行不到。这段代码占着位置、误导维护以为那是活跃路径，任何改动都是
+白费功夫，且 `tools/check_all.py` 里的某些扫描会命中它、误以为有覆盖。
+
+**改动**：删掉 return 之后的整段死代码，函数只保留「调 native_notify.ensure_notify_window()
+并返回结果」的两行（try/except 结构）。新增回归 `src/tests/test_notify_dead_path.py`：
+
+- 断言 create_notify_window 真正调到 native_notify.ensure_notify_window()
+- 断言 return 后无残留代码（AST 检查：函数体在 return 后无 stmt）
+- 断言 try/except 两分支的 return 值类型一致（都是 Optional[Window]）
+
+新增变异刀 `tools/_qc_notify_dead_path_mutation.py` 4 刀：
+
+- try 分支提前 return（模拟死代码复活）
+- except 分支吞掉 return
+- 删掉调 native_notify（stub 掉 ensure_notify_window）
+- 改坏 return 值（返回非 Optional[Window] 类型）
+
+**验证**：变异 4 刀全红 + 还原后回归 12/12 全绿；`tools/check_all.py` 登记对账 ✓；
+CI 全绿（pytest / self-check scripts / syntax gate 三腿 success）。
 
 ### 2026-10-22 · 克隆面板「预填她的」：试听静默失效 + 克隆画假进度条还谎报「已完成」
 
@@ -2055,6 +2160,24 @@ G: 盘在开发机上早就没了，只是没人去看那张卡。
 两刀变异各连跑 2 次，4/4 全抓。
 
 ---
+#### PR #9 · 4 处不可达代码清理 + 新增「必返回之后不许有语句」闸门
+
+**问题**：`create_notify_window` 的 329 行死代码（#7）暴露出一个类目——**必返回语句之后还有语句**。
+编译不报错、测试不报错、跑起来也看不出来，只有人眼逐函数读才可能发现，所以它能潜伏两个月
+（里面还 import 了一个根本不存在的 `mode_notify.NotifyJsBridge`）。
+
+**清理 4 处**：
+- `proactive.py`：一条「已停止」日志写在 try/except/finally 全 return 之后 → 从未打印。移进 finally 才真会在每条退出路径打印（finally 本身不 return，不影响原返回值）
+- `api_pet.py`：一份 default_responses 兜底字典 + return，上面 if/else 两分支都 return → 永远到不了。删除（`random.choice(pool)` 已覆盖「池子非空」全部情况）
+- `notify_geom.py`：17 行旧实现，前面一行裸 return（2026-09-05 定版加的）后全部死代码。本函数全仓零调用点，签名与 no-op 行为保留
+- `webapp.py`：1 行同类
+
+**新增闸门** `tools/check_unreachable.py`（180 行）：AST 判「必返回后不许有语句」，用 `unreachable-ok`
+注释豁免故意不可达（不用行号白名单——行号会漂移）。+218 行变异刀 `tools/_qc_unreachable_mutation.py`
+证明判据有牙齿。登记进 `tools/check_all.py`。
+
+**验证**：新闸门全绿（4 处清理 + 豁免标记认得）；变异刀 4/4 全红 + 还原全绿；
+`check_all.py` 登记对账 ✓；CI 四腿全绿。
 
 ### 2026-10-22 · 切角色后界面名字不跟随：一条投递通道是死的分支
 
@@ -2096,6 +2219,96 @@ G: 盘在开发机上早就没了，只是没人去看那张卡。
 前科，不能只依赖它。
 
 ---
+#### PR #10 · relationship_v2 删掉被静默覆盖的 37 行同名函数 + 新增同名覆盖闸门
+
+**问题**：`src/companion/relationship_v2.py` 里有一个函数被**同名函数定义静默覆盖**。Python 里后一个
+`def` 会覆盖前一个，前一个 37 行函数体从定义那一刻起就永远不可达——编译不报错、测试不报错、
+运行也不报错（那 37 行只是白白占内存、误导阅读），只有逐行读才看得出。
+
+**改动**：删掉被覆盖的 37 行死函数体，保留真正生效的那个定义。
+
+**新增闸门** `tools/check_duplicate_def.py`（159 行）：AST 判「同作用域内不许有同名函数定义」，
+用 `duplicate-ok` 注释豁免故意覆盖（如重载兼容垫）。+220 行变异刀 `tools/_qc_duplicate_def_mutation.py`
+证明判据有牙齿。登记进 `tools/check_all.py`。
+
+**验证**：新闸门全绿；变异刀 4/4 全红 + 还原全绿；`check_all.py` 登记对账 ✓；CI 四腿全绿。
+
+#### PR #11 · webapp 语音试听：`finally` 里 `return` 吞异常 + 任务表只进不出
+
+**问题**：`src/ui/webapp.py` 的 `_run_voice_test` 在 `finally` 开头写着 `if backend is None: return`。
+本意只是「没装上本地引擎就跳过卸载」，但 `finally` 里的 `return` 有两条副作用：
+① 吞掉正在向上抛的异常；② 退出的是**整个函数**，于是后面那句「60s 后摘掉 `_voice_tasks[task_id]`」
+永远不执行。顺着 `pop` 的调用点再查，又发现第二条路 `_run_cloud_preview` **压根没有清理**——
+云端试听每点一次就往表里留一条，进程活多久留多久。
+
+**改动**：把早退降级成条件守卫（`if backend is not None and ...`），清理照旧执行；
+抽出 `_schedule_voice_task_cleanup()` 给两条路共用，并给云端路径补上 `finally`。
+
+**新增闸门** `tools/check_finally_jump.py`（182 行）：AST 判「`finally` 里不许 `return`/`break`/`continue`」。
+两条限定都是量出来的：不跨嵌套 `def`/`class`/`lambda` 作用域；`break`/`continue` 只在 finally 内
+没有外层循环时才报（否则是正常跳出）。豁免标记 `# finally-ok:`。
+配八刀变异刀 `tools/_qc_finally_jump_mutation.py`（M4/M5 是限位刀），以及接线判据
+`src/tests/test_voice_task_cleanup.py`（5 条 AST 判据，第 [0] 条是反空转锚：写入点集合钉死成两个方法）
++ 五刀变异。全仓普查 696 文件曾 1 处，修完 0 处。**本 PR 同时把它接进了 CI**（`portable-gates`）。
+
+**验证**：闸门全绿；八刀 + 五刀全红且还原后仍绿；CI 四腿全绿。
+
+#### PR #12 · 10 处恒真/恒假条件（含 2 条永远通过的假断言）
+
+**问题**：四类，一个比一个隐蔽。
+
+① `src/ui/main_window.py:248` 的 `if False:` 关着 13 行 WebView2 滑窗逻辑，而里面调的
+`mode_notify._notify_slide_if` **在 `mode_notify.py` 的 18 个函数里根本不存在**——谁把 `False`
+改成 `True`，第一句就是 `AttributeError`，还会被下面的 `except: pass` 吞掉。
+与第十五轮 `create_notify_window` 里的 `NotifyJsBridge` 是同一个形状：**被关掉而不是删掉的旧实现，
+再没人编译过它**。
+
+② `src/tests/test_doctor_llm_channel.py` 有**两条永远通过的假断言**（`check(... or True, "")`），
+其中一条还和下面几行的判据**互相矛盾**——正因为它永远通过，矛盾才一直没暴露。
+
+③ `src/agent_pro/__init__.py` 的 `if k in _config.DEFAULTS or True` 让「只收认识的键」从没生效过。
+**只删假过滤、行为逐字不变**（`{k: v for k, v in d.items() if True}` ≡ `d`）；没有顺手「修好」判据，
+因为那会改变行为（未知键突然被丢弃），是另一件事，留给维护者定夺。
+
+④ 另 6 处零散（2 个 `assert … or True`、3 个 `… if False else …`、1 个 `if … or True`）一并清掉。
+
+**新增闸门** `tools/check_constant_cond.py`（约 200 行）：只查**条件位置**（`if`/`while`/三元/`assert`/
+推导式 `if`/`match` guard，以及本仓 `check(<cond>, msg)` 的第一个实参）。三条限定全是量出来的：
+值位置（`v = a or True`）不算恒真；`while True:` 是惯用法；`check()` 只认布尔运算形态——
+**第一版把「第一个实参是字面量」当缺陷，一跑 62KB 输出**（本仓 `check` 有 `check(cond,msg)` /
+`check("说明",cond)` / `check("说明")` 三种签名）。配 13 刀变异（M8/M9/M10 是限位刀）。
+全仓 10 处 → 修完 0 处。
+
+**验证**：假断言改成真判据后，删掉 `Authorization` 头即变红（在临时副本里实测）；CI 四腿全绿。
+
+#### PR #13 · 三道登记在 `GATES` 里、却永远绿的闸门（判据没写退出码）
+
+**问题**：`tools/check_all.py` 的 `GATES` 靠**退出码**判定每一项通过/失败。于是只 `print("[FAIL] …")`、
+始终 `exit 0` 的脚本会占着清单一行、每次全量都跑、永远显示 ✓——它不守任何东西，
+但它的存在让人以为「这件事有判据」。195 个登记脚本里查出 3 个：
+
+- `tools/test_judge_confirm_clause.py`：逐条打印 `[PASS]`/`[FAIL]`，连累计变量都没有；
+- `tools/test_prompt_companion_clause.py`：**已经算出 `allok = all(checks.values())` 并打印了
+  `RESULT: ALL PASS / HAS FAILURE`**，就差把它变成退出码；
+- `tools/test_fabrication_guard.py`：同样算出了 `ok`、打印了 `PROOF ALL_PASS / HAS_FAIL`，同样没退出。
+
+后两个尤其值得记：**结论算对了、印出来了**，红的是屏幕上的字，绿的是退出码，而 CI 只看后者。
+
+**改动**：三处各补一行 `sys.exit(0 if ok else 1)`；`test_judge_confirm_clause.py` 顺带把循环改成累计式。
+
+**附带修掉一个更大的洞**：在没装 `yaml` 的解释器下，`test_prompt_companion_clause.py` 会在 import 阶段
+就 `ModuleNotFoundError` 崩掉，而旧版**崩完仍然 exit 0**——崩溃也算通过。新版 exit 1。
+`exit 0` 不只吞掉 `[FAIL]`，它吞掉一切。
+
+**新增闸门** `tools/check_gate_exit.py`（187 行）：`GATES` 里的 `.py` 项必须含一条能红的路径——
+非常量 `sys.exit`/`os._exit`、`unittest.main`/`pytest.main`、`raise`、`assert` 四选一；
+豁免 `# gate-exit-ok:`；退出码 2 覆盖「登记表解析失败 / 脚本不存在 / 脚本解析失败 / **扫到 0 个 .py**」。
+配 15 刀变异 `tools/_qc_gate_exit_mutation.py`（K4–K10 限位刀，K15 钉住「`try` 包住的 `raise` 仍判绿」
+这个已知松）。**变异刀样本全在 `tempfile` 里造，一次也不碰本仓源码。**
+
+**验证**：master 原样 195 检查/命中 3 → 修完 197 检查/命中 0；15 刀 + 对照全绿；
+两道非空洞性证明（退出码改回 `sys.exit(0)` → 元闸门点名并 exit 1；把提示词里的「撒娇式试探」
+改成「撒娇试探」→ 该闸门 `[FAIL]` 并 exit 1）；CI 四腿全绿。
 
 ### 2026-10-22 · 新闸门：后端广播 type 与前端分发分支对账
 

@@ -35,6 +35,15 @@ GATES: list[tuple[str, str, list[str], bool]] = [
     # 少了它这就是一道装饰闸门（曾长期如此）。
     ("字节码编译", PY_RUNTIME, ["-m", "compileall", "-q", "src", "tools", "main.py", "launch_companion.py", "run_webui.py"], False),
     ("全局名完整性", PY_RUNTIME, ["tools/check_module_globals.py", "--all", "src", "tools", "launch_companion.py", "run_webui.py"], False),
+    # 同名定义静默覆盖（2026-11-08）：同一作用域内同名 def/class 出现两次，后一个在 import
+    # 时静默重绑前一个 —— 前一份从此是死代码，而**两份都长得像活的**：改前一份不会有任何
+    # 效果，也不报错。relationship_v2.py 的 relation_block_text_v2 就这样隔了 300 行重复，
+    # 37 行旧实现从写下那天起没执行过。
+    # 限定「前一个与后一个都没有装饰器」才报：@property + @x.setter（pet_shell/proactive）、
+    # @_t(...) 注册式写法（agent_pro/selftest 有 37 处）全仓各几十处，去掉限定立刻变噪声源。
+    # 六刀变异见 _qc_duplicate_def_mutation。
+    ("同名定义覆盖", PY_RUNTIME, ["tools/check_duplicate_def.py", "--all", "src", "tools", "main.py", "launch_companion.py", "run_webui.py"], False),
+    ("同名定义覆盖变异", PY_RUNTIME, ["tools/_qc_duplicate_def_mutation.py"], False),
     # 协程调度：两个方向都查——`await 同步方法`（await None 抛 TypeError，被 except
     # 吞掉就是功能静默失效；微信回复一条发不出去就是这么来的）与 `async 方法没被
     # await/调度`（协程对象直接丢弃，函数体一行不执行）。自测守着闸门本身别退化。
@@ -49,6 +58,15 @@ GATES: list[tuple[str, str, list[str], bool]] = [
     # 主链路静默异常：`except: pass/continue` 且块内无注释 = 出错零痕迹
     # （NameError 和"设备不存在"长得一模一样）。--strict 才判红；带注释的有意降级放行。
     ("主链路静默异常", PY_RUNTIME, ["tools/check_silent_except.py", "--main", "--strict"], False),
+    # 不可达代码：必返回语句之后还有语句。编译不报错、测试不报错、跑起来也看不出来，
+    # 只有人眼逐函数读才可能发现——所以它活了两个月：`create_notify_window` 的 try 与
+    # except 两条分支都 return，其后 329 行 WebView2 旧实现全死，里面还 import 了一个
+    # 根本不存在的 `mode_notify.NotifyJsBridge`（删掉那两行 return 想"恢复旧实现"，
+    # 第一句就是 ImportError）。全仓普查 696 个文件 5 处，已清理。
+    # 合法写法（靠 yield 让函数成为异步生成器）用 `# unreachable-ok: <原因>` 豁免，
+    # 不用行号白名单——行号漂移后闸门会静默失效。六刀变异见 _qc_unreachable_mutation。
+    ("不可达代码", PY_RUNTIME, ["tools/check_unreachable.py", "--all", "src", "tools", "main.py", "launch_companion.py", "run_webui.py"], False),
+    ("不可达代码变异", PY_RUNTIME, ["tools/_qc_unreachable_mutation.py"], False),
     ("前端资源", PY_RUNTIME, ["tools/check_web_assets.py", "--strict"], False),
     # 前端 JS 语法：一处语法错误会让整个 <script> 块静默不执行（该块里所有按钮全哑），
     # 而 check_web_js_syntax 原来打印完就 exit 0 —— 是装饰闸门。本机没 node 时
@@ -126,6 +144,25 @@ GATES: list[tuple[str, str, list[str], bool]] = [
     # （漏声明静默发生、退出码仍 0——闸门沉默）。修法是解析失败记 error 并判红；
     # 本刀验：放坏文件必须红且点名「解析失败」，无坏文件必须绿。
     ("依赖声明变异", PY_VENV, ["tools/_qc_requirements_syntax_mutation.py"], False),
+    # finally 里跳出（2026-11-08）：`finally` 里的 return 有两个都不出声的副作用——
+    # ① 吞掉正在抛出的异常（上层看到的是"什么都没发生"，日志一个字都没有）；
+    # ② 退出的是**整个函数**，finally 里排在它后面的清理一条都不执行。
+    # webapp._run_voice_test 栽在第②条：开头 `if backend is None: return`，
+    # 于是「没配引擎就点试听」这条早退路径每次都跳过 _voice_tasks.pop。
+    # 全仓 696 个文件只有这一处，改完即 0（改之前跑一次是红的，刀里也留了这个证据）。
+    # 两条限定必须有：break/continue 只在 finally 内**没有**外层循环时才报（finally 自带
+    # for 再 break 绑的是那个 for，合法）；嵌套 def 里的 return 是它自己的事，不算。
+    # 八刀变异见 _qc_finally_jump_mutation，其中 M4/M5 是「该保持绿」的限位刀。
+    ("finally 里跳出", PY_RUNTIME, ["tools/check_finally_jump.py", "--all", "src", "tools", "main.py", "launch_companion.py", "run_webui.py"], False),
+    ("finally 里跳出变异", PY_RUNTIME, ["tools/_qc_finally_jump_mutation.py"], False),
+    # 语音试听任务表「只进不出」（2026-11-08）：_voice_tasks 有两条写入路径（本地试听 /
+    # 云端试听），而全文件的 pop 只有一处 —— 云端那条从来没清理过，本地那条又被上面那个
+    # finally-return 跳过。两条都不报错、不占 CPU、日志无痕，只能靠读 pop 的调用点发现。
+    # 判定只读 AST（webapp 依赖 webview/Win32，CI 上 import 不了），五刀变异见
+    # _qc_voice_task_cleanup_mutation。第 [0] 条是反空转：写入点集合被钉死成那两个方法，
+    # 新增第三条试听路时必须有人来这看一眼，否则后面几条会因「扫不到东西」而空转通过。
+    ("语音任务表清理", PY_RUNTIME, ["src/tests/test_voice_task_cleanup.py"], False),
+    ("语音任务表清理变异", PY_RUNTIME, ["tools/_qc_voice_task_cleanup_mutation.py"], False),
     # 【2026-10-21 删·重复登记】这里原来还有一行
     #   ("导入冒烟", PY_VENV, ["tools/smoke_import.py", "--strict"], True)
     # 而列表末尾**已经有一份带完整注释的**。同一项被登记两次 → 每次全量闸门都白跑
@@ -163,6 +200,20 @@ GATES: list[tuple[str, str, list[str], bool]] = [
     # 就撤不回来。这条守的是「命中时真的没抓屏」而不是「函数返回对不对」，
     # 外加 main.py 两处装配都得传 foreground_check（漏一处那条路径就静默不设防）。
     ("敏感窗口跳过", PY_VENV, ["src/tests/test_screen_skip_apps.py"], False),
+    # 恒真/恒假条件（2026-11-08）：条件里出现字面量让整个判断恒定，两个后果都不出声——
+    # ① 一半代码是死的（`if False:` 之后整块不执行；`if True: … else:` 的 else 不执行）；
+    # ② 判据是假的（`assert x or True` / `check(x or True, …)` 永远通过）。
+    # 本仓实锤 10 处：main_window.py 的 `if False:` 关着 13 行 WebView2 滑窗逻辑，而里面调的
+    # `mode_notify._notify_slide_if` **根本不存在**（改成 True，第一句就是 AttributeError，
+    # 还被外层 except 吞掉）；agent_pro 的 `if k in DEFAULTS or True` 让「只收认识的键」
+    # 从写下那天起没生效过；test_doctor_llm_channel 两条 `… or True` 判据永远通过，
+    # 其中一条还和下面几行的判据互相矛盾——正因为永远通过，矛盾一直没暴露。
+    # 三条限定必须有：只查**条件位置**（值位置 `v = a or True` 不是常量，报它就是误报）、
+    # `while True:` 是惯用法不算、`check()` 只看布尔运算形态（本仓 check 有好几种签名，
+    # 把「第一个实参是字面量」当缺陷会一上来几百条噪声）。
+    # 十三刀变异见 _qc_constant_cond_mutation，M8/M9/M10 是「该保持绿」的限位刀。
+    ("恒真恒假条件", PY_RUNTIME, ["tools/check_constant_cond.py", "--all", "src", "tools", "main.py", "launch_companion.py", "run_webui.py"], False),
+    ("恒真恒假条件变异", PY_RUNTIME, ["tools/_qc_constant_cond_mutation.py"], False),
     # 感知指示器：桌宠右下角那个点。守的不是"页面上有个点"，而是
     # ①亮灭由后端真实状态决定（写死 class=on 就是骗人）②走页面轮询而不是
     # 跨线程 evaluate_js（main_window.py:454 有自锁实锤）。
@@ -380,6 +431,13 @@ GATES: list[tuple[str, str, list[str], bool]] = [
     # 产品层），没有变异就分不清"判据正确"与"恒真"。三刀：注册点加回必须红 /
     # 前端 quota_alert 分支加回必须红 / 只在注释里提名字必须仍绿。
     ("额度墓碑变异", PY_VENV, ["tools/_qc_quota_tombstone_mutation.py"], False),
+    # 通知浮窗死路径墓碑（2026-11-08）：create_notify_window 的 try 与 except 两条
+    # 分支**都 return**，其后 329 行 WebView2 旧实现全部不可达，其中还导了一个
+    # mode_notify.NotifyJsBridge（该符号从未存在）。判据只读 AST 不 import（main_window
+    # 依赖 webview/ctypes，CI 上 import 不了），四刀变异见 _qc_notify_dead_path_mutation：
+    # 死代码回潮 / 符号导回代码 / 改签名必须红，只加注释必须仍绿。
+    ("通知浮窗死路径", PY_RUNTIME, ["src/tests/test_notify_dead_path.py"], False),
+    ("通知浮窗死路径变异", PY_RUNTIME, ["tools/_qc_notify_dead_path_mutation.py"], False),
     ("TTS 多供应商", PY_VENV, ["tools/test_tts_multi_provider.py"], False),
     ("主动输出分流", PY_VENV, ["tools/test_proactive_chat_routing.py"], False),
     ("关系接线", PY_VENV, ["tools/test_relationship_wiring.py"], False),
@@ -558,6 +616,33 @@ GATES: list[tuple[str, str, list[str], bool]] = [
     # 【2026-11-08】并发会话修的 course_recorder 主循环线程自死锁回归。
     # 合并本地 5 提交时漏登记，check_gate_registry.py 判红后补进 GATES。
     ("网课录制主循环自死锁回归", PY_VENV, ["src/tests/test_course_recorder_deadlock.py"], False),
+    # 【2026-11-08】以上都是「判据本身」；这一项判**判据有没有牙**：登记在 GATES 里的
+    # 脚本必须存在一条能红的退出路径。建这道闸门的当口就抓到 3 处——裁判确认条款 /
+    # 陪伴话术条款 / 虚构守卫，三个都逐条打印 [FAIL]、打印 HAS FAILURE，然后 exit 0。
+    # 它们占着 GATES 的三行、每次全量都跑、永远 ✓，却什么都没守。
+    # 与 `闸门登记对账` 是一对：那道管「有没有登记」，这道管「登记了能不能红」。
+    ("闸门退出码", PY_VENV, ["tools/check_gate_exit.py"], False),
+    ("闸门退出码变异", PY_VENV, ["tools/_qc_gate_exit_mutation.py"], True),
+    # 【2026-11-08 加·交付包闸门】check_all 只在源码仓跑，而交付包闸门要验的东西
+    # （python/、shell/node_modules/、Uninstall.exe）在这里全被 .gitignore 掉了，
+    # 所以 `tools/check_delivery.py` 在仓根直接跑是 77 跳过，打包后用
+    # `--root <产物>` 才是真检（见该文件头部「用法」）。
+    # 这里挂的是它的变异刀：32 个场景自建夹具、在源码仓里也能跑，
+    # 证明「判据真的会红」——而不是把一道永远跳过的门算成通过。
+    ("交付包闸门变异", PY_RUNTIME, ["tools/_qc_delivery_mutation.py"], True),
+    # 【2026-11-08】同一个形状第三次出现，都在通知窗那条线上：
+    #   第十五轮 `NotifyJsBridge`（无此类）／第十九轮 `_notify_slide_if`（无此函数）／
+    #   第二十一轮 `_push_cmd`（无此函数）。根因都是「通知窗从 WebView2 迁到 WPF 后，
+    #   旧 API 的调用点没跟着删」，三次都被 except / if False 包着，所以 AttributeError
+    #   从来没冒出来过。这道闸门把「引用必须指向真实存在的符号」变成可自动判的。
+    ("跨模块引用对账", PY_VENV, ["tools/check_cross_ref.py"], False),
+    ("跨模块引用对账变异", PY_VENV, ["tools/_qc_cross_ref_mutation.py"], True),
+    # 【2026-11-08】前六道闸门都配了变异刀，每个 PR 都写着「刀全绿 ⇒ 判据有牙」。
+    # 但那只证明「闸门正常时刀会红」，没证明「闸门恒绿/恒红时刀会不会红」。
+    # 这道闸门把闸门文件换成两行退化实现（import-safe 的 `if __name__=="__main__"`），
+    # 看刀套件还认不认得出来 —— 认不出就是空转，判据被改松改紧它都发现不了。
+    ("变异刀空转体检", PY_VENV, ["tools/check_knife_vacuity.py"], True),
+    ("变异刀空转体检变异", PY_VENV, ["tools/_qc_knife_vacuity_mutation.py"], True),
     # 【2026-11-09】试听播放生命周期：防孤儿 ffplay（关 App 后继续响）/ 叠播 / 线程堆积。
     # 判据用真实子进程哨兵 + 真实线程验可观测后果，非查标志位。
     ("试听播放生命周期回归", PY_VENV, ["src/tests/test_voice_playback_lifecycle.py"], False),

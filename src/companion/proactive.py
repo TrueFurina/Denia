@@ -5048,8 +5048,11 @@ class ProactiveStrategy:
                 pass
             self._duplex_native_audio = _prev_native
             self._cloud_omni_audio_buf = bytearray()
-            self._cloud_omni_user_audio_buf = bytearray()
-        logger.info("云端全双工(Qwen-Omni)已停止")
+            # 【2026-11-08 修·这条日志从未打印过】原本它写在 try/except/finally
+            # **之后**，而 try 的 body 与全部 handler 都以 return 收尾 → 整条语句
+            # 不可达，「已停止」永远不会出现在日志里。移进 finally 才真的会在每条
+            # 退出路径上打印（finally 本身不 return，不影响原返回值）。
+            logger.info("云端全双工(Qwen-Omni)已停止")
 
     def _build_cloud_omni_instructions(self) -> str:
         """云端 Qwen-Omni 通话/陪伴指令：当前激活角色人格 + 电话口语规约 + **长期记忆**。

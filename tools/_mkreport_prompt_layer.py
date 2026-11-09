@@ -235,7 +235,10 @@ HTML = HTML.replace('__CFGROWS__', cfg_rows).replace('__SPEAKROWS__', speak_rows
 p = os.path.join(OUT_DIR, 'report.html')
 io.open(p, 'w', encoding='utf-8').write(HTML)
 print('OK ->', p, len(HTML), 'chars')
-assert '__' not in HTML.split('<style>')[0] or True
+# 【2026-11-08】这里原来有一条
+#     assert '__' not in HTML.split('<style>')[0] or True
+# `or True` 让断言恒真 —— 它从写下那天起没可能失败，等于没断言。删掉而不是"修好"：
+# 真要查就写成真判据（下一条 assert 就是正确写法），别留一条看起来在守、其实不管事的。
 for tok in ('__CFGROWS__', '__SPEAKROWS__'):
     assert tok not in HTML, 'leftover token ' + tok
 print('no leftover tokens')

@@ -658,6 +658,32 @@ def _collect_ports(cfg: object) -> list[int]:
     return sorted(p for p in ports if 0 < p < 65536)
 
 
+def _pet_instance_alive(host: str | None = None, port: int | None = None) -> bool:
+    """握手文件背后的桌宠实例是否还活着。
+
+    2026-11-08：判「残留」要判活实例、不能只看文件在不在。这里统一成一处判据，
+    `check_pet_state` 和 `check_ports` 共用，避免两处各写一套、日后走偏。
+    只读 TCP 连通探测（标准库、不发数据、只认 loopback，不借自检向外发起连接）。
+    host/port 可由调用方传入省一次读盘；不传则自己从握手文件读。
+    """
+    try:
+        if host is None or port is None:
+            try:
+                from src.ui.pet_shell import HANDSHAKE_PATH
+            except Exception:  # noqa: BLE001
+                HANDSHAKE_PATH = os.path.join(ROOT, "data", "pet_shell_handshake.json")
+            with open(HANDSHAKE_PATH, "r", encoding="utf-8") as fh:
+                info = json.load(fh)
+            host = str(info.get("host") or "127.0.0.1")
+            port = int(info.get("port") or 0)
+        if port and str(host) in ("127.0.0.1", "localhost", "::1"):
+            with socket.create_connection((host, port), timeout=0.6):
+                return True
+    except Exception:  # noqa: BLE001
+        pass
+    return False
+
+
 def check_ports(cfg: object) -> tuple[str, str, str, str]:
     ports = _collect_ports(cfg)
     if not ports:
@@ -665,7 +691,15 @@ def check_ports(cfg: object) -> tuple[str, str, str, str]:
     busy = [p for p in ports if _port_state(p) == "占用"]
     if not busy:
         return (PASS, "端口", f"{len(ports)} 个端口全部空闲", "")
-    # 端口被占不算致命：可能是上次没退干净的自己，也可能是别的服务
+    # 端口被占不算致命：可能是上次没退干净的自己，也可能是别的服务。
+    # 2026-11-08：本工具是「启动前自检」，但用户也会在软件运行时跑它；此时
+    # 占用端口的往往就是软件自己，旧提示「去任务管理器结束 python.exe」会诱导
+    # 用户杀掉正在用的实例。判据不变（仍是 WARN，提醒别重复启动），只换提示。
+    if _pet_instance_alive():
+        return (WARN, "端口",
+                "被占用：" + ", ".join(str(p) for p in busy) + "（本程序正在运行）",
+                "这些端口很可能由当前运行的达妮娅自己占用，属正常、无需处理；"
+                "若要重启，请先正常退出软件再重跑本自检")
     return (WARN, "端口", "被占用：" + ", ".join(str(p) for p in busy),
             "确认是不是本程序的残留进程；是的话在任务管理器结束 electron.exe / python.exe")
 
@@ -1028,6 +1062,12 @@ def check_pet_state() -> tuple[str, str, str, str]:
       · 握手文件残留 → 上次进程是被强杀/崩溃掉的，没走清理；
         而且那文件里带着 RPC 令牌，本身就该消失。
       · 位置存档损坏 → 桌宠会被甩到默认位（用户视角：人自己跑回右下角了）。
+
+    2026-11-08 修正：旧判据只看文件在不在，于是**正在运行的桌宠**必被报成
+    「残留」——握手文件本来就是运行期产物。判「残留」真正要判的是它背后还有
+    没有活实例：读文件里的 host/port 做一次 TCP 连通探测（标准库、只读、不发数据）。
+    连得上 = 活动实例 → PASS；连不上 = 真残留 → WARN。只认 loopback，避免打着
+    自检的名义向外发起连接（本仓「不经过任何中转服务器」的隐私承诺）。
     """
     try:
         from src.ui import pet_state
@@ -1040,8 +1080,22 @@ def check_pet_state() -> tuple[str, str, str, str]:
         HANDSHAKE_PATH = os.path.join(ROOT, "data", "pet_shell_handshake.json")
 
     if os.path.exists(HANDSHAKE_PATH):
+        try:
+            with open(HANDSHAKE_PATH, "r", encoding="utf-8") as fh:
+                info = json.load(fh)
+            host = str(info.get("host") or "127.0.0.1")
+            port = int(info.get("port") or 0)
+        except Exception as e:  # noqa: BLE001
+            return (WARN, "桌宠状态",
+                    f"握手文件无法解析（{e}），桌宠可能起不来",
+                    f"确认没有正在运行的桌宠后删除 {HANDSHAKE_PATH} 让它重建")
+
+        alive = _pet_instance_alive(host=host, port=port)
+        if alive:
+            return (PASS, "桌宠状态",
+                    f"握手文件属于活动实例（{host}:{port} 可连），不是残留", "")
         return (WARN, "桌宠状态",
-                "发现上次运行残留的握手文件（进程未干净退出）",
+                f"发现陈旧握手文件（{host}:{port} 已不可连，进程未干净退出）",
                 f"确认没有正在运行的桌宠后删除 {HANDSHAKE_PATH}；"
                 f"该文件含 RPC 令牌，不应留在磁盘上")
 

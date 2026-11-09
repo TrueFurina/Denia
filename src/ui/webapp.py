@@ -5733,6 +5733,11 @@ class CharacterAPI(PetAPI, WindowAPI):
         except Exception as e:
             _set(phase="error", done=True, success=False,
                  error="%s: %s" % (type(e).__name__, e))
+        finally:
+            # 【2026-11-08】云端试听原来没有任何清理：全文件的 _voice_tasks.pop 只有一处，
+            # 在本地试听的 _cleanup 里 —— 这条路每点一次就往任务表里留一条，永不回收。
+            # 与本地试听共用同一个清理助手，两条路不再各自长。
+            self._schedule_voice_task_cleanup(task_id)
 
     def test_voice(self, voice_cfg: dict, text: str = "") -> dict:
         """按给定语音配置试听一句：合成并播放（不保存、不影响当前角色）。
@@ -5860,9 +5865,17 @@ class CharacterAPI(PetAPI, WindowAPI):
             # 下次预览/对话再按需重挂（_mount_tts 会重新拉起）。
             # 【2026-10-18】早退（无引擎/参数错）时 backend 为 None，
             # 这里跳过卸载逻辑，避免 finally 抛 UnboundLocalError 覆盖真实错误。
-            if backend is None:
-                return
-            if backend.name in self._LOCAL_MOUNT_ENGINES:
+            #
+            # 【2026-11-08 修 finally-return】这条早退原先写成
+            #     if backend is None:
+            #         return
+            # 而 return 出现在 finally 里有两个副作用，一个都不是想要的：
+            #   ① 它会**吞掉正在抛出的异常**——except 分支自己再抛（或 _set 抛）时，
+            #      线程带着异常静默结束，日志里一个字都没有；
+            #   ② 它直接退出整个函数，把后面「60s 后摘掉 _voice_tasks[task_id]」也一起
+            #      跳过 → 每次「没配引擎就点试听」都往任务表里留一份永不回收的条目。
+            # 改成条件守卫：只跳过卸载，清理照旧执行。全仓同类只有这一处。
+            if backend is not None and backend.name in self._LOCAL_MOUNT_ENGINES:
                 port = self._LOCAL_CLONE_PORT.get(backend.name)
                 if backend.name == "qwen3tts" and preview_api_url:
                     try:
@@ -5880,11 +5893,25 @@ class CharacterAPI(PetAPI, WindowAPI):
                             pass
                     threading.Thread(target=_shutdown_later, daemon=True).start()
             # 完成后保留 60s 供前端最后几次轮询，再清理
-            def _cleanup():
-                import time as _t
-                _t.sleep(60)
-                self._voice_tasks.pop(task_id, None)
-            threading.Thread(target=_cleanup, daemon=True).start()
+            self._schedule_voice_task_cleanup(task_id)
+
+    def _schedule_voice_task_cleanup(self, task_id: str, delay: float = 60.0) -> None:
+        """延迟 delay 秒后把试听任务从 _voice_tasks 里摘掉。
+
+        为什么不「做完立刻删」：前端靠 get_voice_test_status 轮询，音频（audio_b64）
+        也在同一条记录里，删早了前端拿到 phase=gone、<audio> 还没播完就被打断。
+        60s 是给最后几次轮询 + 播放留的余量。
+
+        【2026-11-08】抽成助手的理由：原来这段内联在 _run_voice_test 的 finally 末尾，
+        而 _run_cloud_preview 根本没有对应代码 —— 两条「异步任务 + 轮询」的路各自长，
+        一条清理、一条不清理，_voice_tasks 只进不出。
+        """
+        def _cleanup():
+            import time as _t
+            _t.sleep(delay)
+            self._voice_tasks.pop(task_id, None)
+        threading.Thread(target=_cleanup, daemon=True,
+                         name=f"vt_cleanup_{task_id}").start()
 
     def get_voice_test_status(self, task_id: str) -> dict:
         """前端轮询试听任务真实进度（task_id 由 test_voice 返回）。"""
@@ -7779,23 +7806,23 @@ class CharacterAPI(PetAPI, WindowAPI):
 
 
     def get_quota_status(self, force: bool = False) -> dict:
-        """【2026-10-19 新增】模型额度 / Key 可用性状态（**非打扰式**提示用）。
+        """【2026-11-08 墓碑】额度检测已下线；签名保留只为不打断前端调用。
 
-        背景：用户实测主聊天模型 qwen3.8-max 免费额度耗尽（403），而
-        text_chat.mode=manual 不兜底 → 打字聊天完全发不出去，界面只有一句
-        HTTP 403，用户不知道"该换模型"。
+        历史：2026-10-19 这里 `from .quota_guard import build_quota_report`，但
+        `src/ui/quota_guard.py` 从未入库（全仓无此模块）→ 每次调用 ImportError →
+        logger.exception → 返回 success=False。设置页额度角标因此永远不显示，
+        且每进一次设置页就在日志里留一段栈。
 
-        设计（沿用 2026-10-02 决策：额度耗尽是持续状态，不能反复弹模态框）：
-          · 不主动轮询：只在用户打开设置页 / 手动点"检测"时调用
-          · 结果缓存 30 分钟：避免每次进设置页都打网络
-          · 返回"影响 + 修复建议"，前端用角标/细条展示，不打断操作
+        2026-10-22 额度告警三处死代码已按墓碑约定删除（见
+        tools/_qc_quota_tombstone_mutation.py），这个 import 是那次的漏网。
+
+        方法签名保留、不直接删：app_backend.js:141 仍 `call('get_quota_status')`
+        （:731 导出，设置页会调）。删掉会把「静默返回失败」变成「RPC 方法不存在」，
+        前端虽也 catch，日志反而更脏。
+
+        要恢复额度检测：重新实现 quota_guard 并在这里接回去，别只把 import 加回来。
         """
-        try:
-            from .quota_guard import build_quota_report
-            return build_quota_report(self._cfg, force=bool(force))
-        except Exception as e:  # noqa: BLE001
-            logger.exception("get_quota_status 失败")
-            return {"success": False, "error": str(e)}
+        return {"success": False, "error": "额度检测已下线（2026-10-22 墓碑）"}
 
     def get_tts_provider_key(self, data: dict = None) -> dict:
         """【2026-10-19 新增】给引导页克隆弹窗回传百炼 API Key（仅本机 UI 使用）。
@@ -16243,7 +16270,6 @@ class CharacterAPI(PetAPI, WindowAPI):
                     "modelscope 安装后 CLI 仍不可用。请手动运行下方命令下载。",
                     "manual",
                 )
-                return
                 return
         setlog(f"下载中：{spec['label']}（魔塔国内源，请稍候）…", "running")
         # 关键：把 MODELSCOPE_CACHE 指向各引擎缓存根，
