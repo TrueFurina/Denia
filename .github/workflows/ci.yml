@@ -167,6 +167,19 @@ jobs:
         run: python tools/check_cross_ref.py
       - name: cross-ref mutation (twelve knives)
         run: python tools/_qc_cross_ref_mutation.py
+      # 【2026-11-09】壳层两道静态闸门 + 它们的变异刀。纯 stdlib、只读 AST、各约 1s。
+      # 这两道守的是「事件循环被同步调用占住」和「协程写错方向」—— 症状都是
+      # "卡一下 / 不响应"，不报错、不告警，只能静态查；坏了也没人会发现。
+      # 它们的自测原来只调 `scan()`、从不碰 `main()`，退出码那一行零判据 ——
+      # 本轮补了断言才让「退出码恒 0」这把刀有东西可砍。
+      - name: await-sync judgement
+        run: python tools/check_await_sync.py src
+      - name: await-sync mutation (five knives)
+        run: python tools/_qc_await_sync_mutation.py
+      - name: async-blocking judgement
+        run: python tools/check_async_blocking.py src
+      - name: async-blocking mutation (five knives)
+        run: python tools/_qc_async_blocking_mutation.py
       # 【2026-11-08】「刀全绿」只证明闸门正常时刀会红，不证明闸门恒绿/恒红时刀会不会红。
       # 这两步把闸门文件换成 import-safe 的退化实现（`if __name__=="__main__"` 里 exit 0 / 1），
       # 看刀套件认不认得出来。7 对（unreachable / duplicate-def / finally-jump /

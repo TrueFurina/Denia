@@ -10,8 +10,15 @@
 
 判定：async 函数体内（**不下钻嵌套 def**——嵌套同步函数通常是交给 to_thread 的
 worker，写阻塞代码是对的）出现 time.sleep / urllib.urlopen / subprocess.run /
-requests.* / os.system / socket.* 等同步调用，且没有被 to_thread / run_in_executor
-包裹。
+requests.* / os.system / socket.* 等同步调用。
+
+关于 `to_thread` / `run_in_executor`：**不需要、也不该为它们做「实参豁免」**。
+规范用法是传函数引用——`await asyncio.to_thread(time.sleep, 1)`——那里根本没有
+`ast.Call` 节点，天然不会被报。而 `to_thread(requests.get(url))` 这种写法，实参是在
+**事件循环里先求值**的，`requests.get(url)` 已经把循环卡住了，正是这道门要抓的东西。
+（2026-11-09 修：原实现有一段 `WRAPPERS` 豁免，会把后者标成 safe —— 实测
+`await asyncio.to_thread(urllib.request.urlopen("http://x").read())` 报 0 处。
+那段逻辑对规范用法是多余的、对这种写法是错的，已删除。）
 
 用法：python tools/check_async_blocking.py [根目录]   # 缺省扫 src
 退出码：0 = 未发现；1 = 发现可疑点。
@@ -37,7 +44,6 @@ BLOCKING = {
     ("httpx", "patch"), ("httpx", "delete"), ("httpx", "head"),
     ("httpx", "request"), ("httpx", "Client"),
 }
-WRAPPERS = {"to_thread", "run_in_executor"}
 
 
 def _walk_own(node: ast.AST):
@@ -71,17 +77,8 @@ def scan(path: str) -> list[str]:
     hits: list[str] = []
     for fn in [n for n in ast.walk(tree) if isinstance(n, ast.AsyncFunctionDef)]:
         nodes = list(_walk_own(fn))
-        safe: set[int] = set()
         for n in nodes:
-            if isinstance(n, ast.Call):
-                nm = _call_name(n)
-                if nm and nm[1] in WRAPPERS:
-                    for a in n.args:
-                        for c in ast.walk(a):
-                            if isinstance(c, ast.Call):
-                                safe.add(id(c))
-        for n in nodes:
-            if not isinstance(n, ast.Call) or id(n) in safe:
+            if not isinstance(n, ast.Call):
                 continue
             nm = _call_name(n)
             if not nm:

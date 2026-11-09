@@ -13,6 +13,7 @@
 
 | commit | 时间 | 类型 | 一句话 | 验证 |
 |---|---|---|---|---|
+| `PR#18n` | 22:2x | fix | **两道壳层静态闸门的自测只测 `scan()`，退出码零判据 —— 而「只会打印不会判红，比没有更危险」正是这两个文件自己写在头部的告诫**：① `check_async_blocking.py` 守「事件循环被同步调用占住」（2026-10-18 一天撞到四处：gewechat 回发 / qzone 发布 / tts 的 `time.sleep(0.6)` / heavy_apps 的 `urlopen(timeout=5)`）；`check_await_sync.py` 守「`await` 一个同步方法」（微信回复从来没真正发出去过那次）。两道都自带自测、七条正反例，**但七条全部只调 `C.scan()`，从不碰 `C.main()`**。② 实测：把 `return 1 if all_hits else 0` 改成 `return 0`，闸门退化成「只打印不判红」—— 可疑点一个不少地打印出来、全量里永远绿 —— 而自测照样打印「全部通过 ✅」并 exit 0。两个文件都中。③ **先补判据再加刀**：自测各加「有可疑点 → 1 / 干净 → 0」两条断言，验证改完退出码后自测确实变红，A 刀才写得出来。④ 补刀时撞出一个**真缺陷**：`check_async_blocking` 有一段 `WRAPPERS` 豁免，把 `to_thread(...)` / `run_in_executor(...)` **实参里**的调用标成 safe —— 可实参是在**事件循环里先求值**的，`to_thread(urlopen(...))` 的阻塞已经发生了。实测这种写法报 **0 处**，而它正是 `heavy_apps.pull_cloud` 卡首启 5s 的形状。删掉豁免、补一条正例（规范用法 `to_thread(time.sleep, 1)` 传的是函数引用、没有 Call 节点，不会被误伤），全仓 src 命中仍是 0 → 0。⑤ 两把刀各五刀，共 10 条变异，逐条对应一个漏报或误报方向。 | 协程调度自测 9/9、异步阻塞自测 10/10（分别新增 2 条与 3 条）；两把刀 **5/5、5/5 全红**且各自点名（退出码 / to_thread 实参 / 嵌套 worker / time.sleep / 同步函数；退出码 / 消费者表 / 规则 1 / 规则 2 / 异步生成器）；空变异体检均 **CERTIFIED**；`check_gate_registry` **231 项全部有着落**；站点 7 PASS/0 FAIL（GATES 229→**231**）；四步接进 CI `portable-gates` |
 | `PR#18m` | 21:3x | test | **同一类越界，三个兄弟函数只测了一个；顺手跟进 master 4 个提交解掉合并冲突**：① `_read_file` / `_write_file` / `_append_file` 是同一段 `_safe_path` + `except WorkspaceEscape: return str(e)` 的三份复制粘贴，但 `test_workspace_guard.py` 只守了 `_write_file` —— `_read_file` 与 `_append_file` 在**整个 `tools/` 目录下出现 0 次**。后果不对称得很厉害：写越界是脏数据，**读越界是任意文件读取**（密钥盒 / `config.yaml` / 导出的凭据都能被模型读进上下文），而它一条判据都没有。② **先补判据再加刀**：第 6b 节先造一个真存在、真可读的区外文件（不造的话，「读不到」可能只是因为文件不存在，而不是因为越界被拦），再断言「返回里说明越界」+「没把区外内容读进来」+「区外文件没有被创建」+「沙箱里也没多出这个文件」。③ 刀跟着补：`工作区边界` D 写越界改名进沙箱（2026-10 那个 bug 的形状）/ E 读越界也照读 / F 追加越界改名进沙箱，三刀 → **六刀**；`命令守卫` D `allow_cmd` fail-closed 关掉 / E `shell=True`，三刀 → **五刀**（前四把都在前置检查上，没有一把碰真正执行的那一行）。④ **一个被自己否掉的做法**：先新建了 `_qc_workspace_guard_mutation.py` / `_qc_run_command_guard_mutation.py` 各砍一遍，跑出来 4/4、5/5 全红 —— 但那是**同一判据的第二把刀**，等于给覆盖率造第二份真相，还把 CI 时间翻倍。删掉两个新文件，只把真正新增的三把并进既有文件。⑤ master 从 `b945b4ca` 前进到 `c264700e`（含合入 89 个 PR），PR 被 GitHub 标成 `dirty`；做了一次真合并，5 处冲突：`check_delivery` 两边**独立修了同一个 bug**（取 master 侧，它的修法更完整）/ `check_all.py` 两边各加门禁（**都留**）/ 站点 4 处数字锚点（两边都不对，合并后是 229，由 `check_site_counts --fix` 回填）。 | 工作区边界 **20 PASS / 0 FAIL**（15→20）；六刀全红且各自点名（D「沙箱里也没多出这个文件」/ E「没把区外内容读进来」/ F 同 D）；命令守卫五刀全红（D「allow_cmd=false 拒绝」/ E「shell=False :: True」）；两把刀空变异体检 **CERTIFIED**（起点绿 / 空变异 exit 1 报 6 处、5 处异常）；合并后 `check_gate_registry` **229 项全部有着落**、`check_site_counts` 7 PASS/0 FAIL；PR 恢复 `mergeable=true / clean` |
 | `PR#18l` | 20:5x | fix | **第五道补刀，补的过程发现判据自己有缺陷：`开机自启` 的清理路径依赖了被测代码**。这道门守「用户登录时到底跑什么」，18 条断言从没配过刀。最想打的一刀是「`disable` 删错值名」—— 那正是 2026-10-18 真实泄漏的那次（真实 HKCU Run 留一条指向已删 tempfile 的死命令，用户登录弹「无法运行」）。但写不出来：刀的 finally 只还原源码字节，删不掉已被错误逻辑漏掉的注册表项，而测试自己的 finally 调的**正是被变异的 `disable`** → 每跑一次刀就多留一条。想清楚之后发现这不是「刀不能写」，是**判据有缺陷**：清理依赖被测对象，`disable` 一旦真回归，`test_autostart` 自己每跑一次也会留残留。**先修判据再加刀**：`finally` 换成 `_raw_delete()`（直接用 winreg，与 `autostart` 实现解耦），A6 才安全。六刀：A1 不加引号 / A2 用 python.exe 不是 pythonw / A3 `is_enabled` 遇 OSError 返回 True / A4 `sync(False)` 也去 enable / A5 `read_command` 异常返回空串 / A6 `disable` 删错值名。 | 开机自启 18/18；六刀全红且各自点名；**A6 跑完复查 HKCU Run：7 个既有值、0 残留**（`_raw_delete` 在 `disable` 被破坏时仍清干净，这就是修复的实证）；空变异体检 **CERTIFIED**；登记对账 ✓（227）；站点 7 PASS/0 FAIL（GATES 226→**227**） |
 | `PR#18k` | 20:4x | test | **第四道补刀：`密钥盒加密` 五刀 —— 最硬的一条安全底线，20 条判据从来没有刀**：它守的是「磁盘上不许出现明文 Key」（用户的 OpenAI / 百炼 Key、QQ cookie 全在 config.yaml 里），2026-10-18 起在跑，一次都没被验过牙。**这类判据的失效方式特别阴**：加密函数照常返回、`Config.save` 照常写盘、日志照常打「已加密」，只是密文里其实还是明文—— 没有任何报错，只有某天有人 `cat config.yaml` 才看得见。五刀：S1 密文不带 `dpapi:` 前缀（等于没加密）/ S2 `seal_tree` 不递归进嵌套 dict / S3 密钥字段表加宽（把 `name` 也当密钥）/ S4 解不开的密文不记失败（换机时静默丢 Key）/ S5 `is_sealed` 恒 False。**一个被否掉的变异方向**：本想用「`is_sealed` 恒 True」，但它会让 `decrypt_secret` 去 base64 解普通文本、`validate=True` 直接抛 `binascii.Error`，脚本带 Traceback 退出 —— 那是「崩了」不是「认出来了」。改成恒 False 才是判据该红的那条路。**刀的变异方向要选判据能开口的那条，不能选让判据闭嘴的那条。** | 密钥盒 20/0；五刀全红且各自点名；空变异体检 **CERTIFIED**；`闸门退出码` 0 命中；登记对账 ✓（226）；站点 7 PASS/0 FAIL（GATES 225→**226**） |
@@ -564,6 +565,106 @@ find_spec 返回 None → 误报「唤醒词退化」；
 
 **验证**：变异 4 刀全红 + 还原后回归 12/12 全绿；`tools/check_all.py` 登记对账 ✓；
 CI 全绿（pytest / self-check scripts / syntax gate 三腿 success）。
+
+#### PR #18（续九）· 两道闸门自己写着「只会打印不会判红，比没有更危险」，而它们的自测正好漏了这一条
+
+**选这两道门的理由**不是覆盖率排名，而是它们的失效形状。壳层那组闸门的共同点是
+**坏掉不报错，只是卡住**：
+
+- `check_async_blocking.py` 守「async 函数里做同步调用」——事件循环被占住，
+  症状是"卡一下"，不报错、不告警。2026-10-18 一天撞到四处（gewechat 回发 /
+  qzone 发布 / tts 的 `time.sleep(0.6)` / heavy_apps 的 `urlopen(timeout=5)`）。
+- `check_await_sync.py` 守「`await` 一个同步方法」——`await None` 抛 TypeError，
+  被事件总线 `except` 吞掉，功能静默失效。真实事故：`gewechat._on_decision` 里
+  `await self._safe_post(...)`，**微信回复从来没真正发出去过**，症状像"AI 不理人"。
+
+两道都自带自测、七条正反例，看上去是这一批里最不需要担心的。
+
+**但自测只测 `scan()`。** 两道门的自测都是这个形状：
+
+```python
+hits = C.scan(p)          # ← 七条全部只走这里
+ok = len(hits) == want
+```
+
+而真正决定闸门会不会判红的，是 `main()` 的最后一行：
+
+```python
+return 1 if all_hits else 0
+```
+
+这条路径**没有任何判据**。实测（不是推测）：把它改成 `return 0`，
+
+- 闸门退化成「只打印不判红」：可疑点一个不少地打印出来，但退出码永远是 0，
+  全量里永远绿；
+- 而自测**照样打印「全部通过 ✅」并 exit 0**。
+
+两个文件都中。讽刺的是 `test_check_async_blocking.py` 第 3 行自己写着：
+
+> 闸门如果只会打印不会判红，比没有更危险（本项目吃过"文本编码闸门永远 exit 0"的亏）。
+
+这句话守住了 `scan()`，却没守住 `main()` —— 它描述的正是它自己漏掉的那个洞。
+
+**先补判据，再加刀。** 两个自测各加两条断言：
+
+```python
+("有可疑点 → 1", "import time\nasync def f():\n    time.sleep(1)\n", 1),
+("干净 → 0",   "import time\ndef f():\n    time.sleep(1)\n", 0),
+```
+
+做法是建临时目录、写一个文件、调 `C.main([d])` 拿退出码（`main` 会打印，用
+`contextlib.redirect_stdout` 收走）。补完先验证它能开口：把退出码改回恒 0，
+两个自测都从「全部通过 ✅」变成「❌ 1 项未通过」。**验证过才动刀。**
+
+**补刀时撞出一个真缺陷。** 写 B 刀（取消 `to_thread` 豁免）时它没红，查下去发现
+`WRAPPERS` 那段逻辑是这样的：
+
+```python
+if nm and nm[1] in WRAPPERS:          # to_thread / run_in_executor
+    for a in n.args:                   # 把**实参里**的调用标成 safe
+        ...safe.add(id(c))
+```
+
+两件事同时成立：
+
+1. 对规范用法它**多余**——`to_thread(time.sleep, 1)` 传的是函数引用，`time.sleep`
+   是一个 `ast.Attribute`，根本没有 `Call` 节点可标；
+2. 对错误用法它**有害**——`to_thread(urlopen(...))` 的实参是在**事件循环里先求值**的，
+   那段阻塞已经发生了，豁免它等于把真阻塞标成安全。
+
+实测：
+
+```
+await asyncio.to_thread(urllib.request.urlopen("http://x").read())
+→ 修复前：可疑点 0 处
+```
+
+这正是 `heavy_apps.pull_cloud` 卡首启 5s 的形状。删掉豁免，补一条正例
+（`to_thread 实参里的同步调用（真阻塞，必须报）`），再确认规范用法不被误伤：
+全仓 `src` 命中 0 → 0，七条旧用例全绿。刀 B 改成「把豁免加回去」，它现在红了。
+
+**十刀。**
+
+| 门 | 刀 | 变异 | 被哪条判据点名 |
+|---|---|---|---|
+| 异步阻塞 | A | `return 1 if all_hits else 0` → `return 0` | main() 退出码 / 有可疑点 → 1 |
+| 异步阻塞 | B | 恢复 `to_thread` 实参豁免 | to_thread 实参里的同步调用（真阻塞，必须报） |
+| 异步阻塞 | C | 下钻嵌套 def（把 to_thread 的 worker 也查） | 嵌套 worker + to_thread（正常） |
+| 异步阻塞 | D | 阻塞表里删掉 `time.sleep` | async 里 time.sleep |
+| 异步阻塞 | E | 同步函数也一起扫 | 嵌套 worker / 同步函数里 sleep / main() 退出码（3 项） |
+| 协程调度 | A | `return 1 if all_hits else 0` → `return 0` | main() 退出码 / 有可疑点 → 1 |
+| 协程调度 | B | 消费者表删掉 `create_task` / `run` / `gather` | create_task 调度 / asyncio.run 消费 |
+| 协程调度 | C | 规则 1 失效（`await` 同步方法不再报） | await 同步方法 |
+| 协程调度 | D | 规则 2 失效（async 没调度不再报） | async 没调度 |
+| 协程调度 | E | 不再排除异步生成器 | 异步生成器 async for（正常） |
+
+C 和 E 这两类方向是**误报**方向，不是漏报。误报比漏报更快杀死一道闸门 ——
+所有人开始无视它，然后它就真的没用了。所以刀不能只砍「检测变弱」那一侧。
+
+**验证。** 协程调度自测 9/9、异步阻塞自测 10/10；两把刀 5/5、5/5 全红且各自点名；
+空变异体检均 CERTIFIED；`check_gate_registry` 231 项全部有着落、无重复登记；
+站点 7 PASS / 0 FAIL；四步（两道门的判据 + 两把刀）接进 CI `portable-gates` ——
+纯 stdlib、只读 AST，各约 1s，没有理由只在本机守。
 
 #### PR #18（续八）· 同一类越界，三个兄弟函数只测了一个
 

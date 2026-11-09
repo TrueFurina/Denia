@@ -49,11 +49,22 @@ GATES: list[tuple[str, str, list[str], bool]] = [
     # await/调度`（协程对象直接丢弃，函数体一行不执行）。自测守着闸门本身别退化。
     ("协程调度", PY_RUNTIME, ["tools/check_await_sync.py", "src"], False),
     ("协程调度自测", PY_RUNTIME, ["src/tests/test_check_await_sync.py"], False),
+    # 【2026-11-09 加】自测七条**全部只调 `scan()`，从不碰 `main()`** ——
+    # 于是「退出码那一行改成 return 0」没有任何判据：闸门退化成只打印不判红，
+    # 自测照样打印「全部通过 ✅」。先给自测补了「有可疑点 → 1 / 干净 → 0」
+    # 两条断言，这把刀才有东西可砍。五刀：退出码 / 消费者表 / 规则 1 / 规则 2 /
+    # 异步生成器排除。每一条都对应一条具体的误判方向（漏报或误报）。
+    ("协程调度变异", PY_RUNTIME, ["tools/_qc_await_sync_mutation.py"], False),
     # 异步阻塞：async 里做同步 HTTP/sleep 会把事件循环占住（"卡一下"，不报错）。
     # 一天内撞到四处：gewechat 回发、qzone 发布、tts 的 time.sleep(0.6)、
     # heavy_apps 的 urlopen(timeout=5)。嵌套同步 worker（交给 to_thread）不算。
     ("异步阻塞", PY_RUNTIME, ["tools/check_async_blocking.py", "src"], False),
     ("异步阻塞自测", PY_RUNTIME, ["src/tests/test_check_async_blocking.py"], False),
+    # 【2026-11-09 加】与上面同源：自测只测 `scan()`，退出码零判据。
+    # 这把刀顺手还砍出一个真缺陷：原来有一段 `WRAPPERS` 豁免，会把
+    # `to_thread(urlopen(...))` 的实参标成 safe —— 而实参是在**事件循环里先求值**的，
+    # 那段阻塞已经发生了。实测这种写法报 0 处。已删掉豁免并补一条正例。
+    ("异步阻塞变异", PY_RUNTIME, ["tools/_qc_async_blocking_mutation.py"], False),
     ("文本编码", PY_RUNTIME, ["tools/check_open_encoding.py", "--all", "--strict", "src", "tools", "main.py", "launch_companion.py", "run_webui.py"], False),
     # 主链路静默异常：`except: pass/continue` 且块内无注释 = 出错零痕迹
     # （NameError 和"设备不存在"长得一模一样）。--strict 才判红；带注释的有意降级放行。
