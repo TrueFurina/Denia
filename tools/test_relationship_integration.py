@@ -141,18 +141,42 @@ class TestPairing(unittest.TestCase):
             #   语义上正确：用户那句留着等下一次"真正的聊天回复"配对，不会被主动发言吞掉。
             self.assertEqual(list(self.rep._pending_user_queue), ["我喜欢你"],
                              "proactive 不消费用户队列（留给真回复配对）")
+            # 正控（2026-11-10 加）：上面两条都是「什么都没发生」也成立的断言。
+            # 若判定链路整个不启动，proactive 不判定、队列不动，两条照样绿。
+            # 所以必须再证一次「真的能判」：真聊天回复要消费队列并记一轮。
+            await self.bus.publish(Event(EventType.AI_DECISION,
+                                        {"text": "真心回复", "source": "dialogue", "streamed": True}))
+            await asyncio.sleep(0.4)
+            self.assertEqual(list(self.rep._pending_user_queue), [],
+                             "真回复应消费用户队列（正控）")
+            st = self.rep._mgr.get("danya")
+            self.assertGreaterEqual(int(st.get("turns") or 0), 1,
+                                    "真回复应真的判一轮（正控：否则本测试对「判定未启动」无感）")
         asyncio.run(self._run_bus_briefly(go))
 
     def test_04_dedup_same_ai_text(self):
-        """同一句 AI 文本 5s 内重复投递 → 只记一次。"""
+        """同一句 AI 文本 5s 内重复投递 → 只记一次。
+
+        2026-11-10 修：原来只投 1 句用户话 + 3 句相同 AI 话。这样即使**去重整个删掉**，
+        第 2/3 句也会因为队列已空而什么都不做 —— turns 仍是 1，去重有没有都不影响读数。
+        （队列为空正好替去重打了掩护。）现在投 2 句用户话：没有去重就会配掉两轮。
+        """
         async def go():
             await self.bus.publish(Event(EventType.USER_TEXT, {"text": "你好", "source": "webui"}))
+            await self.bus.publish(Event(EventType.USER_TEXT, {"text": "在吗", "source": "webui"}))
             for _ in range(3):
                 await self.bus.publish(Event(EventType.AI_DECISION, {"text": "同一句回复", "source": "dialogue", "streamed": True}))
-            await asyncio.sleep(0.4)
+            await asyncio.sleep(0.5)
         asyncio.run(self._run_bus_briefly(go))
         st = self.rep._mgr.get("danya")
         self.assertLessEqual(int(st.get("turns") or 0), 1, "重复 AI 文本只应记一轮")
+        # 下界（2026-11-10 加）：只写上界时 turns=0 也满足 —— 判定整条链路不启动
+        # 这条判据依然绿。必须同时钉住「确实记过一轮」。
+        self.assertGreaterEqual(int(st.get("turns") or 0), 1,
+                                "且必须真的记过一轮（否则上界恒真，去重坏了也看不出来）")
+        # 第二句用户话必须还在队列里（被去重挡住，没被配掉）
+        self.assertEqual(list(self.rep._pending_user_queue), ["在吗"],
+                         "去重生效时第二句用户话应仍待配对")
 
     def test_05_streamed_final_is_judged(self):
         """🔴 历史大坑回归：streamed=True 是最终整句，必须判定（曾误当分片过滤）。"""
@@ -262,7 +286,13 @@ class TestAsyncJudgeNonBlocking(unittest.TestCase):
         shutil.rmtree(self.base, ignore_errors=True)
 
     def test_20_publish_returns_before_judge_done(self):
-        """publish(AI_DECISION) 不应等 LLM 裁判跑完才返回。"""
+        """publish(AI_DECISION) 不应等 LLM 裁判跑完才返回。
+
+        2026-11-10 修：原版**没启动总线**（`EventBus.publish` 只是 `queue.put`，
+        派发靠 `run()`）。所以它量的是「入队耗时」，两个事件从头到尾没被任何 handler
+        处理过 —— 「判定没启动」和「判定很慢」在这条测试里读数完全一样。
+        现在真跑总线，并加正控：2.5s 后判定必须落盘。
+        """
         class SlowLLM:
             async def chat(self, messages, **kw):
                 await asyncio.sleep(1.5)
@@ -273,12 +303,24 @@ class TestAsyncJudgeNonBlocking(unittest.TestCase):
             rep = rr.RelationshipReporter(bus, _FakeCfg(), enabled=True,
                                           base_dir=self.base, llm=SlowLLM())
             rep.subscribe(); rep.start()
-            await bus.publish(Event(EventType.USER_TEXT, {"text": "hi", "source": "webui"}))
-            t0 = time.time()
-            await bus.publish(Event(EventType.AI_DECISION, {"text": "yo", "source": "dialogue", "streamed": True}))
-            dt = time.time() - t0
-            self.assertLess(dt, 0.5, f"publish 不应阻塞等裁判（实测 {dt:.2f}s）")
-            await asyncio.sleep(2.0)  # 让判定完成，避免退出告警
+            task = asyncio.ensure_future(bus.run())  # ← 不跑总线，publish 只是入队
+            try:
+                await bus.publish(Event(EventType.USER_TEXT, {"text": "hi", "source": "webui"}))
+                t0 = time.time()
+                await bus.publish(Event(EventType.AI_DECISION, {"text": "yo", "source": "dialogue", "streamed": True}))
+                dt = time.time() - t0
+                self.assertLess(dt, 0.5, f"publish 不应阻塞等裁判（实测 {dt:.2f}s）")
+                await asyncio.sleep(2.5)  # 让判定完成（SlowLLM 1.5s）
+                st = rep._mgr.get("danya")
+                self.assertGreaterEqual(int(st.get("turns") or 0), 1,
+                                        "2.5s 后判定应已完成并落盘（正控：否则测的是「什么都没做」）")
+            finally:
+                bus.stop()
+                task.cancel()
+                try:
+                    await task
+                except (asyncio.CancelledError, Exception):
+                    pass
         asyncio.run(go())
 
 
