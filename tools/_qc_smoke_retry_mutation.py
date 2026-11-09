@@ -31,6 +31,11 @@ PY = sys.executable
 TEST = os.path.join(ROOT, "tools", "test_smoke_import_retry.py")
 TOOL = os.path.join("tools", "smoke_import.py")
 
+# 【2026-11-09 加】`(标签, old, new, 说明)` —— 四个都是 str，空变异体检光看类型
+# 分不清哪两个是 old/new（第一版就曾把"说明"当成了 new，产出一个假 VACUOUS）。
+# 声明一下，工具就不用猜。
+NOOP_SHAPE = ("idx", 1, 2)
+
 MUTS = [
     ("M1 复核范围放宽（什么错都重试）",
      '    return _MEM_FAIL_MARK in ((result.get("detail") or "") + (result.get("trace") or ""))',

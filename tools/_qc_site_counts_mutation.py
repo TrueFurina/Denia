@@ -43,6 +43,12 @@ def mutate_number(rel: str, spec_i: int, new_val: str) -> str:
 
 
 # (标签, 文件, 变异函数)
+#
+# 【2026-11-09 加】这一把的"变异"不是字符串替换，而是一个**执行变异的可调用对象**
+# （`lambda: mutate_number(...)`）。空变异 = 把它换成"读回原文"，于是刀写出去的内容
+# 与原文一字不差 —— 它必须自己发现"变异没生效"（它确实有这条判据）。
+NOOP_SHAPE = ("filearg", 1, 2)
+
 MUTS = [
     ("A index.html 统计块闸门数改成 999",
      "site/index.html", lambda: mutate_number("site/index.html", 0, "999")),

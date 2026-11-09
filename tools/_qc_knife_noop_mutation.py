@@ -100,6 +100,70 @@ def main() -> int:
 '''
 
 
+# N11：`(标签, old, new, 说明)` —— 四个都是 str，自动定位分不出来，刀自己声明
+KNIFE_IDX_SHAPE = '''\
+NOOP_SHAPE = ("idx", 1, 2)
+MUTS = [("A 改一处", "old-a", "new-a", "这是说明文字，不是 new")]
+
+
+def main() -> int:
+    bad = 0
+    for name, old, new, note in MUTS:
+        if old == new:
+            print("%s：没抓住（变异没生效）" % name)
+            bad += 1
+    print("一刀全红" if bad == 0 else "有 %d 处异常" % bad)
+    return 1 if bad else 0
+'''
+
+# N13：同一把刀**不声明**形状 —— 工具必须判 SHAPE（该验没验），不许猜、不许放过
+KNIFE_IDX_UNDECLARED = KNIFE_IDX_SHAPE.replace('NOOP_SHAPE = ("idx", 1, 2)\n', "")
+
+# N12：变异不是字符串替换，而是一个"执行变异的函数"（site_counts 那种）
+KNIFE_FILEARG = '''\
+import io
+import os
+
+NOOP_SHAPE = ("filearg", 1, 2)
+TARGET = "target.txt"
+
+
+def _mutate():
+    with io.open(TARGET, encoding="utf-8", newline="") as f:
+        return f.read().replace("原始", "改过", 1)
+
+
+MUTS = [("A 改一处", TARGET, _mutate)]
+
+
+def main() -> int:
+    io.open(TARGET, "w", encoding="utf-8", newline="").write("原始\\n")  # 每次从干净状态起跑
+    bad = 0
+    for name, rel, fn in MUTS:
+        with io.open(rel, encoding="utf-8", newline="") as f:
+            raw = f.read()
+        new = fn()
+        if new == raw:
+            print("%s：没抓住（变异没生效）" % name)
+            bad += 1
+            continue
+        io.open(rel, "w", encoding="utf-8", newline="").write(new)
+    print("一刀全红" if bad == 0 else "有 %d 处异常" % bad)
+    return 1 if bad else 0
+'''
+
+# N14：声明越界 —— 必须抛（判 SKIP），不许硬着头皮改
+KNIFE_BAD_SHAPE = '''\
+NOOP_SHAPE = ("idx", 0, 99)
+MUTS = [("A 改一处", b"aaa", b"bbb")]
+
+
+def main() -> int:
+    print("一刀全红")
+    return 0
+'''
+
+
 def make_repo(tools: dict) -> str:
     d = tempfile.mkdtemp(prefix="qc_noop_mut_")
     t = os.path.join(d, "tools")
@@ -235,6 +299,46 @@ def main() -> int:
             bad += 1
         else:
             print("  PASS N6 全 SKIP：exit 2（一把都没跑成不算通过）")
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
+
+    # ---- N11 刀自己声明 idx 形状 → CERTIFIED ----
+    # 形状声明是"知识放在数据旁边"：`(标签, old, new, 说明)` 四个都是 str，
+    # 光看类型分不出 old/new，刀自己写一行 NOOP_SHAPE 就行。
+    d = make_repo({"_qc_idx_mutation.py": KNIFE_IDX_SHAPE})
+    try:
+        bad += check("N11 声明 idx 形状 → CERTIFIED",
+                     run_tool(d, "--knife", "_qc_idx_mutation.py"), "CERTIFIED", 0)
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
+
+    # ---- N12 声明 filearg 形状 → CERTIFIED ----
+    # 变异不是字符串替换，而是一个"执行变异的函数"：空变异 = 换成"读回原文"，
+    # 于是刀必须自己发现"变异没生效"。
+    d = make_repo({"_qc_filearg_mutation.py": KNIFE_FILEARG})
+    try:
+        bad += check("N12 声明 filearg 形状 → CERTIFIED",
+                     run_tool(d, "--knife", "_qc_filearg_mutation.py"), "CERTIFIED", 0)
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
+
+    # ---- N13 没声明 → SHAPE（该验没验，不是通过）----
+    d = make_repo({"_qc_undeclared_mutation.py": KNIFE_IDX_UNDECLARED})
+    try:
+        bad += check("N13 没声明形状 → SHAPE",
+                     run_tool(d, "--knife", "_qc_undeclared_mutation.py"), "SHAPE", 2)
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
+
+    # ---- N14 声明越界 → SHAPE（不是 SKIP）----
+    # 这把刀**有 MUTS**，只是声明写坏了 —— 那是"该验没验"，不是"不适用"。
+    # 两者都不算通过，但混成一个数字就没人知道该去修哪把。
+    # 关键要求是：**不许硬着头皮改**（越界还去 e[99] 就会 IndexError，
+    # 或者更糟——改了个不相关的项，产出一个假 CERTIFIED）。
+    d = make_repo({"_qc_badshape_mutation.py": KNIFE_BAD_SHAPE})
+    try:
+        bad += check("N14 声明越界 → SHAPE",
+                     run_tool(d, "--knife", "_qc_badshape_mutation.py"), "SHAPE", 2)
     finally:
         shutil.rmtree(d, ignore_errors=True)
 

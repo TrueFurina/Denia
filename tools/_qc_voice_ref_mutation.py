@@ -29,6 +29,10 @@ TEST = os.path.join(ROOT, "tools", "test_voice_ref_record.py")
 REC = os.path.join("src", "audio", "voice_ref_record.py")
 API = os.path.join("src", "ui", "webapp.py")
 
+# 【2026-11-09 加】`(标签, 文件, old, new, 说明)` —— 三个 str 夹着文件路径，
+# 光看类型分不清。声明 old/new 在第 2、3 项。
+NOOP_SHAPE = ("idx", 2, 3)
+
 MUTS = [
     ("M1 去掉时长上限", REC,
      '    return max(MIN_SECONDS, min(MAX_SECONDS, s))',

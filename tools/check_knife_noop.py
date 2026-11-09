@@ -29,8 +29,9 @@
   CERTIFIED  空变异下刀 exit != 0（它发现"没东西可抓"）
   VACUOUS    空变异下刀 exit == 0（**什么都没改，它却说全抓到了**）
   SKIP       没有模块级 `MUTS` —— 刀不用这个机制，本工具不适用（不算通过）
-  SHAPE      有 `MUTS` 但形状看不懂 —— **刀用了这个机制，是本工具退化不了**
-             （这两种原来挤在同一个 SKIP 数字里，读不出来谁是谁）
+  SHAPE      有 `MUTS` 但形状看不懂（含 `NOOP_SHAPE` 声明写坏）——
+             **刀用了这个机制，是本工具退化不了**（这两种原来挤在同一个
+             SKIP 数字里，读不出来谁是谁）
   ERROR      起点本来就红 / 跑崩了 —— 无法判定
 
 分母只算 `_qc_*_mutation.py`。tools/ 下还有十几个 `_qc_*.py` 是**一次性探针**，
@@ -41,8 +42,18 @@
 已知边界
 --------
 ① 只认模块级的 `MUTS`。没有它的刀 → SKIP，有但形状看不懂 → SHAPE，
-   两者都不算通过。`_qc_*_mutation.py` 里没有模块级 MUTS 的那 27 把归
+   两者都不算通过。`_qc_*_mutation.py` 里没有模块级 MUTS 的归
    `check_knife_nowrite.py`（封住写入口）——三个工具的分工写在那个文件头上。
+
+   形状看不懂的刀可以**自己声明**，工具照读，不用工具这边另建一张会烂的表：
+
+       NOOP_SHAPE = ("idx", 1, 2)       # 第 1 项是 old、第 2 项是 new
+       NOOP_SHAPE = ("filearg", 1, 2)   # 第 1 项是文件路径、第 2 项是"执行变异的函数"
+
+   声明写坏（越界 / 类型不对 / 指的两项本来就相同）一律判 SHAPE，**不许硬着头皮改**
+   —— 改错一项不会报错，只会产出一个假 CERTIFIED，那比没有结论更糟。
+   目前四把刀这么声明：`_qc_smoke_retry`(1,2)、`_qc_voice_ref`(2,3)、
+   `_qc_partial_reply`(1,2)、`_qc_site_counts`(filearg 1,2)。
 ② 空变异只证明"没东西可抓时它不会假红"，**不证明"有东西可抓时它抓得住"**。
    后者要靠每把刀自己的正向刀，以及 `check_knife_vacuity.py`。
 ③ 有的刀在 `main()` 里除了 MUTS 还有别的判据（比如"还原字节一致"），
@@ -95,6 +106,7 @@ KNOWN_VACUOUS = {
 # 用子进程而不是进程内，是因为刀会改源码；崩了也只是崩一个子进程，副本可以整份丢掉。
 RUNNER = r'''# -*- coding: utf-8 -*-
 import importlib.util
+import io
 import os
 import sys
 
@@ -128,6 +140,15 @@ def _byteses(e):
     return [i for i, x in enumerate(e) if isinstance(x, (bytes, bytearray))]
 
 
+# 【2026-11-09 加·刀自己声明形状】有的刀把 (old, new) 夹在说明文字中间，
+# 光看类型分不出来（`(标签, old, new, 说明)` 里三个都是 str）。原来只能判 SHAPE
+# 放过 —— 那等于"该验没验"。现在刀可以在自己文件里写一行
+#     NOOP_SHAPE = ("idx", 1, 2)          # 第 1 项是 old、第 2 项是 new
+#     NOOP_SHAPE = ("filearg", 1, 2)      # 第 1 项是文件路径、第 2 项是"执行变异的函数"
+# 工具照读。**知识放在数据旁边**，不放到工具里另建一张会烂的表。
+SHAPE = getattr(m, "NOOP_SHAPE", None)
+
+
 def _noop(entry):
     """把一条变异改成"空变异"，并**返回证据**。
 
@@ -145,6 +166,38 @@ def _noop(entry):
     验证不过就抛 —— 宁可 SKIP，也不产出一个假的 VACUOUS。
     """
     e = list(entry)
+
+    # ① 刀自己声明了形状 → 按声明来（并且自检，声明错了要抛，不许静默产假 VACUOUS）
+    if SHAPE is not None:
+        if not (isinstance(SHAPE, (list, tuple)) and len(SHAPE) == 3
+                and SHAPE[0] in ("idx", "filearg")):
+            raise ValueError("NOOP_SHAPE 形状看不懂：%r" % (SHAPE,))
+        kind, i, j = SHAPE
+        if not (0 <= i < len(e) and 0 <= j < len(e)):
+            raise ValueError("NOOP_SHAPE 下标越界：%r（条目只有 %d 项）" % (SHAPE, len(e)))
+        if kind == "idx":
+            if e[i] is e[j]:
+                raise ValueError("NOOP_SHAPE 指的两项本来就相同 —— 声明错了")
+            e[j] = e[i]
+            if e[j] is not e[i]:
+                raise ValueError("空变异自检失败")
+            return tuple(e), "declared-idx"
+        # filearg：第 i 项是文件路径、第 j 项是"执行变异的函数"。
+        # 空变异 = 换成"读回原文"的函数 —— 刀写出去的内容与原文一字不差，
+        # 于是它必须自己发现"变异没生效"。若它照样报全红，就是空转。
+        rel = e[i]
+        if not isinstance(rel, str) or not callable(e[j]):
+            raise ValueError("NOOP_SHAPE=filearg 要求 (路径, 可调用)，实际是 (%r, %r)"
+                             % (type(rel).__name__, type(e[j]).__name__))
+        def _same(_rel=rel):
+            with io.open(_rel, encoding="utf-8", newline="") as f:
+                return f.read()
+        e[j] = _same
+        if not callable(e[j]):
+            raise ValueError("空变异自检失败")
+        return tuple(e), "declared-filearg"
+
+    # ② 没声明 → 按载荷类型自动定位
     last = e[-1]
     if (isinstance(last, (list, tuple)) and len(last) > 0
             and isinstance(last[0], (list, tuple)) and len(last[0]) == 2):
