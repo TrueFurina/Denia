@@ -619,6 +619,10 @@ GATES: list[tuple[str, str, list[str], bool]] = [
     ("权限模式矩阵变异", PY_VENV, ["tools/_qc_permission_modes_mutation.py"], True),
     # 【2026-11-04 加】文件读写的工作区边界。原来越界会「悄悄改名塞进沙箱」并回报
     # 「已写入」——用户以为改的是那个文件，实际写到了别处。守的是"越界必须明说"。
+    # 【2026-11-09 补·判据只盖了三兄弟里的一个】`_read_file` / `_write_file` /
+    # `_append_file` 是同一段 `_safe_path` + `except WorkspaceEscape` 的三份复制粘贴，
+    # 但之前只有 `_write_file` 有判据，另外两个在整个 tools/ 下出现 0 次。
+    # 其中读越界不拦的后果最重：不是写坏一个文件，是**任意文件读取**。已补第 6b 节。
     ("工作区边界", PY_VENV, ["tools/test_workspace_guard.py"], False),
     ("工作区边界变异", PY_VENV, ["tools/_qc_workspace_mutation.py"], True),
     # 【2026-11-04 加】run_command 的守卫：fail-closed 白名单 / 禁元字符 / cwd 落在工作区。
@@ -687,7 +691,12 @@ GATES: list[tuple[str, str, list[str], bool]] = [
     # `--root <产物>` 才是真检（见该文件头部「用法」）。
     # 这里挂的是它的变异刀：32 个场景自建夹具、在源码仓里也能跑，
     # 证明「判据真的会红」——而不是把一道永远跳过的门算成通过。
-    ("交付包闸门变异", PY_RUNTIME, ["tools/_qc_delivery_mutation.py"], True),
+    # 【2026-11-09】这里改回 PY_VENV：源码仓内置运行时 python/Lib/site-packages
+    # 只有 2 项、没有 yaml，用它跑这把刀会让 _read_yaml 抛 ModuleNotFoundError，
+    # 连带 check_template/check_template_secrets/check_file_integrity 假红 7 场景。
+    # 这道门验的是「判据有没有牙」（32 场景自建夹具），不是「交付包运行时能不能跑」；
+    # 后者由发布前手动 check_delivery.py --root <产物> 验（该文件本就「不进闸门」）。
+    ("交付包闸门变异", PY_VENV, ["tools/_qc_delivery_mutation.py"], True),
     # 【2026-11-08】同一个形状第三次出现，都在通知窗那条线上：
     #   第十五轮 `NotifyJsBridge`（无此类）／第十九轮 `_notify_slide_if`（无此函数）／
     #   第二十一轮 `_push_cmd`（无此函数）。根因都是「通知窗从 WebView2 迁到 WPF 后，
@@ -734,6 +743,10 @@ GATES: list[tuple[str, str, list[str], bool]] = [
     # _qc_api_wiring_mutation（函数里的 `from check_api_wiring import`）。
     ("工具脚本导入路径", PY_VENV, ["tools/check_tool_sys_path.py"], False),
     ("工具脚本导入路径变异", PY_VENV, ["tools/_qc_tool_sys_path_mutation.py"], False),
+    # 【2026-11-09】试听播放生命周期：防孤儿 ffplay（关 App 后继续响）/ 叠播 / 线程堆积。
+    # 判据用真实子进程哨兵 + 真实线程验可观测后果，非查标志位。
+    ("试听播放生命周期回归", PY_VENV, ["src/tests/test_voice_playback_lifecycle.py"], False),
+    ("试听播放生命周期变异", PY_VENV, ["tools/_qc_voice_playback_mutation.py"], True),
 ]
 
 

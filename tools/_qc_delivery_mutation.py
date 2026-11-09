@@ -28,6 +28,16 @@ import tempfile
 REAL_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 GATE = os.path.join(REAL_ROOT, "tools", "check_delivery.py")
 
+# 【2026-11-09 环境守卫】check_delivery._read_yaml 依赖 PyYAML。若解释器缺它，
+# 场景会连坐假红（A 正常态都 FAIL），看起来像「判据坏了」其实是环境坏了。
+# 必须先自检仪器：缺依赖直接判红退出，别让 32 个场景给出误导性结论。
+try:
+    import yaml as _yaml  # noqa: F401
+except ImportError:
+    print("ENV_FAIL: 当前解释器缺 PyYAML，_read_yaml 不可用；请用 .venv 跑本刀")
+    sys.exit(1)
+
+
 # 最小包里放一份「行为正确」的自愈实现。第九轮起闸门验的是目标包这份文件，
 # 而不是脚本所在包的 src.config —— 所以占位文件不能再是空文件。
 FAITHFUL_CONFIG_PY = (
@@ -73,13 +83,14 @@ def make_root(td: str) -> str:
         os.makedirs(os.path.dirname(p), exist_ok=True)
         if rel == "config.yaml" and not os.path.isfile(os.path.join(REAL_ROOT, rel)):
             # 源码仓里 config.yaml 是 gitignore 的实配。用模板派生一份「跑过一次」
-            # 的等价物：出厂模板不预置 first_run_done，跑完一次引导才会写上它
-            # （src/ui/webapp.py:10587）。注意**不是**改 force_first_run ——
-            # 模板从 2026-10-20 起就是 false，那个开关是开发调试用的。
+            # 的等价物：出厂模板 force_first_run=false、无 first_run_done；
+            # 跑过一次的实配补上 first_run_done: true（判级 force or not first_run_done）。
+            # 【2026-11-09】别再假设模板是 true——那是事故 14d4e15 的旧包口径。
             tpl = open(os.path.join(REAL_ROOT, "config.release.yaml"),
                        encoding="utf-8").read()
             with io.open(p, "w", encoding="utf-8", newline="\n") as fh:
-                fh.write(tpl + "first_run_done: true\n")
+                fh.write(tpl.replace("force_first_run: false",
+                                     "force_first_run: false\nfirst_run_done: true", 1))
         elif rel in ("config.yaml", "config.release.yaml", "requirements.txt"):
             shutil.copyfile(os.path.join(REAL_ROOT, rel), p)
         elif rel == "src/config.py":
@@ -162,23 +173,16 @@ case("C 模板夹带明文密钥", leak_key, ["check_template_secrets"])
 
 
 def flip_first_run(r):
-    """把出厂模板改成带开发调试开关 —— 这才是「不是出厂态」。
-
-    【2026-11-08 修·锚点失效让刀假过】这里原来是把 `force_first_run: true` 换成
-    `false`。模板从 2026-10-20 起本来就是 `false`，于是这个 replace **一次都没命中**：
-    变异没落地，而当时 check_template 正因为旧断言恒红，D 就"通过"了——
-    通过的理由和它要证的事毫无关系。所以锚点必须动态取、必须命中一次，否则直接报错。
-    """
+    # 【2026-11-09】判据口径修正后反向注入：给合格出厂模板塞回开发调试开关
+    # force_first_run: true（事故 14d4e15 的形态），check_template 必须判红。
     p = os.path.join(r, "config.release.yaml")
     s = io.open(p, encoding="utf-8").read()
-    n = s.count("force_first_run: false")
-    if n != 1:
-        raise RuntimeError("锚点 `force_first_run: false` 命中 %d 次（期望 1）" % n)
+    assert "force_first_run: false" in s, "D 刀锚点漂了：模板里没有 false"
     io.open(p, "w", encoding="utf-8").write(
         s.replace("force_first_run: false", "force_first_run: true", 1))
 
 
-case("D 模板不是出厂态", flip_first_run, ["check_template"])
+case("D 模板夹带开发调试开关 force_first_run=true", flip_first_run, ["check_template"])
 
 
 def bump_version(r):

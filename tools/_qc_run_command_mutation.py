@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""「run_command 守卫」的变异验证：三刀，刀刀必须被抓住。
+"""「run_command 守卫」的变异验证：五刀，刀刀必须被抓住。
 
 跑法：.venv/Scripts/python.exe -u tools/_qc_run_command_mutation.py
 """
@@ -75,6 +75,26 @@ MUTS = [
     ("C 不拦 shell 元字符（允许串联/管道/重定向）",
      B("    if _SHELL_META_RE.search(command):"),
      B("    if False:")),
+
+    # 【2026-11-09 加·D 是「没配就等于全开」的翻版，但入口不同】
+    # `allow_cmd` 是**模型自报**的那个开关：agent 没被授予命令能力时，
+    # 上下文里根本没有 `allow_cmd=True`。原判据是 fail-closed（缺省即拒）。
+    # 上面三把刀都没碰它 —— 也就是说，如果哪天有人把这一行删了或改成
+    # `if ctx.get("allow_cmd") is False:`（只在显式 false 时拒），
+    # 那么**任何**没配白名单的会话都会直接落到后面的白名单检查，
+    # 而白名单恰好配了 `echo`，就变成了「模型说可以就可以」。
+    ("D fail-closed 关掉（没开命令能力也照跑）",
+     B('    if not ctx.get("allow_cmd"):'),
+     B("    if False:")),
+
+    # 【2026-11-09 加·E 守的是「不经过 shell 解释」】
+    # 前四把刀都在 `_run_command` 的**前置检查**上，没有一把碰真正执行的那一行。
+    # `shell=True` 会让 `_SHELL_META_RE` 的拦截彻底失效：元字符在 Python 层被拒了，
+    # 但只要有一条路径漏进来（比如白名单里配了 `cmd`），就由 shell 去解释了。
+    # 判据 `CAPTURED["shell"] is False` 直接盯这个 kwarg，所以刀也必须砍在这里。
+    ("E 改成 shell=True（元字符拦截被绕过）",
+     B("            run_argv, shell=False, capture_output=True, text=True,\n"),
+     B("            run_argv, shell=True, capture_output=True, text=True,\n")),
 ]
 
 
@@ -111,7 +131,7 @@ def main() -> int:
     print("\n还原字节一致：%s" % ok)
     if not ok:
         bad += 1
-    print("三刀全红" if bad == 0 else "有 %d 处异常" % bad)
+    print("五刀全红" if bad == 0 else "有 %d 处异常" % bad)
     return 1 if bad else 0
 
 

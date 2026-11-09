@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""「工作区边界」的变异验证：三刀，刀刀必须被抓住。
+"""「工作区边界」的变异验证：六刀，刀刀必须被抓住。
 
 跑法：.venv/Scripts/python.exe -u tools/_qc_workspace_mutation.py
 """
@@ -74,6 +74,45 @@ MUTS = [
     ("C 不检查空路径（没给名字就落到工作区根）",
      B('    if not raw:\n        raise WorkspaceEscape("未提供文件名")\n'),
      B("")),
+
+    # 【2026-11-09 加·补的是判定里最要命的那一条】上面三把刀砍的都是
+    # `_safe_path` 本身（抛不抛、归一不归一、空不空）。但 `test_workspace_guard.py`
+    # 第 6 节守的是另一件事：**越界之后不许落盘**。判据里那三行
+    #   · 返回里说明越界
+    #   · 区外文件没有被创建
+    #   · 沙箱里也没多出这个文件      ← 这一条专门钉 2026-10 那个 bug
+    # 之前没有任何刀指着它。也就是说：如果有人把 `_write_file` 的 except 分支
+    # 改回「改名塞进沙箱再回报已写入」，四把刀里前三把**全是绿的** —— 因为
+    # `_safe_path` 一个字节都没动。用户会以为改的是 `../外面/x.txt`，
+    # 实际写进了工作区，而且回报「已写入」。
+    # 刀的形状就是那个 bug 的形状：except 分支不返回错误，改成重写到沙箱根。
+    ("D 越界时改名写进沙箱（2026-10 那个 bug 的形状）",
+     B('        return str(e)\n    try:\n'
+       '        with open(p, "w", encoding="utf-8") as f:\n'),
+     B('        p = os.path.join(workspace_dir(), os.path.basename(name))'
+       '  # 变异刀：越界就改名写进沙箱\n    try:\n'
+       '        with open(p, "w", encoding="utf-8") as f:\n')),
+
+    # 【2026-11-09 加·同一类越界的另外两个兄弟】`_read_file` / `_append_file`
+    # 和 `_write_file` 是同一段形状的三份复制粘贴。判据（第 6b 节）刚补上，
+    # 刀也要跟着补 —— 否则"补了判据"只是一句话，谁也不能保证它以后还能开口。
+    # E 砍的是**读**：越界不返回错误，改成拼到工作区再读一次。
+    #   这是三把刀里后果最重的一把 —— 写坏一个文件是脏数据，读穿了是
+    #   **任意文件读取**：密钥盒、config.yaml、导出的凭据都能进模型上下文。
+    ("E 读越界也照读（任意文件读取）",
+     B('        return str(e)\n    try:\n        if not os.path.exists(p):\n'),
+     B('        p = os.path.abspath(os.path.join(workspace_dir(), name))'
+       '  # 变异刀：越界也照读\n    try:\n'
+       '        if not os.path.exists(p):\n')),
+
+    # F 砍的是**追加**：2026-10 那个 bug 在 append 分支上的同形复制。
+    # 写和追加走的是两个分支，D 刀红不能证明 F 刀也红 —— 这正是要各砍一刀的理由。
+    ("F 追加越界改名写进沙箱",
+     B('        return str(e)\n    try:\n'
+       '        with open(p, "a", encoding="utf-8") as f:\n'),
+     B('        p = os.path.join(workspace_dir(), os.path.basename(name))'
+       '  # 变异刀：越界就改名写进沙箱\n    try:\n'
+       '        with open(p, "a", encoding="utf-8") as f:\n')),
 ]
 
 
@@ -110,7 +149,7 @@ def main() -> int:
     print("\n还原字节一致：%s" % ok)
     if not ok:
         bad += 1
-    print("三刀全红" if bad == 0 else "有 %d 处异常" % bad)
+    print("六刀全红" if bad == 0 else "有 %d 处异常" % bad)
     return 1 if bad else 0
 
 
