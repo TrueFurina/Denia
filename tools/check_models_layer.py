@@ -35,8 +35,31 @@ def fail(m: str) -> None:
     FAILS.append(m)
 
 
+def _pick_config() -> tuple:
+    """本机的实配 `config.yaml`，没有就用出厂模板。
+
+    【2026-11-09 加·「缺环境」不是「判据失败」】`config.yaml` 在 `.gitignore` 里
+    （它是实配，含 api_key），所以**任何新克隆的树上都没有它** —— 这道门于是
+    在每台刚装好的机器上第一行就 `FileNotFoundError`，连一条判据都没跑到。
+    本门验的是「`src/models` 的视图构建对一份合法配置做了什么」，与 api_key 无关，
+    出厂模板 `config.release.yaml` 就是最该被验的那份配置（它才是发给用户的）。
+    两份都没有才报 77（未验证）。
+    """
+    for name in ("config.yaml", "config.release.yaml"):
+        p = os.path.join(_ROOT, name)
+        if os.path.isfile(p):
+            return p, name
+    return "", ""
+
+
 def main() -> int:
-    conf = os.path.join(_ROOT, "config.yaml")
+    conf, conf_name = _pick_config()
+    if not conf:
+        print("[SKIP] 既没有 config.yaml 也没有 config.release.yaml —— "
+              "视图构建没有夹具可跑（不是通过）")
+        return 77
+    if conf_name != "config.yaml":
+        print("（本机没有实配 config.yaml，用出厂模板 %s 当夹具）" % conf_name)
     with open(conf, "r", encoding="utf-8") as f:
         raw = yaml.safe_load(f)
 

@@ -13,6 +13,7 @@
 
 | commit | 时间 | 类型 | 一句话 | 验证 |
 |---|---|---|---|---|
+| `PR#18g` | 18:0x | fix | **最后 12 个红点：4 道门在新克隆上必红，2 道门的红是「测试自己没隔离 ffmpeg」**：① `config.yaml` 在 `.gitignore` 里（实配含 api_key），任何新克隆都没有 → 投影层自检 / ASR 事件流 / 桌面视频 e2e / 抓屏性能闸 D8 / 视频进度 五处直接 `FileNotFoundError`，**一条判据都没跑到**。四道退回出厂模板 `config.release.yaml` 当夹具（它才是「用户拿到的默认值」，验默认值比验实配更有意义），两份都没有才 77。② **视频两道不是缺环境，是测试有缺陷**：`test_video_watch.test_success` 已经 mock 了 `download_media` 和 `sample_frames`，却没 mock 前置能力探测 `_resolve_ffmpeg()` —— 而 `watch_video` 的闸是 `if video_files and ffmpeg_exe:`，于是**没装 ffmpeg 的机器上 frame 阶段根本不触发、那个 `sample_frames` mock 一次都没被调用**，结论取决于跑它的机器而不是代码。补 mock 后 21/21、7/7。③ `test_phash` 缺 `imagehash`（**故意**不在 requirements，它是被自实现取代的对照源）原来 `return 1`，在汇总里与真回归长得一样 → 改 77 并给出安装命令。④ 顺带把 `_pick_python` 的**静默降级**说出来：内置运行时不存在时 32 项声明 `PY_RUNTIME` 的闸门会静默改由 `sys.executable` 跑，汇总一个字不提。 | 全量 **14 红 → 0 红**（211 项判完 / 10 项跳过）；投影层 16/0、ASR 事件流全过、桌面视频 e2e 7 OK（原 7 errors）、抓屏性能闸 **27/0**（原 26/1）、视频观看 **21/21**、视频进度 **7/7**；感知哈希 → `[SKIP]` 77；静态闸门全绿 |
 | `PR#18f` | 17:3x | fix | **「问不到」被当成「答否」：三道闸门在非 git 工作树里恒红**：交付包工作副本没有 `.git`，`git ls-files` 返回 128 + `fatal: not a git repository`。三道闸门把它当成「文件没入库」：`test_bundled_assets` 于是对 **10 件产品素材**逐个报「在磁盘上但没进 git —— 包里会缺」（**这是它没验证过的断言**）；`verify_first_run` 在第一步「造干净副本」就 `RuntimeError` 判红，**后面 7 步一条没跑**；`test_pack_for_teammate` 的 `[3]` 直接抛「取不到 git 文件清单」。三把变异刀跟着连环自爆（「起点不绿」「基线就不绿」）。修法分两种，都不许报绿：① `test_bundled_assets` 把「入库」拆成 `yes/no/unknown` 三态 —— 存在/非空壳/真格式照常逐件判，只有「入库」这一项报未验证，`exit 77`；② `verify_first_run` 加 `NoGitWorkTree` 异常 → `[SKIP]` + 77（整条链一步没跑，不能说验过）；③ `test_pack_for_teammate` 只把依赖 git 的 `[3]/[3b]` 跳过，其余四节照常判，末尾 77。刀的处理也分两种：`_qc_bundled_assets_mutation` 的三刀（删/截断/假格式）**不需要 git**，让基线认 (0,77) 后照常跑，仍三刀全红；`_qc_pack_exclude_mutation` 的变异目标就在 `[3]` 里，前提没了就整把报 77，不硬凑。 | 必需资产 0 PASS/**10 FAIL** → `0 PASS / 0 FAIL / 10 未验证` exit 77；首启链 RuntimeError → `[SKIP]` exit 77；打包排除 `取不到清单` → 四节照判 + `[SKIP]` exit 77；三把刀 `起点不绿/traceback` → 77 与三刀全红；静态闸门（编码/全局名/同名/不可达/常量条件/静默异常/导入路径）全绿 |
 | `PR#18e` | 17:0x | fix | **闸门在推荐解释器下起不来：全量跑一行没执行就退出**：`check_all.py` 尾巴的 `from _gate_lock import` 在 `.venv/Scripts/python.exe` 下必崩（`ModuleNotFoundError`），在普通 `python` 下正常 —— 交付包自带的是**可嵌入运行时**，`python312._pth` 只把 `python/` 下几个目录加一个 `..`（仓根）塞进 sys.path，**不含 `tools/`**；普通 CPython 会补「脚本目录」，可嵌入版不补。而 `.venv` 才是要三方依赖时的推荐解释器 → **这道门在官方姿势下从未跑起来过**。同一族 PR #17 已修过一次（`check_web_js_syntax`），所以这次不只修还补判据：新增 `check_tool_sys_path.py`（纯 stdlib 静态判定，181 脚本 0.2s）——兄弟 import 前必须有由 `__file__` 推导的 sys.path 改写（模块层或更早行号），写死盘符路径判红，接 `ImportError` 的降级导入与免登脚本不计分但必须打印。**它第一次跑就抓到 `_qc_api_wiring_mutation`**（函数里 `from check_api_wiring import`），补完后全量跑里那条 `反向接线变异` 整条挂掉的记录随之消失。顺带把上一轮写死的 600s 闸门超时按档改成 1800/600 并把超时记成有名字的失败。**并记录未修的发现**：交付包工作副本（无 `.git`／无 `config.yaml`）里全量 14/215 红，其中 12 项是「问不到被当成答否」，按约定该报 77 却报了 1。 | `check_all.py` 在 `.venv` 下能拿到锁并跑完（215 项判完 / 4 跳过 / 14 红，红的构成已分类）；`变异刀空写体检` 428.9s < 1800s 预算，不再被 kill；新闸门 **33 PASS / 0 FAIL**；新刀 **11 项全过**；`_qc_api_wiring_mutation` 4 刀恢复全红 + 起点绿；登记对账 ✓（220）；站点 7 PASS/0 FAIL（GATES 219→**221**） |
 | `PR#18d` | 17:4x | test | **第三种空转体检：封住写入口** —— 「SKIP 50 不算通过」这句话压了三轮，这一轮把它拆开：那 50 里 18 个是**一次性探针**（压根不是刀）、28 把是「没有模块级 MUTS 也没有独立判定文件」的真刀、4 把有 MUTS 但形状退化不了。新工具 `check_knife_nowrite.py` 不碰变异，把 `builtins.open`/`io.open` 的**写模式**重定向到临时文件，让「变异根本没发生」：此时刀还 exit 0 就是空转。这个方向与变异长什么样无关 —— 改源码的、往 `src/` 扔坏文件的、复制配置的、删目录的，一视同仁。**三方向闭环**：换判定（判定坏了刀会不会红）/ 空变异（源码没变时会不会假绿）/ 封写（**什么都没变**时会不会假绿）。顺带：`check_knife_vacuity.py` 的仓副本改成「重新 init 一个 git 仓」（`tools/_qc_repo_copy.py`），最后一条 `EXCUSED` 解开、表清空；`check_knife_noop.py` 的刀口径改成 `_qc_*_mutation.py`；**`check_delivery.py:check_template` 还在断言 `force_first_run is True`，而 10-20 的修复故意改成 false —— 它对任何正确打的包都判 FAIL，`_qc_delivery_mutation` 466 行 14 个用例因此永久红、等于从来没在跑**。 | 空写体检 **CERTIFIED 21 / COVERED_ELSEWHERE 33 / META 3 / SKIP 1 / ERROR 4（62 把），VACUOUS 0**，exit 0（14m）；空转变检 **CERTIFIED 33 / SKIP 29 / SHAPE 0**（口径修正后 62 把，原「29 / 50」是 79 个文件混算）；空转体检 **28 CERTIFIED / 1 SKIP**（29 对，上轮 27/1）；**三合一覆盖 54/62（装上 jsdom 后 55/62）**；三道体检的变异刀 16 项 / 13 刀 / 9 刀全过；出厂模板判据修正后 `check_delivery` 该行 PASS；GATES 217→219，站点 7 PASS/0 FAIL |
@@ -558,7 +559,96 @@ find_spec 返回 None → 误报「唤醒词退化」；
 **验证**：变异 4 刀全红 + 还原后回归 12/12 全绿；`tools/check_all.py` 登记对账 ✓；
 CI 全绿（pytest / self-check scripts / syntax gate 三腿 success）。
 
+#### PR #18（续六）· 最后 12 个红点：一半是缺夹具，一半是测试自己没隔离
+
+上一轮把「`git ls-files` 问不到」那一族修完，剩下 5 道门 + 2 个视频用例。逐条查下来，
+**没有一条是产品缺陷** —— 但它们分成性质完全不同的两类，处理方式也不该一样。
+
+**一、`config.yaml` 一族（4 道门 + 1 个文件）**
+
+`config.yaml` 在 `.gitignore` 里（实配，含 api_key），所以**任何新克隆的树上都没有它**：
+
+```
+投影层自检      FileNotFoundError: .../config.yaml
+ASR 事件流      FileNotFoundError: 'config.yaml'
+桌面视频 e2e    FileNotFoundError: .../config.yaml   （7 个用例全 error）
+抓屏性能闸      D8 真实 config.yaml 判定与原文一致   ← 26 PASS / 1 FAIL
+视频进度        3 个用例 FileNotFoundError
+```
+
+处理：退回出厂模板 `config.release.yaml` 当夹具。这不是"凑绿"—— 这几条验的是
+「视图构建对一份合法配置做了什么」「进度事件有没有发到总线」「`desktop.media.watch_videos`
+默认是不是 true」，**与 api_key 无关**；而且出厂模板恰恰是"用户拿到的那份默认值"，
+拿它验默认值比拿实配验更有意义。两份都没有才报 77。
+
+**二、视频两道：不是缺 ffmpeg，是测试自己没隔离**
+
+这条值得单独写，因为它的失败长相极具误导性：
+
+```
+[媒体观看] 无 ffmpeg，跳过抽帧（仅基于标题/简介理解）
+FAIL: test_success ... AssertionError: '厨房' not found in '…（未能取到可看的画面/图片…）'
+```
+
+看起来是"本机没装 ffmpeg"，加个 `pip install imageio-ffmpeg` 就完事。但读测试：
+
+```python
+with patch.object(vw, "download_media", ...), \
+     patch.object(vw, "sample_frames", ...):     # ← 抽帧已经 mock 了
+```
+
+**它已经 mock 了 `sample_frames`。** 那为什么还走到"无 ffmpeg"分支？因为
+`watch_video` 里那道闸是：
+
+```python
+ffmpeg_exe = _resolve_ffmpeg()
+if video_files and ffmpeg_exe:      # ← 前置能力探测，没被 mock
+    raw_frames = await sample_frames(...)
+```
+
+`_resolve_ffmpeg()` 是**前置探测**，mock 的是**下游**。没装 ffmpeg 时前置探测返回
+`None`，整个分支被跳过，那个 `sample_frames` mock **一次都没被调用**。
+
+所以这条用例的结论取决于**跑它的机器有没有 ffmpeg**，而不是代码对不对：
+装了 → 绿，没装 → 红，而 `sample_frames` 这个 mock 形同装饰。
+`test_video_watch_progress` 里 `test_success_run_recorded` 断言 `frames == 2`
+失败（拿到 0）也是同一个原因。
+
+修法不是装 ffmpeg，是**把前置探测一起 mock**：
+
+```python
+patch.object(vw, "_resolve_ffmpeg", return_value="/fake/ffmpeg")
+```
+
+补完后 `test_video_watch` **21/21**、`test_video_watch_progress` **7/7**。
+**注意这里没有用 77** —— 这条判据在缺 ffmpeg 的机器上**完全跑得起来**，
+只是它自己没隔离环境；报 77 会把一份本来能拿到的覆盖白白丢掉。
+
+**三、感知哈希：`imagehash` 是故意不在 requirements 里的**
+
+`requirements.txt:25` 写着用 numpy 自实现替代 imagehash。所以"本机没装 imagehash"
+是**正常状态**。原来 `test_phash.main()` 直接 `return 1`，在汇总里与真回归长得一模一样，
+只能靠人去看那一行文字。改为 `[SKIP]` + 77，并给出 `pip install imagehash==4.3.2`。
+
+**四、顺带：`_pick_python` 的静默降级现在会说出来**
+
+GATES 里 32 项声明用内置运行时、其余用 `.venv`。但内置运行时不存在时
+`_pick_python` **静默**换成 `sys.executable` —— 在交付包工作副本里（没有 `python/`），
+全部闸门其实都由当前解释器跑，而汇总一个字不提。这与本轮主题（缺环境要说缺环境）
+是同一件事，所以开跑前打一行：
+
+```
+⚠ 内置运行时不存在：…\python\python.exe
+   声明用它跑的那几项会改由当前解释器执行：…\.venv\Scripts\python.exe
+   —— 分档在这台机器上不成立；不是失败，但读数时要知道
+```
+
+**验证**：全量 **14 红 → 0 红**（211 项判完 / 10 项跳过 / 0 红）。
+逐门读数：投影层 16/0、ASR 事件流全过、桌面视频 e2e 7 OK（原 7 errors）、
+抓屏性能闸 **27/0**（原 26/1）、视频观看 **21/21**、视频进度 **7/7**、感知哈希 77。
+
 #### PR #18（续五）· 「问不到」被当成「答否」：三道闸门在非 git 工作树里恒红
+
 
 上一轮记录了一个没修的发现：在交付包工作副本里跑全量，14 项红里有 12 项与产品无关。
 这一轮先修其中最硬的一族 —— **`git ls-files` 问不到**。

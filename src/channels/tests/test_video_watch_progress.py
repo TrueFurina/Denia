@@ -80,7 +80,19 @@ class _DialogueHarness:
             Event(EventType.USER_TEXT, {"text": text, "source": source}, "test")))
 
 
-CFG_PATH = os.path.join(ROOT, "config.yaml")
+# 【2026-11-09 加·「缺环境」不是「判据失败」】`config.yaml` 在 `.gitignore` 里
+# （实配，含 api_key），任何新克隆的树上都没有。本文件 3 个用例要 `_load_cfg()`，
+# 于是它们在新机器上全是 FileNotFoundError —— 而这几条验的是「进度事件有没有
+# 发到总线上」，与 api_key 无关。退到出厂模板 `config.release.yaml` 即可。
+def _pick_cfg() -> str:
+    for _name in ("config.yaml", "config.release.yaml"):
+        _p = os.path.join(ROOT, _name)
+        if os.path.isfile(_p):
+            return _p
+    return ""
+
+
+CFG_PATH = _pick_cfg()
 
 
 def _load_cfg():
@@ -107,8 +119,16 @@ class TestWatchVideoProgress(unittest.TestCase):
             return [b"frame1", b"frame2"]
 
         llm = _LLM()
+        # 【2026-11-09 修·测试依赖宿主有没有 ffmpeg】`watch_video` 里抽帧那道闸是
+        # `if video_files and ffmpeg_exe:`，而 `ffmpeg_exe = _resolve_ffmpeg()` 是
+        # **前置能力探测**。原来只 mock 了下游的 download_media / sample_frames，
+        # 探测没 mock —— 本机没装 ffmpeg 时 frame 阶段根本不触发，于是
+        # 「缺少阶段 frame」判红，而 sample_frames 那个 mock 一次都没被调用。
+        # 结论取决于跑它的机器，不是代码。前置探测一起 mock 掉。
         with patch.object(video_watch, "download_media", fake_dl), \
-             patch.object(video_watch, "sample_frames", fake_frames):
+             patch.object(video_watch, "sample_frames", fake_frames), \
+             patch.object(video_watch, "_resolve_ffmpeg",
+                          return_value="/fake/ffmpeg"):
             async def run():
                 return await video_watch.watch_video(
                     llm, "https://b23.tv/abc123",
@@ -203,7 +223,9 @@ class TestVideoWatchDiagnostics(unittest.TestCase):
             return [b"f1", b"f2"]
 
         with patch.object(video_watch, "download_media", fake_dl), \
-             patch.object(video_watch, "sample_frames", fake_frames):
+             patch.object(video_watch, "sample_frames", fake_frames), \
+             patch.object(video_watch, "_resolve_ffmpeg",
+                          return_value="/fake/ffmpeg"):
             asyncio.run(video_watch.watch_video(
                 _LLM(), "https://b23.tv/diag1"))
 

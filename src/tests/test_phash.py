@@ -72,8 +72,17 @@ def main() -> int:
     try:
         import imagehash
     except Exception as e:  # noqa: BLE001
+        # 【2026-11-09 修·「缺环境」不是「判据失败」】imagehash 是**故意**不进
+        # requirements 的（它正是被自实现取代的那个包，见 requirements.txt 第 25 行
+        # 的说明）。所以「本机没装 imagehash」是**正常状态**，不是产品坏了 ——
+        # 原来返回 1，在 check_all 里与真回归长得一模一样，只能靠人去看那一行文字。
+        # 按仓库约定改报 77（未验证）：既不算绿（docstring 原本的要求），
+        # 也不会混进真红点里。
         print(f"✗ dev 环境没有 imagehash，无法对照：{e}")
-        return 1
+        print("[SKIP] 本机没有 imagehash（它不在 requirements 里，是构建机专用对照源）"
+              "—— bit 级对照未验证（不是通过）。要验："
+              "pip install imagehash==4.3.2")
+        return 77
 
     print("== 1. hash bit 级对照（200+ 张图）==")
     # 注意 str(imagehash) 是 16 位 hex、str(own) 是 64 位 0/1，不能比 str——

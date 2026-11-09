@@ -694,6 +694,15 @@ def main(argv: list[str]) -> int:
     fast = "--fast" in argv
     todo = [g for g in GATES if not (fast and g[3])]
     print(f"共 {len(todo)} 项闸门{'（--fast：已跳过慢项）' if fast else ''}\n")
+    # 【2026-11-09 加·不许静默降级】GATES 里 32 项声明用内置运行时、其余用 .venv。
+    # `_pick_python` 在内置运行时不存在时会**静默**换成 sys.executable ——
+    # 于是"用哪个解释器跑"这件事在读数里看不出来。在交付包工作副本里（没有
+    # `python/` 目录）全部 211 项其实都由当前解释器跑，而汇总一个字都不提。
+    # 这与本轮的主题（缺环境要说缺环境，别装成正常）是同一件事，所以打出来。
+    if not os.path.exists(PY_RUNTIME):
+        print("⚠ 内置运行时不存在：%s" % PY_RUNTIME)
+        print("   声明用它跑的那几项会改由当前解释器执行：%s" % sys.executable)
+        print("   —— 分档在这台机器上不成立；不是失败，但读数时要知道\n")
 
     results: list[tuple[str, bool, float, str]] = []
     skips: list[tuple[str, str]] = []

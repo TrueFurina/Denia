@@ -173,7 +173,27 @@ from src.event_bus import EventType  # noqa: E402
 # 用假 AudioIO 替身，避免开声卡；其余走真实 asr._run 逻辑
 asr_mod.AudioIO = FakeAudioIO
 
-cfg = load_config("config.yaml")
+# 【2026-11-09 加·「缺环境」不是「判据失败」】`config.yaml` 在 `.gitignore` 里
+# （实配，含 api_key），任何新克隆的树上都没有 —— 这一行原来直接
+# `load_config("config.yaml")`，于是整条事件流测试在新机器上第一行就
+# FileNotFoundError，**一条判据都没跑到**。本测试验的是「唤醒→切指令→USER_TEXT」
+# 的链路，与 api_key 无关，出厂模板 `config.release.yaml` 是合法夹具。
+# 两份都没有才报 77（未验证）。
+def _pick_config() -> str:
+    for _name in ("config.yaml", "config.release.yaml"):
+        if os.path.isfile(_name):
+            return _name
+    return ""
+
+
+_CFG_NAME = _pick_config()
+if not _CFG_NAME:
+    print("[SKIP] 既没有 config.yaml 也没有 config.release.yaml —— "
+          "ASR 事件流没有夹具可跑（不是通过）")
+    sys.exit(77)
+if _CFG_NAME != "config.yaml":
+    print("（本机没有实配 config.yaml，用出厂模板 %s 当夹具）" % _CFG_NAME)
+cfg = load_config(_CFG_NAME)
 
 FRAME_SCRIPT = [b"WAKE_SPEECH", None, b"CMD_SPEECH", None] + [None] * 200
 

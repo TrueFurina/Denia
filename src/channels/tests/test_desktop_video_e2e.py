@@ -32,7 +32,22 @@ from src.channels import media_ingest  # noqa: E402
 from src.event_bus import Event, EventType  # noqa: E402
 
 
-CFG_PATH = os.path.join(ROOT, "config.yaml")
+# 【2026-11-09 加·「缺环境」不是「判据失败」】`config.yaml` 在 `.gitignore` 里
+# （实配，含 api_key），任何新克隆的树上都没有 —— 本文件原来把路径写死成
+# `ROOT/config.yaml`，于是 7 个用例在新机器上**全部** `FileNotFoundError`，
+# 一条断言都没跑到。本文件验的是「桌面视频开关 + 媒体落盘 + 富化回复」，
+# 与 api_key 无关；出厂模板 `config.release.yaml` 恰恰是「用户拿到的默认值」，
+# 拿它验 `desktop.media.watch_videos: true` 比拿实配验更有意义。
+# 两份都没有才报 77（未验证）。
+def _pick_cfg() -> str:
+    for _name in ("config.yaml", "config.release.yaml"):
+        _p = os.path.join(ROOT, _name)
+        if os.path.isfile(_p):
+            return _p
+    return ""
+
+
+CFG_PATH = _pick_cfg()
 
 
 class _Bus:
@@ -205,4 +220,13 @@ class TestDesktopVideoE2E(unittest.TestCase):
 
 
 if __name__ == "__main__":
+    if not CFG_PATH:
+        # 报 77 而不是让 7 个用例各抛一次 FileNotFoundError：
+        # 那是"没有夹具"，不是"桌面视频坏了"。
+        print("[SKIP] 既没有 config.yaml 也没有 config.release.yaml —— "
+              "桌面视频 e2e 的 7 个用例一条都没跑（不是通过）")
+        sys.exit(77)
+    if os.path.basename(CFG_PATH) != "config.yaml":
+        print("（本机没有实配 config.yaml，用出厂模板 %s 当夹具）"
+              % os.path.basename(CFG_PATH))
     unittest.main()

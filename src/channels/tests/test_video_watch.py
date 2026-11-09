@@ -194,9 +194,18 @@ class TestWatchVideo(unittest.TestCase):
         llm = FakeLLM(["第一帧：厨房", "第二帧：出锅"])
         meta = {"title": "做菜", "duration": 60}
         # watch_video 现统一走 download_media（返回 [(path,kind), meta]）
+        # 【2026-11-09 修·测试依赖宿主有没有 ffmpeg】原来只 mock 了 download_media
+        # 和 sample_frames，但 watch_video 里那道闸是
+        #     if video_files and ffmpeg_exe:  → 抽帧
+        # `ffmpeg_exe = _resolve_ffmpeg()` 是**前置能力探测**，没被 mock：
+        # 本机装了 ffmpeg 就绿、没装就红（日志里那句「无 ffmpeg，跳过抽帧」），
+        # 而 sample_frames 这个 mock 从头到尾没被调用过 —— 也就是说这条用例的
+        # 结论取决于跑它的机器，而不是代码。前置探测一起 mock 掉，才真的在验
+        # 「有帧时会用帧」。
         with patch.object(vw, "download_media", new=AsyncMock(
                 return_value=([("/tmp/x.mp4", "video")], meta))), \
-             patch.object(vw, "sample_frames", new=AsyncMock(return_value=[b"jpg1", b"jpg2"])):
+             patch.object(vw, "sample_frames", new=AsyncMock(return_value=[b"jpg1", b"jpg2"])), \
+             patch.object(vw, "_resolve_ffmpeg", return_value="/fake/ffmpeg"):
             out = asyncio.run(vw.watch_video(llm, "https://www.bilibili.com/video/BV1", frames=2))
         self.assertIsNotNone(out)
         self.assertIn("做菜", out)
