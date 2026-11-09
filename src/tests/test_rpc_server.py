@@ -4,6 +4,15 @@
   同一个 CharacterAPI 实例，两条通道调用同一批方法必须返回**完全相同**的结果。
   此外三条安全边界必须成立：只绑回环、缺令牌拒绝、内部方法不可调用。
 
+【2026-11-10 加·子对象/点号路径整条链路此前零判据】`_resolve` 的注释写着
+「与 pywebview 的 get_nested_attribute 一致，支持子对象」，但本文件 19 条等价性
+用例**全是单段名字**，没有一个带点。实测两处空转：
+  · 把 `all(_is_exposed(p) for p in method.split("."))` 改成 `_is_exposed(method)`
+    —— 整串检查 —— 本文件**照样全绿 exit 0**，而那个退化正是点号绕过：
+    `sub._secret` 整串不以 `_` 开头，于是校验通过、私有方法被调走。
+  · 把 `_resolve` 换成 `getattr(api, dotted, None)`（不再支持点号）同样全绿。
+两处都在同一条链路上：**名字检查只被单段名字验过。**
+
 运行：.venv/Scripts/python.exe src/tests/test_rpc_server.py
 """
 from __future__ import annotations
@@ -31,11 +40,26 @@ def check(cond: bool, msg: str) -> None:
         _fails.append(msg)
 
 
+class _Sub:
+    """子对象：验证点号路径（`sub.ping`）与「每一段都要过名字检查」。"""
+
+    def ping(self) -> str:
+        return "sub-pong"
+
+    def _secret(self) -> str:
+        return "子对象私有，不该被远程看到"
+
+    def a__b(self) -> str:
+        # 不以 _ 开头，但名字中间带 dunder —— `_is_exposed` 的第二道条件挡它
+        return "中间双下划线"
+
+
 class FakeAPI:
     """故意覆盖各种返回类型：字符串、数字、布尔、None、嵌套、中文、长 base64。"""
 
     def __init__(self) -> None:
         self._secret = "不应被外部调用"
+        self.sub = _Sub()
 
     # --- 20 个公开方法（模拟真实 CharacterAPI 的形态） ---
     def ping(self) -> str:
@@ -128,6 +152,18 @@ def get(info: dict, path: str):
         return e.code, {}
 
 
+def _direct_call(api, method: str, args, kwargs):
+    """参照实现：**不调用被测的 `_resolve`**，自己按点号走一遍。
+
+    这是故意重复的一份逻辑。用 `rpc_server._resolve()` 当参照等于拿被测实现
+    给自己打分 —— 它坏了，两边一起坏，等价性永远成立。参照必须是独立的。
+    """
+    obj = api
+    for part in method.split("."):
+        obj = getattr(obj, part)
+    return obj(*args, **kwargs)
+
+
 def test_parity(api: FakeAPI, info: dict) -> None:
     print("[1] 通道等价性（RPC 结果 == 直接调用结果）")
     cases = [
@@ -150,11 +186,14 @@ def test_parity(api: FakeAPI, info: dict) -> None:
         ("bool_arg", [True], {}),
         ("kwargs_only", [], {"x": 1, "y": "二"}),
         ("many_args", [1, 2, 3, 4, 5], {}),
+        # 【2026-11-10 加】点号路径：19 条用例里唯一带点的一条。
+        # `_resolve` 的注释承诺「支持子对象」，此前没有任何用例走过这段循环。
+        ("sub.ping", [], {}),
     ]
     bad = 0
     for method, args, kwargs in cases:
         try:
-            direct = getattr(api, method)(*args, **kwargs)
+            direct = _direct_call(api, method, args, kwargs)
         except Exception as e:  # noqa: BLE001
             direct = {"__exception__": type(e).__name__}
         status, payload = call(info, method, args, kwargs)
@@ -177,6 +216,23 @@ def test_security(info: dict) -> None:
     check(status in (403, 404), f"dunder 不可调用（{status}）")
     status, _ = call(info, "no_such_method")
     check(status == 404, f"不存在的方法返回 404（{status}）")
+
+    # 【2026-11-10 加】点号路径上的三段检查。此前一条都没有 —— 名字检查
+    # 只被单段名字验过，而 `all(_is_exposed(p) for p in method.split("."))`
+    # 与 `_is_exposed(method)` 在单段名字上完全等价，所以那个退化测不出来。
+    status, payload = call(info, "sub._secret")
+    body = json.dumps(payload, ensure_ascii=False)
+    check(status == 403, f"点号路径里的私有段被拒（{status}）")
+    check("子对象私有" not in body, "私有方法的返回值没有泄漏到响应体里")
+
+    status, _ = call(info, "sub.no_such")
+    check(status == 404, f"点号路径指向不存在的方法返回 404（{status}）")
+
+    status, _ = call(info, "sub..ping")
+    check(status == 403, f"空段被拒（{status}）")
+
+    status, _ = call(info, "sub.a__b")
+    check(status == 403, f"中间带 dunder 的名字被拒（{status}）")
 
     host = info["host"]
     check(host in ("127.0.0.1", "localhost"), f"只绑回环地址（{host}）")

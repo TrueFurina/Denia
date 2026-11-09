@@ -183,6 +183,10 @@ PAIRS = [
     # 本轮读判据时读到两处空转（删重试日志、serve 提出循环），补完判据才有这八刀。
     ("_qc_ws_port_bind_mutation.py", "src/tests/test_ws_port_bind.py", "dev",
      "WS 端口绑定：八刀，G 刀「只 bind 一次+空睡 5 次」在补判据之前是全绿的"),
+    # 【2026-11-10 加】RPC 通道：十刀。同族的第三个洞 —— 这道门守的通道
+    # 「坏了照样返回 200，只是返回的东西不对」，而 19 条等价性用例全是单段名字。
+    ("_qc_rpc_mutation.py", "src/tests/test_rpc_server.py", "dev",
+     "RPC 通道：十刀，B 刀「逐段检查→整串检查」在补判据之前是全绿的（点号绕过）"),
     # ---- dev（第二十六轮补：两条从 EXCUSED 挪进来的）----
     ("_qc_presence_mutation.py", "test_presence_controls.py", "dev",
      "在场感增强：缺 pynput 时兜底校验放行拼错的键名 —— 修好后起点第一次是绿的"),
