@@ -652,6 +652,10 @@ GATES: list[tuple[str, str, list[str], bool]] = [
     # 判据用真实子进程哨兵 + 真实线程验可观测后果，非查标志位。
     ("试听播放生命周期回归", PY_VENV, ["src/tests/test_voice_playback_lifecycle.py"], False),
     ("试听播放生命周期变异", PY_VENV, ["tools/_qc_voice_playback_mutation.py"], True),
+    # 【2026-11-10】D8 原来直接读 config.yaml —— 那份文件在 .gitignore 里，
+    # 刚克隆的树上不存在，于是这道门在任何新克隆上都是红的（本机实测 1 FAIL）。
+    # 已回落到 config.release.yaml，并用两把刀钉住判定本身。
+    ("看屏性能护栏变异", PY_VENV, ["tools/_qc_screen_perf_guard_mutation.py"], True),
 ]
 
 
