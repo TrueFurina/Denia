@@ -652,6 +652,25 @@ GATES: list[tuple[str, str, list[str], bool]] = [
     # 判据用真实子进程哨兵 + 真实线程验可观测后果，非查标志位。
     ("试听播放生命周期回归", PY_VENV, ["src/tests/test_voice_playback_lifecycle.py"], False),
     ("试听播放生命周期变异", PY_VENV, ["tools/_qc_voice_playback_mutation.py"], True),
+    # 【2026-11-10】关系集成有三处「只有一侧」的断言，探针实测全部空转：
+    #   ① test_04 去重只写 `turns <= 1`，而场景只投 1 句用户话 —— 去重整段删掉照样绿
+    #      （队列为空正好替去重打掩护）；
+    #   ② test_20「publish 不阻塞」**没启动 EventBus.run()**，而 `publish` 只是 `queue.put`，
+    #      量的是入队耗时，两个事件从头到尾没被处理过；
+    #   ③ test_03 全是负向断言（proactive 不判定、不动队列），判定链路整个不启动也绿。
+    # 已给三条补正控 / 下界 / 真跑总线，并用三把刀钉住（A 判定不启动 / B 删去重 / C 张冠李戴）。
+    ("关系集成变异", PY_VENV, ["tools/_qc_relationship_integration_mutation.py"], True),
+    # 【2026-11-10】TTS 多供应商 §3 的 `except Exception: print("! 跳过 …")` 不计 FAIL ——
+    # 实测让 synthesize 抛一个非 RuntimeError，整段（落盘/异常类型/工厂）会整段消失
+    # （31 → 27 条判据），闸门仍 exit 0。「跳过」被当成了「通过」，与第 20 轮
+    # 「退出码吞掉 [FAIL]」同族。已改为硬 FAIL + 判据总数下限护栏，四把刀钉住。
+    ("TTS 多供应商变异", PY_VENV, ["tools/_qc_tts_multi_provider_mutation.py"], True),
+    # 【2026-11-10】看屏热生效里两条纯负向断言：
+    #   ① C1 只写 `va.calls == 0` —— capture_now 整个坏成 `return` 也绿；
+    #   ② B2 的观察窗口 0.6s < 轮询间隔 3.0s，关闸后本来就在 sleep，
+    #      「不再抓屏」在**任何实现**下都成立（变异实测：改成 `if False:` 仍绿）。
+    # 已补 C2（开闸真进抓屏流程）/ D5（开闸 + 可用 LLM 必须拿到结果），并把轮询间隔压到 0.05s。
+    ("看屏热生效变异", PY_VENV, ["tools/_qc_desktop_watch_hotapply_mutation.py"], True),
 ]
 
 
