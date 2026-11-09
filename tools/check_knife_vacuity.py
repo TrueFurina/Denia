@@ -172,6 +172,12 @@ PAIRS = [
      "语音后端自检"),
     ("_qc_workspace_mutation.py", "tools/test_workspace_guard.py", "dev",
      "工作区守卫"),
+    # 【2026-11-09 加】壳层两道静态门。判定文件就是它们的自测；这两把刀本轮
+    # 才第一次存在（此前自测只测 scan()，退出码零判据，A 刀写不出来）。
+    ("_qc_await_sync_mutation.py", "src/tests/test_check_await_sync.py", "dev",
+     "协程调度：五刀，A 刀砍退出码（自测本轮才补上这条判据）"),
+    ("_qc_async_blocking_mutation.py", "src/tests/test_check_async_blocking.py", "dev",
+     "异步阻塞：五刀，B 刀砍 to_thread 实参豁免（本轮删掉的那个真缺陷）"),
     # ---- dev（第二十六轮补：两条从 EXCUSED 挪进来的）----
     ("_qc_presence_mutation.py", "test_presence_controls.py", "dev",
      "在场感增强：缺 pynput 时兜底校验放行拼错的键名 —— 修好后起点第一次是绿的"),
