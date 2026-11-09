@@ -652,6 +652,9 @@ GATES: list[tuple[str, str, list[str], bool]] = [
     # 判据用真实子进程哨兵 + 真实线程验可观测后果，非查标志位。
     ("试听播放生命周期回归", PY_VENV, ["src/tests/test_voice_playback_lifecycle.py"], False),
     ("试听播放生命周期变异", PY_VENV, ["tools/_qc_voice_playback_mutation.py"], True),
+    # 【2026-11-10】B2 的观察窗口 0.6s < 轮询间隔 3.0s（恒真）、C1/D2 是纯负向断言。
+    # 已压间隔到 0.05s 并补 C2/D5 正控。
+    ("看屏热生效变异", PY_VENV, ["tools/_qc_desktop_watch_hotapply_mutation.py"], True),
 ]
 
 
