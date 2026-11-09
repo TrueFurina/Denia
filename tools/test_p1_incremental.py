@@ -250,6 +250,11 @@ api = make_api(raw)
 r = api.set_mixed_mode({"enabled": True})
 ck("⑦ 老调用（无 atomic）仍走原路径", r.get("success") is True and r.get("atomic") is not True, r)
 ck("⑦ 老调用不碰双工/不写盘", api._duplex_calls == [] and _Cfg.writes == 0, (api._duplex_calls, _Cfg.writes))
+# 【2026-11-10 加】上面两条只验「返回 success + 没副作用」，一个「直接 return success、
+# 根本不调 pro.set_mixed_mode」的空实现也能全过 —— 「老路径行为不变」这半句没被验过。
+# 补上副作用正控：混合开关必须真的被切换。
+ck("⑦ 老调用仍真的切换混合开关（不是只回 success）",
+   ("set_mixed_mode", True) in api._proactive.calls, api._proactive.calls)
 
 print()
 print("=" * 66)
