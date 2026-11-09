@@ -174,11 +174,10 @@ jobs:
       # 代价：判据 16s、刀 18s（每对要复制一次仓副本、跑 3 次套件），是本 job 里最慢的两步。
       #
       # 【2026-11-08 PR #18】`--tier portable` 是**显式**写的，不靠默认值：
-      # 另有 18 对 `dev` 层的刀要 `.venv`（其中 9 对验 check_*.py、9 对验
-      # test_*.py），本 job 不装依赖、没有 venv，跑它们只会全 ERROR、
-      # 把整道门变成恒红。所以 CI 只覆盖 8 对，另外 18 对由本机
-      # `check_all.py`（`--tier all`）覆盖。
-      # **这句话必须留在这里**：CI 全绿只说明这 8 对不是空转，不说明全部 26 对。
+      # 另有 21 对 `dev` 层的刀要 `.venv`（验 check_*.py / test_*.py），本 job
+      # 不装依赖、没有 venv，跑它们只会全 ERROR、把整道门变成恒红。
+      # 所以 CI 只覆盖 8 对，另外 21 对由本机 `check_all.py`（`--tier all`）覆盖。
+      # **这句话必须留在这里**：CI 全绿只说明这 8 对不是空转，不说明全部 29 对。
       - name: knife vacuity judgement
         run: python tools/check_knife_vacuity.py --tier portable
       - name: knife vacuity mutation (thirteen knives)
@@ -192,3 +191,12 @@ jobs:
       #     python tools/check_knife_noop.py
       #     python tools/_qc_knife_noop_mutation.py
       # 这句话必须留着：CI 全绿不等于空变异体检跑过。
+      #
+      # 【2026-11-09 第二十七轮】同理，第三道 `check_knife_nowrite.py`（封住写入口）
+      # 与 `_qc_knife_nowrite_mutation.py` **也不在 CI 跑**：它要 import 并执行 62 把刀
+      # （含 `.venv` 三方包），且每把刀要复制一次仓副本跑两遍，本机实测 14 分钟。
+      # 放进 CI 只会得到"全 ERROR 的绿"或超时。它同样**只由本机 `check_all.py` 覆盖**：
+      #     python tools/check_knife_nowrite.py
+      #     python tools/_qc_knife_nowrite_mutation.py
+      # 于是三道的覆盖分布是：CI 8 对（换判定·portable）/ 本机 29 对（换判定·全部）
+      # + 33 把（空变异）+ 29 把（封写）。**CI 全绿 ≠ 三道都跑过。**
