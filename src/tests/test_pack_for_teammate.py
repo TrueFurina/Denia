@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import os
 import shutil
+import subprocess
 import sys
 import tempfile
 import zipfile
@@ -43,6 +44,26 @@ def _mk_zip(path: str, entries: dict[str, bytes]) -> str:
         for n, b in entries.items():
             zf.writestr(n, b)
     return path
+
+
+def _in_git_work_tree() -> bool:
+    """`pk.collect()` 走的是 `git ls-files`；没有 git 工作树时它**问不到**。
+
+    【2026-11-09 加·「问不到」不是「答否」】交付包的工作副本没有 `.git`
+    （安装包 / 解压目录 / 拷给队友的副本都没有）。原来 [3] 直接调 `pk.collect()`，
+    它在 `git ls-files` 失败时抛异常 → 整条测试判红，报的是
+    「取不到 git 文件清单（exit 128）」。**这不是打包规则有问题**，
+    是这台机器上根本问不出文件清单。
+    本仓约定：缺环境 → exit 77（未验证），不许报成 FAIL。
+    其余四节（红线 / 规则表 / verify_zip / 随包说明）不依赖 git，照常判。
+    """
+    try:
+        r = subprocess.run(["git", "rev-parse", "--is-inside-work-tree"],
+                           cwd=ROOT, capture_output=True, text=True,
+                           encoding="utf-8", errors="replace", timeout=20)
+    except Exception:  # noqa: BLE001  没有 git 可执行文件
+        return False
+    return r.returncode == 0 and (r.stdout or "").strip() == "true"
 
 
 def main() -> int:
@@ -124,38 +145,42 @@ def main() -> int:
         check(reason is None, f"保留 {rel}" + (f" ← 被误排：{reason}" if reason else ""))
 
     print("\n=== [3] collect() 与规则表一致 ===")
-    files, dropped = pk.collect()
-    check(len(files) > 0, f"收集到文件（{len(files)} 个）")
-    leaked = [f for f in files if pk._exclude_reason(f)]
-    check(not leaked, f"入包清单里没有违反规则的条目（违例 {leaked[:3]}）")
-    missing = [r for r in pk.REQUIRED if r not in files]
-    check(not missing, f"必需文件全部在清单里（缺 {missing}）")
-    check(all(os.path.isfile(os.path.join(ROOT, f)) for f in files),
-          "清单里每个路径在磁盘上真实存在")
-    check(all("\\" not in f for f in files), "清单路径统一用 /（避免 zip 内混用分隔符）")
-    dead_in = [f for f in files if f in pk.EXCLUDE_DEAD_WEB]
-    check(not dead_in, f"入包清单里没有开发期残留页面（违例 {dead_in[:3]}）")
-
-    print("\n=== [3b] 残留页面清单必须自己催：新出现的未登记 _ 页面要报错 ===")
-    # 光有 [1b] 不够——它只证明"清单里的都被排了"，证明不了"没进清单的进不了包"。
-    # 这条反向盯着：`redesign/` 下新出现一个 `_` 前缀文件而清单没登记 → 这里红。
-    # 与"白名单必须会自己催你删"是同一条判据：清单不催人，就会变成背景噪音。
-    scan_dir = os.path.join(ROOT, pk.DEAD_WEB_SCAN_DIR)
-    if os.path.isdir(scan_dir):
-        found = sorted(
-            f"{pk.DEAD_WEB_SCAN_DIR}{n}"
-            for n in os.listdir(scan_dir)
-            if n.startswith("_") and os.path.isfile(os.path.join(scan_dir, n))
-        )
-        unregistered = [f for f in found if f not in pk.EXCLUDE_DEAD_WEB]
-        check(not unregistered,
-              f"{pk.DEAD_WEB_SCAN_DIR} 下没有未登记的 _ 前缀文件"
-              + (f"（未登记：{unregistered}）" if unregistered else ""))
-        # 清单里已不存在的条目 = stale，同样要红（文件删了就该把登记也删掉）
-        stale = [f for f in pk.EXCLUDE_DEAD_WEB if not os.path.isfile(os.path.join(ROOT, f))]
-        check(not stale, f"登记表里没有已消失的条目（stale：{stale}）")
+    if not _in_git_work_tree():
+        print("  ↷ 跳过 [3]/[3b]：本机不是 git 工作树，pk.collect() 走 "
+              "git ls-files，问不到（不是通过）")
     else:
-        check(False, f"找不到扫描目录 {pk.DEAD_WEB_SCAN_DIR}（规则失效了）")
+        files, dropped = pk.collect()
+        check(len(files) > 0, f"收集到文件（{len(files)} 个）")
+        leaked = [f for f in files if pk._exclude_reason(f)]
+        check(not leaked, f"入包清单里没有违反规则的条目（违例 {leaked[:3]}）")
+        missing = [r for r in pk.REQUIRED if r not in files]
+        check(not missing, f"必需文件全部在清单里（缺 {missing}）")
+        check(all(os.path.isfile(os.path.join(ROOT, f)) for f in files),
+              "清单里每个路径在磁盘上真实存在")
+        check(all("\\" not in f for f in files), "清单路径统一用 /（避免 zip 内混用分隔符）")
+        dead_in = [f for f in files if f in pk.EXCLUDE_DEAD_WEB]
+        check(not dead_in, f"入包清单里没有开发期残留页面（违例 {dead_in[:3]}）")
+
+        print("\n=== [3b] 残留页面清单必须自己催：新出现的未登记 _ 页面要报错 ===")
+        # 光有 [1b] 不够——它只证明"清单里的都被排了"，证明不了"没进清单的进不了包"。
+        # 这条反向盯着：`redesign/` 下新出现一个 `_` 前缀文件而清单没登记 → 这里红。
+        # 与"白名单必须会自己催你删"是同一条判据：清单不催人，就会变成背景噪音。
+        scan_dir = os.path.join(ROOT, pk.DEAD_WEB_SCAN_DIR)
+        if os.path.isdir(scan_dir):
+            found = sorted(
+                f"{pk.DEAD_WEB_SCAN_DIR}{n}"
+                for n in os.listdir(scan_dir)
+                if n.startswith("_") and os.path.isfile(os.path.join(scan_dir, n))
+            )
+            unregistered = [f for f in found if f not in pk.EXCLUDE_DEAD_WEB]
+            check(not unregistered,
+                  f"{pk.DEAD_WEB_SCAN_DIR} 下没有未登记的 _ 前缀文件"
+                  + (f"（未登记：{unregistered}）" if unregistered else ""))
+            # 清单里已不存在的条目 = stale，同样要红（文件删了就该把登记也删掉）
+            stale = [f for f in pk.EXCLUDE_DEAD_WEB if not os.path.isfile(os.path.join(ROOT, f))]
+            check(not stale, f"登记表里没有已消失的条目（stale：{stale}）")
+        else:
+            check(False, f"找不到扫描目录 {pk.DEAD_WEB_SCAN_DIR}（规则失效了）")
 
     print("\n=== [4] verify_zip 能抓住「包不对」 ===")
     scratch = tempfile.mkdtemp(prefix="pk_test_")
@@ -208,6 +233,12 @@ def main() -> int:
         for m in _fails:
             print("   - " + m)
         return 1
+    if not _in_git_work_tree():
+        # [3]/[3b] 没跑：这一条判据「入包清单里没有违规条目」本轮未验证。
+        # 报 77 而不是 0 —— 绿会让下一轮的人以为它验过了。
+        print("[SKIP] 本机不是 git 工作树：[3]/[3b]（入包清单与规则表一致）未验证，"
+              "其余四节已判（不是通过）")
+        return 77
     print("✅ 打包脚本排除规则测试全部通过")
     return 0
 

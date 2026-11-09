@@ -89,17 +89,33 @@ ASSETS = [
 ]
 
 
-def _tracked(path: str) -> bool:
+def _tracked(path: str) -> str:
+    """「入库了吗」→ `"yes"` / `"no"` / `"unknown"`（问不到）。
+
+    【2026-11-09 修·「问不到」被当成「答否」】原来只判 `returncode == 0`，
+    于是**在非 git 工作树里**（交付包工作副本、解压出来的目录、拷给别人看的副本）
+    每一件资产都被判「在磁盘上但没进 git —— 包里会缺」。这句话是**它没验证过**的
+    断言：`git ls-files` 在非仓目录里返回 128 + "fatal: not a git repository"，
+    和「这个文件确实没入库」（返回 1）根本不是一回事。
+    本仓纪律：「缺环境 ≠ 判据失败」，问不到就得说问不到，并 exit 77（未验证），
+    绝不能报成 FAIL —— 否则真缺陷会被这一片假红淹掉（2026-11-09 全量实测：
+    交付包工作副本里 14 项红，其中 5 项全是这一类）。
+    """
     try:
         r = subprocess.run(["git", "ls-files", "--error-unmatch", path],
                            capture_output=True, text=True, timeout=20)
-        return r.returncode == 0
-    except Exception:  # noqa: BLE001  没有 git 时不阻塞（判据降级）
-        return True
+    except Exception:  # noqa: BLE001  没有 git 可执行文件
+        return "unknown"
+    if r.returncode == 0:
+        return "yes"
+    if "not a git repository" in (r.stderr or "").lower():
+        return "unknown"
+    return "no"
 
 
 def main() -> int:
     print("1) 必需资产存在 / 非空壳 / 真格式 / 已入库")
+    unverified = 0
     for path, min_size, magic in ASSETS:
         if not os.path.isfile(path):
             chk(path, False, "文件不存在")
@@ -113,16 +129,31 @@ def main() -> int:
             if not magic(head):
                 chk(path, False, "魔数不对（%r）——扩展名改了但内容不是该格式" % head[:8])
                 continue
-        if not _tracked(path):
+        state = _tracked(path)
+        if state == "unknown":
+            # 问不到 ≠ 答否：只报「未验证」，不进 FAIL，也不冒充 PASS
+            unverified += 1
+            print("  ~ %s —— 存在/非空壳/真格式 已验，但「是否入库」未验证" % path)
+            continue
+        if state == "no":
             chk(path, False, "在磁盘上但没进 git —— 打包只取 git ls-files，包里会缺")
             continue
         chk(path, True, "%d 字节" % size)
 
-    print("\n结果: %d PASS / %d FAIL" % (OK, FAIL))
+    print("\n结果: %d PASS / %d FAIL / %d 未验证" % (OK, FAIL, unverified))
+    if unverified:
+        print("\n⚠️ %d 件资产的「是否入库」未验证：本机没有 git 工作树，"
+              "问不到不等于没入库。" % unverified)
     if FAIL:
         print("\n⚠️ 这些是产品素材，不是垃圾。删之前先确认有没有被配置/代码引用；")
         print("   误删可从 git 恢复：git checkout HEAD -- <路径>")
-    return 0 if FAIL == 0 else 1
+        return 1
+    if unverified:
+        print("[SKIP] 本机不是 git 工作树：%d 件资产的「是否入库」未验证"
+              "（存在/非空壳/真格式已逐件验过，但这一项问不到 —— 不是通过）"
+              % unverified)
+        return 77
+    return 0
 
 
 if __name__ == "__main__":

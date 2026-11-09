@@ -13,6 +13,7 @@
 
 | commit | 时间 | 类型 | 一句话 | 验证 |
 |---|---|---|---|---|
+| `PR#18f` | 17:3x | fix | **「问不到」被当成「答否」：三道闸门在非 git 工作树里恒红**：交付包工作副本没有 `.git`，`git ls-files` 返回 128 + `fatal: not a git repository`。三道闸门把它当成「文件没入库」：`test_bundled_assets` 于是对 **10 件产品素材**逐个报「在磁盘上但没进 git —— 包里会缺」（**这是它没验证过的断言**）；`verify_first_run` 在第一步「造干净副本」就 `RuntimeError` 判红，**后面 7 步一条没跑**；`test_pack_for_teammate` 的 `[3]` 直接抛「取不到 git 文件清单」。三把变异刀跟着连环自爆（「起点不绿」「基线就不绿」）。修法分两种，都不许报绿：① `test_bundled_assets` 把「入库」拆成 `yes/no/unknown` 三态 —— 存在/非空壳/真格式照常逐件判，只有「入库」这一项报未验证，`exit 77`；② `verify_first_run` 加 `NoGitWorkTree` 异常 → `[SKIP]` + 77（整条链一步没跑，不能说验过）；③ `test_pack_for_teammate` 只把依赖 git 的 `[3]/[3b]` 跳过，其余四节照常判，末尾 77。刀的处理也分两种：`_qc_bundled_assets_mutation` 的三刀（删/截断/假格式）**不需要 git**，让基线认 (0,77) 后照常跑，仍三刀全红；`_qc_pack_exclude_mutation` 的变异目标就在 `[3]` 里，前提没了就整把报 77，不硬凑。 | 必需资产 0 PASS/**10 FAIL** → `0 PASS / 0 FAIL / 10 未验证` exit 77；首启链 RuntimeError → `[SKIP]` exit 77；打包排除 `取不到清单` → 四节照判 + `[SKIP]` exit 77；三把刀 `起点不绿/traceback` → 77 与三刀全红；静态闸门（编码/全局名/同名/不可达/常量条件/静默异常/导入路径）全绿 |
 | `PR#18e` | 17:0x | fix | **闸门在推荐解释器下起不来：全量跑一行没执行就退出**：`check_all.py` 尾巴的 `from _gate_lock import` 在 `.venv/Scripts/python.exe` 下必崩（`ModuleNotFoundError`），在普通 `python` 下正常 —— 交付包自带的是**可嵌入运行时**，`python312._pth` 只把 `python/` 下几个目录加一个 `..`（仓根）塞进 sys.path，**不含 `tools/`**；普通 CPython 会补「脚本目录」，可嵌入版不补。而 `.venv` 才是要三方依赖时的推荐解释器 → **这道门在官方姿势下从未跑起来过**。同一族 PR #17 已修过一次（`check_web_js_syntax`），所以这次不只修还补判据：新增 `check_tool_sys_path.py`（纯 stdlib 静态判定，181 脚本 0.2s）——兄弟 import 前必须有由 `__file__` 推导的 sys.path 改写（模块层或更早行号），写死盘符路径判红，接 `ImportError` 的降级导入与免登脚本不计分但必须打印。**它第一次跑就抓到 `_qc_api_wiring_mutation`**（函数里 `from check_api_wiring import`），补完后全量跑里那条 `反向接线变异` 整条挂掉的记录随之消失。顺带把上一轮写死的 600s 闸门超时按档改成 1800/600 并把超时记成有名字的失败。**并记录未修的发现**：交付包工作副本（无 `.git`／无 `config.yaml`）里全量 14/215 红，其中 12 项是「问不到被当成答否」，按约定该报 77 却报了 1。 | `check_all.py` 在 `.venv` 下能拿到锁并跑完（215 项判完 / 4 跳过 / 14 红，红的构成已分类）；`变异刀空写体检` 428.9s < 1800s 预算，不再被 kill；新闸门 **33 PASS / 0 FAIL**；新刀 **11 项全过**；`_qc_api_wiring_mutation` 4 刀恢复全红 + 起点绿；登记对账 ✓（220）；站点 7 PASS/0 FAIL（GATES 219→**221**） |
 | `PR#18d` | 17:4x | test | **第三种空转体检：封住写入口** —— 「SKIP 50 不算通过」这句话压了三轮，这一轮把它拆开：那 50 里 18 个是**一次性探针**（压根不是刀）、28 把是「没有模块级 MUTS 也没有独立判定文件」的真刀、4 把有 MUTS 但形状退化不了。新工具 `check_knife_nowrite.py` 不碰变异，把 `builtins.open`/`io.open` 的**写模式**重定向到临时文件，让「变异根本没发生」：此时刀还 exit 0 就是空转。这个方向与变异长什么样无关 —— 改源码的、往 `src/` 扔坏文件的、复制配置的、删目录的，一视同仁。**三方向闭环**：换判定（判定坏了刀会不会红）/ 空变异（源码没变时会不会假绿）/ 封写（**什么都没变**时会不会假绿）。顺带：`check_knife_vacuity.py` 的仓副本改成「重新 init 一个 git 仓」（`tools/_qc_repo_copy.py`），最后一条 `EXCUSED` 解开、表清空；`check_knife_noop.py` 的刀口径改成 `_qc_*_mutation.py`；**`check_delivery.py:check_template` 还在断言 `force_first_run is True`，而 10-20 的修复故意改成 false —— 它对任何正确打的包都判 FAIL，`_qc_delivery_mutation` 466 行 14 个用例因此永久红、等于从来没在跑**。 | 空写体检 **CERTIFIED 21 / COVERED_ELSEWHERE 33 / META 3 / SKIP 1 / ERROR 4（62 把），VACUOUS 0**，exit 0（14m）；空转变检 **CERTIFIED 33 / SKIP 29 / SHAPE 0**（口径修正后 62 把，原「29 / 50」是 79 个文件混算）；空转体检 **28 CERTIFIED / 1 SKIP**（29 对，上轮 27/1）；**三合一覆盖 54/62（装上 jsdom 后 55/62）**；三道体检的变异刀 16 项 / 13 刀 / 9 刀全过；出厂模板判据修正后 `check_delivery` 该行 PASS；GATES 217→219，站点 7 PASS/0 FAIL |
 | `PR#18c` | 17:1x | fix | **「缺环境」被报成「判据失败」：四个红点，四个都不是产品坏了**：① `A5环境探针` 扫 `logs/launch_run*.log`，而 `logs/` 在 `.gitignore` 里 → **新克隆的树上恒红**；改为三态（有样本逐条判 / 有日志扫出 0 份=FAIL / 没日志=WARN+exit 77），并加 `--root` 让判据能被夹具驱动。② `_qc_a5_probe_mutation` 起点恒红 → 六把刀"全红"白送；改用 tempfile 合成日志当夹具 + `_judged()` + 三把限位（77 / FAIL / 0）。③ `_qc_tray_switch_mutation` 要 `config.yaml`（也在 gitignore 里）→ 缺文件时回落到出厂模板 `config.release.yaml`。④ `hotkeys._validate` 在**没装 pynput** 时只做形状校验，`<ctrl>+<alt>+<nosuchkey>` 静默进映射表（**用户以为绑上了，按下去什么都不发生**）；新增 `_fallback_ok` + 键名白名单。**并更正上一轮的错误归因**（原写成"无桌面会话返回空表"，与桌面会话无关）。⑤ 17 把刀的 `_baseline_green()` 比判定还严（禁 `Traceback`），把"判定故意打的异常日志"判成起点红 → 改为"退出码 0 且无 FAIL 行"。⑥ `KNOWN_VACUOUS` 清空 + 额度对账（N8 指向空气 / N9 表在说谎 / N10 限位）。 | 空转变检 **CERTIFIED 29 / SKIP 50，VACUOUS 0 / ERROR 0**（上轮 26 / 1 / 50 / 2）；空转体检 27 / SKIP 1（上轮 25 / 1）；A5 探针 7/0/2 未验证 exit 77、夹具下 9/0 exit 0；A5 刀 6 刀 + 3 限位全过；在场感 33/1 → **41/0**；托盘 29/0；四腿 CI 全绿 |
@@ -557,7 +558,59 @@ find_spec 返回 None → 误报「唤醒词退化」；
 **验证**：变异 4 刀全红 + 还原后回归 12/12 全绿；`tools/check_all.py` 登记对账 ✓；
 CI 全绿（pytest / self-check scripts / syntax gate 三腿 success）。
 
+#### PR #18（续五）· 「问不到」被当成「答否」：三道闸门在非 git 工作树里恒红
+
+上一轮记录了一个没修的发现：在交付包工作副本里跑全量，14 项红里有 12 项与产品无关。
+这一轮先修其中最硬的一族 —— **`git ls-files` 问不到**。
+
+**现象**（同一台机器，只是目录没有 `.git`）：
+
+```
+【必需资产清单】FAIL app.ico :: 在磁盘上但没进 git —— 打包只取 git ls-files，包里会缺
+               结果: 0 PASS / 10 FAIL          ← 10 件产品素材全被判"没入库"
+【陌生人首启判据链】FAIL 副本建立成功  <- RuntimeError('git ls-files 失败：fatal: not a git repository')
+【源码包排除规则】✗ 取不到 git 文件清单（exit 128）。本脚本要求仓库是 git 工作树。
+```
+
+**根因不是 git 坏了，是判据把「问不到」当成了「答否」**：`git ls-files` 在非仓目录里
+返回 128 + `fatal: not a git repository`，而「这个文件确实没入库」返回 1。原来的代码
+只判 `returncode != 0`，两种完全不同的情况走进同一个分支，于是输出了一句
+**它没有验证过的断言**：「在磁盘上但没进 git —— 包里会缺」。而文件在上游是跟踪的。
+
+这比"误报"更糟：它给的是一个**看起来可执行**的错误结论（去 `git add` 吧），
+真去做了反而会把 `config.yaml` 之类的实配加进仓库。
+
+**修法分两种，都不许报绿**：
+
+| 闸门 | 依赖 git 的部分 | 处理 |
+|---|---|---|
+| `test_bundled_assets` | 只有「是否入库」这一项 | 拆成 `yes/no/unknown` 三态：存在 / 非空壳 / 真格式**照常逐件判**，只有入库报「未验证」，末尾 `exit 77` |
+| `verify_first_run` | 第一步「按 `git ls-files` 造干净副本」 | 新增 `NoGitWorkTree` 异常 → `[SKIP]` + 77。**整条链 7 步一步没跑，不能说验过** |
+| `test_pack_for_teammate` | 只有 `[3]/[3b]` | 只跳过这两节，红线 / 规则表 / `verify_zip` / 随包说明四节照常判，末尾 77 |
+
+**三把刀也跟着连环自爆，处理同样分两种**：
+
+- `_qc_bundled_assets_mutation`：三刀（删文件 / 截断成空壳 / 换成假格式）**都不需要 git**。
+  基线判据从「`returncode == 0`」放宽成「`returncode in (0, 77)` 且没有 FAIL 行」，
+  三刀照常跑 —— 实测仍**三刀全红 + 还原字节一致**。能验的继续验。
+- `_qc_pack_exclude_mutation`：变异目标就在 `[3]` 里，前提没了。整把报 77，
+  不硬凑一个"全红"出来 —— 那种红什么都不证明。
+
+**验证**：
+
+- `必需资产清单`：`0 PASS / 10 FAIL` → `0 PASS / 0 FAIL / 10 未验证`，exit 77，
+  逐件打印「存在/非空壳/真格式 已验，但「是否入库」未验证」。
+- `陌生人首启判据链`：`RuntimeError` 判红 → `[SKIP]` exit 77（原因写清"7 步一条都没跑"）。
+- `源码包排除规则`：四节照判全 ✓，末尾 `[SKIP]` exit 77。
+- `_qc_bundled_assets_mutation`：`起点不绿` → **起点绿 + 三刀全红 + 还原字节一致**。
+- `_qc_pack_exclude_mutation`：`基线就不绿` → `[SKIP]` exit 77。
+- 静态闸门（字节码 / 编码 / 全局名 / 同名 / 不可达 / 常量条件 / 静默异常 / 导入路径）全绿。
+
+**还剩**：`config.yaml` 一族（投影层自检 / ASR 事件流 / 桌面视频 e2e / 抓屏性能闸 D8）
+与 `感知哈希`（缺 `imagehash`）共 5 项，同一处理，下一轮。
+
 #### PR #18（续四）· 闸门在推荐解释器下起不来：「跑得起来的那个会掩盖跑不起来的那个」
+
 
 **问题**：`check_all.py` 全量跑，**一行闸门都没执行就退出**，报
 

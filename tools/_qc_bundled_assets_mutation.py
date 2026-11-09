@@ -55,8 +55,14 @@ def _baseline_green() -> bool:
     # 整把刀一进来就自爆，而报错信息把矛头指向**产品**。
     # 判据改成"退出码 0 且没有 FAIL 行"：崩了的判定一定非零退出，
     # Traceback 本身不能证明任何事。同一轮 `_judged()` 也是这么改的。
-    return r.returncode == 0 and not any(l.strip().startswith("FAIL")
-                                         for l in out.splitlines())
+    #
+    # 【2026-11-09 修·77 不是红】判定新增了三态：非 git 工作树里「是否入库」问不到，
+    # 它会 exit 77（未验证）而不是 0 或 1。77 既不是绿也不是红 —— 按"非 0 即红"处理
+    # 会让整把刀在交付包工作副本里一进来就自爆，报的还是"起点不是绿的"，
+    # 而真正的原因是**这台机器没有 .git**。所以这里认 (0, 77) 两种非红。
+    if r.returncode not in (0, 77):
+        return False
+    return not any(l.strip().startswith("FAIL") for l in out.splitlines())
 
 TARGET = "src/ui/web/_role_assets/ref/xiaowei.wav"
 
