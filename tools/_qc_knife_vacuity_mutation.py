@@ -313,7 +313,7 @@ def main() -> int:
     # 分层最怕的不是跑错，是**某一层被悄悄漏掉**：少跑几对没人发现，而
     # 「结果：CERTIFIED 7」和「跑全了」长得一模一样。
     # 这里查三件事，都便宜：
-    #   ① PAIRS 的静态计数（portable 8 / dev 21，合计 29）—— 直接读，不跑
+    #   ① PAIRS 的静态计数（portable 8 / dev 23，合计 31）—— 直接读，不跑
     #   ② `--tier` 的过滤真的生效（dev 层挑一对，看「待检」行是 1）
     #   ③ 不该进 portable 的对，portable 真的不选（`--only release_numbers`
     #      在 portable 层应为 0 对 → exit 2 且没有「待检」行）
@@ -336,12 +336,12 @@ def main() -> int:
 
     n_dev = picked("--tier", "dev", "--only", "release_numbers")
     n_leak = picked("--tier", "portable", "--only", "release_numbers")
-    if tiers.get("portable") != 8 or tiers.get("dev") != 21:
-        print("  FAIL K11 分层计数：portable %r / dev %r（期望 8 / 21）"
+    if tiers.get("portable") != 8 or tiers.get("dev") != 23:
+        print("  FAIL K11 分层计数：portable %r / dev %r（期望 8 / 23）"
               % (tiers.get("portable"), tiers.get("dev")))
         bad += 1
-    elif sum(tiers.values()) != 29:
-        print("  FAIL K11 总对数 %d（期望 29；PAIRS 里有未知层 %r）"
+    elif sum(tiers.values()) != 31:
+        print("  FAIL K11 总对数 %d（期望 31；PAIRS 里有未知层 %r）"
               % (sum(tiers.values()), sorted(tiers)))
         bad += 1
     elif n_dev != 1:
