@@ -652,6 +652,14 @@ GATES: list[tuple[str, str, list[str], bool]] = [
     # 判据用真实子进程哨兵 + 真实线程验可观测后果，非查标志位。
     ("试听播放生命周期回归", PY_VENV, ["src/tests/test_voice_playback_lifecycle.py"], False),
     ("试听播放生命周期变异", PY_VENV, ["tools/_qc_voice_playback_mutation.py"], True),
+    # 【2026-11-10】关系集成有三处「只有一侧」的断言，探针实测全部空转：
+    #   ① test_04 去重只写 `turns <= 1`，而场景只投 1 句用户话 —— 去重整段删掉照样绿
+    #      （队列为空正好替去重打掩护）；
+    #   ② test_20「publish 不阻塞」**没启动 EventBus.run()**，而 `publish` 只是 `queue.put`，
+    #      量的是入队耗时，两个事件从头到尾没被处理过；
+    #   ③ test_03 全是负向断言（proactive 不判定、不动队列），判定链路整个不启动也绿。
+    # 已给三条补正控 / 下界 / 真跑总线，并用三把刀钉住（A 判定不启动 / B 删去重 / C 张冠李戴）。
+    ("关系集成变异", PY_VENV, ["tools/_qc_relationship_integration_mutation.py"], True),
 ]
 
 
