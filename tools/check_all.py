@@ -652,6 +652,9 @@ GATES: list[tuple[str, str, list[str], bool]] = [
     # 判据用真实子进程哨兵 + 真实线程验可观测后果，非查标志位。
     ("试听播放生命周期回归", PY_VENV, ["src/tests/test_voice_playback_lifecycle.py"], False),
     ("试听播放生命周期变异", PY_VENV, ["tools/_qc_voice_playback_mutation.py"], True),
+    # 【2026-11-10】§3 的 `except Exception: print("! 跳过 …")` 不计 FAIL ——
+    # 实测整段可消失而闸门仍 exit 0（31 → 27 条判据）。已改硬 FAIL + 判据总数护栏。
+    ("TTS 多供应商变异", PY_VENV, ["tools/_qc_tts_multi_provider_mutation.py"], True),
 ]
 
 

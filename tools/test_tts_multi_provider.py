@@ -156,6 +156,9 @@ try:
     be = tb.FishAudioBackend(cfg)
     check("FishAudioBackend.name == fish_audio", be.name == "fish_audio")
     out = os.path.join(ROOT, "tools", "_fa_test_out.mp3")
+    # 先删残留：否则上一次崩溃留下的文件会让「落盘成功」误判为通过
+    if os.path.isfile(out):
+        os.remove(out)
     asyncio.run(be.synthesize("你好", out))
     check("FishAudioBackend 落盘成功", os.path.isfile(out) and os.path.getsize(out) > 0)
     if os.path.isfile(out):
@@ -163,14 +166,24 @@ try:
     # 无 key / 无 reference_id 应抛错
     be2 = tb.FishAudioBackend(types.SimpleNamespace(api_key="", voice_id="", model="s2-pro"))
     try:
-        asyncio.run(be2.synthesize("hi", out)); check("无 key 应抛错", False)
-    except RuntimeError:
-        check("无 key 应抛错", True)
+        asyncio.run(be2.synthesize("hi", out))
+        check("无 key 应抛错", False)
+    except RuntimeError as _e:
+        # 2026-11-10 加严：原来只判「抛了 RuntimeError」。任何 RuntimeError 都算过，
+        # 于是把错误换成「未实现」之类也能绿。这里要求消息里点名 Key。
+        check("无 key 应抛错（且消息点名缺 Key，不是随便一个 RuntimeError）",
+              ("Key" in str(_e)) or ("key" in str(_e)))
     # 工厂能造出
     be3 = tb.create_backend("fish_audio", cfg)
     check("create_backend('fish_audio') 返回 FishAudioBackend", isinstance(be3, tb.FishAudioBackend))
-except Exception as e:
-    print(f"  ! 跳过 FishAudioBackend 测试（导入失败: {e}）")
+except Exception as e:  # noqa: BLE001
+    # 【2026-11-10 修·静默跳过】这里原来只 `print("! 跳过 …")`，**不计 FAIL**。
+    # 实测：让 synthesize 抛一个非 RuntimeError，整段（落盘 / 异常类型 / 工厂）
+    # 会整段消失（判据 30 → 27 条），而闸门仍然 exit 0 —— 「跳过」被当成了「通过」。
+    # 而且原提示写「导入失败」，在合成期异常时是错的（误导排查方向）。
+    import traceback
+    traceback.print_exc()
+    check(f"[3] 段必须真的跑完（不得静默跳过）：{type(e).__name__}: {e}", False)
 
 # ---------- 4) 兼容性：旧单 provider 走新逻辑得到等价预设 ----------
 print("[4] 旧配置经新逻辑等价")
@@ -304,4 +317,11 @@ check("done_callback 在 worker 异常退出时重启 worker（避免永久失�
       _restarted is True)
 
 print(f"\n结果：{PASS} 通过 / {FAIL} 失败")
+# 【2026-11-10 加】结构性护栏：任何一段被 `except` 吞掉 / 被注释掉 / 条件为假而跳过，
+# 都不会让 FAIL +1，只会让总条数悄悄变少。这里钉住总数下限。
+# （本文件 2026-11-10 基线为 31 条：30 条原有 + 本条自己。）
+BASELINE_CHECKS = 31
+check(f"判据总数不低于基线（{BASELINE_CHECKS} 条）——防止某段被静默跳过",
+      PASS + FAIL + 1 >= BASELINE_CHECKS)
+print(f"结果（含护栏）：{PASS} 通过 / {FAIL} 失败")
 sys.exit(1 if FAIL else 0)
