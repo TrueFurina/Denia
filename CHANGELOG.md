@@ -13,6 +13,7 @@
 
 | commit | 时间 | 类型 | 一句话 | 验证 |
 |---|---|---|---|---|
+| `PR#18m` | 21:3x | test | **同一类越界，三个兄弟函数只测了一个；顺手跟进 master 4 个提交解掉合并冲突**：① `_read_file` / `_write_file` / `_append_file` 是同一段 `_safe_path` + `except WorkspaceEscape: return str(e)` 的三份复制粘贴，但 `test_workspace_guard.py` 只守了 `_write_file` —— `_read_file` 与 `_append_file` 在**整个 `tools/` 目录下出现 0 次**。后果不对称得很厉害：写越界是脏数据，**读越界是任意文件读取**（密钥盒 / `config.yaml` / 导出的凭据都能被模型读进上下文），而它一条判据都没有。② **先补判据再加刀**：第 6b 节先造一个真存在、真可读的区外文件（不造的话，「读不到」可能只是因为文件不存在，而不是因为越界被拦），再断言「返回里说明越界」+「没把区外内容读进来」+「区外文件没有被创建」+「沙箱里也没多出这个文件」。③ 刀跟着补：`工作区边界` D 写越界改名进沙箱（2026-10 那个 bug 的形状）/ E 读越界也照读 / F 追加越界改名进沙箱，三刀 → **六刀**；`命令守卫` D `allow_cmd` fail-closed 关掉 / E `shell=True`，三刀 → **五刀**（前四把都在前置检查上，没有一把碰真正执行的那一行）。④ **一个被自己否掉的做法**：先新建了 `_qc_workspace_guard_mutation.py` / `_qc_run_command_guard_mutation.py` 各砍一遍，跑出来 4/4、5/5 全红 —— 但那是**同一判据的第二把刀**，等于给覆盖率造第二份真相，还把 CI 时间翻倍。删掉两个新文件，只把真正新增的三把并进既有文件。⑤ master 从 `b945b4ca` 前进到 `c264700e`（含合入 89 个 PR），PR 被 GitHub 标成 `dirty`；做了一次真合并，5 处冲突：`check_delivery` 两边**独立修了同一个 bug**（取 master 侧，它的修法更完整）/ `check_all.py` 两边各加门禁（**都留**）/ 站点 4 处数字锚点（两边都不对，合并后是 229，由 `check_site_counts --fix` 回填）。 | 工作区边界 **20 PASS / 0 FAIL**（15→20）；六刀全红且各自点名（D「沙箱里也没多出这个文件」/ E「没把区外内容读进来」/ F 同 D）；命令守卫五刀全红（D「allow_cmd=false 拒绝」/ E「shell=False :: True」）；两把刀空变异体检 **CERTIFIED**（起点绿 / 空变异 exit 1 报 6 处、5 处异常）；合并后 `check_gate_registry` **229 项全部有着落**、`check_site_counts` 7 PASS/0 FAIL；PR 恢复 `mergeable=true / clean` |
 | `PR#18l` | 20:5x | fix | **第五道补刀，补的过程发现判据自己有缺陷：`开机自启` 的清理路径依赖了被测代码**。这道门守「用户登录时到底跑什么」，18 条断言从没配过刀。最想打的一刀是「`disable` 删错值名」—— 那正是 2026-10-18 真实泄漏的那次（真实 HKCU Run 留一条指向已删 tempfile 的死命令，用户登录弹「无法运行」）。但写不出来：刀的 finally 只还原源码字节，删不掉已被错误逻辑漏掉的注册表项，而测试自己的 finally 调的**正是被变异的 `disable`** → 每跑一次刀就多留一条。想清楚之后发现这不是「刀不能写」，是**判据有缺陷**：清理依赖被测对象，`disable` 一旦真回归，`test_autostart` 自己每跑一次也会留残留。**先修判据再加刀**：`finally` 换成 `_raw_delete()`（直接用 winreg，与 `autostart` 实现解耦），A6 才安全。六刀：A1 不加引号 / A2 用 python.exe 不是 pythonw / A3 `is_enabled` 遇 OSError 返回 True / A4 `sync(False)` 也去 enable / A5 `read_command` 异常返回空串 / A6 `disable` 删错值名。 | 开机自启 18/18；六刀全红且各自点名；**A6 跑完复查 HKCU Run：7 个既有值、0 残留**（`_raw_delete` 在 `disable` 被破坏时仍清干净，这就是修复的实证）；空变异体检 **CERTIFIED**；登记对账 ✓（227）；站点 7 PASS/0 FAIL（GATES 226→**227**） |
 | `PR#18k` | 20:4x | test | **第四道补刀：`密钥盒加密` 五刀 —— 最硬的一条安全底线，20 条判据从来没有刀**：它守的是「磁盘上不许出现明文 Key」（用户的 OpenAI / 百炼 Key、QQ cookie 全在 config.yaml 里），2026-10-18 起在跑，一次都没被验过牙。**这类判据的失效方式特别阴**：加密函数照常返回、`Config.save` 照常写盘、日志照常打「已加密」，只是密文里其实还是明文—— 没有任何报错，只有某天有人 `cat config.yaml` 才看得见。五刀：S1 密文不带 `dpapi:` 前缀（等于没加密）/ S2 `seal_tree` 不递归进嵌套 dict / S3 密钥字段表加宽（把 `name` 也当密钥）/ S4 解不开的密文不记失败（换机时静默丢 Key）/ S5 `is_sealed` 恒 False。**一个被否掉的变异方向**：本想用「`is_sealed` 恒 True」，但它会让 `decrypt_secret` 去 base64 解普通文本、`validate=True` 直接抛 `binascii.Error`，脚本带 Traceback 退出 —— 那是「崩了」不是「认出来了」。改成恒 False 才是判据该红的那条路。**刀的变异方向要选判据能开口的那条，不能选让判据闭嘴的那条。** | 密钥盒 20/0；五刀全红且各自点名；空变异体检 **CERTIFIED**；`闸门退出码` 0 命中；登记对账 ✓（226）；站点 7 PASS/0 FAIL（GATES 225→**226**） |
 | `PR#18j` | 20:1x | test | **第三道补刀：`抓屏性能闸` 五刀** —— 它守的是一条**真炸过**的底线：2026-08-25 修掉的「抽帧 / 核显本卡炸」，游戏或锁快照期间画面长时间静止时 `_next_interval` 的 static 加速会把采样间隔打到 ~1s，每帧全屏抓屏 + resize + pHash + JPEG 编码。这道门 27 条判据（A/B/C/D/E/F）**从来没有刀** —— 「27 条到底有没有牙」一次没验过，而第三十轮刚改过它的 D8（缺夹具退回出厂模板）。五刀：G1 low_rate 档不再守低频底线（落回 static 加速）/ G2 静态加速乘数被去掉 / G3 主路径不再传 low_rate（云端接管时偷偷提速）/ G4 让位分支不再传 `low_rate=True` / G5 `main.py` 两处 `ScreenCapture` 构造去掉 `low_rate_check`。**G5 的锚点逐字出现两次**（1346 / 3214），因为 D11 的判据就是「**每一处**构造都要带」—— 所以这把刀给 MUTS 加了一个「期望命中次数」字段，G5 写 2、其余写 1，命中数不符一律报「锚点已腐烂」而不硬改。 | 抓屏性能闸 **27/0**；五刀全红且各自点名（A2 / A3 / B1 / B3 / D11）；空变异体检 **CERTIFIED**；`闸门退出码` 0 命中；登记对账 ✓（225）；站点 7 PASS/0 FAIL（GATES 224→**225**） |
@@ -563,6 +564,103 @@ find_spec 返回 None → 误报「唤醒词退化」；
 
 **验证**：变异 4 刀全红 + 还原后回归 12/12 全绿；`tools/check_all.py` 登记对账 ✓；
 CI 全绿（pytest / self-check scripts / syntax gate 三腿 success）。
+
+#### PR #18（续八）· 同一类越界，三个兄弟函数只测了一个
+
+**怎么发现的。** 上一轮补完 `投影层自检` 之后，按盘点表继续还债，轮到产品关键路径
+上的三条安全边界：工作区边界、命令守卫、权限模式。打开 `tools/test_workspace_guard.py`
+准备给它补刀时先看它守什么 —— 六节里第 6 节写着「越界时**不写文件**（本轮修的核心）」，
+守的是 2026-10 那个 bug：越界路径被**悄悄改名塞进沙箱**，还回报「已写入」，用户以为
+改的是 `../那个文件`。
+
+顺手搜了一下另外两个兄弟函数：
+
+```
+grep -rn "_append_file\|_read_file" tools/*.py
+→ （无输出）
+```
+
+`_read_file` 和 `_append_file` 在**整个 `tools/` 目录下出现 0 次**。三个函数是同一段
+`_safe_path(name)` + `except WorkspaceEscape as e: return str(e)` 的三份复制粘贴，
+但只有 `_write_file` 有判据。
+
+**为什么这条比「覆盖率 42%」更值得先修。** 覆盖率是个平均数，平均数会盖住分布。
+这三个兄弟的失效后果完全不对称：
+
+| 函数 | 越界不拦的后果 | 有判据？ |
+|---|---|---|
+| `_write_file` | 脏数据：用户以为改了 A，实际改了 B | 有（第 6 节） |
+| `_append_file` | 同上，且是**追加**——把内容混进一个不该动的文件 | **无** |
+| `_read_file` | **任意文件读取**：密钥盒、`config.yaml`（用户 API Key 全在里面）、导出的凭据，全部能进模型上下文 | **无** |
+
+写坏一个文件是事故，读穿一次是**泄露**，而且读穿的痕迹比写坏小得多：没有文件被改，
+没有任何报错，只有上下文里多了一段本该看不见的东西。
+
+**先有判据，才有刀。** 第 6b 节的第一条断言不是「读越界被拒」，而是先**造一个真存在、
+真可读的区外文件**：
+
+```python
+secret = os.path.join(outside, "secret.txt")
+with open(secret, "w", encoding="utf-8") as f:
+    f.write("TOPSECRET-PAYLOAD")
+```
+
+不造这个文件的话，「读不到」可能只是因为文件不存在 —— 判据会在实现完全坏掉的情况下
+照样绿。这和本仓「先有判据，才有刀」是同一条纪律的另一面：**判据必须能开口，而
+「开口」要求被测的那条路本来是走得通的**。
+
+四条断言：返回里说明越界 / 没把区外内容读进来 / 区外文件没有被创建 /
+沙箱里也没多出这个文件。最后一条专门钉 2026-10 那个 bug 在 append 分支上的同形复制。
+
+**刀。** `工作区边界` 从三刀到六刀：
+
+| 刀 | 变异 | 被哪条判据点名 |
+|---|---|---|
+| D | `_write_file` 的 except 分支改成改名写进沙箱 | 沙箱里也没多出这个文件 |
+| E | `_read_file` 的 except 分支改成拼到工作区再读一次 | 没把区外内容读进来 |
+| F | `_append_file` 的 except 分支改成改名写进沙箱 | 沙箱里也没多出这个文件 |
+
+`命令守卫` 从三刀到五刀。原来三刀全在**前置检查**上（cwd / 白名单为空 / 元字符），
+没有一把碰真正执行的那一行：
+
+| 刀 | 变异 | 被哪条判据点名 |
+|---|---|---|
+| D | `if not ctx.get("allow_cmd"):` → `if False:` | allow_cmd=false 拒绝 |
+| E | `shell=False` → `shell=True` | shell=False :: True |
+
+D 是「没配就等于全开」的翻版，但入口不同：`allow_cmd` 是**模型自报**的开关，
+原判据是 fail-closed（缺省即拒）。改成只在显式 false 时拒，任何没配白名单的会话
+都会直接落到后面的白名单检查 —— 白名单里恰好有 `echo`，就变成「模型说可以就可以」。
+
+**一个被自己否掉的做法（记下来，免得下次再走）。** 这两条判据的第一版，是新建
+`tools/_qc_workspace_guard_mutation.py`（四刀）和 `tools/_qc_run_command_guard_mutation.py`
+（五刀），跑出来 4/4、5/5 全红，空变异体检 CERTIFIED，看上去完全合格。
+
+问题在于：仓库里**已经有** `_qc_workspace_mutation.py` 和 `_qc_run_command_mutation.py`，
+砍的是同一条判据。两把刀同时存在不会让判据更硬，只会：① 让 CI 时间翻倍；
+② 给「覆盖率」造出第二份真相 —— 以后统计「有多少道判据有刀」时，两个文件各算一次，
+数字虚高；③ 谁改坏了其中一个，另一个还在，**红不红取决于哪把先跑**。
+这正是 `catalog.py:98` 自己写的那句「不复制逻辑（第二份真相是 bug 温床）」。
+删掉两个新文件，只把真正新增的三把（D/E/F、D/E）并进既有文件。
+
+**顺带：跟进 master，解掉合并冲突。** 这轮开始时 master 还是 `b945b4ca`，推到一半
+发现它前进到了 `c264700e`（中间合入了 89 个 PR），GitHub 已经把 PR #18 标成
+`mergeable=false / dirty`。做了一次真合并（不是 rebase：冲突只解一次，历史保留），
+5 处冲突三种判法：
+
+1. `tools/check_delivery.py` + `tools/_qc_delivery_mutation.py` —— **取 master 侧**。
+   两边**独立修了同一个 bug**（`check_template` 断言 `force_first_run is True`，
+   方向写反）。master 的修法更新且更完整（多一条「出厂模板不许预置 `first_run_done`」），
+   本分支那两处属于被取代 —— 同一判据留两份实现，就是又造一份第二真相。
+2. `tools/check_all.py` —— **两边都留**。本分支在 `GATES` 尾巴加了 6 条，master 加了
+   2 条（试听播放生命周期），互不相干，谁都不该被删。合并后 `len(GATES) = 229`。
+3. `site/PUBLISH.md` + `site/index.html` —— **两边都不对**。纯数字锚点（227 vs 217），
+   而合并后是 229。先取本侧再由 `check_site_counts.py --fix` 回填，锚点重新对账。
+
+**验证。** `test_workspace_guard` 20 PASS / 0 FAIL（原 15）；六刀全红且各自点名，
+还原后 sha256 逐字节一致；五刀全红；两把刀空变异体检均 CERTIFIED（起点绿，空变异
+exit 1 分别报 6 处、5 处异常）；合并后 `check_gate_registry` 229 项全部有着落、
+无重复登记；`check_site_counts` 7 PASS / 0 FAIL；PR 恢复 `mergeable=true / clean`。
 
 #### PR #18（续七）· 刀指向了一条不存在的判据：`CALL_SITES` 是一份没人对账的第二真相
 
