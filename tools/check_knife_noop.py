@@ -4,8 +4,8 @@
 为什么需要
 ----------
 `check_knife_vacuity.py` 用的是「把**判定文件**换成退化实现」，前提是刀有一个独立的
-判定文件。全仓 78 个 `_qc_*` 里只有 26 个有，另外 48 个是**改完源码自己在进程内断言**，
-换文件这招对它们完全无效——也就是说那 48 把刀的空转风险一直是零覆盖。
+判定文件。全仓 61 把 `_qc_*_mutation.py` 里只有 28 把有，其余是**改完源码自己在进程内
+断言**，换文件这招对它们完全无效——也就是说那些刀的空转风险一直是零覆盖。
 
 这一轮换一个方向：不退化判定，**退化变异本身**。
 
@@ -28,14 +28,21 @@
 ----
   CERTIFIED  空变异下刀 exit != 0（它发现"没东西可抓"）
   VACUOUS    空变异下刀 exit == 0（**什么都没改，它却说全抓到了**）
-  SKIP       没有 `MUTS`，或 MUTS 的形状看不懂
+  SKIP       没有模块级 `MUTS` —— 刀不用这个机制，本工具不适用（不算通过）
+  SHAPE      有 `MUTS` 但形状看不懂 —— **刀用了这个机制，是本工具退化不了**
+             （这两种原来挤在同一个 SKIP 数字里，读不出来谁是谁）
   ERROR      起点本来就红 / 跑崩了 —— 无法判定
+
+分母只算 `_qc_*_mutation.py`。tools/ 下还有十几个 `_qc_*.py` 是**一次性探针**，
+不是变异刀，单列一句、不计入——否则"SKIP 50"里一半是压根不是刀的东西。
 
 退出码：0 无 VACUOUS / 1 有 VACUOUS / 2 一把都没跑成
 
 已知边界
 --------
-① 只认模块级的 `MUTS`（本仓的刀都是这个约定）。别的写法 → SKIP，不算通过。
+① 只认模块级的 `MUTS`。没有它的刀 → SKIP，有但形状看不懂 → SHAPE，
+   两者都不算通过。`_qc_*_mutation.py` 里没有模块级 MUTS 的那 27 把归
+   `check_knife_nowrite.py`（封住写入口）——三个工具的分工写在那个文件头上。
 ② 空变异只证明"没东西可抓时它不会假红"，**不证明"有东西可抓时它抓得住"**。
    后者要靠每把刀自己的正向刀，以及 `check_knife_vacuity.py`。
 ③ 有的刀在 `main()` 里除了 MUTS 还有别的判据（比如"还原字节一致"），
@@ -163,7 +170,12 @@ def _noop(entry):
 try:
     patched = [_noop(t) for t in muts]
 except ValueError as exc:
-    print("__NOOP_SKIP__ %s" % exc)
+    # 【2026-11-08 拆】原来这里和"没有 MUTS"共用 __NOOP_SKIP__，于是结果行里
+    # 两种完全不同的东西被算进同一个 SKIP 数字：
+    #   · 没有模块级 MUTS  —— 刀根本不用这个机制（要换另一招）
+    #   · 有 MUTS 但形状看不懂 —— 刀用了这个机制，是本工具退化不了
+    # 前者是"不适用"，后者是"该验没验"，混在一起读不出来。分开。
+    print("__NOOP_SHAPE__ %s" % exc)
     raise SystemExit(0)
 
 m.MUTS = [p[0] for p in patched]
@@ -238,6 +250,9 @@ def certify(root: str, knife: str) -> tuple[str, list[str]]:
         code2, out2 = _run(py, runner, kp, repo, noop=True)
         if "__NOOP_SKIP__" in out2:
             return "SKIP", [out2.split("__NOOP_SKIP__", 1)[1].splitlines()[0].strip()]
+        if "__NOOP_SHAPE__" in out2:
+            return "SHAPE", ["有 MUTS 但形状看不懂（%s）—— 本工具退化不了它，不算通过"
+                             % out2.split("__NOOP_SHAPE__", 1)[1].splitlines()[0].strip()]
         if code2 == 0:
             return "VACUOUS", ["空变异下仍然 exit 0（%s）—— 它没在看变异改了什么" % _tail(out2)]
         log.append("✓ 空变异：exit %d（%s）" % (code2, _tail(out2)))
@@ -259,17 +274,29 @@ def main() -> int:
         print("✗ 找不到 %s —— 无法判定" % tdir, file=sys.stderr)
         return 2
 
+    # 【2026-11-08 修·分母里混进了不是刀的东西】原来选的是"tools/ 下所有
+    # `_qc_*.py`"——79 个。其中 18 个是**一次性探针**（`_qc_paint_matrix`、
+    # `_qc_path_refs`、`_qc_wake_word`……），既没有 MUTS 也不做变异，永远 SKIP。
+    # 于是"SKIP 50"这个读数里，27 把是真没验的刀、18 个压根不是刀、还有 5 把
+    # 有 MUTS 但形状退化不了——三种东西挤在一个数字里，谁都读不出来。
+    # 口径改成：**刀 = `_qc_*_mutation.py`**（本仓的命名约定），其余单列不计入分母。
+    others: list[str] = []
     if args.knife:
         knives = [k for k in args.knife if args.only in k]
     else:
-        knives = sorted(f for f in os.listdir(tdir)
-                        if f.startswith("_qc_") and f.endswith(".py") and args.only in f)
+        knives = []
+        for f in sorted(os.listdir(tdir)):
+            if not (f.startswith("_qc_") and f.endswith(".py") and args.only in f):
+                continue
+            (knives if f.endswith("_mutation.py") else others).append(f)
     if not knives:
         print("✗ 一把都没选上（--only 过滤掉了全部？）无法判定", file=sys.stderr)
         return 2
 
     print("仓根：%s" % root)
     print("待检 %d 把刀\n" % len(knives))
+    if others:
+        print("（另有 %d 个 `_qc_*.py` 不是变异刀（一次性探针），不计入分母）" % len(others))
 
     # 【2026-11-08 加·表会腐烂】KNOWN_VACUOUS 是"允许空转"的额度。额度只减不增还不够，
     # 它还得**跟得上现实**，否则会以两种方式变成遮羞布：
@@ -297,7 +324,7 @@ def main() -> int:
         if kind == "VACUOUS":
             vacuous.append(k)
 
-    order = ["CERTIFIED", "VACUOUS", "SKIP", "ABSENT", "ERROR"]
+    order = ["CERTIFIED", "VACUOUS", "SKIP", "SHAPE", "ABSENT", "ERROR"]
     print("结果：" + " / ".join("%s %d" % (x, counts[x]) for x in order if x in counts))
 
     ran = sum(counts.get(x, 0) for x in ("CERTIFIED", "VACUOUS"))

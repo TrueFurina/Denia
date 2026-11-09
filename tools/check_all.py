@@ -649,13 +649,20 @@ GATES: list[tuple[str, str, list[str], bool]] = [
     ("变异刀空转体检", PY_VENV, ["tools/check_knife_vacuity.py", "--tier", "all"], True),
     ("变异刀空转体检变异", PY_VENV, ["tools/_qc_knife_vacuity_mutation.py"], True),
     # 【2026-11-08 加·空转变检的另一半】上面那道是「把**判定文件**换成退化实现」，
-    # 前提是刀有一个独立的判定文件 —— 全仓 78 个 `_qc_*` 里只有 26 个有，另外 48 个
-    # 是改完源码**自己在进程内断言**，换文件那招对它们完全无效。这一道换方向：
+    # 前提是刀有一个独立的判定文件 —— 全仓 61 把 `_qc_*_mutation.py` 里只有 28 把有，
+    # 其余是改完源码**自己在进程内断言**，换文件那招对它们完全无效。这一道换方向：
     # 不退化判定，**退化变异本身**（把 (old, new) 换成 (old, old)），于是
-    # 「什么都没改时刀会不会假绿」对 78 把刀一视同仁。
+    # 「什么都没改时刀会不会假绿」对有模块级 MUTS 的刀一视同仁。
     # 两道合起来才闭环：换判定证明「判定变坏时刀会红」，空变异证明「没东西可抓时刀不假红」。
     ("变异刀空转变检", PY_VENV, ["tools/check_knife_noop.py"], True),
     ("变异刀空转变检变异", PY_VENV, ["tools/_qc_knife_noop_mutation.py"], True),
+    # 【2026-11-08 加·空转体检的第三个方向】前两道各堵一半，而且都只堵"有模块级
+    # MUTS 的刀"。剩下 27 把把 (old,new) 写在函数里、或者根本不改源码（往 src/ 扔
+    # 一个语法坏文件、复制一份配置、删一个目录）——前两招都够不着。这一道**不碰变异**，
+    # 而是把 `builtins.open` / `io.open` 的写模式重定向到临时文件，让"变异根本没发生"：
+    # 此时刀还报 PASS 就是空转。三个方向合起来才覆盖全部 61 把。
+    ("变异刀空写体检", PY_VENV, ["tools/check_knife_nowrite.py"], True),
+    ("变异刀空写体检变异", PY_VENV, ["tools/_qc_knife_nowrite_mutation.py"], True),
 ]
 
 

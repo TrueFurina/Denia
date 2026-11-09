@@ -501,17 +501,26 @@ def check_template(root: str) -> tuple[str, str, str, str]:
     tpl = os.path.join(root, TEMPLATE_NAME)
     if not os.path.isfile(tpl):
         return (FAIL, "出厂模板", f"缺 {TEMPLATE_NAME}——误删 config.yaml 将无法自愈",
-                "打包清单加入 config.release.yaml（出厂态：force_first_run=true）")
+                "打包清单加入 config.release.yaml（出厂态：不带 force_first_run 调试开关）")
     try:
         raw = _read_yaml(tpl)
     except Exception as e:  # noqa: BLE001
         return (FAIL, "出厂模板", f"YAML 解析失败：{e}", "检查模板缩进/编码，别把实配当模板打包")
     if not isinstance(raw, dict):
         return (FAIL, "出厂模板", "模板顶层不是映射", "重新从出厂配置生成模板")
-    if raw.get("force_first_run") is not True:
+    # 【2026-11-08 修·判据停在旧认知】这里原来断言 `force_first_run is True`，
+    # 理由是"否则新装用户不会走引导"——反了。首启判定是
+    # `force or not first_run_done`（src/ui/webapp.py:10309），出厂模板不预置
+    # first_run_done，所以取 false 时新装用户**照样**走一次引导；取 true 才是
+    # 把每个用户每次启动都拽回引导页的那个 bug（2026-10-20 在 config.release.yaml
+    # 里修掉，注释还留在文件头）。`src/tests/test_release_template.py` 当时跟着改成了
+    # `force is not True`，本文件没跟 —— 于是它对**任何正确打的包**都判 FAIL，
+    # 连带 `_qc_delivery_mutation` 的 14 个用例永久红（那 14 个用例等于一直没在跑）。
+    if raw.get("force_first_run") is True:
         return (FAIL, "出厂模板",
-                f"force_first_run={raw.get('force_first_run')!r}（应为 true 的出厂态）",
-                "模板必须保留 force_first_run: true，否则新装用户不会走引导")
+                "force_first_run=true（出厂模板不许带这个开发调试开关）",
+                "改成 false 或删掉该键：判级是 force or not first_run_done，"
+                "带 true 会让每个用户每次启动都被拽回引导页重填 Key")
     # 版本一致性：模板与实配的 app.version 必须同版本，否则恢复出来的配置是旧 schema
     live = os.path.join(root, "config.yaml")
     if os.path.isfile(live):
@@ -524,7 +533,8 @@ def check_template(root: str) -> tuple[str, str, str, str]:
         except Exception as e:  # noqa: BLE001
             return (WARN, "出厂模板", f"无法比对实配版本：{e}", "确认 config.yaml 可解析")
     return (PASS, "出厂模板",
-            f"{TEMPLATE_NAME} 合法（force_first_run=true，app.version={(raw.get('app') or {}).get('version')}）", "")
+            f"{TEMPLATE_NAME} 合法（无 force_first_run 调试开关，"
+            f"app.version={(raw.get('app') or {}).get('version')}）", "")
 
 
 def check_template_secrets(root: str) -> tuple[str, str, str, str]:

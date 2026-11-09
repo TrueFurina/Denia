@@ -97,13 +97,20 @@ import tempfile
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 
-# (刀套件, 它验的判定文件, 层, 为什么它必须在名单里)
+if HERE not in sys.path:
+    sys.path.insert(0, HERE)
+from _qc_repo_copy import copy_repo  # noqa: E402
+
+# (刀套件, 它验的判定文件, 层, 为什么它必须在名单里, [副本要不要 git 仓])
 #
 # 层的含义：
 #   portable  纯 stdlib、不需要 .venv / 音频设备 / 桌面会话 —— CI 跑这一层
 #   dev       刀自己把解释器硬编码成 `.venv/Scripts/python.exe` —— 只有装了 venv
 #             的机器能跑。**不是"不重要"，是"这台机器跑不了"**，所以不能混进 CI，
 #             否则 CI 上全 ERROR、整道门恒红。
+#
+# 第 5 位（可选，默认 False）：这一对的判定要用 `git ls-files`，副本里得有个仓。
+# 副本里是**重新 init** 一个仓，不是复制原仓的 .git —— 见 tools/_qc_repo_copy.py。
 PAIRS = [
     # ---- portable ----
     ("_qc_unreachable_mutation.py", "check_unreachable.py", "portable",
@@ -170,6 +177,11 @@ PAIRS = [
      "在场感增强：缺 pynput 时兜底校验放行拼错的键名 —— 修好后起点第一次是绿的"),
     ("_qc_tray_switch_mutation.py", "test_tray_switch.py", "dev",
      "托盘切换：判定不再依赖 gitignore 里的 config.yaml"),
+    # 【2026-11-08 从 EXCUSED 挪进来的最后一条】判定要 `git ls-files`，副本里
+    # 得有个仓。原来记的理由是"要验它得让副本带上 .git，代价是每对多拷几十 MB"——
+    # 代价估对了，结论错了：副本里 `git init` + `add -A` + commit 只要几十毫秒。
+    ("_qc_bundled_assets_mutation.py", "test_bundled_assets.py", "dev",
+     "随包资产：副本里重新 init 一个仓（不是复制 .git），判定才有文件清单可判", True),
 ]
 
 # 声明了判定文件、但**本工具无法判定**的刀。每条都必须写清"为什么"，空理由等于没写。
@@ -177,10 +189,11 @@ PAIRS = [
 # 这一张表不是垃圾桶，是**待办清单**：每一行都说明了一个"这道刀现在守不住自己
 # 声称守住的东西"的具体原因。想加进来，先回答"什么条件下它就能验了"。
 EXCUSED = {
-    "_qc_bundled_assets_mutation.py":
-        "判定 tools/test_bundled_assets.py 用 `git ls-files` 判「在盘上但没进 git」；"
-        "本工具在仓副本里跑，而 .git 被 SKIP_DIRS 排除 → 判定恒红（10 FAIL），无法判定。"
-        "要验它得让副本带上 .git，代价是每对多拷几十 MB。",
+    # 【2026-11-08 清空】最后一条 `_qc_bundled_assets_mutation.py` 已经能验了。
+    # 它原来在这里的理由是"判定要 `git ls-files`，而副本把 .git 排除了"——
+    # 那不是刀的缺陷，是**副本造得不像仓库**。修法见 tools/_qc_repo_copy.py：
+    # 副本里重新 init 一个仓（几十毫秒），不复制原仓的 .git。
+    # **空表是有意义的读数**：它说的是"没有已知验不了的"，不是"全都验过了"。
     # 【2026-11-08 删掉两条过时的】`_qc_tray_switch_mutation` 与 `_qc_presence_mutation`
     # 原来在这里，理由是"判定恒红/缺文件 → 无法判定"。第二十六轮查出**两条理由都不是
     # 产品缺陷**，而是判定自己依赖了不该依赖的东西：
@@ -258,7 +271,21 @@ def _declared_judgment(path: str) -> str | None:
     return None
 
 
-def _copy_repo(root: str) -> str:
+def _copy_repo(root: str, need_git: bool = False) -> str:
+    """复制一份仓给套件跑。need_git=True 时副本里**重新 init 一个仓**。
+
+    【2026-11-08 修·副本造得不像仓库】`_qc_bundled_assets_mutation` 的判定
+    `check_bundled_assets.py` 用 `git ls-files` 判「在盘上但没进 git」。副本原来
+    把 `.git` 排除掉，判定就恒红（10 FAIL），于是这把刀被挂进 `EXCUSED`，
+    理由写的是"要验它得让副本带上 .git，代价是每对多拷几十 MB"。
+
+    代价估得对，结论错了：**不需要复制 .git**。在副本里 `git init` + `git add -A`
+    + commit 只要几十毫秒，而且 `git ls-files` 返回的正是"这份副本该有的文件"，
+    还天然遵守 `.gitignore`（`config.yaml`、`logs/` 不进清单）—— 比复制原仓
+    更接近新克隆的样子。共用实现在 `tools/_qc_repo_copy.py`。
+    """
+    if need_git:
+        return copy_repo(root, need_git=True)
     d = tempfile.mkdtemp(prefix="qc_vacuity_")
     dst = os.path.join(d, "repo")
     shutil.copytree(root, dst, ignore=shutil.ignore_patterns(*SKIP_DIRS))
@@ -311,7 +338,7 @@ def _degenerate(gate_path: str, pristine: bytes, stub: str, suite_path: str,
     return "ok", "exit %d 且自行报失败" % code
 
 
-def certify(root: str, suite: str, gate: str) -> tuple[str, list[str]]:
+def certify(root: str, suite: str, gate: str, need_git: bool = False) -> tuple[str, list[str]]:
     """返回 (分类, 逐阶段说明)。分类 ∈ CERTIFIED/VACUOUS/WEAK/SKIP/ABSENT/ERROR。"""
     log: list[str] = []
     src_suite = _resolve(root, suite)
@@ -339,7 +366,7 @@ def certify(root: str, suite: str, gate: str) -> tuple[str, list[str]]:
     if imports_gate(src_suite, gate):
         return "SKIP", ["套件进程内 import 了 %s —— 换文件对它无效，本工具不覆盖" % gate]
 
-    repo = _copy_repo(root)
+    repo = _copy_repo(root, need_git=need_git)
     try:
         gate_path = _resolve(repo, gate)
         suite_path = _resolve(repo, suite)
@@ -435,10 +462,14 @@ def main() -> int:
 
 
     counts: dict[str, int] = {}
-    for suite, gate, _tier, why in pairs:
+    for pair in pairs:
+        suite, gate, _tier, why = pair[:4]
+        # 第 5 位是可选的"副本要不要 git 仓"。用 len 判断而不是 try/except：
+        # PAIRS 是声明式的，元组长度不齐时应该安静地按默认走，不该炸。
+        need_git = bool(pair[4]) if len(pair) > 4 else False
         print("== %s → %s" % (suite, gate))
         print("   （%s）" % why)
-        kind, log = certify(root, suite, gate)
+        kind, log = certify(root, suite, gate, need_git=need_git)
         for line in log:
             print("   " + line)
         print("   → %s\n" % kind)

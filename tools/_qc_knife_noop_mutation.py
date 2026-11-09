@@ -185,47 +185,47 @@ def main() -> int:
     bad = 0
 
     # ---- N1 空转的刀 → VACUOUS ----
-    d = make_repo({"_qc_vacuous.py": KNIFE_VACUOUS})
+    d = make_repo({"_qc_vacuous_mutation.py": KNIFE_VACUOUS})
     try:
         bad += check("N1 不看变异的刀 → VACUOUS",
-                     run_tool(d, "--knife", "_qc_vacuous.py"), "VACUOUS", 1)
+                     run_tool(d, "--knife", "_qc_vacuous_mutation.py"), "VACUOUS", 1)
     finally:
         shutil.rmtree(d, ignore_errors=True)
 
     # ---- N2 老实的刀 → CERTIFIED（不许误判成空转）----
-    d = make_repo({"_qc_sound.py": KNIFE_SOUND})
+    d = make_repo({"_qc_sound_mutation.py": KNIFE_SOUND})
     try:
         bad += check("N2 老实检查的刀 → CERTIFIED",
-                     run_tool(d, "--knife", "_qc_sound.py"), "CERTIFIED", 0)
+                     run_tool(d, "--knife", "_qc_sound_mutation.py"), "CERTIFIED", 0)
     finally:
         shutil.rmtree(d, ignore_errors=True)
 
     # ---- N3 起点红 → ERROR ----
-    d = make_repo({"_qc_red.py": KNIFE_RED})
+    d = make_repo({"_qc_red_mutation.py": KNIFE_RED})
     try:
         bad += check("N3 起点就红 → ERROR",
-                     run_tool(d, "--knife", "_qc_red.py"), "ERROR", 2)
+                     run_tool(d, "--knife", "_qc_red_mutation.py"), "ERROR", 2)
     finally:
         shutil.rmtree(d, ignore_errors=True)
 
     # ---- N4 没有 MUTS → SKIP ----
-    d = make_repo({"_qc_nomuts.py": KNIFE_NO_MUTS})
+    d = make_repo({"_qc_nomuts_mutation.py": KNIFE_NO_MUTS})
     try:
         bad += check("N4 没有 MUTS → SKIP",
-                     run_tool(d, "--knife", "_qc_nomuts.py"), "SKIP", 2)
+                     run_tool(d, "--knife", "_qc_nomuts_mutation.py"), "SKIP", 2)
     finally:
         shutil.rmtree(d, ignore_errors=True)
 
     # ---- N5 嵌套形状 → CERTIFIED ----
-    d = make_repo({"_qc_nested.py": KNIFE_NESTED})
+    d = make_repo({"_qc_nested_mutation.py": KNIFE_NESTED})
     try:
         bad += check("N5 嵌套形状 → CERTIFIED",
-                     run_tool(d, "--knife", "_qc_nested.py"), "CERTIFIED", 0)
+                     run_tool(d, "--knife", "_qc_nested_mutation.py"), "CERTIFIED", 0)
     finally:
         shutil.rmtree(d, ignore_errors=True)
 
     # ---- N6 全部 SKIP → exit 2 ----
-    d = make_repo({"_qc_nomuts.py": KNIFE_NO_MUTS})
+    d = make_repo({"_qc_nomuts_mutation.py": KNIFE_NO_MUTS})
     try:
         rc, out = run_tool(d)
         if rc != 2:
@@ -239,13 +239,13 @@ def main() -> int:
         shutil.rmtree(d, ignore_errors=True)
 
     # ---- N8 额度指向不存在的刀 → exit 2 并点名 ----
-    d = make_repo({"_qc_sound.py": KNIFE_SOUND})
+    d = make_repo({"_qc_sound_mutation.py": KNIFE_SOUND})
     try:
-        rc, out = _run_with_table({"_qc_ghost.py": 1}, d)
-        ok8 = rc == 2 and "_qc_ghost.py" in out
+        rc, out = _run_with_table({"_qc_ghost_mutation.py": 1}, d)
+        ok8 = rc == 2 and "_qc_ghost_mutation.py" in out
         print("  %s N8 额度指向不存在的刀：exit %d%s"
               % ("PASS" if ok8 else "FAIL", rc,
-                 "" if ok8 else "（期望 2 且点名 _qc_ghost.py）"))
+                 "" if ok8 else "（期望 2 且点名 _qc_ghost_mutation.py）"))
         if not ok8:
             for l in out.strip().splitlines()[-5:]:
                 print("    " + l[:150])
@@ -254,13 +254,13 @@ def main() -> int:
         shutil.rmtree(d, ignore_errors=True)
 
     # ---- N9 额度指向已经修好的刀 → exit 2（表在说谎）----
-    d = make_repo({"_qc_sound.py": KNIFE_SOUND})
+    d = make_repo({"_qc_sound_mutation.py": KNIFE_SOUND})
     try:
-        rc, out = _run_with_table({"_qc_sound.py": 1}, d)
-        ok9 = rc == 2 and "_qc_sound.py" in out
+        rc, out = _run_with_table({"_qc_sound_mutation.py": 1}, d)
+        ok9 = rc == 2 and "_qc_sound_mutation.py" in out
         print("  %s N9 额度指向已经不空转的刀：exit %d%s"
               % ("PASS" if ok9 else "FAIL", rc,
-                 "" if ok9 else "（期望 2 且点名 _qc_sound.py）"))
+                 "" if ok9 else "（期望 2 且点名 _qc_sound_mutation.py）"))
         if not ok9:
             for l in out.strip().splitlines()[-5:]:
                 print("    " + l[:150])
@@ -271,9 +271,9 @@ def main() -> int:
     # ---- N10 限位：额度指向真的还空转的刀 → 放行 exit 0 ----
     # 没有这一刀，N8/N9 可以靠"永远 exit 2"满足 —— 那就是把额度表判成恒错，
     # 结果是没人再敢往表里写东西，空转又变回没人管。
-    d = make_repo({"_qc_vacuous.py": KNIFE_VACUOUS})
+    d = make_repo({"_qc_vacuous_mutation.py": KNIFE_VACUOUS})
     try:
-        rc, out = _run_with_table({"_qc_vacuous.py": 1}, d)
+        rc, out = _run_with_table({"_qc_vacuous_mutation.py": 1}, d)
         ok10 = rc == 0 and "已知空转" in out
         print("  %s N10 限位：额度指向真的空转的刀 → 放行：exit %d%s"
               % ("PASS" if ok10 else "FAIL", rc,

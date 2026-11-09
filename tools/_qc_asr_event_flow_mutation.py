@@ -147,7 +147,17 @@ sys.modules["vosk"] = FakeVosk("vosk")
 from src.config import load_config  # noqa: E402
 from src.event_bus import EventType  # noqa: E402
 
-cfg = load_config("config.yaml")
+_CFG = "config.yaml"
+if not os.path.isfile(os.path.join(ROOT, _CFG)):
+    # 【2026-11-08 修·缺环境 ≠ 判据失败】`config.yaml` 在 .gitignore 里，新克隆的
+    # 树上必然没有 → `load_config("config.yaml")` 直接 FileNotFoundError，整把刀在
+    # 起跑线上就崩，读数会被当成"这把刀有问题"。本刀验的是 ASR 事件流，不验
+    # "用户的配置长什么样"，所以缺实配时用**在 git 里的出厂模板**当夹具
+    # （与 `tools/test_tray_switch.py` 同一修法）。
+    _CFG = "config.release.yaml"
+    print("  （本机没有 config.yaml，用出厂模板 config.release.yaml 当夹具）")
+
+cfg = load_config(_CFG)
 FRAME_SCRIPT = [b"WAKE_SPEECH", None, b"CMD_SPEECH", None] + [None] * 200
 
 
