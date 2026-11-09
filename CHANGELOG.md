@@ -13,7 +13,7 @@
 
 | commit | 时间 | 类型 | 一句话 | 验证 |
 |---|---|---|---|---|
-| `PR#18d` | 17:4x | test | **第三种空转体检：封住写入口** —— 「SKIP 50 不算通过」这句话压了三轮，这一轮把它拆开：那 50 里 18 个是**一次性探针**（压根不是刀）、28 把是「没有模块级 MUTS 也没有独立判定文件」的真刀、4 把有 MUTS 但形状退化不了。新工具 `check_knife_nowrite.py` 不碰变异，把 `builtins.open`/`io.open` 的**写模式**重定向到临时文件，让「变异根本没发生」：此时刀还 exit 0 就是空转。这个方向与变异长什么样无关 —— 改源码的、往 `src/` 扔坏文件的、复制配置的、删目录的，一视同仁。**三方向闭环**：换判定（判定坏了刀会不会红）/ 空变异（源码没变时会不会假绿）/ 封写（**什么都没变**时会不会假绿）。顺带：`check_knife_vacuity.py` 的仓副本改成「重新 init 一个 git 仓」（`tools/_qc_repo_copy.py`），最后一条 `EXCUSED` 解开、表清空；`check_knife_noop.py` 的刀口径改成 `_qc_*_mutation.py`；**`check_delivery.py:check_template` 还在断言 `force_first_run is True`，而 10-20 的修复故意改成 false —— 它对任何正确打的包都判 FAIL，`_qc_delivery_mutation` 466 行 14 个用例因此永久红、等于从来没在跑**。 | 空写体检 **CERTIFIED 21 / COVERED_ELSEWHERE 33 / META 3 / SKIP 1 / ERROR 4（62 把），VACUOUS 0**，exit 0（14m）；空转变检 **CERTIFIED 33 / SKIP 29 / SHAPE 0**（口径修正后 62 把，原「29 / 50」是 79 个文件混算）；空转体检 **28 CERTIFIED / 1 SKIP**（29 对，上轮 27/1）；**三合一覆盖 54/62**；三道体检的变异刀 16 项 / 13 刀 / 9 刀全过；出厂模板判据修正后 `check_delivery` 该行 PASS；GATES 217→219，站点 7 PASS/0 FAIL |
+| `PR#18d` | 17:4x | test | **第三种空转体检：封住写入口** —— 「SKIP 50 不算通过」这句话压了三轮，这一轮把它拆开：那 50 里 18 个是**一次性探针**（压根不是刀）、28 把是「没有模块级 MUTS 也没有独立判定文件」的真刀、4 把有 MUTS 但形状退化不了。新工具 `check_knife_nowrite.py` 不碰变异，把 `builtins.open`/`io.open` 的**写模式**重定向到临时文件，让「变异根本没发生」：此时刀还 exit 0 就是空转。这个方向与变异长什么样无关 —— 改源码的、往 `src/` 扔坏文件的、复制配置的、删目录的，一视同仁。**三方向闭环**：换判定（判定坏了刀会不会红）/ 空变异（源码没变时会不会假绿）/ 封写（**什么都没变**时会不会假绿）。顺带：`check_knife_vacuity.py` 的仓副本改成「重新 init 一个 git 仓」（`tools/_qc_repo_copy.py`），最后一条 `EXCUSED` 解开、表清空；`check_knife_noop.py` 的刀口径改成 `_qc_*_mutation.py`；**`check_delivery.py:check_template` 还在断言 `force_first_run is True`，而 10-20 的修复故意改成 false —— 它对任何正确打的包都判 FAIL，`_qc_delivery_mutation` 466 行 14 个用例因此永久红、等于从来没在跑**。 | 空写体检 **CERTIFIED 21 / COVERED_ELSEWHERE 33 / META 3 / SKIP 1 / ERROR 4（62 把），VACUOUS 0**，exit 0（14m）；空转变检 **CERTIFIED 33 / SKIP 29 / SHAPE 0**（口径修正后 62 把，原「29 / 50」是 79 个文件混算）；空转体检 **28 CERTIFIED / 1 SKIP**（29 对，上轮 27/1）；**三合一覆盖 54/62（装上 jsdom 后 55/62）**；三道体检的变异刀 16 项 / 13 刀 / 9 刀全过；出厂模板判据修正后 `check_delivery` 该行 PASS；GATES 217→219，站点 7 PASS/0 FAIL |
 | `PR#18c` | 17:1x | fix | **「缺环境」被报成「判据失败」：四个红点，四个都不是产品坏了**：① `A5环境探针` 扫 `logs/launch_run*.log`，而 `logs/` 在 `.gitignore` 里 → **新克隆的树上恒红**；改为三态（有样本逐条判 / 有日志扫出 0 份=FAIL / 没日志=WARN+exit 77），并加 `--root` 让判据能被夹具驱动。② `_qc_a5_probe_mutation` 起点恒红 → 六把刀"全红"白送；改用 tempfile 合成日志当夹具 + `_judged()` + 三把限位（77 / FAIL / 0）。③ `_qc_tray_switch_mutation` 要 `config.yaml`（也在 gitignore 里）→ 缺文件时回落到出厂模板 `config.release.yaml`。④ `hotkeys._validate` 在**没装 pynput** 时只做形状校验，`<ctrl>+<alt>+<nosuchkey>` 静默进映射表（**用户以为绑上了，按下去什么都不发生**）；新增 `_fallback_ok` + 键名白名单。**并更正上一轮的错误归因**（原写成"无桌面会话返回空表"，与桌面会话无关）。⑤ 17 把刀的 `_baseline_green()` 比判定还严（禁 `Traceback`），把"判定故意打的异常日志"判成起点红 → 改为"退出码 0 且无 FAIL 行"。⑥ `KNOWN_VACUOUS` 清空 + 额度对账（N8 指向空气 / N9 表在说谎 / N10 限位）。 | 空转变检 **CERTIFIED 29 / SKIP 50，VACUOUS 0 / ERROR 0**（上轮 26 / 1 / 50 / 2）；空转体检 27 / SKIP 1（上轮 25 / 1）；A5 探针 7/0/2 未验证 exit 77、夹具下 9/0 exit 0；A5 刀 6 刀 + 3 限位全过；在场感 33/1 → **41/0**；托盘 29/0；四腿 CI 全绿 |
 | `PR#18b` | 16:4x | test | **空变异体检：另外 48 把刀的空转风险一直是零覆盖**：上一道工具靠「把判定文件换成退化实现」，前提是刀有独立判定文件——79 把里只有 26 对有，另外 48 把在进程内断言，换文件完全无效。本轮换方向：**退化变异本身**（`(old,new)` → `(old,old)`，即"什么都没改"），判定有牙就该绿 → 刀必须报「没抓住」→ `exit != 0`；若仍 `exit 0` 就是没在看变异。这个方向不需要知道判定在哪，对 79 把一视同仁。普查中修掉自己仪器的两处假发现（`_noop()` 盲取最后两个元素，把「说明」当成 `new_thunk`，5 把刀被误判 VACUOUS；runner 的 `sys.path[0]` 不是 `tools/`，让 `_qc_api_wiring_mutation` 白记 ERROR）。**顺带查出真缺陷**：`导入冒烟复核` 在 `PY_VENV` 下一直是 6 FAIL——`smoke_import` 的 `env["PYTHONPATH"]=root` 在随包嵌入式运行时下是死代码（`._pth` 固定 sys.path），且夹具的 `src/` 少了 `__init__.py` 成了命名空间包、被 `DaniaAI\src` 这个常规包压住。 | `check_knife_noop.py` CERTIFIED 26 / VACUOUS 1（已知）/ SKIP 50 / ERROR 2，exit 0（5m56s）；七刀 + 对照全 PASS；`导入冒烟复核` venv 6 PASS/6 FAIL → **12 PASS/0 FAIL**，刀在 venv 下也 3 刀全红 + 起点绿；`GATES` 215→217，站点 4 处锚点同步（7 PASS/0 FAIL） |
 | `PR#18` | 16:0x | fix | **18 把变异刀是空转的：判定崩了也被算成「抓住了」**：`caught = r.returncode != 0` 把「判出了问题」和「根本没跑起来」当同一件事——把判定整个换成 `raise RuntimeError(...)`，套件照样印「已抓住：<无输出>」「N 刀全红」并 exit 0。18 把刀补 `_judged()`（非零退出 **且** 有 FAIL/✗）+ `_baseline_green()`（起点不绿直接 FAIL）。工具补 `_resolve()`（判定不一定在 `tools/` 下）、ABSENT/ERROR 拆分、完整性检查、`--tier` 分层。顺带查出 `_qc_pathrefs_mutation` H 刀锚点缩进差 4 格、`count(old)==1` 拦不住子串匹配。 | `--tier portable` 8 / `dev` 17+SKIP1 / `all` 25+SKIP1；13 刀 + 对照全 PASS；修前旧版被体检判 VACUOUS、注入崩溃后仍 exit 0，修后 exit 1 并点名「起点就不是绿的」 |
@@ -723,7 +723,19 @@ _qc_knife_vacuity_mutation.py            → 13 刀 + 对照 全 PASS    exit 0
   `TypeError: a bytes-like object is required`，差点被记成"认出来了"。改成"真临时文件"后
   这 7 把才真的被验。教训：**"崩了"和"认出来了"必须分开记**，否则工具在自欺。
 
-**六之前补一条：SHAPE 已经归零。** 上一版把「有 `MUTS` 但分不清 old/new」的 4 把判成
+**六、还剩什么没验（必须和读数一起读）。** 三合一之后 **54/62 把至少被一道判为 CERTIFIED**，
+剩下 8 把每一把都有名有姓的理由：
+
+| 刀 | 原因 |
+|---|---|
+| `_qc_asr_event_flow` / `_qc_delivery` / `_qc_dialogue_voice_chain` / `_qc_wake` | 机制要求**真写出一个文件再 import**，封写等于抽掉前提 → 归 ERROR（本工具无能为力，不是它们的缺陷） |
+| `_qc_clone_card` | 缺 jsdom（`npm i jsdom` 或设 `DANIYA_JSDOM`）→ SKIP 未验证 |
+| `_qc_knife_noop` / `_qc_knife_nowrite` / `_qc_knife_vacuity` | 质检仪器自身的刀，由各自门禁互检 → META（**单列而不是静默跳过**，静默跳过正是这一轮在修的病） |
+
+> **不要把 54/62 读成"刀都验过了"。** 它说的是"62 把里有 54 把至少被一种机制证明过它不会假绿"，
+> 另外 8 把的原因写在上表。这个数字以前是 26/79（且分母里混着 18 个不是刀的文件）。
+
+**七、SHAPE 归零：让刀自己声明形状。** 上一版把「有 `MUTS` 但分不清 old/new」的 4 把判成
 SHAPE（该验没验）。这一版让**刀自己声明形状**，工具照读：
 
 ```python
@@ -736,17 +748,21 @@ NOOP_SHAPE = ("filearg", 1, 2)   # (标签, 文件路径, 执行变异的函数)
 四把刀这么声明：`_qc_smoke_retry`(1,2)、`_qc_voice_ref`(2,3)、`_qc_partial_reply`(1,2)、
 `_qc_site_counts`(filearg 1,2)；`check_knife_noop.py` 因此 **CERTIFIED 29 → 33、SHAPE 4 → 0**。
 
-**六、还剩什么没验（必须和读数一起读）。** 三合一之后 **54/62 把至少被一道判为 CERTIFIED**，
-剩下 8 把每一把都有名有姓的理由：
+**八、另外两道门在这台机器上从来没真跑过。** 查 `_qc_clone_card_mutation` 为什么一直 SKIP，
+顺藤摸到两条：
 
-| 刀 | 原因 |
-|---|---|
-| `_qc_asr_event_flow` / `_qc_delivery` / `_qc_dialogue_voice_chain` / `_qc_wake` | 机制要求**真写出一个文件再 import**，封写等于抽掉前提 → 归 ERROR（本工具无能为力，不是它们的缺陷） |
-| `_qc_clone_card` | 缺 jsdom（`npm i jsdom` 或设 `DANIYA_JSDOM`）→ SKIP 未验证 |
-| `_qc_knife_noop` / `_qc_knife_nowrite` / `_qc_knife_vacuity` | 质检仪器自身的刀，由各自门禁互检 → META（**单列而不是静默跳过**，静默跳过正是这一轮在修的病） |
+- **`克隆面板真值表`**（`test_clone_card_ui.py`）缺 jsdom → 一直 `exit 77`（这是**正确**的：
+  环境不满足，单列未验证）。临时装一份 jsdom 指向 `DANIYA_JSDOM` 之后：**24 PASS / 0 FAIL**，
+  变异刀 6 刀全红、还原后仍全绿。也就是说这道门的牙齿一直在，只是这台机器上从没张过嘴。
+- **`参考音频物化`**（`test_clone_ref_audio.py`）是**真缺陷**：`main()` 里
+  `shutil.copy2(ROOT/config.yaml, ...)` —— `config.yaml` 是 `.gitignore` 的实配，源码仓里没有，
+  于是它在任何"刚克隆"的树上都崩在 `FileNotFoundError: [WinError 2]`，**连第一条断言都没跑到**。
+  和上一轮托盘刀同一修法：缺文件时回落到出厂模板（本门验的是"参考音频怎么物化"，与 api_key
+  填没填无关）。修后 **22 PASS / 0 FAIL**。
 
-> **不要把 54/62 读成"刀都验过了"。** 它说的是"62 把里有 54 把至少被一种机制证明过它不会假绿"，
-> 另外 8 把的原因写在上表。这个数字以前是 26/79（且分母里混着 18 个不是刀的文件）。
+装上 jsdom 之后 `_qc_clone_card_mutation` 在三合一里也转 CERTIFIED（封写下 exit 1，"6 处有问题"），
+覆盖 **54/62 → 55/62**。
+
 
 #### PR #18（续二）· 「缺环境」被报成「判据失败」：四个红点，四个都不是产品坏了
 
