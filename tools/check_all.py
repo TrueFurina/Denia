@@ -280,6 +280,17 @@ GATES: list[tuple[str, str, list[str], bool]] = [
     # **刀的变异方向要选判据能开口的那条，不能选让判据闭嘴的那条。**
     ("密钥盒加密变异", PY_VENV, ["tools/_qc_secret_box_mutation.py"], True),
     ("开机自启", PY_VENV, ["src/tests/test_autostart.py"], False),
+    # 【2026-11-09 加·这条判据自己就踩过坑，却从没配过刀】上面这道门守的是「用户登录时
+    # 到底跑什么」。2026-10-18 实锤过一次：某个变异让 enable 写死 VALUE_NAME、disable
+    # 删的却是 TEST_VALUE → 真实 HKCU Run 泄漏一条指向已删 tempfile 的死命令，用户登录
+    # 弹「无法运行」。测试因此自带快照 + 污染守卫，但 18 条断言从没配过刀。
+    # 五刀：不加引号 / 用 python.exe 不是 pythonw / is_enabled 遇 OSError 返回 True /
+    # sync(False) 也去 enable / read_command 异常返回空串。
+    # **故意不写「disable 删错值名」那一刀**：刀的 finally 只还原源码字节，删不掉已被
+    # 错误逻辑漏掉的注册表项，而测试自己的 finally 用的正是被变异的 disable —— 每跑一次
+    # 刀，用户登录就多一条死命令。要验 disable 得先给测试加「干净实现兜底清理」的钩子，
+    # 那是改判据不是加刀，另开一轮。
+    ("开机自启变异", PY_VENV, ["tools/_qc_autostart_mutation.py"], True),
     ("裁判确认条款", PY_VENV, ["tools/test_judge_confirm_clause.py"], False),
     ("陪伴话术条款", PY_VENV, ["tools/test_prompt_companion_clause.py"], False),
     ("历史隔离", PY_VENV, ["tools/test_history_isolation.py"], False),

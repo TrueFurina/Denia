@@ -24,6 +24,28 @@ def check(ok: bool, msg: str) -> None:
     print(("  ✅ " if ok else "  ✗ ") + msg)
 
 
+def _raw_delete(value_name: str) -> None:
+    """不经 `autostart.disable`，直接把值从 HKCU Run 删掉。
+
+    【2026-11-09 加·清理路径不许依赖被测代码】`finally` 原来调的是
+    `autostart.disable(...)` —— 也就是**被测的那个函数**。它一旦回归（比如删错值名、
+    或者干脆不删），清理就跟着一起坏：真实 `HKCU\\...\\Run` 里留下
+    `_DaniaAutostartTest` 指向已删除的临时目录，用户下次登录时弹「无法运行」，
+    而且**每跑一次门禁就再留一条**。2026-10-18 那次泄漏正是这么发生的。
+
+    清理是测试的卫生责任，不能托付给被验的对象 —— 就像不能用一个坏掉的删除键
+    去证明「删干净了」。这里直接用 winreg，与 `autostart` 的实现彻底解耦。
+    """
+    import winreg
+    try:
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, autostart.RUN_KEY, 0,
+                            winreg.KEY_SET_VALUE) as k:
+            winreg.DeleteValue(k, value_name)
+    except OSError:
+        # 本来就没有（或没有权限）—— 清理路径不制造新的失败
+        pass
+
+
 def main() -> int:
     root = tempfile.mkdtemp(prefix="autostart_root_")
     # 伪造包根结构：root/python/pythonw.exe + root/main.py
@@ -89,10 +111,13 @@ def main() -> int:
                   "read_command 同路径 → None")
     finally:
         try:
-            autostart.disable(root, value_name=TEST_VALUE)
+            # 【2026-11-09 改】清理不再走 `autostart.disable`：那是被测代码。
+            # 它坏了清理就跟着坏，真实 Run 键会留一条指向已删 tempfile 的死命令
+            # （2026-10-18 实锤）。清理必须与实现解耦。
+            _raw_delete(TEST_VALUE)
             # 残留旧值模拟（wrong_val）也是测试写入真实键的，必须清掉，否则每次跑门禁
             # 都在 HKCU Run 泄漏一条指向已删 tempfile 的死命令（登录时报“无法运行”）。
-            autostart.disable(root, value_name=wrong_val)
+            _raw_delete(wrong_val)
         except Exception:  # noqa: BLE001
             pass
         # 变异态污染守卫：真实键若被测试改动，按快照还原（原本有值→恢复，原本无→删）
@@ -102,7 +127,7 @@ def main() -> int:
                 print(f"  ⚠ 检测到真实键 {autostart.VALUE_NAME} 被测试污染（"
                       f"快照={_snap!r} 现在={_now!r}），已还原")
                 if _snap is None:
-                    autostart.disable(root, value_name=autostart.VALUE_NAME)
+                    _raw_delete(autostart.VALUE_NAME)
                 else:
                     import winreg
                     with winreg.OpenKey(winreg.HKEY_CURRENT_USER, autostart.RUN_KEY,
