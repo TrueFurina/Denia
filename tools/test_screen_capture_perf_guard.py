@@ -313,7 +313,15 @@ def test_main_wiring_truth_table() -> None:
     # D8：对真实 config.yaml 的判定必须与配置原文一致（接线读的是真配置）
     try:
         import yaml
-        cfg_real = yaml.safe_load((ROOT / "config.yaml").read_text(encoding="utf-8"))
+        # 【2026-11-10】config.yaml 在 .gitignore 里，刚克隆的树上没有 ——
+        # 原来直接 read_text 抛 FileNotFoundError，判据记 False，
+        # 于是这道门在**任何新克隆**上都是红的（本机实测 1 FAIL）。
+        # CI 之所以绿，是因为 self-check job 先「prepare standard first-run layout」造了它。
+        # 与 `test_tray_switch` / `test_clone_ref_audio` 同款修法：缺文件回落出厂模板。
+        _cfg_path = ROOT / "config.yaml"
+        if not _cfg_path.is_file():
+            _cfg_path = ROOT / "config.release.yaml"
+        cfg_real = yaml.safe_load(_cfg_path.read_text(encoding="utf-8"))
         vm = (cfg_real or {}).get("vision_models") or {}
         models = vm.get("models") or []
         expect = bool(vm.get("game_cloud_watch")) and any(
@@ -323,7 +331,7 @@ def test_main_wiring_truth_table() -> None:
                     and bool(str(m.get("api_key", "") or "").strip())))
             for m in models)
         got = main_mod._game_cloud_watch_active(_RawCfg(raw=cfg_real))
-        ok("D8 真实 config.yaml 判定与原文一致", got == expect,
+        ok(f"D8 真实配置判定与原文一致（源={_cfg_path.name}）", got == expect,
            f"game_cloud_watch={vm.get('game_cloud_watch')} expect={expect} got={got}")
     except Exception as e:  # noqa: BLE001
         ok("D8 真实 config.yaml 判定与原文一致", False, f"{type(e).__name__}: {e}")
