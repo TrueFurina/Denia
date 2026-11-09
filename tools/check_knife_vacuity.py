@@ -200,6 +200,11 @@ PAIRS = [
     # 最狠的是「装完不验收」—— `if verify: return verify_deps(...)` 整段没有判据。
     ("_qc_make_dist_mutation.py", "src/tests/test_make_dist_deps.py", "dev",
      "打包依赖分级：十二刀，C 刀「装完不验收」此前零判据（[14] 只测了 verify_deps 本身）"),
+    # 【2026-11-10 加】引导页集成：二十四刀。这道门 108 条断言、绿得很稳，探针却捅出
+    # 五个洞，最狠的是 C1 —— 判据（该不该断言 success=False）是从 webapp.py 里读出来的，
+    # 删掉守卫，判据跟着消失，端点被静默降级成"返回 dict 就行"。
+    ("_qc_onboarding_mutation.py", "tools/test_onboarding_integration.py", "dev",
+     "引导页集成：二十四刀，C1 刀「删 _cfg 守卫」此前全绿（判据从被测代码里读）"),
     # ---- dev（第二十六轮补：两条从 EXCUSED 挪进来的）----
     ("_qc_presence_mutation.py", "test_presence_controls.py", "dev",
      "在场感增强：缺 pynput 时兜底校验放行拼错的键名 —— 修好后起点第一次是绿的"),

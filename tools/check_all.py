@@ -577,7 +577,7 @@ GATES: list[tuple[str, str, list[str], bool]] = [
     # 后端侧：use_bundled_ref_audio 把随包资产物化成 data/voice_ref/ 真实路径 +
     # 白名单（防路径穿越）+ /local_img 音频 Content-Type + register_local_img_dir。
     ("参考音频物化", PY_VENV, ["tools/test_clone_ref_audio.py"], False),
-    # ---- 引导页集成（106 项）----
+    # ---- 引导页集成（119 项）----
     # 【为什么现在收了】上一轮我判定「不收：5 个 FAIL 是设计稿未落地的产品待办」——
     # 那个判断是**错的**。逐个查下来 5 个里没有一个是"要动产品"的：A1 拿仓库里
     # 从没进过库的本地设计稿当判据、A4 盯着两种已不存在的代码形态、A9 是
@@ -588,6 +588,12 @@ GATES: list[tuple[str, str, list[str], bool]] = [
     # 【输入】它把 config.release.yaml 复制到临时目录当沙盒（绝不写真实配置），
     # 所以验的是**出厂状态**而不是"我这台机器现在什么样"。
     ("引导页集成", PY_VENV, ["tools/test_onboarding_integration.py"], True),
+    # 【2026-11-10 加】引导页集成的刀：二十四刀。这道门 108 条断言、绿得很稳，
+    # 但探针一捅五个洞：首启实际链路零判据（判据盯着一段没人调用的 buildFlow）、
+    # 「返回失败」只验了"是不是 dict"、「接受 payload」只验了"有个 success 键"、
+    # 运行时切角色分支一次都没跑过、C1 的判据是从被测代码里读出来的（删守卫=删判据）。
+    # 标慢项：24 次整门重跑。
+    ("引导页集成变异", PY_VENV, ["tools/_qc_onboarding_mutation.py"], True),
     # ---- 变异脚本（判据的判据）：验证闸门里的检查器**真的还有牙齿** ----
     # 【为什么必须收进来】2026-10-21 实测：doctor.run_all 里加了一项之后，
     # `_qc_voice_mutation` 的 A/B/C/E 四刀与 `_qc_asr_mutation` 的若干刀

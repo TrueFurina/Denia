@@ -1,13 +1,16 @@
 # -*- coding: utf-8 -*-
 """引导页整体重构 —— 接入可行性与集成验证。
 
-范围（不是只验建角色，而是整条引导页链路）：
-  第1步 连引擎  = screenSlots（iframe 嵌 redesign/ui_redesign_modelapi.html?embed=onboard）
-  第2步 下模型  = screenVisionDl（挂 redesign/model_downloader.js）
-  第3步 麦克风  = screenMic
-  第4步 建角色  = screenRole（设计稿 docs/mockups/引导页建角色_设计稿_v8_20261012.html 待落地）
-  第5步 体检    = screenSummary
-  收尾          = deriveMode() + doFinish() → validate_onboarding / save_first_run_config
+范围：**首启实际链路** + 回滚链路 + 每屏依赖的桥面/接口。
+  【2026-11-10 更正·上面原来写的是"5 步全链路"，那已经不是现状了】
+  2026-10-20 产品把首启简化成两屏，`screenSlots/screenVisionDl/screenMic` 全部退出流程
+  （DOM 与 JS 一行没删，收进隐藏池可回滚）。现在真的会跑的是：
+
+  首启实际 = screenRole（建角色，含声音）→ screenSummary（体检）
+             建角色那屏挂 src/ui/web/onboarding_role.js
+  回滚链路 = MODE_SEQ（本机免费 / 云端付费 / 混合推荐）+ buildFlow()
+             —— **当前零调用者**，只作回滚备用；A4·回滚 那几条只验它没烂掉
+  收尾      = doFinish() → validate_onboarding / save_first_run_config
 
 三段：
   A. 静态契约：每个前端文件调用的桥方法是否都存在；关键结构/守卫是否齐备。
@@ -81,8 +84,12 @@ FILES = {
     # 而 `git log --all -- "docs/mockups/*"` **零命中**、.gitignore 也没忽略它 ——
     # 说明它是开发机上的本地过程稿，从没进过库。于是 A1「文件存在」在任何干净克隆上
     # 都必然红，等于**拿仓库里没有的东西当判据**。
-    # 设计稿是"落地前的过程产物"，落地后就不该再是判据依赖；真正要守的接线由 A8 承担，
-    # 而 A8 已经写了 `if r8:`（存在才验），移出 FILES 后它会自动跳过。
+    # 【2026-11-10 追加·「移出后 A8 会自动跳过」是句自欺】当时把 A8 写成 `if r8:`，
+    # 理由写的是"存在才验、不存在自动跳过"。但 r8 从此**恒为 None**，A8 那两条断言
+    # 就永久消失了 —— 不红、不报、不留痕。本文件开头的 finding() 文档早就写过这个病：
+    # 「不红、也不会自己消失」；这里更糟，它连"发现"都不算，是**静默蒸发**。
+    # 现在 A8 已经改判真身 `src/ui/web/onboarding_role.js`（设计稿落地后的实现），
+    # 不再依赖这张表。
 }
 
 _bridge = open(BRIDGE_JS, encoding="utf-8").read()
@@ -112,6 +119,14 @@ for tag, p in FILES.items():
     chk("[A1] %s 调用的桥方法全部存在" % tag, len(missing) == 0,
         "缺失=%s" % missing if missing else "调用 %d 个" % len(calls))
 
+# 【2026-11-10 补·上面那三条可能是空转】`missing` 是"从 s 里正则抓到的调用"减去
+# "桥面里有的名字"。如果正则**一个都没抓到**（比如前端改成 `Backend["x"]()`、
+# 或者 `bk()` 包了一层），missing 就是空集 → 三条「全部存在」全部 PASS。
+# 「零个东西全部满足条件」是真空真。补一条下限，让"没解析出来"变成红，而不是绿。
+chk("[A1] 每个前端文件都真的解析出桥调用（否则上面的「全部存在」是空转）",
+    bool(file_calls) and all(len(v[2]) >= 3 for v in file_calls.values()),
+    str({k: len(v[2]) for k, v in file_calls.items()}))
+
 # 引导页必须覆盖 5 步的桥面
 fl = file_calls.get("引导页 first_launch_setup.html")
 if fl:
@@ -140,7 +155,7 @@ if dl:
         ("callSafe" in s) and ("Promise.race" in s) and ("后端响应超时" in s))
     chk("[A3] 下载器暴露 open/mountInto", ("window.ModelDownloader" in s) and ("mountInto" in s))
 
-# 引导页结构：链路由 buildFlow 动态拼（MODE_SEQ），退场屏留隐藏池
+# 引导页结构：**首启实际链路** + 回滚备用表
 if fl:
     _, s, _ = fl
     # 【2026-10-21 修·判据盯着已不存在的形态】原来断言两件事，现在两件都不成立了：
@@ -148,21 +163,34 @@ if fl:
     #   ② 字面量 `'screenVisionDl','screenMic','screenRole','screenSummary'` 连续出现
     #      —— MODE_SEQ 里中间插了 screenVoice（2026-09-25 决定：本地双工的出声也是
     #      TTS 合成，不绑 TTS 就没声音），这个连续串永远不会再出现。
-    # 判据改成守**语义**（谁在哪条链路上），而不是某个具体的字面写法：
-    #   · 至少两条链路（本机 / 云端 / 混合）
-    #   · **每条**链路都必须有「建角色」和「体检」——少一个流程就断了
-    #   · 至少一条链路要下本地模型
+    # 判据改成守**语义**（谁在哪条链路上），而不是某个具体的字面写法。
+    #
+    # 【2026-11-10 再修·上面那次"改成守语义"，守的是一段没人调用的代码】
+    # 2026-10-20 产品把首启简化成「建角色 → 体检」，唯一的 `buildFlow(mode)` 调用点
+    # 被删了（1759 行还留着注释），只剩 MODE_SEQ 这张表当回滚备用。实测：
+    #   · `buildFlow` 全仓**零调用**（grep 只剩定义 + 两处注释）；
+    #   · 真正跑的首启链路是写死的两屏：
+    #       let FLOW = [];  ['screenRole','screenSummary'].forEach(id=>{ ... FLOW.push(el) })
+    #   · 而下面第四条断言叫「FLOW 由 buildFlow 动态拼（不再写死单条）」——**与现状正好相反**。
+    # 后果：把 'screenRole' 从实际链路里删掉，本门**照样全绿**（已用探针验证）。
+    # 改法：① 首启实际链路直接验那段字面量（这才是用户真的会看到的流程）；
+    #       ② MODE_SEQ/buildFlow 如实降级成"回滚备用路径完好"，断言名字里就写明是回滚。
+    m_init = re.search(r"let FLOW = \[\];\s*\n\s*\[([^\]]*)\]\.forEach", s)
+    init_ids = re.findall(r"'([A-Za-z][A-Za-z0-9_]*)'", m_init.group(1)) if m_init else []
+    chk("[A4] 首启实际链路 == 建角色 → 体检（改这里等于改产品流程，必须同步改判据）",
+        init_ids == ["screenRole", "screenSummary"], "实际=%s" % init_ids)
+    chk("[A4] 实际链路引用的屏 id 都在 DOM 里（写错一个就是白屏）",
+        bool(init_ids) and all(('id="%s"' % i) in s for i in init_ids),
+        "缺=%s" % [i for i in init_ids if ('id="%s"' % i) not in s])
     m_seq = re.search(r"const MODE_SEQ = \{(.*?)\n  \};", s, re.S)
     seqs = re.findall(r"\[([^\]]*)\]", m_seq.group(1)) if m_seq else []
-    chk("[A4] MODE_SEQ 至少 2 条链路（本机/云端/混合）", len(seqs) >= 2,
+    chk("[A4·回滚] MODE_SEQ 仍有 >=2 条链路且每条都含「建角色 + 体检」",
+        len(seqs) >= 2 and all("screenRole" in x and "screenSummary" in x for x in seqs),
         "实际 %d 条" % len(seqs))
-    chk("[A4] 每条链路都含「建角色 + 体检」",
-        bool(seqs) and all("screenRole" in x and "screenSummary" in x for x in seqs),
-        "缺的链路见上")
-    chk("[A4] 至少一条链路要下本地模型（screenVisionDl）",
+    chk("[A4·回滚] 至少一条链路要下本地模型（screenVisionDl）",
         any("screenVisionDl" in x for x in seqs))
-    chk("[A4] FLOW 由 buildFlow 动态拼（不再写死单条）",
-        ("function buildFlow(" in s) and ("FLOW = [screenMode];" in s))
+    chk("[A4·回滚] buildFlow 仍在（改回动态链路只改一行）",
+        "function buildFlow(" in s and "FLOW = [screenMode];" in s)
     for sid in ["screenMode", "screenVoice", "screenProvider", "screenChatApi"]:
         chk("[A5] 退场屏 %s DOM 保留（可回滚）" % sid, ('id="%s"' % sid) in s)
     chk("[A6] 引导页有 iframe 能力槽嵌入", 'id="slotsFrame"' in s and "embed=onboard" in s)
@@ -175,12 +203,27 @@ if ma:
     _, s, _ = ma
     chk("[A7] modelapi 页支持 ?embed=onboard 嵌入模式", "embed" in s and "onboard" in s)
 
-# v8 稿：接线注释指向适配器（不自建）
-r8 = file_calls.get("建角色 v8 设计稿")
-if r8:
-    _, s, _ = r8
-    chk("[A8] v8 稿接线指向适配器 setCapabilitySlot", 'setCapabilitySlot("tts"' in s or "setCapabilitySlot('tts'" in s)
-    chk("[A8] v8 稿声明 TTS 厂商来自 TTS_PROVIDERS", "TTS_PROVIDERS" in s)
+# 建角色步的「接线指向适配器，不自建」
+# 【2026-11-10 修·两条断言静默蒸发了】原来这里验的是 `docs/mockups/…v8_20261012.html`，
+# 而那份设计稿从没进过库（见 FILES 注释），于是：
+#     r8 = file_calls.get("建角色 v8 设计稿")   # ← 恒为 None
+#     if r8: ...                               # ← 两条断言永久不执行
+# 不红、不报、不留痕 —— 比"发现栏腐烂"更隐蔽：发现至少还会打印一行 ⚠。
+# 设计稿落地后的**真身**是 `src/ui/web/onboarding_role.js`（首启 FLOW 里的 screenRole
+# 就挂它），所以判据搬到真身上，验两件事：
+#   ① 写 TTS 走能力槽适配器（cap:"tts" + setCapabilitySlot），不自己拼请求；
+#   ② 厂商清单来自 TTS_PROVIDERS（真相源 slot_config.TTS_PROVIDERS），不自建厂商表。
+# **先剥注释再断言** —— 这两串字面量在文件注释里都出现过（第 425、1352 行），
+# 不剥注释的话注释自己就能满足判据（本仓踩过：`"backup=True" in txt` 被注释满足）。
+_role_src = open(os.path.join(PROJ, "src", "ui", "web", "onboarding_role.js"),
+                 encoding="utf-8").read()
+_role_nc = re.sub(r"/\*.*?\*/", "", _role_src, flags=re.S)
+_role_nc = re.sub(r"(?m)^\s*//.*$", "", _role_nc)
+chk("[A8] 建角色步写 TTS 走能力槽适配器（cap:\"tts\" + setCapabilitySlot）",
+    re.search(r"""cap\s*:\s*["']tts["']""", _role_nc) is not None
+    and re.search(r"\.setCapabilitySlot\s*\(", _role_nc) is not None)
+chk("[A8] 建角色步的厂商清单来自 TTS_PROVIDERS（不自建厂商表）",
+    re.search(r"TTS_PROVIDERS\s*=\s*\[", _role_nc) is not None)
 
 # SHELL_GUARD 对 iframe 放行
 # 【2026-10-21 修·代码搬家没同步搬判据】`_SHELL_GUARD` 已随 UI 拆分搬进
@@ -330,7 +373,20 @@ chk("[B6] modelDirInfo 空路径不抛", isinstance(info_bad, dict))
 st = api.stop_model_download("dl_not_exist")
 chk("[B6] stopModelDownload 不存在任务安全", isinstance(st, dict))
 dlq = api.delete_model_quant({"quant_id": "Q4_K_M", "model_dir": SANDBOX})
-chk("[B6] deleteModelQuant 未装档返回失败但不抛", isinstance(dlq, dict))
+# 【2026-11-10 修·断言名承诺了"返回失败"，条件只查了"是不是 dict"】
+# 原来是 `chk("…未装档返回失败但不抛", isinstance(dlq, dict))` —— 名字里写着「返回失败」，
+# 判据里一个失败都没验。探针实测：把 `delete_model_quant` 的"文件不存在"分支改成
+# `return {"success": True}`，本门**照样全绿**。
+# 生产实现（model_catalog.py）这条分支返回
+#   {"success": False, "error": "该档位文件不存在（可能未下载或已删除）"}
+# 所以两件事都验：success 必须是 False，error 必须说清是"不存在"（不是别的失败）。
+chk("[B6] deleteModelQuant 未装档返回失败但不抛",
+    isinstance(dlq, dict) and dlq.get("success") is False and "不存在" in str(dlq.get("error")),
+    str(dlq)[:100])
+dlq_bad = api.delete_model_quant({"quant_id": "NO_SUCH_QUANT", "model_dir": SANDBOX})
+chk("[B6] deleteModelQuant 未知量化档被拒（不误删）",
+    dlq_bad.get("success") is False and "量化档" in str(dlq_bad.get("error")),
+    str(dlq_bad)[:100])
 
 # ---- B7 第 3 步：麦克风 ----
 mic = api.list_mic_devices()
@@ -398,6 +454,46 @@ chk("[B11] active 已切换", str(api._cfg.active_character_id) == "_onb_int_tes
     str(api._cfg.active_character_id))
 sw_bad = api.switch_character("no_such_char_zzz")
 chk("[B11] switchCharacter 不存在角色被拒", sw_bad.get("success") is False)
+
+# 【2026-11-10 补·运行时分支一条判据都没有】上面三条只走了「无运行时 → 配置级回退」
+# 那条路：`self._dialogue` 是 None，`_run_coro` 立刻返回 None，于是
+#     if result is False:  return {"success": False, "error": "角色不存在"}
+# 这段**一次都没执行过**。探针实测：把这段的拒绝改成 `return {"success": True}`，
+# 本门照样全绿 —— 因为桩根本没进那个分支。
+# 这里造一个最小运行时（真事件循环 + 桩 dialogue），让那条分支真的跑一次。
+import asyncio as _aio            # noqa: E402
+import threading as _thr          # noqa: E402
+
+
+class _StubDialogue:
+    """只实现 switch_character；verdict=False 用来模拟"运行时说角色不存在"。"""
+
+    def __init__(self, verdict):
+        self.verdict = verdict
+        self.calls = []
+
+    async def switch_character(self, cid):
+        self.calls.append(cid)
+        return self.verdict
+
+
+_rt_loop = _aio.new_event_loop()
+_rt_thr = _thr.Thread(target=_rt_loop.run_forever, daemon=True)
+_rt_thr.start()
+_stub = _StubDialogue(False)
+sw_rt = {}
+try:
+    api.set_runtime(dialogue=_stub, loop=_rt_loop)
+    sw_rt = api.switch_character("no_such_char_zzz")
+finally:
+    api.set_runtime()
+    _rt_loop.call_soon_threadsafe(_rt_loop.stop)
+    _rt_thr.join(timeout=3)
+chk("[B11] 运行时桥返回 False → 拒绝（这段之前一条判据都没有）",
+    isinstance(sw_rt, dict) and sw_rt.get("success") is False
+    and "不存在" in str(sw_rt.get("error")), str(sw_rt)[:100])
+chk("[B11] 桩确实被问到过一次（证明走的是运行时分支，不是回退路径蒙对）",
+    _stub.calls == ["no_such_char_zzz"], str(_stub.calls))
 
 # ---- B12 克隆引擎（本地路线） ----
 CE = ["qwen3tts", "voxcpm", "cosyvoice", "mimo_tts", "gpt_sovits"]
@@ -479,8 +575,26 @@ chk("[B17] getCompanionReadiness 返回 success/ready", isinstance(rd, dict) and
 vo = api.validate_onboarding({"mode": "云端付费", "role": {"preset": "danya"}, "mic": None,
                               "camera": None, "voice": None, "tts": None, "llm": None,
                               "cloud_omni": None, "local_vision_ready": False, "model_dir": None})
-chk("[B17] validateOnboarding 接受精简 payload（能力槽已落盘）", isinstance(vo, dict) and "success" in vo,
-    str(vo)[:100])
+# 【2026-11-10 修·「接受」被写成了「有个 success 键就算」】
+# 原来是 `isinstance(vo, dict) and "success" in vo` —— `{"success": False, "error": …}`
+# 也满足。名字叫「接受精简 payload」，实际连"复核有没有跑完"都没验。
+# 探针实测：把正常路径改成 `return {"success": False, "ok": False, "checks": checks}`，
+# 本门照样全绿。生产契约是 {"success": True, "ok": …, "checks": [...]}，
+# 而 ok 的定义是「没有任何一条 fail」——这两件都验。
+chk("[B17] validateOnboarding 接受精简 payload 且复核跑完（success True + checks）",
+    isinstance(vo, dict) and vo.get("success") is True
+    and isinstance(vo.get("checks"), list) and len(vo["checks"]) >= 3,
+    str(vo)[:140])
+chk("[B17] 每条 check 都有 id/label/status（体检页按这三字段渲染）",
+    isinstance(vo.get("checks"), list)
+    and all(isinstance(c, dict) and {"id", "label", "status"} <= set(c) for c in vo["checks"]),
+    str([c.get("id") for c in (vo.get("checks") or []) if isinstance(c, dict)]))
+chk("[B17] ok 的定义自洽：没有任何一条 fail 才为 True",
+    isinstance(vo.get("checks"), list)
+    and vo.get("ok") == (not any(c.get("status") == "fail" for c in vo["checks"])),
+    "ok=%r fails=%s" % (vo.get("ok"),
+                        [c.get("id") for c in (vo.get("checks") or [])
+                         if isinstance(c, dict) and c.get("status") == "fail"]))
 chk("[B17] getModelBundleStatus 存在", hasattr(api, "get_model_bundle_status"))
 chk("[B17] applyOnboardingVoice 存在", hasattr(api, "apply_onboarding_voice"))
 
@@ -531,11 +645,31 @@ OFF_ENDPOINTS = [
     ("set_tts_model_dir", ({"engine": "voxcpm", "dir": SANDBOX},)),
     ("validate_onboarding", ({},)),
 ]
-# 从源码判定每个端点是否在方法体开头就 `if not self._cfg` 早退
+# 【2026-11-10 修·判据是从被测代码里读出来的，于是"删守卫"= "删判据"】
+# 原来这里是 `_guards_cfg(nm)`：去 webapp.py 里找 `if not self._cfg`，**用它决定**
+# 这个端点该不该断言 `success is False`。等于让被测代码自己出考卷 ——
+# 把守卫删掉，端点就被静默降级成"无守卫端点"，只剩一句"返回 dict 就行"。
+# 探针实测：删掉 `get_model_catalog` 的 `if not self._cfg` 早退，本门**照样全绿**。
+# 改法：契约**手写**在下面两张表里（哪 14 个必须守 cfg、哪 3 个本来就不需要），
+# 行为断言只认这两张表；源码一致性另立一条断言 —— 删守卫会让它**红**，而不是让它消失。
+CFG_GUARDED = [
+    # 读写配置的端点：没有 cfg 就必须早退成 success=False，不能半路 AttributeError
+    "get_capability_slots", "set_capability_slot", "get_model_catalog", "model_dir_info",
+    "list_voice_profiles", "save_character", "switch_character", "check_clone_engine_target",
+    "set_reference_audio", "download_model_quant", "stop_model_download", "delete_model_quant",
+    "set_tts_model_dir", "validate_onboarding",
+]
+CFG_FREE = {
+    # 静态/硬件类：本来就不需要 cfg，要求"不抛且返回 dict"即可
+    "get_character_templates",   # 模板是常量表
+    "get_voice_vram_advice",     # 探测本机显存
+    "scan_tts_model_dir",        # 扫的是传进来的目录
+}
 _app_src = open(os.path.join(PROJ, "src", "ui", "webapp.py"), encoding="utf-8").read()
 
 
 def _guards_cfg(method_name):
+    """仅用于「手写契约 vs 源码」的一致性核对，**不再**用来决定断言口径。"""
     i = _app_src.find("def %s(" % method_name)
     if i < 0:
         return False
@@ -544,22 +678,29 @@ def _guards_cfg(method_name):
     return "if not self._cfg" in body[:700]
 
 
-off_bad, off_guarded = [], 0
+off_bad = []
 for nm, args in OFF_ENDPOINTS:
     try:
         rr = getattr(api_off, nm)(*args)
-        if _guards_cfg(nm):
-            off_guarded += 1
-            if not (isinstance(rr, dict) and rr.get("success") is False):
-                off_bad.append((nm, str(rr)[:70]))
-        else:
-            # 无 cfg 守卫的端点（如静态模板/显存探测）：只要求不抛、返回 dict
-            if not isinstance(rr, dict):
-                off_bad.append((nm, "非 dict: " + str(rr)[:60]))
     except Exception as e:            # noqa: BLE001
         off_bad.append((nm, "THREW " + str(e)[:60]))
-chk("[C1] _cfg=None 时 %d 个端点优雅早退、%d 个无守卫端点不抛"
-    % (off_guarded, len(OFF_ENDPOINTS) - off_guarded), len(off_bad) == 0, str(off_bad))
+        continue
+    if nm in CFG_GUARDED:
+        if not (isinstance(rr, dict) and rr.get("success") is False):
+            off_bad.append((nm, str(rr)[:70]))
+    elif not isinstance(rr, dict):
+        off_bad.append((nm, "非 dict: " + str(rr)[:60]))
+chk("[C1] _cfg=None 时 %d 个必须守 cfg 的端点全部 success=False、%d 个 cfg 无关端点不抛"
+    % (len(CFG_GUARDED), len(CFG_FREE)), len(off_bad) == 0, str(off_bad))
+chk("[C1] 契约表恰好覆盖全部探针端点（新增端点必须显式归类，不许默认放行）",
+    set(CFG_GUARDED) | CFG_FREE == {nm for nm, _ in OFF_ENDPOINTS}
+    and not (set(CFG_GUARDED) & CFG_FREE),
+    "表=%d 探针=%d 交集=%s" % (len(CFG_GUARDED) + len(CFG_FREE), len(OFF_ENDPOINTS),
+                               sorted(set(CFG_GUARDED) & CFG_FREE)))
+chk("[C1] 这 %d 个端点的源码里确实写着 `if not self._cfg` 早退（删了会红）"
+    % len(CFG_GUARDED),
+    [nm for nm in CFG_GUARDED if not _guards_cfg(nm)] == [],
+    "缺守卫=%s" % [nm for nm in CFG_GUARDED if not _guards_cfg(nm)])
 
 # C2 脏数据：read_capability_slots 不抛
 from src.models.slot_config import read_capability_slots  # noqa: E402
