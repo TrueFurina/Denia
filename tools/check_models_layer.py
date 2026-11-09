@@ -131,6 +131,23 @@ def main() -> int:
     else:
         ok("调用点 id 无重复")
 
+    # ---------- 3b) CALL_SITES 与视图逐项对账 ----------
+    # 【2026-11-09 加·第二份真相必须被对账】`CALL_SITES` 是「13 个调用点」的**第二份
+    # 声明**：它在 `src/models/__init__.py` 的 `__all__` 里导出、被文档和 UI 引用，
+    # 但 `build_model_view` **并不用它**建视图（视图是 13 段手写 append）。
+    # 后果：把 `CALL_SITES` 删掉一项、或改到撞车，视图照样 13 条，这道门照样全绿 ——
+    # 声明和实现可以任意漂移而没有任何人发现。这正是本仓自己写在
+    # `catalog.py:98` 那句「不复制逻辑（第二份真相是 bug 温床）」要防的事，
+    # 却唯独漏了它自己。这里补的就是这条对账：两份必须逐项相同（重复也计入）。
+    from src.models import CALL_SITES as _DECLARED
+    declared = list(_DECLARED)
+    if sorted(declared) == sorted(ids):
+        ok(f"CALL_SITES 声明与视图逐项一致（{len(declared)} 项）")
+    else:
+        fail(f"CALL_SITES 与视图不一致: 仅声明={sorted(set(declared) - set(ids))} "
+             f"仅视图={sorted(set(ids) - set(declared))} "
+             f"声明 {len(declared)} 项 / 视图 {len(ids)} 项")
+
     s = mv["summary"]
     if s["total"] == len(sites) and s["ready"] + s["not_ready"] == s["total"] \
             and s["in_slot"] + s["blind"] == s["total"]:
