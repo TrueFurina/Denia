@@ -13,6 +13,7 @@
 
 | commit | 时间 | 类型 | 一句话 | 验证 |
 |---|---|---|---|---|
+| `PR#18s` | 04:5x | test | **最厚的一道门（1047 行）三处空转，最狠的是「装完不验收」**：① `打包依赖分级`（`src/tests/test_make_dist_deps.py`）是全项目最厚的一道门，而且**写得比大多数门都讲究** —— [14] 专门写了「先判 env 是否存在，再判内容：否则 `"PYTHONPATH" not in {}` 会恒真……空洞通过比不通过更危险」。所以这一轮不能假设它漏，只能一处一处探。② 三处全空（实测，改完门仍 EXIT 0 全绿）：`[C10-6]`「配了凭证但没 signtool 应拒绝」在**没抛异常**的分支里断言 `not os.path.isfile("signtool.exe")` —— 那是断言**文件系统**不是代码，把守卫改成 `if False:` 全门全绿；`[C10-14]`「`--sign` 必须连着 `--installer`」只 grep 错误文案，守卫改成 `if False:` 后文案还在、门全绿而 `--sign` 已不再报错；`install_deps` 末尾 `if verify: return verify_deps(...)` **整段没有判据**，换成 `return True`（装完不验收）全门全绿 —— 这是 [14] 那件事的镜像：「规矩没写进 `env=`，等于没写」→「验收没被调用，等于没验收」，而 [14] 只直接测 `verify_deps` 本身，从没测过 `install_deps` 调不调它。③ 先补判据 135 → **142**：C10-6 改成显式给不存在的 `DANIA_SIGN_TOOL`（任何机器都必抛）+ 先问 `find_signtool()` 再定判据（装了 SDK 就如实说「不适用，未验证」）；C10-14 改成用 `ast` 找「body 含那句提示」的 `if` 直接验**条件**；新增 `[26]`（verify=True 必调一次、拿到包内解释器路径、verify=False/defer_verify 不许调、验收不过必须返回 False）。④ 新刀 `tools/_qc_make_dist_mutation.py` 十二刀：A 不查 signtool / B `--sign` 守卫失效 / C 装完不验收 / D `_pth` 写 LF / E DLL 落 `DLLs/` / F 非 DLL 也搬 / G `enable=False` 不删 / H `tier_specs` 永不 break / I purge 清到 `python/` / J 指纹不含壳脚本 / K 档位静默降级 / L 不裁 locales。| 门 **135 → 142 条**；十二刀 **12/12 全红**且各自点名（A 2 项 / C 3 项 / E 2 项 / F 3 项 / K 7 项）；还原后 sha256 逐字节一致；空变异体检 **CERTIFIED**；`check_gate_registry` **236 项全部有着落**；站点 7 PASS/0 FAIL（GATES 235→**236**）；K11 分层 8/28=**36**、0 处异常 |
 | `PR#18r` | 03:1x | test | **测试里抄了一遍生产代码，然后测抄件**：① `双工停止与麦克风`（`tools/test_duplex_stop_and_mic.py`）的 A/B/C 三段函数注释明写「复刻 `_stop_duplex_client` 的分派核心 / 复刻 `_track_mic_level` 的电平平滑 / 复刻 `get_role_voice_context` 的 engine_ui 判定」—— 生产实现被手抄进测试，然后测这份抄件，生产代码改成什么样都不会红。而**同一个文件 D 段的注释早就写对了**：「不复制逻辑，避免"假绿"——复刻逻辑两次写得一样不算测试」。② 改法：三段全改成调真实实现（`__new__` 绕过 `__init__`），B 段从「造假浮点数喂抄件」改成「造 16-bit PCM 喂 `_track_mic_level`」，实测复现 BUG-2 原始形状（`level=0.00375` < 阈值 / `disp=0.04501` > 阈值）。③ 换成真实现后逼出两件「注释在骗人」：A1 括号里那句「旧代码 `await None` → TypeError → **stopped 恒 False**」是**假的** —— `await f()` 必然先求值 `f()`，客户端真的停了；探针实测把生产代码回退成 BUG-1 原形，A1/A2 **照样绿**，唯一会红的只有日志。真正坏掉的是「异常逃逸 → 调用方 `self._duplex_client = None` 被跳过 → 引用仍指着已停客户端」，而现在 try/except 已挡住逃逸、可观测后果只剩一条日志 → 补 **A5**（ERROR handler 挂 `proactive.logger`，正常分派零异常日志）；`proactive.py` 里同一条假因果一并改正。④ 第二件：`_watchdog_tick` 的 `and self._mic_proc is proc`（换轮保护，旧看门狗别杀新一轮子进程）**一条判据都没有**（D5/D6 都是 `is proc`，D7 桩成 False 又不过它），删掉全绿 → 补 **D9** 真实竞态用例。⑤ 新刀 `tools/_qc_duplex_stop_mic_mutation.py` 十刀跨三文件：A 分派回退 / B `_mic_disp` 退化 / C 停滞判据比较反向 / D 不看 running / E 不看 `_mic_proc` / F 去掉换轮保护 / G 停滞也不杀 / H 杀完不清引用 / I 只清引用不 kill / J 出声方式只读静态 config。| 门 **21 → 22 条**（A5/B4/D9 本轮新补）；十刀 **10/10 全红**且各自点名（C 连坐 4 项、G 连坐 2 项、I 连坐 2 项、J 连坐 3 项）；还原后 sha256 逐字节一致；空变异体检 **CERTIFIED**；`check_gate_registry` **235 项全部有着落**；站点 7 PASS/0 FAIL（GATES 234→**235**）；K11 分层 8/27=**35**、0 处异常 |
 | `PR#18q` | 02:2x | test | **15 节、四十来条断言的「最扎实」那道门，进程回收这条支路上五处关键行为全都没判据**：① `壳自愈与退出清理`（`src/tests/test_pet_shell_selfheal.py`）守的是「桌宠无声消失」「无限 spawn Electron」「孤儿窗口滞留」三类用户看不懂的故障。② 读判据时五处全空（实测，删掉后自测照样全绿 exit 0）：`_try_restart` 的 `if was_top: self.on_top = True`（恢复置顶）—— 而原文件 [1] 里有个 `calls = {"launch": 0, "show": 0, "top": 0}`，**`top` 从头到尾没被 ++ 过**，也没人读它；`_cleanup_proc` 的 `elif force: _kill_tree(proc.pid)`（主进程已退、子进程还在 = 孤儿 Electron 窗口，Electron 会**无输出地立刻退出**，项目里最难查的坑）；活进程 `wait(5)` 超时后的升级强杀；`time.sleep(RESTART_BACKOFF)`（连续崩时的退避，作用是「别把 CPU 打满」）；`close()` 里的 `sendall(b"quit\n")`（先礼后兵）。③ **为什么 15 节还是漏**：节数多不等于覆盖面广。15 节里有 9 节在测配额/降级/握手文件，而五处全在「进程回收」和「重启时恢复状态」两条支路上 —— **分支比断言更值得数**。④ 先补判据：47 → **57** 条（[1] 加置顶、[1b] 加「没置顶就不碰」、[6] 加三条杀进程树分支（含 force=False 的不越权边界）、[11] 加 quit、[16] 加退避（只断言下界，不赌上界））。⑤ 新刀 `tools/_qc_pet_shell_mutation.py` 八刀：A 不恢复置顶 / B 不杀子进程树 / C 不升级强杀 / D 不退避 / E 不发 quit / F 配额差一 / G 拿掉整条守卫 / H 窗口不滚动。| 断言 **47 → 57**；八刀 **8/8 全红**且各自点名（B 连坐 3 项、F 连坐 11 项、G 连坐 2 项）；还原字节一致；空变异体检 **CERTIFIED**；`check_gate_registry` **234 项全部有着落**；站点 7 PASS/0 FAIL（GATES 233→**234**）；K11 分层 8/26=34、0 处异常 |
 | `PR#18p` | 00:5x | test | **这条通道坏了不会报错，只会「照样返回 200，返回的东西不对」—— 而它唯一的名字检查只被单段名字验过**：① `RPC 通道`（`src/tests/test_rpc_server.py`）守壳↔后端那条没有类型检查的 HTTP 通道：19 条等价性 + 三条安全边界。失效形状与端口绑定相反：端口坏了是「起不来」，这条坏了是「照样 200」，或者更糟 —— **私有方法能调到**。② 读判据读到两处空转（实测）：把 `all(_is_exposed(p) for p in method.split("."))` 改成 `_is_exposed(method)`（整串检查）→ 自测**照样全绿 exit 0**，而那个退化正是**点号绕过**：`sub._secret` 整串不以 `_` 开头，校验通过、私有方法被调走；把 `_resolve` 换成 `getattr(api, dotted, None)`（不再支持点号）→ 同样全绿，而它的注释写着「与 pywebview 的 `get_nested_attribute` 一致，支持子对象」。③ 根因：19 条等价性用例**全是单段名字**，而单段名字上「逐段检查」与「整串检查」完全等价、「点号循环」跑一轮与直接 `getattr` 完全等价 —— **判据只覆盖了退化不产生差别的那个输入域**。④ 先补判据：FakeAPI 加子对象 `sub`（`ping` / `_secret` / `a__b`），等价性加 `sub.ping`，安全检查加四段点号用例（私有段 403 + 不泄漏 / 不存在 404 / 空段 403 / 中间 dunder 403）；运行时断言 21 → **26**。顺带把参照实现从 `getattr(api, method)` 换成自己走点号的 `_direct_call()` —— **不能拿 `_resolve` 当参照**，它坏了参照一起坏，等价性永远成立。⑤ 新刀 `tools/_qc_rpc_mutation.py` 十刀：A 令牌恒真 / B 逐段→整串 / C 不支持点号 / D 不排空请求体 / E 去掉 MAX_BODY / F 去掉 degraded / G stop 空操作 / H 业务异常改 200 / I 去掉中间 dunder 限制 / J 去掉空段限制。| 运行时断言 **21 → 26**（19 → 24 个 `check()` 调用点）；十刀 **10/10 全红**且各自点名（A 3 项 / B 3 项 / C 1 项 / D 3 项 / E 2 项 / F 1 项 / G 1 项 / H 1 项 / I 1 项 / J 1 项）；还原字节一致；空变异体检 **CERTIFIED**；`check_gate_registry` **233 项全部有着落**；站点 7 PASS/0 FAIL（GATES 232→**233**）；K11 分层 8/25=33、0 处异常 |
@@ -569,6 +570,90 @@ find_spec 返回 None → 误报「唤醒词退化」；
 
 **验证**：变异 4 刀全红 + 还原后回归 12/12 全绿；`tools/check_all.py` 登记对账 ✓；
 CI 全绿（pytest / self-check scripts / syntax gate 三腿 success）。
+
+#### PR #18（续十四）· 最厚的一道门三处空转，最狠的是「装完不验收」
+
+**为什么挑它**：`打包依赖分级`（`src/tests/test_make_dist_deps.py`）1047 行、
+六十来条断言，是全项目最厚的一道门，按「有没有刀」的读数是「没有刀」。
+
+**它写得比大多数门都讲究。** [14] 那节甚至专门写了这句：
+
+> 「先判 env 是否存在，再判内容：否则 `"PYTHONPATH" not in {}` 会恒真，
+> 变异体（删掉 `env=`）下那两条照样打勾 —— **空洞通过比不通过更危险**。」
+
+[20] 也写了「这两条是『别做过头』的护栏：静默删目录比留下垃圾更危险」。
+所以这一轮不能假设它漏，只能一处一处去探。
+
+##### 三处空转（全部实测：改完门仍 EXIT 0 全绿）
+
+**① `[C10-6]` 断言的是文件系统，不是代码。**
+
+```python
+try:
+    make_dist.resolve_sign_config({"DANIA_SIGN_SUBJECT": "X"})
+    check(not os.path.isfile("signtool.exe"),
+          "无 TOOL 且 PATH 无 signtool 时应抛 ValueError（本机没有裸 signtool.exe）")
+except ValueError:
+    check(True, "凭证配了但没工具 → ValueError")
+```
+
+没抛异常时，它去断言「当前目录没有 `signtool.exe`」——那是**文件系统**的事实。
+把 `if not cfg["tool"] or not os.path.isfile(cfg["tool"]): raise` 改成 `if False:`，
+门照样全绿：这个守卫从来没被测过。
+
+**② `[C10-14]` 只 grep 错误文案。**
+
+```python
+check('"--sign"' in src_txt10 and "--sign 需要 --installer" in src_txt10, ...)
+```
+
+把守卫改成 `if False:`，提示原样留在源码里、门全绿，而 `--sign` 单跑已经不再报错。
+
+**③ `install_deps` 末尾「装完验收」整段没有判据。**
+
+```python
+if verify:
+    return verify_deps(out_dir, python_exe)
+return True
+```
+
+换成 `return True` 全门全绿。**这是 [14] 那件事的镜像**：
+「规矩没写进 `env=`，等于没写」——「验收没被调用，等于没验收」。
+而 [14] 只**直接**测 `verify_deps` 本身，从没测过 `install_deps` 到底调不调它。
+
+##### 判据先行：135 → 142
+
+- `[C10-6]` 改成显式给一个不存在的 `DANIA_SIGN_TOOL`（任何机器上都必抛），
+  直接钉住 `os.path.isfile(cfg["tool"])` 这半句；「本机完全没有工具」那一半
+  改成先问 `find_signtool()` 再定判据，机器上装了 SDK 时如实打印「不适用，未验证」。
+- `[C10-14]` 改成用 `ast` 找到「body 里含那句提示」的 `if`，直接验它的**条件**
+  是否同时含 `sign` 与 `installer`。
+- 新增 `[26]`：`verify=True` 必须调一次 `verify_deps`、拿到的是包内解释器路径、
+  `verify=False` / `defer_verify=True` 不许调、验收不过必须让 `install_deps` 返回 False。
+
+##### 十二刀
+
+`tools/_qc_make_dist_mutation.py`：A 不查 signtool / B `--sign` 守卫失效 /
+C 装完不验收 / D `_pth` 写 LF / E DLL 落 `DLLs/` / F 非 DLL 也搬 /
+G `enable=False` 不删 / H `tier_specs` 永不 break / I purge 清到 `python/` /
+J 指纹不含壳脚本 / K 档位静默降级 / L 不裁 locales。**12/12 全红**。
+
+##### 一个仪器错误，留档
+
+第一版探针按 `✗` 过滤判「有没有红」，结果七处全报「抓住了」——**全错**。
+因为 `make_dist` 的负向场景自己会打印 `  ✗ ...`（「包内没有 python.exe」
+「核心档安装失败」……），和本门 `check()` 的前缀一模一样。按 `✗` 过滤，
+等于把「门在验证某个失败场景」当成「门失败了」。
+改成本门自己的汇总行 `❌ N 项未通过` 才看对。
+
+同一轮里还有两把刀**砍断了多行语句**（`if ...startswith(` 只替换了第一行），
+留下悬空的续行 → `make_dist.py` SyntaxError → 门崩了。`_judged()` 正确地拒绝
+把「崩了」算成「抓住了」，两把刀都报「没抓住」。改成整块替换才红。
+这是第三次踩「崩了 ≠ 认出来了」，但这次是**刀自己**崩。
+
+**验证**：门 **135 → 142 条**；十二刀 12/12 全红且各自点名；还原后 sha256
+逐字节一致；空变异体检 **CERTIFIED**；`check_gate_registry` **236 项全部有着落**；
+站点 7 PASS/0 FAIL（GATES 235→**236**）；K11 分层 portable 8 / dev 28 = **36**。
 
 #### PR #18（续十三）· 测试里抄了一遍生产代码，然后测抄件
 

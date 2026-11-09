@@ -196,6 +196,10 @@ PAIRS = [
     # 原 A1 那句「stopped 恒 False」是假的。
     ("_qc_duplex_stop_mic_mutation.py", "tools/test_duplex_stop_and_mic.py", "dev",
      "双工停止与麦克风：十刀，A 刀只有 A5 能抓（A1/A2 对回归本来就绿）"),
+    # 【2026-11-10 加】打包依赖分级：十二刀。最厚的一道门（1047 行）三处空转，
+    # 最狠的是「装完不验收」—— `if verify: return verify_deps(...)` 整段没有判据。
+    ("_qc_make_dist_mutation.py", "src/tests/test_make_dist_deps.py", "dev",
+     "打包依赖分级：十二刀，C 刀「装完不验收」此前零判据（[14] 只测了 verify_deps 本身）"),
     # ---- dev（第二十六轮补：两条从 EXCUSED 挪进来的）----
     ("_qc_presence_mutation.py", "test_presence_controls.py", "dev",
      "在场感增强：缺 pynput 时兜底校验放行拼错的键名 —— 修好后起点第一次是绿的"),

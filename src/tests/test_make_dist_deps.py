@@ -11,6 +11,7 @@
 """
 from __future__ import annotations
 
+import ast
 import os
 import shutil
 import sys
@@ -740,6 +741,37 @@ def main() -> int:
     check(bool(hit) and '"optional"' in hit[0],
           f"--tier 的 choices 含 optional（否则用户根本传不进来）：{hit[0].strip()[:60]}")
 
+    print("[26] 装完必须验收：verify=True 要真的调 verify_deps")
+    # 【2026-11-10 加·这一整段以前没有判据】把 install_deps 末尾的
+    #     if verify: return verify_deps(out_dir, python_exe)
+    # 换成 `return True`（装完不验收），全门照样 EXIT 0 全绿 —— 实测。
+    # 这正是本文件 [14] 讲的那件事的镜像：「规矩没写进 env=，等于没写」；
+    # **「验收没被调用，等于没验收」**。而 [14] 只直接测 verify_deps 本身，
+    # 从没测过 install_deps 到底调不调它。
+    out26 = _mk_out(os.path.join(tmp, "o26"))
+    make_dist._pip = lambda py, args: (0, [])
+    calls26: list[tuple] = []
+
+    def _verify26(*a, **k):
+        calls26.append((a, k))
+        return True
+
+    make_dist.verify_deps = _verify26
+    check(make_dist.install_deps(out26, upto="core") is True, "验收通过 → 返回 True")
+    check(len(calls26) == 1, f"verify=True 时调了一次 verify_deps（实际 {len(calls26)} 次）")
+    check(bool(calls26) and str(calls26[0][0][1]).endswith("python.exe"),
+          f"验收拿到的是包内解释器路径：{calls26[0][0][1] if calls26 else '无'}")
+    calls26.clear()
+    make_dist.install_deps(out26, upto="core", verify=False)
+    check(not calls26, "verify=False 时不许验收")
+    calls26.clear()
+    make_dist.install_deps(out26, upto="core", defer_verify=True)
+    check(not calls26, "defer_verify=True 时不许在这里验收（交给隔离段之后统一验）")
+    # 反向：验收不过必须让 install_deps 失败，不能"装了就算成功"
+    make_dist.verify_deps = lambda *a, **k: False
+    check(make_dist.install_deps(out26, upto="core") is False,
+          "验收不过 → install_deps 返回 False")
+
     print()
     print("== [C9-5] 装配源码指纹（版本没 bump 但 src 过期也拦得住） ==")
     # 自包含脚手架（C2-A 段的 scratch 已被 finally 清掉，不复用）。
@@ -868,12 +900,32 @@ def main() -> int:
           "PFX 收进 cfg 且口令缺省为空串")
 
     print("[C10-6] 配了凭证但找不到 signtool → 在解析期就挡住，不等到签名")
+    # 【2026-11-10 修·这条以前是空转的】原写法在"没抛异常"的分支里去断言
+    #     check(not os.path.isfile("signtool.exe"), ...)
+    # —— 那是在断言**当前目录的文件系统**，不是在断言代码。实测把
+    # `if not cfg["tool"] or not os.path.isfile(cfg["tool"]): raise` 改成
+    # `if False:`，全门照样 EXIT 0 全绿：这个守卫从来没被测过。
+    # 改法：显式给一个不存在的 DANIA_SIGN_TOOL —— 任何机器上都必抛，
+    # 直接钉住 `os.path.isfile(cfg["tool"])` 这半句。
+    _bogus_tool = os.path.join(tmp, "no-such-signtool.exe")
     try:
-        make_dist.resolve_sign_config({"DANIA_SIGN_SUBJECT": "X"})
-        check(not os.path.isfile("signtool.exe"),
-              "无 TOOL 且 PATH 无 signtool 时应抛 ValueError（本机没有裸 signtool.exe）")
+        _got6 = make_dist.resolve_sign_config({"DANIA_SIGN_SUBJECT": "X",
+                                               "DANIA_SIGN_TOOL": _bogus_tool})
+        check(False,
+              f"DANIA_SIGN_TOOL 指向不存在的文件时应抛 ValueError（实得 {_got6!r}）")
     except ValueError:
-        check(True, "凭证配了但没工具 → ValueError")
+        check(True, "DANIA_SIGN_TOOL 指向不存在的文件 → ValueError")
+    # 另一半：本机完全找不到 signtool、又没给 TOOL 时也必须拒绝。
+    # 机器上装了 SDK 的话这一半不适用 —— 如实说明，不算通过。
+    if make_dist.find_signtool() is None:
+        try:
+            _got6b = make_dist.resolve_sign_config({"DANIA_SIGN_SUBJECT": "X"})
+            check(False,
+                  f"本机无 signtool 且未指定 TOOL 时应抛 ValueError（实得 {_got6b!r}）")
+        except ValueError:
+            check(True, "无 TOOL 且 PATH 无 signtool → ValueError")
+    else:
+        print("  · 本机有 signtool，「完全找不到工具」这一半不适用（未验证，不算通过）")
 
     # --- find_signtool：本机真身探测（存在则必须是个真文件） ---
     st = make_dist.find_signtool()
@@ -949,10 +1001,23 @@ def main() -> int:
                               runner=_boom) is False, "OSError → False")
 
     print("[C10-14] CLI 口径：--sign 必须连着 --installer")
+    # 【2026-11-10 修·原来只 grep 错误文案】原判据是
+    #     check('"--sign"' in src and "--sign 需要 --installer" in src, ...)
+    # —— 只要那句提示还留在源码里就算过。实测把守卫改成 `if False:`，
+    # 提示原样保留、门 EXIT 0 全绿，而 `--sign` 单跑已经不再报错。
+    # 改法：用 AST 找到"body 里含那句提示"的 if，直接验它的**条件**。
     src_txt10 = open(os.path.join(ROOT, "tools", "make_dist.py"),
                      encoding="utf-8").read()
-    check('"--sign"' in src_txt10 and "--sign 需要 --installer" in src_txt10,
-          "--sign 无包可签时硬失败")
+    _guard_test = None
+    for _node in ast.walk(ast.parse(src_txt10)):
+        if isinstance(_node, ast.If):
+            _whole = ast.get_source_segment(src_txt10, _node) or ""
+            if "--sign 需要 --installer" in _whole:
+                _guard_test = ast.get_source_segment(src_txt10, _node.test) or ""
+                break
+    check(_guard_test is not None
+          and "sign" in _guard_test and "installer" in _guard_test,
+          f"--sign 的守卫条件真在同时检查 sign 与 installer（实得 {_guard_test!r}）")
 
     # ==================== C11：桌宠 Electron 壳进包 ====================
     print("== [C11] 桌宠壳装配（缺它装机回退白底 pywebview 桌宠） ==")

@@ -442,7 +442,20 @@ GATES: list[tuple[str, str, list[str], bool]] = [
     ("渠道探活判级变异", PY_VENV, ["tools/_qc_channel_mutation.py"], True),
     # 配置里的 ${ENV} 引用：展开、缺失告警、保存不把明文 key 落盘。
     ("配置环境变量引用", PY_VENV, ["src/tests/test_config_env_refs.py"], False),
+    # 【2026-11-10 加·最厚的一道门，三处空转】1047 行、六十来条断言，而且写得比
+    # 大多数门都讲究（[14] 专门写了「先判 env 是否存在，再判内容」这种防空洞通过
+    # 的话）。但按「有没有刀」的读数是「没有刀」，一探三处全空：
+    #   ① [C10-6] 配了凭证但没 signtool → 原写法在"没抛异常"的分支里断言
+    #      `not os.path.isfile("signtool.exe")` —— 那是断言**文件系统**，不是断言代码；
+    #   ② [C10-14] `--sign` 必须连着 `--installer` → 原判据只 grep 错误文案，
+    #      守卫改成 `if False:` 后文案还在、门全绿；
+    #   ③ `install_deps` 末尾 `if verify: return verify_deps(...)` **整段没有判据**，
+    #      换成 `return True`（装完不验收）全门全绿 —— 这是 [14] 那件事的镜像：
+    #      「规矩没写进 env=，等于没写」/「验收没被调用，等于没验收」。
+    # 三处先补判据（显式不存在的 DANIA_SIGN_TOOL / AST 验守卫条件 / 新增 [26]），
+    # 再上十二刀，见 tools/_qc_make_dist_mutation.py。
     ("打包依赖分级", PY_VENV, ["src/tests/test_make_dist_deps.py"], False),
+    ("打包依赖分级变异", PY_VENV, ["tools/_qc_make_dist_mutation.py"], True),
     ("队列语义", PY_VENV, ["src/tests/test_queue_util.py"], True),
     ("通话冒烟", PY_VENV, ["src/ui/tests/test_call_smoke.py"], True),
     ("通道状态", PY_VENV, ["src/channels/tests/test_agent_status.py"], True),
