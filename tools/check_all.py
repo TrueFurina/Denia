@@ -417,7 +417,22 @@ GATES: list[tuple[str, str, list[str], bool]] = [
     ("空间说说", PY_VENV, ["src/channels/tests/test_gewechat_qzone.py"], False),
     ("媒体路由", PY_VENV, ["src/channels/tests/test_media_routing.py"], False),
     ("视频观看", PY_VENV, ["src/channels/tests/test_video_watch.py"], False),
+    # 【2026-11-09 加·改动最频繁的判据反而没有刀】上面这道门是第三十轮刚修过的
+    # （`test_success` 漏 mock 前置能力探测 `_resolve_ffmpeg()`，结论取决于跑它的
+    # 机器），它守的是一条完整链路：URL 白名单 → 抽帧 → 送 VLM → 拼上下文。
+    # 这条链上任何一环断掉，用户看到的都是「点开只会看个空壳」，而测试全绿。
+    # 六刀：抽帧闸短路 / 帧描述不送进上下文 / 上下文丢掉帧条目 / 视觉能力恒不可用 /
+    # 视频被判成图文 / pixiv 掉出白名单。判据输出是 unittest 的，所以 `_judged()`
+    # 用 `FAILED (` 而不是 `[FAIL]` 把「判出来了」和「崩了」分开。
+    ("视频观看变异", PY_VENV, ["tools/_qc_video_watch_mutation.py"], True),
     ("视频进度", PY_VENV, ["src/channels/tests/test_video_watch_progress.py"], False),
+    # 【2026-11-09 加·守「用户能看见的那一层」】上面这道门守的是进度条：
+    # `watch_video` 发阶段 → `Dialogue._make_video_progress` 转事件 → 总线
+    # `publish_threadsafe`。这条链断在哪一环，现象都是「进度条不动 / 一直转圈」，
+    # 而回调异常被 `except` 吞掉、日志里看不出所以然 —— 所以判据本身必须有牙。
+    # 五刀：诊断 frames 恒 0 / 不发 frame 阶段 / 诊断不暴露 ffmpeg /
+    # 失败抹空错误信息 / 失败不发 error 阶段。
+    ("视频进度变异", PY_VENV, ["tools/_qc_video_watch_progress_mutation.py"], True),
     ("双工停止与麦克风", PY_VENV, ["tools/test_duplex_stop_and_mic.py"], False),
     # 过渡期看门狗接线（2026-10-23）：重连卡死时禁言闸门没有出口 → 她永久静默。
     # 方法 09-08 就写好了但从来没有启动点（注释却一直承诺"配合看门狗兜底"）。
