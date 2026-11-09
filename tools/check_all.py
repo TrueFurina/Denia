@@ -448,6 +448,16 @@ GATES: list[tuple[str, str, list[str], bool]] = [
     ("关系模型", PY_VENV, ["tools/test_relationship.py"], False),
     ("关系里程碑", PY_VENV, ["tools/test_relationship_milestone.py"], False),
     ("抓屏性能闸", PY_VENV, ["tools/test_screen_capture_perf_guard.py"], False),
+    # 【2026-11-09 加·守的是一条真炸过的底线】上面这道门守 2026-08-25 修掉的
+    # 「抽帧 / 核显本卡炸」：游戏或锁快照期间画面长时间静止，`_next_interval` 的
+    # static 加速会把间隔打到 ~1s，每帧全屏抓屏 + resize + pHash + JPEG 编码。
+    # 27 条判据（A/B/C/D/E/F）**从来没有刀** —— 「27 条到底有没有牙」一次没验过；
+    # 而第三十轮刚改过它的 D8（缺夹具退回出厂模板）。
+    # 五刀：low_rate 档不守低频底线 / 静态加速乘数被去掉 / 主路径不传 low_rate /
+    # 让位分支不传 low_rate=True / main.py 两处构造去掉 low_rate_check。
+    # 最后一把的锚点在 main.py 里**逐字出现两次**（1346 / 3214），因为 D11 的判据就是
+    # 「每一处构造都要带」—— 所以这把刀多带一个「期望命中次数=2」，命中数不符即判腐烂。
+    ("抓屏性能闸变异", PY_VENV, ["tools/_qc_screen_capture_perf_guard_mutation.py"], True),
     ("看屏热生效", PY_VENV, ["tools/test_desktop_watch_hotapply.py"], False),
     ("引导页 TTS 键", PY_VENV, ["tools/test_onboarding_tts_key.py"], False),
     # ---- 第三批普查的第二轮（同日）：又修好 5 个，同样是"判据/桩过时"而非功能坏。
