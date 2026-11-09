@@ -268,6 +268,17 @@ GATES: list[tuple[str, str, list[str], bool]] = [
     # 串行复核包装器本身的自测：救得回来的必须救、真缺陷绝不重试、救不回来的仍红。
     ("内存抖动复核自测", PY_VENV, ["tools/test_mem_retry_wrapper.py"], False),
     ("密钥盒加密", PY_VENV, ["src/tests/test_secret_box.py"], False),
+    # 【2026-11-09 加·最硬的一条安全底线没有刀】上面这道门守「磁盘上不许出现明文 Key」
+    # —— 用户的 OpenAI / 百炼 Key 和 QQ cookie 全在 config.yaml 里。20 条判据从
+    # 2026-10-18 起就在跑，**从来没有刀**。这类判据的失效方式特别阴：加密函数照常返回、
+    # `Config.save` 照常写盘、日志照常打「已加密」，只是密文里其实还是明文 ——
+    # 没有报错，只有某天有人 `cat config.yaml` 才看得见。
+    # 五刀：密文不带前缀 / 不递归进嵌套 dict / 密钥字段表加宽 / 解不开不记失败 /
+    # is_sealed 恒 False。
+    # 记一笔：本想用「is_sealed 恒 True」，但它会让 decrypt_secret 去 base64 解普通文本、
+    # 直接抛 binascii.Error 带 Traceback 退出 —— 那是「崩了」不是「认出来了」。
+    # **刀的变异方向要选判据能开口的那条，不能选让判据闭嘴的那条。**
+    ("密钥盒加密变异", PY_VENV, ["tools/_qc_secret_box_mutation.py"], True),
     ("开机自启", PY_VENV, ["src/tests/test_autostart.py"], False),
     ("裁判确认条款", PY_VENV, ["tools/test_judge_confirm_clause.py"], False),
     ("陪伴话术条款", PY_VENV, ["tools/test_prompt_companion_clause.py"], False),
