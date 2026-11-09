@@ -208,7 +208,14 @@ GATES: list[tuple[str, str, list[str], bool]] = [
     ("壳桌宠回退", PY_VENV, ["src/tests/test_pet_shell_fallback.py"], False),
     ("桌宠后端决策", PY_VENV, ["src/tests/test_pet_backend.py"], False),
     ("桌宠位置持久化", PY_VENV, ["src/tests/test_pet_state.py"], False),
+    # 壳自愈与退出清理：15 节、四十来条断言。看着最扎实，但 2026-11-10 一查，
+    # 「进程回收」和「重启时恢复状态」这两条支路上五处关键行为全都没判据
+    # （恢复置顶 / 杀子进程树 / 升级强杀 / 退避 / close 前的 quit）。
+    # **节数多不等于覆盖面广** —— 15 节里有 9 节在测配额/降级/握手文件。
     ("壳自愈与退出清理", PY_VENV, ["src/tests/test_pet_shell_selfheal.py"], False),
+    # 上面那道门的刀：八刀（A–E 是补判据之后才砍得动的五刀）。
+    # 慢：每刀都要跑满 15 节（含 GPU 回退那条真 _launch），八刀约 80s。
+    ("壳自愈变异", PY_VENV, ["tools/_qc_pet_shell_mutation.py"], True),
     ("壳自愈端到端", PY_VENV, ["tools/pet_shell_selfheal_smoke.py"], True),
     ("日志轮转", PY_VENV, ["src/tests/test_log_rotate.py"], False),
     ("配置校验", PY_VENV, ["src/tests/test_config_schema.py"], False),

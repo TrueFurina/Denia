@@ -336,12 +336,12 @@ def main() -> int:
 
     n_dev = picked("--tier", "dev", "--only", "release_numbers")
     n_leak = picked("--tier", "portable", "--only", "release_numbers")
-    if tiers.get("portable") != 8 or tiers.get("dev") != 25:
-        print("  FAIL K11 分层计数：portable %r / dev %r（期望 8 / 25）"
+    if tiers.get("portable") != 8 or tiers.get("dev") != 26:
+        print("  FAIL K11 分层计数：portable %r / dev %r（期望 8 / 26）"
               % (tiers.get("portable"), tiers.get("dev")))
         bad += 1
-    elif sum(tiers.values()) != 33:
-        print("  FAIL K11 总对数 %d（期望 33；PAIRS 里有未知层 %r）"
+    elif sum(tiers.values()) != 34:
+        print("  FAIL K11 总对数 %d（期望 34；PAIRS 里有未知层 %r）"
               % (sum(tiers.values()), sorted(tiers)))
         bad += 1
     elif n_dev != 1:

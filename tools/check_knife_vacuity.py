@@ -187,6 +187,10 @@ PAIRS = [
     # 「坏了照样返回 200，只是返回的东西不对」，而 19 条等价性用例全是单段名字。
     ("_qc_rpc_mutation.py", "src/tests/test_rpc_server.py", "dev",
      "RPC 通道：十刀，B 刀「逐段检查→整串检查」在补判据之前是全绿的（点号绕过）"),
+    # 【2026-11-10 加】壳自愈与退出清理：八刀。15 节、四十来条断言的「最扎实」
+    # 那道门，进程回收与重启恢复状态两条支路上五处关键行为全都没判据。
+    ("_qc_pet_shell_mutation.py", "src/tests/test_pet_shell_selfheal.py", "dev",
+     "壳自愈：八刀，B 刀「不杀子进程树」= 孤儿 Electron 窗口那个坑，此前零判据"),
     # ---- dev（第二十六轮补：两条从 EXCUSED 挪进来的）----
     ("_qc_presence_mutation.py", "test_presence_controls.py", "dev",
      "在场感增强：缺 pynput 时兜底校验放行拼错的键名 —— 修好后起点第一次是绿的"),
