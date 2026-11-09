@@ -171,6 +171,15 @@ def test_capture_now_respects_live_switch() -> None:
     asyncio.get_event_loop().run_until_complete(cap.capture_now(force=True))
     ok("C1 关闸时 capture_now 不分析", va.calls == 0)
 
+    # 【2026-11-10 加·正控】C1 是纯负向断言：capture_now 整个函数坏成 `return`，
+    # 它也绿。这里补一条「开闸时确实进入抓屏流程」——用真实属性 `_event_trigger_count`
+    # 计数（它在 _grab_and_analyze 之前自增，抓屏失败也照样计，不依赖 mss/网络）。
+    cfg.runtime_status.vision_enabled = True
+    cap._event_trigger_count = 0
+    asyncio.get_event_loop().run_until_complete(cap.capture_now(force=True))
+    ok("C2 开闸时 capture_now 真的进入抓屏流程（不被早退）",
+       cap._event_trigger_count == 1, f"trigger={cap._event_trigger_count}")
+
 
 async def _loop_until_disabled(mod, cfg) -> int:
     """起 capture_loop，跑一会儿后把开关关掉，返回关闸后 grab 是否被叫。
@@ -206,6 +215,12 @@ def test_capture_loop_rechecks_each_iteration() -> None:
     print("\n[B] capture_loop 在 while 内每轮重读开关")
     mod = _load_screen_capture()
     cfg = FakeCfg(vision_enabled=True)
+    # 【2026-11-10 修·观察窗口】原来 interval_s=3.0，而关闸后只等 0.6s ——
+    # 这段时间里循环本来就在 sleep，**任何实现都不会再抓屏**，B2 因此恒真
+    # （变异实测：把循环内的开关判断改成 `if False:`，B2 照样绿）。
+    # 把轮询间隔压到 0.05s，让 0.6s 窗口覆盖十来轮，"不抓屏"才真的证明是热生效。
+    cfg.ns.perception.screenshot.interval_s = 0.05
+    cfg.ns.perception.screenshot.game_interval_s = 0.05
     try:
         before, after = asyncio.new_event_loop().run_until_complete(
             _loop_until_disabled(mod, cfg))
@@ -233,6 +248,33 @@ def test_vision_analyzer_hard_gate() -> None:
     ok("D2 关闸后 analyze 返回 None（不发调用）", r is None)
     ok("D3 关闸后 disabled=True", an.disabled is True)
     ok("D4 关闸造成的禁用 _disabled_at==0（非失败熔断）", an._disabled_at == 0.0)
+
+    # 【2026-11-10 加·正控】D2 只证明「关闸时是 None」。但 LLM 桩坏掉（缺 vision_describe）
+    # 时 analyze 也会失败返回 None —— 两者在这条判据里读数相同（本次跑测就有
+    # "视觉分析失败 (1/3): 'LLM' object has no attribute 'vision_describe'" 这行日志）。
+    # 补一条放行路径的正控：开闸 + 可用 LLM 时，必须真的拿到结果。
+    class LLMGood:
+        vision_available = True
+
+        async def vision_describe(self, *a, **k):  # noqa: ANN002, ANN003
+            # 契约是**文本**（analyze 内部要 .strip() 再解析），不是 dict。
+            return "屏幕上是一段 Python 代码\nAPP: VSCode\n置信度: 0.9"
+
+    class _BusStub:
+        """放行路径会 publish 分析结果事件，这里必须有可用的 bus（None 会在结尾炸）。"""
+
+        def __init__(self) -> None:
+            self.events: list = []
+
+        async def publish(self, *a, **k):  # noqa: ANN002, ANN003
+            self.events.append(a)
+
+    cfg2 = FakeCfg(vision_enabled=True)
+    bus2 = _BusStub()
+    an2 = va.VisionAnalyzer(LLMGood(), bus=bus2, cfg=cfg2)
+    r2 = asyncio.new_event_loop().run_until_complete(an2.analyze(b"x", force=True))
+    ok("D5 开闸且 LLM 可用时 analyze 真的放行并返回结果（正控）",
+       isinstance(r2, dict) and bool(r2.get("summary")), f"r={r2!r}"[:120])
 
 
 def test_auto_recover_does_not_override_user_switch() -> None:
