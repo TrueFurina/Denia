@@ -600,6 +600,12 @@ GATES: list[tuple[str, str, list[str], bool]] = [
     # 它名字无关"（去重/日上限被饱和度满足），四处是 v2 引擎整层没判据。
     ("关系模型变异", PY_VENV, ["tools/_qc_relationship_model_mutation.py"], True),
     ("主动输出分流", PY_VENV, ["tools/test_proactive_chat_routing.py"], False),
+    # 【2026-11-11 加】主动输出分流的刀：四十三刀。这道门是「聊天页主动消息永不出现」
+    # 那个用户反复报的 bug 的唯一一道门，而它原来有 32 处零判据 —— 最狠的两处：
+    # ① 第 5 组命中不了就 SKIP，而 SKIP 在返回值里算通过（整条记忆主动路径可断而不红）；
+    # ② 桩把 `_in_call_flag` 钉成 False，`_flush_duplex_emit` 后半段 130 行通话生命周期
+    #    闸门（2026-09-23「她不理我」那次的全部修复）一次都没跑过。
+    ("主动输出分流变异", PY_VENV, ["tools/_qc_proactive_routing_mutation.py"], True),
     ("关系接线", PY_VENV, ["tools/test_relationship_wiring.py"], False),
     ("关系集成", PY_VENV, ["tools/test_relationship_integration.py"], False),
     # 【2026-11-10 加】关系集成的刀：十三刀。这道门 13 个用例、绿得很稳，探针捅出七处

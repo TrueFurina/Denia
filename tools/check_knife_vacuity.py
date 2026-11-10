@@ -227,6 +227,11 @@ PAIRS = [
     # 零判据 —— 最刺眼的两处是「判据绿的原因跟它名字无关」（去重/日上限都被饱和度满足）。
     ("_qc_relationship_model_mutation.py", "tools/test_relationship.py", "dev",
      "关系模型：三十二刀，去重/日上限被饱和度满足 + v2 引擎整层无判据"),
+    # 【2026-11-11 加】主动输出分流：四十三刀。32 处零判据 —— 最狠的是第 5 组命中不了
+    # 就 SKIP、而 SKIP 在返回值里算通过；以及桩把 _in_call_flag 钉成 False，
+    # 整段通话生命周期闸门（2026-09-23「她不理我」的修复）一次都没跑过。
+    ("_qc_proactive_routing_mutation.py", "tools/test_proactive_chat_routing.py", "dev",
+     "主动输出分流：四十三刀，SKIP 算通过 + 通话生命周期闸门/原生音频硬闸整段不可见"),
     # ---- dev（第二十六轮补：两条从 EXCUSED 挪进来的）----
     ("_qc_presence_mutation.py", "test_presence_controls.py", "dev",
      "在场感增强：缺 pynput 时兜底校验放行拼错的键名 —— 修好后起点第一次是绿的"),
