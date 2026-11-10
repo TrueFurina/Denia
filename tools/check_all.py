@@ -537,6 +537,20 @@ GATES: list[tuple[str, str, list[str], bool]] = [
     # 「每一处构造都要带」—— 所以这把刀多带一个「期望命中次数=2」，命中数不符即判腐烂。
     ("抓屏性能闸变异", PY_VENV, ["tools/_qc_screen_capture_perf_guard_mutation.py"], True),
     ("看屏热生效", PY_VENV, ["tools/test_desktop_watch_hotapply.py"], False),
+    # 【2026-11-10 加】这道门的名字是对的，判据是空的。三处「绿得跟名字无关」：
+    #  ① B 组「关闸后不再抓屏」：关闸后只等 0.6s 就断言计数不涨 —— 而采样周期是 3s
+    #    （`_next_interval` 下限 0.5s），**一个周期都没走完**，把「每轮重读开关」
+    #    整段删掉照样绿。现把间隔调到 0.2s、关闸后再跨三个周期。
+    #  ② E 组「自动恢复不推翻用户关闸」：断言的是 `_disabled_at==0` 时不该被唤醒，
+    #    但那段代码在用户关闸路径上**根本执行不到**（硬闸更靠前就 return），而且
+    #    测试还手工把 `_disabled_at` 置 0 来「造已过窗口的假象」——正好把原始 bug
+    #    （先熔断后关闸、90s 后自己复活）盖住。现按真实时序造：先打熔断再关闸。
+    #  ③ C 组只测「关闸不分析」，不测「开闸真抓一帧」—— capture_now 整条改成
+    #    `return` 也全绿。
+    # 另外补 H 组：关掉再打开，循环必须自己活回来（原版没有用例关闸后再开闸，
+    # 把 `continue` 改成 `return`（循环退出、重开要重启）照样绿）。
+    # 十二刀见 tools/_qc_hotapply_mutation.py。
+    ("看屏热生效变异", PY_VENV, ["tools/_qc_hotapply_mutation.py"], True),
     ("引导页 TTS 键", PY_VENV, ["tools/test_onboarding_tts_key.py"], False),
     # ---- 第三批普查的第二轮（同日）：又修好 5 个，同样是"判据/桩过时"而非功能坏。
     #      test_onboarding_role_backend 退出码 0 但跑 29s，不进闸门。

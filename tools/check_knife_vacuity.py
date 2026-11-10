@@ -209,6 +209,11 @@ PAIRS = [
     # 跟它名字里那件事无关"：test_04 被队列耗尽掩盖、test_20 压根没跑总线。
     ("_qc_relationship_mutation.py", "tools/test_relationship_integration.py", "dev",
      "关系集成：十三刀，test_04 去重/ test_20 总线此前全绿（绿的原因与名字无关）"),
+    # 【2026-11-10 加】看屏热生效：十二刀。三处零判据，全是「判据在、牙齿不在」：
+    # B 组关闸后只等 0.6s（采样周期 3s，一个周期都没到）、E 组断言的那段自动恢复
+    # 被更前面的硬闸挡住根本执行不到、C 组只测「关闸不动」不测「开闸真抓」。
+    ("_qc_hotapply_mutation.py", "tools/test_desktop_watch_hotapply.py", "dev",
+     "看屏热生效：十二刀，B3/E2/C3 此前恒真（窗口短于周期 / 支路不可达 / 只测一半）"),
     # ---- dev（第二十六轮补：两条从 EXCUSED 挪进来的）----
     ("_qc_presence_mutation.py", "test_presence_controls.py", "dev",
      "在场感增强：缺 pynput 时兜底校验放行拼错的键名 —— 修好后起点第一次是绿的"),
