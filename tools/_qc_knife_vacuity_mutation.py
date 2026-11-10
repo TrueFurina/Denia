@@ -26,7 +26,7 @@
   K9 **输出里有闸门的 Traceback，但套件自己报了失败** → 仍判 CERTIFIED
      这一刀钉的是本工具真踩的坑③：第一版把"输出里有 Traceback"当成套件崩溃，
      于是 `_qc_silent_mutation.py` 明明印了「FAIL：5 刀未抓住」却被判 WEAK。
-  K11 **分层不许漏**：PAIRS 里 portable 恰好 8 对、dev 恰好 36 对，且两层互不混入
+  K11 **分层不许漏**：PAIRS 里 portable 恰好 8 对、dev 恰好 37 对，且两层互不混入
      分层是"这台机器能不能跑"的分层，最怕的是某一层被悄悄漏掉（少跑几对没人发现），
      或者 dev 的对混进 portable（CI 上全 ERROR，把整道门变成恒红）。
   K10 对照：真实仓的 PAIRS       → exit 0 且 CERTIFIED 7
@@ -313,11 +313,11 @@ def main() -> int:
     # 分层最怕的不是跑错，是**某一层被悄悄漏掉**：少跑几对没人发现，而
     # 「结果：CERTIFIED 7」和「跑全了」长得一模一样。
     # 这里查三件事，都便宜：
-    #   ① PAIRS 的静态计数（portable 8 / dev 36，合计 44）—— 直接读，不跑
+    #   ① PAIRS 的静态计数（portable 8 / dev 37，合计 45）—— 直接读，不跑
     #   ② `--tier` 的过滤真的生效（dev 层挑一对，看「待检」行是 1）
     #   ③ 不该进 portable 的对，portable 真的不选（`--only release_numbers`
     #      在 portable 层应为 0 对 → exit 2 且没有「待检」行）
-    # 为什么不用 `--tier all` 数「待检」：那会把 36 对 dev 全跑一遍（每对一次仓副本
+    # 为什么不用 `--tier all` 数「待检」：那会把 37 对 dev 全跑一遍（每对一次仓副本
     # + 3 次套件），CI 上还没有 `.venv`，白等十几秒换一屏 ERROR。计数要便宜才对。
     spec = importlib.util.spec_from_file_location("_kv_under_test", TOOL)
     kv = importlib.util.module_from_spec(spec)
@@ -336,12 +336,12 @@ def main() -> int:
 
     n_dev = picked("--tier", "dev", "--only", "release_numbers")
     n_leak = picked("--tier", "portable", "--only", "release_numbers")
-    if tiers.get("portable") != 8 or tiers.get("dev") != 36:
-        print("  FAIL K11 分层计数：portable %r / dev %r（期望 8 / 36）"
+    if tiers.get("portable") != 8 or tiers.get("dev") != 37:
+        print("  FAIL K11 分层计数：portable %r / dev %r（期望 8 / 37）"
               % (tiers.get("portable"), tiers.get("dev")))
         bad += 1
-    elif sum(tiers.values()) != 44:
-        print("  FAIL K11 总对数 %d（期望 44；PAIRS 里有未知层 %r）"
+    elif sum(tiers.values()) != 45:
+        print("  FAIL K11 总对数 %d（期望 45；PAIRS 里有未知层 %r）"
               % (sum(tiers.values()), sorted(tiers)))
         bad += 1
     elif n_dev != 1:

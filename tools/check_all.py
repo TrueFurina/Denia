@@ -337,6 +337,20 @@ GATES: list[tuple[str, str, list[str], bool]] = [
     ("js_api 状态分叉", PY_VENV, ["tools/test_jsapi_state_split.py"], False),
     ("虚构守卫", PY_VENV, ["tools/test_fabrication_guard.py"], False),
     ("主动开口冒烟", PY_VENV, ["tools/test_proactive_smoke.py"], False),
+    # 【2026-11-11 第 47 轮】主动开口冒烟的刀：五十二刀。门 243 行 / 31 条判据，
+    # 探针下去捅出 **16 处零判据**。最刺眼的三类：
+    # ① **源码文本量不出接线**：管理器「委托 engine」只靠 inspect.getsource 找字符串，
+    #    改成「调用 engine 但丢掉返回值」照样绿；让位判据同理，注释里留着
+    #    `self._in_call()` 字符串就能骗过源码文本判据。
+    # ② **判据绿的原因跟它名字无关**：「不回翻倍」只查理由串里有没有「翻倍」两个字、
+    #    没量冷却时长；warmth 权重判据的样本全为 0、唯一非 0 样本已饱和；B6 的 else
+    #    分支干脆是无条件 `ok(..., True, "skip")`（跳过算通过，第 45 轮同型）。
+    # ③ **桩钉死的分支不可见 / 文档里的判据不算判据**：四道守卫被钉成「必然放行」，
+    #    空闲 / 批冷却 / 8s / 开机起算整段不可达；`_on_user_text_input` 与
+    #    `subscribe()` 文档写着却一次都没执行过。另钉死一处真接线漏洞：双工让位
+    #    只看 `_duplex_call_mode`，`_duplex_app_call_active` 这条 OR 分支门里没样本。
+    # 判据 31 → 48 + 条数总账；畸形输入改走 `_safe` 包装（判据崩 ≠ 判据错）。
+    ("主动开口冒烟变异", PY_VENV, ["tools/_qc_proactive_smoke_mutation.py"], True),
     ("关系主动修复", PY_VENV, ["tools/test_relationship_proactive_fixes.py"], False),
     ("写入层", PY_VENV, ["tools/test_write_layer.py"], False),
     # 第二批普查（2026-10-21 02:0x）：又试跑 8 个，6 个能过 → 收进来。

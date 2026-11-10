@@ -238,6 +238,12 @@ PAIRS = [
     # 顺带修掉一个真 bug：原子混合模式关闭路径失败不检查、仍返回 success=True。
     ("_qc_p1_incremental_mutation.py", "tools/test_p1_incremental.py", "dev",
      "P1 增量：六十五刀，文档里的回归判据根本没执行 + 回滚判据绿在压根没改过 + 关闭路径失败不检查"),
+    # 【2026-11-11 加】主动开口冒烟：五十二刀。16 处零判据，三类最刺眼：
+    # ① 委托 engine / 让位判据靠源码文本，改坏接线照样绿；
+    # ② 不回翻倍只查理由串、warmth 样本全 0、B6 无条件 skip —— 绿的原因与名字无关；
+    # ③ 桩把四道守卫钉成必放行，handler 与 USER_TEXT 订阅文档里写着却从没执行过。
+    ("_qc_proactive_smoke_mutation.py", "tools/test_proactive_smoke.py", "dev",
+     "主动开口冒烟：五十二刀，源码文本量不出接线 + 判据绿的原因与名字无关 + 桩钉死的守卫整段不可见"),
     # ---- dev（第二十六轮补：两条从 EXCUSED 挪进来的）----
     ("_qc_presence_mutation.py", "test_presence_controls.py", "dev",
      "在场感增强：缺 pynput 时兜底校验放行拼错的键名 —— 修好后起点第一次是绿的"),
