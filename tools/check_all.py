@@ -567,6 +567,16 @@ GATES: list[tuple[str, str, list[str], bool]] = [
     ("通知浮窗死路径", PY_RUNTIME, ["src/tests/test_notify_dead_path.py"], False),
     ("通知浮窗死路径变异", PY_RUNTIME, ["tools/_qc_notify_dead_path_mutation.py"], False),
     ("TTS 多供应商", PY_VENV, ["tools/test_tts_multi_provider.py"], False),
+    # 【2026-11-10 加】这道门 30 条判据、五个服务商、写得挺细，但它有**静默跳过**：
+    # 第 3 段（FishAudioBackend 全链路）整块包在 `try/except Exception: print("! 跳过")`
+    # 里 —— 把 synthesize 改成直接抛错，这段 5 条一条不跑，结果打成「27 通过 / 0 失败」，
+    # **exit 0 全绿**。合成功能彻底坏了、门是绿的，这正是「跳过不是通过」最贵的一种。
+    # 另有五处零判据：全局 Key 多源兜底（cloud_tts → cloud_omni，2026-10-17 修过
+    # 「又要搞一遍 key」）、merge「空字符串=不改」（F3）、JSON(audio_url) 二次下载、
+    # 空音频、缺 reference_id。
+    # 修法：异常本身记 FAIL + 末尾钉条数总账 EXPECTED_CHECKS（少跑一条就红）；
+    # 补 15 条判据（45 条）。十四刀见 tools/_qc_tts_multi_provider_mutation.py。
+    ("TTS 多供应商变异", PY_VENV, ["tools/_qc_tts_multi_provider_mutation.py"], True),
     ("主动输出分流", PY_VENV, ["tools/test_proactive_chat_routing.py"], False),
     ("关系接线", PY_VENV, ["tools/test_relationship_wiring.py"], False),
     ("关系集成", PY_VENV, ["tools/test_relationship_integration.py"], False),

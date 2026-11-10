@@ -214,6 +214,10 @@ PAIRS = [
     # 被更前面的硬闸挡住根本执行不到、C 组只测「关闸不动」不测「开闸真抓」。
     ("_qc_hotapply_mutation.py", "tools/test_desktop_watch_hotapply.py", "dev",
      "看屏热生效：十二刀，B3/E2/C3 此前恒真（窗口短于周期 / 支路不可达 / 只测一半）"),
+    # 【2026-11-10 加】TTS 多供应商：十四刀。这道门有**静默跳过**（第 3 段整块包在
+    # try/except 里，异常被吞掉后打 27/0 全绿），另有五处零判据。
+    ("_qc_tts_multi_provider_mutation.py", "tools/test_tts_multi_provider.py", "dev",
+     "TTS 多供应商：十四刀，synthesize 抛错后整段被跳过仍全绿（跳过不算通过）"),
     # ---- dev（第二十六轮补：两条从 EXCUSED 挪进来的）----
     ("_qc_presence_mutation.py", "test_presence_controls.py", "dev",
      "在场感增强：缺 pynput 时兜底校验放行拼错的键名 —— 修好后起点第一次是绿的"),
