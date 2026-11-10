@@ -218,6 +218,11 @@ PAIRS = [
     # try/except 里，异常被吞掉后打 27/0 全绿），另有五处零判据。
     ("_qc_tts_multi_provider_mutation.py", "tools/test_tts_multi_provider.py", "dev",
      "TTS 多供应商：十四刀，synthesize 抛错后整段被跳过仍全绿（跳过不算通过）"),
+    # 【2026-11-10 加】TTS 配置迁移：十八刀。这道门的判据大半是**源码文本**断言，
+    # 于是"接线"那一条把调用塞进 `if False:` 照样绿；另有深拷贝样本字段名不对、
+    # 子串判定样本本身就在清单里（等于从没验过）。
+    ("_qc_config_migrate_mutation.py", "src/tests/test_config_migrate.py", "dev",
+     "TTS 配置迁移：十八刀，接线只做文本断言（塞进 if False 仍绿）+ 深拷贝/子串从未被逼住"),
     # ---- dev（第二十六轮补：两条从 EXCUSED 挪进来的）----
     ("_qc_presence_mutation.py", "test_presence_controls.py", "dev",
      "在场感增强：缺 pynput 时兜底校验放行拼错的键名 —— 修好后起点第一次是绿的"),

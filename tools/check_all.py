@@ -224,6 +224,13 @@ GATES: list[tuple[str, str, list[str], bool]] = [
     # 零调用）——用户已建的音色档绑着下线模型，试听永远 400 而启动期从没人修。
     # 这道测的重点是「接线」而不是「算得对」：唯一入口是否真跑两半、webapp 是否
     # 真调了入口、写盘是否真是原子替换（不是原地截断）。
+    # 【2026-11-10 第 43 轮】探针捅出 5 处零判据，最狠的一处是**接线只有源码文本断言**：
+    # 把调用改写成 `if False: migrate_stale_tts_config(...)`，那行字符串还躺在文件里，
+    # 五条文本判据全绿而迁移永不执行 —— 与 2026-10-19「函数写了没接线」同型。
+    # 现改为运行时断言（真造 CharacterAPI 看盘上文件变没变）。另外补了条数总账
+    # （56 条）：`backup` 失效时原来崩在 open(.bak) 上、写盘失败改抛异常时原来崩在
+    # 调用点上 —— 崩掉的门说不清是哪条判据在守。十八刀见
+    # tools/_qc_config_migrate_mutation.py。
     ("TTS 配置迁移", PY_VENV, ["src/tests/test_config_migrate.py"], False),
     # 「别一直说同一句话」：屏幕活动入缓冲时去掉几乎相同的摘要。_similar_summary
     # 写好很久但零调用（注释里承诺的"防重复搭话"实际只靠输出侧兜着），轨迹里
@@ -577,6 +584,11 @@ GATES: list[tuple[str, str, list[str], bool]] = [
     # 修法：异常本身记 FAIL + 末尾钉条数总账 EXPECTED_CHECKS（少跑一条就红）；
     # 补 15 条判据（45 条）。十四刀见 tools/_qc_tts_multi_provider_mutation.py。
     ("TTS 多供应商变异", PY_VENV, ["tools/_qc_tts_multi_provider_mutation.py"], True),
+    # 【2026-11-10 加】TTS 配置迁移的刀：十八刀。五处零判据，最狠的是「接线」那一条
+    # 只有源码文本断言 —— 调用塞进 `if False:` 照样全绿；另外 `copy.deepcopy` 的样本
+    # 字段 `api_key_probe` 根本不是 secret_box 认的密钥名，摘掉深拷贝门也绿；
+    # 子串判定的唯一样本 `cosyvoice-v2` 本身就在失效清单里，等于从没验过子串分支。
+    ("TTS 配置迁移变异", PY_VENV, ["tools/_qc_config_migrate_mutation.py"], True),
     ("主动输出分流", PY_VENV, ["tools/test_proactive_chat_routing.py"], False),
     ("关系接线", PY_VENV, ["tools/test_relationship_wiring.py"], False),
     ("关系集成", PY_VENV, ["tools/test_relationship_integration.py"], False),
