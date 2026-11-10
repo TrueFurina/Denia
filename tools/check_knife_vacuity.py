@@ -232,6 +232,12 @@ PAIRS = [
     # 整段通话生命周期闸门（2026-09-23「她不理我」的修复）一次都没跑过。
     ("_qc_proactive_routing_mutation.py", "tools/test_proactive_chat_routing.py", "dev",
      "主动输出分流：四十三刀，SKIP 算通过 + 通话生命周期闸门/原生音频硬闸整段不可见"),
+    # 【2026-11-11 加】P1 增量写接口：六十五刀。40 处零判据，两类最刺眼：
+    # ① 文档字符串声称回归的老接口 save_text_chat_providers 一次都没调用过；
+    # ② 回滚判据绿在「桩不改 raw」上（回滚整段删掉照样绿）。
+    # 顺带修掉一个真 bug：原子混合模式关闭路径失败不检查、仍返回 success=True。
+    ("_qc_p1_incremental_mutation.py", "tools/test_p1_incremental.py", "dev",
+     "P1 增量：六十五刀，文档里的回归判据根本没执行 + 回滚判据绿在压根没改过 + 关闭路径失败不检查"),
     # ---- dev（第二十六轮补：两条从 EXCUSED 挪进来的）----
     ("_qc_presence_mutation.py", "test_presence_controls.py", "dev",
      "在场感增强：缺 pynput 时兜底校验放行拼错的键名 —— 修好后起点第一次是绿的"),

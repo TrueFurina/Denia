@@ -529,6 +529,13 @@ GATES: list[tuple[str, str, list[str], bool]] = [
     ("里程碑落盘", PY_VENV, ["tools/test_milestone_persist.py"], False),
     ("模型下载器", PY_VENV, ["tools/test_model_downloader.py"], False),
     ("P1 增量", PY_VENV, ["tools/test_p1_incremental.py"], False),
+    # 【2026-11-11 第 46 轮】P1 增量的刀：六十五刀。门 263 行 / 44 条判据，探针捅出
+    # **40 处零判据**。最刺眼的两处：① 文档字符串第 ⑤ 条写着「老接口
+    # save_text_chat_providers 行为不变（回归）」，但整份文件**一次都没调用过老接口**；
+    # ② `⑦ 中途失败 ⇒ 配置回到原样` 绿在「桩压根没改过 raw」上 —— 把回滚代码整段
+    # 删掉照样绿（第 44 轮饱和度同型）。探针还挖出一个真 bug：原子混合模式关闭路径
+    # 只把两步成败记进 steps 却不检查，双工回 local 失败照样返回 success=True，已修。
+    ("P1 增量变异", PY_VENV, ["tools/_qc_p1_incremental_mutation.py"], True),
     ("主动开口空闲", PY_VENV, ["tools/test_proactive_boot_idle.py"], False),
     # 【2026-11-10 第 44 轮】这道门 41 条判据、写得挺细（连"新手期把创建时间钉到 t0"
     # 这种坑都在注释里），探针下去还是捅出 **21 处零判据**。最刺眼的两处不是"没写判据"，

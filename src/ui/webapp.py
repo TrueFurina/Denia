@@ -9923,10 +9923,18 @@ class CharacterAPI(PetAPI, WindowAPI):
                     steps.append(("vision", False))
                     logger.warning("混合模式：视觉管线开启失败（不阻断）: %s", _e)
             else:
+                # 【2026-11-11 第 46 轮变异探针】此前关闭路径只把两步的成败记进 steps，
+                # 却**不检查**：双工回 local 失败时照样返回 success=True，用户看到
+                # 「已关闭」而引擎还停在云端 —— 与本文档「任一步失败时回滚」直接矛盾。
+                # 开启路径每一步都有 raise，关闭路径必须对称。
                 _s1 = self._proactive.set_mixed_mode(False)
                 steps.append(("mixed", bool(_s1 and _s1.get("success"))))
+                if not (_s1 and _s1.get("success")):
+                    raise RuntimeError((_s1 or {}).get("error") or "混合开关失败")
                 _s2 = self.save_duplex_settings({"engine": "local"})
                 steps.append(("duplex", bool(_s2 and _s2.get("success"))))
+                if not (_s2 and _s2.get("success")):
+                    raise RuntimeError((_s2 or {}).get("error") or "双工引擎切换失败")
             # 只写一次盘
             self._save_config()
             self._cfg.ns = _to_ns(raw)
