@@ -530,6 +530,13 @@ GATES: list[tuple[str, str, list[str], bool]] = [
     ("模型下载器", PY_VENV, ["tools/test_model_downloader.py"], False),
     ("P1 增量", PY_VENV, ["tools/test_p1_incremental.py"], False),
     ("主动开口空闲", PY_VENV, ["tools/test_proactive_boot_idle.py"], False),
+    # 【2026-11-10 第 44 轮】这道门 41 条判据、写得挺细（连"新手期把创建时间钉到 t0"
+    # 这种坑都在注释里），探针下去还是捅出 **21 处零判据**。最刺眼的两处不是"没写判据"，
+    # 而是"判据绿的原因跟它名字无关"：「重复内容增益打折」绿是因为好感越接近 100 单轮
+    # 增益本来就越小（饱和），把 DEDUP_FACTOR 改成 1.0 照样满足那个不等式；「软每日上限」
+    # 同理 —— 末 3 轮增益小是饱和造成的。另有 v2 引擎（阶段迟滞/疤自愈/交情沉淀/情绪
+    # 降温）整层零判据，而 `RelationshipManager` 用的正是 v2。现补 32 条（73 条）+ 条数总账。
+    # 三十二刀见 tools/_qc_relationship_model_mutation.py。
     ("关系模型", PY_VENV, ["tools/test_relationship.py"], False),
     ("关系里程碑", PY_VENV, ["tools/test_relationship_milestone.py"], False),
     ("抓屏性能闸", PY_VENV, ["tools/test_screen_capture_perf_guard.py"], False),
@@ -589,6 +596,9 @@ GATES: list[tuple[str, str, list[str], bool]] = [
     # 字段 `api_key_probe` 根本不是 secret_box 认的密钥名，摘掉深拷贝门也绿；
     # 子串判定的唯一样本 `cosyvoice-v2` 本身就在失效清单里，等于从没验过子串分支。
     ("TTS 配置迁移变异", PY_VENV, ["tools/_qc_config_migrate_mutation.py"], True),
+    # 【2026-11-10 加】关系模型的刀：三十二刀。21 处零判据，其中两处是"判据绿的原因跟
+    # 它名字无关"（去重/日上限被饱和度满足），四处是 v2 引擎整层没判据。
+    ("关系模型变异", PY_VENV, ["tools/_qc_relationship_model_mutation.py"], True),
     ("主动输出分流", PY_VENV, ["tools/test_proactive_chat_routing.py"], False),
     ("关系接线", PY_VENV, ["tools/test_relationship_wiring.py"], False),
     ("关系集成", PY_VENV, ["tools/test_relationship_integration.py"], False),

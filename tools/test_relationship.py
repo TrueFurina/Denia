@@ -13,17 +13,21 @@ from __future__ import annotations
 import json
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
 from companion.relationship import RelationshipManager  # noqa: E402
+from companion.relationship import RelationshipEngine as _V1Engine  # noqa: E402
 from companion.relationship_judge import heuristic_signals  # noqa: E402
 from companion.history_store import HistoryStore  # noqa: E402
 from companion.session_clock import SessionClock  # noqa: E402
 
 RESULTS: list[tuple[bool, str]] = []
+# 判据条数总账：少跑一条就红（见汇总处注释）。
+EXPECTED_CHECKS = 73
 T0 = 1_760_000_000.0  # 固定时间基准
 CID = "danya"
 
@@ -254,7 +258,216 @@ def main() -> int:
     sc2.stop(ts=t2)
     check(sc2.late_night_summary(now=day + 12 * 3600)["night_streak"] == 0, "白天活动不算熬夜")
 
+    # ============================================================ 2026-11-10 补
+    # 【第 44 轮变异探针】上面 41 条判据全绿，探针下去捅出 **21 处零判据**。
+    # 下面每一段都对应一处"刀落下去门还绿"，段首写明它逼住的是哪一行生产代码。
+    section("去重：隔离测量（原来的判据被饱和度满足了）")
+    # 原判据 `(a2-a1) < (a1-a0)*0.7` 绿的原因不是去重生效：intimacy 越接近 100，
+    # 单轮增益本身就越小（`delta *= 1 - aff/100`），第二次增益天然更小 —— 把
+    # DEDUP_FACTOR 改成 1.0（去重彻底失效）照样满足那个不等式。
+    # 所以改成**只差一个变量**的对照：两次测量唯一的差别是第二句是否与第一句重复。
+    def _gain_second(second_text: str, tag: str) -> float:
+        m = RelationshipManager(base_dir=tmp / ("dd_" + tag))
+        stamp(m, CID)
+        m.on_turn(CID, {"valence": 0.5, "user_text": "在吗在吗在吗"}, now=T0)
+        b = float(m.get(CID)["affinity"]["intimacy"])
+        m.on_turn(CID, {"valence": 0.5, "user_text": second_text}, now=T0 + 60)
+        return float(m.get(CID)["affinity"]["intimacy"]) - b
+
+    g_rep = _gain_second("在吗在吗在吗", "rep")
+    g_new = _gain_second("今天下班路上看见一只很胖的橘猫", "new")
+    check(g_rep < g_new * 0.6,
+          f"重复内容增益打折（重复 {g_rep:.3f} < 新内容 {g_new:.3f} × 0.6）")
+
+    section("软每日上限：隔离测量（原来的判据被饱和度满足了）")
+    # 同上：原判据比较"首3轮最大"与"末3轮最大"，而那 12 轮本身就让 trust 从 50 涨到
+    # 接近 100 —— 末 3 轮增益小是**饱和**造成的，跟每日上限无关。把上限整段拆掉
+    # （`return 1.0`）照样绿。改成把 daily_gain.sum 预置成两种值，其余完全相同。
+    def _cap_gain(pre_sum: float, tag: str) -> float:
+        m = RelationshipManager(base_dir=tmp / ("dc_" + tag))
+        stamp(m, CID)
+        st = m.get(CID)
+        st["daily_gain"] = {"date": time.strftime("%Y-%m-%d", time.localtime(T0)),
+                            "sum": pre_sum}
+        m.store.save(st)
+        b = float(m.get(CID)["affinity"]["trust"])
+        m.on_turn(CID, {"valence": 0.5, "care": 0.5, "user_text": f"新话题{tag}"},
+                  now=T0 + 30)
+        return float(m.get(CID)["affinity"]["trust"]) - b
+
+    g_low = _cap_gain(0.0, "low")
+    g_high = _cap_gain(99.0, "high")
+    check(g_high < g_low * 0.4,
+          f"当日已满额 → 增益被压（满额 {g_high:.3f} vs 未满 {g_low:.3f}）")
+
+    section("旧档兼容 / 文件名净化 / 未知原型")
+    # 旧档补字段：老版本写下的状态文件缺一堆字段，读的时候必须补全而不是 KeyError。
+    d_old = tmp / "old"
+    (d_old / "affinity").mkdir(parents=True, exist_ok=True)
+    (d_old / "affinity" / "old.json").write_text(
+        json.dumps({"char_id": "old", "affinity": {"trust": 60}}), encoding="utf-8")
+    st_old = RelationshipManager(base_dir=d_old).get("old")
+    check(st_old.get("affinity", {}).get("trust") == 60.0, "旧档已有的值原样保留")
+    check(set(st_old.get("affinity") or {}) == {"trust", "intimacy", "warmth"},
+          "旧档缺的好感维度被补全（不 KeyError）")
+    check((st_old.get("mood") or {}).get("label") == "平静"
+          and (st_old.get("settings") or {}).get("pace") == "标准",
+          "旧档缺的顶层字段被补全（mood / settings）")
+    # 文件名净化：char_id 是用户可写的（角色名），带 ../ 就能写到 data/ 外面去。
+    p_evil = mgr.store.path_for("../../evil")
+    check(p_evil.parent == mgr.store.base and ".." not in p_evil.name,
+          "_safe_id 挡住路径穿越（../../evil 只落在 affinity/ 里）")
+    check(mgr.store.path_for("a/b") == mgr.store.path_for("a_b"),
+          "非法字符被换成下划线（不会多出一层目录）")
+    # 未知原型：原型名是 UI/配置传进来的，写错不许把整段行为带偏。
+    mgr.set_archetype(CID, "根本不存在的原型")
+    check(mgr.get(CID)["archetype"] == "温柔", "未知原型回落默认『温柔』（不是照收）")
+
+    section("心情：最近三句最负 / 72h 空窗 / 雀跃 / 想你门槛")
+    # ① 被凶一句就该有反应，不能被"最近 6 句的加权均值"稀释。
+    m13 = RelationshipManager(base_dir=tmp / "m13")
+    stamp(m13, CID)
+    for i in range(5):
+        m13.on_turn(CID, {"valence": 0.5, "user_text": f"开心话{i}"}, now=T0 + 60 * i)
+    m13.on_turn(CID, {"valence": -0.3, "user_text": "随便你吧"}, now=T0 + 400)
+    check(m13.get(CID)["mood"]["label"] in ("闹别扭", "炸毛", "委屈"),
+          f"前面都聊得好、最后一句冷下来 → 心情『{m13.get(CID)['mood']['label']}』"
+          f"（均值仍为正，只有『最近三句最负』能判出来）")
+    # ② 72 小时空窗是"想你/蔫蔫的"的分界线：亲密度低 → 蔫蔫的。
+    m14 = RelationshipManager(base_dir=tmp / "m14")
+    st14 = m14.get(CID)
+    st14["affinity"]["intimacy"] = 30.0
+    st14["last_interaction_ts"] = T0 - 100 * 3600
+    st14["recent_valence"] = []
+    check(m14.engine.derive_mood(st14, now=T0)["label"] == "蔫蔫的",
+          "空窗 100 小时 + 亲密度低 → 蔫蔫的（72h 分支，不是 20h 分支）")
+    st14b = dict(st14)
+    st14b["affinity"] = dict(st14["affinity"])
+    st14b["affinity"]["intimacy"] = 60.0
+    st14b["last_interaction_ts"] = T0 - 200 * 3600
+    md14b = m14.engine.derive_mood(st14b, now=T0)
+    check(md14b["label"] == "想你" and int(md14b["intensity"]) == 3,
+          f"空窗 200 小时 + 亲密度够 → 想你·明显（实际 {md14b['label']}/{md14b['intensity']}）")
+    st14c = dict(st14)
+    st14c["affinity"] = dict(st14["affinity"])
+    st14c["affinity"]["intimacy"] = 60.0
+    st14c["last_interaction_ts"] = T0 - 100 * 3600
+    check(m14.engine.derive_mood(st14c, now=T0)["label"] == "想你",
+          "同样 100 小时，亲密度够 → 想你（45 分门槛）")
+    # ③ 强正向一轮 → 不会还是"平静"（雀跃分支）。
+    m15 = RelationshipManager(base_dir=tmp / "m15")
+    stamp(m15, CID)
+    m15.on_turn(CID, {"valence": 0.95, "care": 1.0, "depth": 0.8, "effort": 0.9,
+                      "user_text": "我今天特别想谢谢你陪着我"}, now=T0 + 60)
+    check(m15.get(CID)["mood"]["label"] in ("雀跃", "柔软", "心动", "感动", "安心"),
+          f"强正向一轮 → 心情『{m15.get(CID)['mood']['label']}』（不是平静）")
+    # v1 的雀跃分支本身：v2 的 _refine 会用语义信号把标签改写成"感动/心动"，
+    # 所以「雀跃」这个分支只能直接打在 v1 上 —— 它是 _refine 的兜底 base_label。
+    st15 = m15.get(CID)
+    st15["recent_valence"] = [0.9]
+    st15["last_interaction_ts"] = T0 + 30
+    md15 = _V1Engine(m15.store).derive_mood(st15, now=T0 + 60)
+    check(md15["label"] == "雀跃",
+          f"v1 心情：强正向 → 雀跃（实际『{md15['label']}』，v2 的细分以它为兜底）")
+
+    section("历史：截断 / 空行 / 角色字段")
+    hs2 = HistoryStore(base_dir=tmp / "h2")
+    for i in range(5):
+        hs2.append_turn(CID, "user", f"第{i}句", ts=T0 + i)
+    recs2 = hs2.load_recent(CID, 2)
+    check(len(recs2) == 2 and recs2[-1]["content"] == "第4句",
+          f"load_recent(2) 只给最近 2 条（实际 {len(recs2)} 条）")
+    n_before = hs2.count(CID)
+    with hs2.path_for(CID).open("a", encoding="utf-8") as f:
+        f.write("\n   \n")
+    check(hs2.count(CID) == n_before, f"空行不计入条数（{n_before} → {hs2.count(CID)}）")
+    check(hs2.append_turn(CID, "narrator", "旁白不算对话")["role"] == "user",
+          "非法 role 归为 user（不会写出一条谁都读不懂的记录）")
+
+    section("会话时钟：空会话 / 断档切分 / 夜间窗口 / 在线分钟")
+    sc3 = SessionClock(base_dir=tmp / "s3")
+    sc3.touch(ts=T0, force_new=True)
+    sc3.stop(ts=T0)
+    check(len(sc3._read_log()) == 0, "零长度会话不写日志（不刷空记录）")
+    sc4 = SessionClock(base_dir=tmp / "s4")
+    sc4.touch(ts=T0, force_new=True)
+    sc4.touch(ts=T0 + 300)              # 先让这段会话有 5 分钟长度
+    sc4.touch(ts=T0 + 300 + 20 * 60)    # 空档 20 分钟 > 15 分钟阈值
+    check(len(sc4._read_log()) == 1, "空档超过 15 分钟 → 旧会话收尾")
+    check(float((sc4._read_current() or {}).get("start") or 0) == T0 + 300 + 20 * 60,
+          "断档后那次心跳开的是新会话")
+    check(sc._in_night(day + 2 * 3600) is True, "02:00 属于夜间窗口")
+    check(sc._in_night(day + 7 * 3600) is False, "07:00 不属于夜间窗口（上界是 5 点）")
+    check(abs(sm["online_minutes_today"] - 120.0) < 1.0,
+          f"今日在线分钟按『分钟』算（实际 {sm['online_minutes_today']}，应为 120 左右）")
+
+    section("规则裁判：否定语境 / 两字敷衍")
+    # "我不喜欢你"是负向，不能因为含"喜欢"就判成表白。
+    neg = heuristic_signals("我不喜欢你")
+    check(float(neg.get("valence") or 0.0) < 0.3,
+          f"'我不喜欢你' 不算表白（valence={neg.get('valence')}）")
+    check(float(heuristic_signals("别喜欢我了").get("valence") or 0.0) < 0.3,
+          "'别喜欢我了' 不算表白")
+    # 两字冷句（不在 _PERFUNCTORY 里）也要判成敷衍：perf 必须 >= 0.5 才算信息不足。
+    pf = heuristic_signals("算了")
+    check(float(pf.get("perfunctory") or 0.0) >= 0.5,
+          f"两字冷句判为敷衍（perf={pf.get('perfunctory')}）")
+    check(pf.get("sufficient") is False, "'算了' 信息不足 → sufficient=False")
+
+    section("v2 引擎：阶段迟滞 / 疤自愈 / 交情沉淀 / 情绪降温")
+    m16 = RelationshipManager(base_dir=tmp / "v1")
+    st16 = m16.get(CID)
+    st16["stage"] = "萍水"
+    st16["affinity"] = {"trust": 53.0, "intimacy": 53.0, "warmth": 53.0}
+    check(m16.engine._stage(st16) == "萍水",
+          "升档要够稳：53 分刚过 52 的门槛，但不跳档（迟滞 +2）")
+    st16b = dict(st16)
+    st16b["affinity"] = {"trust": 60.0, "intimacy": 60.0, "warmth": 60.0}
+    check(m16.engine._stage(st16b) == "熟络", "60 分稳稳超过门槛 → 升到熟络")
+    # 疤随日子自愈：20 天前留的疤不该一辈子记着。
+    m17 = RelationshipManager(base_dir=tmp / "v2")
+    st17 = m17.get(CID)
+    stamp(m17, CID)
+    st17 = m17.get(CID)
+    st17["scar"] = 0.8
+    st17["last_interaction_ts"] = T0 - 10 * 86400
+    m17.store.save(st17)
+    scar_after = float(m17.tick(CID, now=T0).get("scar") or 0.0)
+    check(scar_after < 0.8, f"疤会随时间自愈（0.8 → {scar_after:.3f}）")
+    # 交情越久，衰减越慢。
+    def _decay_warmth(bond_days: int, tag: str) -> float:
+        m = RelationshipManager(base_dir=tmp / ("bd_" + tag))
+        stamp(m, CID)
+        st = m.get(CID)
+        st["affinity"] = {"trust": 70.0, "intimacy": 70.0, "warmth": 70.0}
+        st["bond"] = {"days": bond_days, "last_date": ""}
+        st["last_interaction_ts"] = T0 - 7 * 86400
+        st["settings"]["pace"] = "标准"
+        m.store.save(st)
+        return float(m.tick(CID, now=T0)["affinity"]["warmth"])
+
+    w_new = _decay_warmth(0, "new")
+    w_old = _decay_warmth(60, "old")
+    check(w_old > w_new, f"交情越久衰减越慢（老交情 {w_old:.1f} > 新关系 {w_new:.1f}）")
+    # 情绪会自然降温：48 小时前的气头，现在不该还是炸毛。
+    m18 = RelationshipManager(base_dir=tmp / "v3")
+    st18 = m18.get(CID)
+    stamp(m18, CID)
+    st18 = m18.get(CID)
+    st18["recent_valence"] = [-0.8]
+    st18["mood"] = {"label": "炸毛", "intensity": 3, "since": T0 - 100 * 3600}
+    st18["last_interaction_ts"] = T0 - 100 * 3600
+    mood18 = m18.engine.derive_mood(st18, now=T0)
+    check(mood18["label"] != "炸毛",
+          f"气头会自然降温（100 小时后是『{mood18['label']}』，不是一直炸毛）")
+
     # ------------------------------------------------------------ 汇总
+    # 【2026-11-10 条数总账】`passed == total` 只证明"跑过的都过了"，不证明"该跑的都跑了"：
+    # 某段判据被 try/except 吞掉、或被人顺手删掉，总数跟着变小，报告照样是 `N/N 通过`。
+    # 少跑的判据不算通过 —— 所以把期望条数也钉住。
+    if len(RESULTS) != EXPECTED_CHECKS:
+        check(False, f"判据条数 {len(RESULTS)} != 期望 {EXPECTED_CHECKS}"
+                     f"（有整段被跳过/删掉了 —— 少跑的判据不算通过）")
     passed = sum(1 for ok, _ in RESULTS if ok)
     total = len(RESULTS)
     print(f"\n===== {passed}/{total} 通过 =====")

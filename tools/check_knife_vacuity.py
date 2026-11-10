@@ -223,6 +223,10 @@ PAIRS = [
     # 子串判定样本本身就在清单里（等于从没验过）。
     ("_qc_config_migrate_mutation.py", "src/tests/test_config_migrate.py", "dev",
      "TTS 配置迁移：十八刀，接线只做文本断言（塞进 if False 仍绿）+ 深拷贝/子串从未被逼住"),
+    # 【2026-11-10 加】关系模型：三十二刀。这道门 41 条判据绿得很稳，探针捅出 21 处
+    # 零判据 —— 最刺眼的两处是「判据绿的原因跟它名字无关」（去重/日上限都被饱和度满足）。
+    ("_qc_relationship_model_mutation.py", "tools/test_relationship.py", "dev",
+     "关系模型：三十二刀，去重/日上限被饱和度满足 + v2 引擎整层无判据"),
     # ---- dev（第二十六轮补：两条从 EXCUSED 挪进来的）----
     ("_qc_presence_mutation.py", "test_presence_controls.py", "dev",
      "在场感增强：缺 pynput 时兜底校验放行拼错的键名 —— 修好后起点第一次是绿的"),
