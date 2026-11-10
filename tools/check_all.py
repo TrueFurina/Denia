@@ -556,6 +556,12 @@ GATES: list[tuple[str, str, list[str], bool]] = [
     ("主动输出分流", PY_VENV, ["tools/test_proactive_chat_routing.py"], False),
     ("关系接线", PY_VENV, ["tools/test_relationship_wiring.py"], False),
     ("关系集成", PY_VENV, ["tools/test_relationship_integration.py"], False),
+    # 【2026-11-10 加】关系集成的刀：十三刀。这道门 13 个用例、绿得很稳，探针捅出七处
+    # 零判据 —— 最狠的是 test_04「同一句 AI 文本 5s 内只记一次」：它绿是因为**队列只有
+    # 一句**（第一次回复就把队列取空了），去重那一行根本执行不到，删掉去重整段照样绿；
+    # 其次是 test_20「publish 不阻塞」—— 它从头到尾**没跑 `bus.run()`**，量的是两次
+    # `queue.put` 的耗时，把判定改成同步 await 也不会红。
+    ("关系集成变异", PY_VENV, ["tools/_qc_relationship_mutation.py"], False),
     # 关系面板的两个新入口（2026-10-21）：原型下拉 + 最近事件列表。判据是"界面变成
     # 什么样"，所以**原样加载 relation_panel.js** 在假 DOM + 假 pywebview 里跑（不是
     # 复刻逻辑）。24 项，含两个对照组：老后端没有 archetypes 时**不许**写死枚举兜底、

@@ -205,6 +205,10 @@ PAIRS = [
     # 删掉守卫，判据跟着消失，端点被静默降级成"返回 dict 就行"。
     ("_qc_onboarding_mutation.py", "tools/test_onboarding_integration.py", "dev",
      "引导页集成：二十四刀，C1 刀「删 _cfg 守卫」此前全绿（判据从被测代码里读）"),
+    # 【2026-11-10 加】关系集成：十三刀。七个行为零判据，最狠的两处是"测试绿的原因
+    # 跟它名字里那件事无关"：test_04 被队列耗尽掩盖、test_20 压根没跑总线。
+    ("_qc_relationship_mutation.py", "tools/test_relationship_integration.py", "dev",
+     "关系集成：十三刀，test_04 去重/ test_20 总线此前全绿（绿的原因与名字无关）"),
     # ---- dev（第二十六轮补：两条从 EXCUSED 挪进来的）----
     ("_qc_presence_mutation.py", "test_presence_controls.py", "dev",
      "在场感增强：缺 pynput 时兜底校验放行拼错的键名 —— 修好后起点第一次是绿的"),
