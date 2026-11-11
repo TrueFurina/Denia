@@ -621,8 +621,8 @@ def check_signature() -> tuple[str, str, str, str]:
     if unsigned:
         return (WARN, "代码签名", "未发现内嵌签名：" + "；".join(unsigned),
                 "未签名时用户会看到「未知发布者」，国内杀软更容易直接拦。"
-                "选项：OV 证书（需企业资质）／EV 证书（可即时积累 SmartScreen 信誉）"
-                "／暂不买则至少公开 SHA256 校验值并在 README 写明")
+                "选项：OV 证书（需企业资质）／EV 证书（内核驱动签名才必需）；按微软现行规则两者都不再即时豁免 SmartScreen，信誉需靠真实下载量逐步积累"
+                "／暂不买则至少公开 SHA256 校验值并在下载页写明放行引导")
     return (PASS, "代码签名", f"{len(targets)} 个自研可执行入口均带内嵌签名", "")
 
 
