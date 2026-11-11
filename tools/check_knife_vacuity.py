@@ -244,6 +244,12 @@ PAIRS = [
     # ③ 桩把四道守卫钉成必放行，handler 与 USER_TEXT 订阅文档里写着却从没执行过。
     ("_qc_proactive_smoke_mutation.py", "tools/test_proactive_smoke.py", "dev",
      "主动开口冒烟：五十二刀，源码文本量不出接线 + 判据绿的原因与名字无关 + 桩钉死的守卫整段不可见"),
+    # 【2026-11-11 加】首启承接浮层：四十一刀。25 处零判据，三类最刺眼：
+    # ① 接线判据全是源码文本（n_add==1 / 下标先后 / count==2），整片 12 把全洞；
+    # ② CSS 与标签判据只查字符串存在，bottom / z-index / 字号改坏照样绿；
+    # ③ 真值表缺 success:true 且无 health 的样本，两把等价变异没样本能击中。
+    ("_qc_setup_hint_mutation.py", "src/tests/test_setup_hint.py", "dev",
+     "首启承接浮层：四十一刀，源码文本量不出接线 + CSS 判值不判字符串 + 真值表补样本"),
     # ---- dev（第二十六轮补：两条从 EXCUSED 挪进来的）----
     ("_qc_presence_mutation.py", "test_presence_controls.py", "dev",
      "在场感增强：缺 pynput 时兜底校验放行拼错的键名 —— 修好后起点第一次是绿的"),
