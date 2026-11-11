@@ -596,7 +596,7 @@ footer{border-top:1px solid var(--line);margin-top:40px;background:rgba(0,0,0,.2
       <span class="ai">⚠️</span>
       <div>
         <b>关于「Windows 已保护你的电脑」蓝色提示</b><br>
-        当前分发包<b>未做代码签名</b>，首次运行 SmartScreen 会拦截一次，属正常现象（不是病毒）。点「更多信息」→「仍要运行」即可。建议下载后核对 SHA-256。签名证书已在规划中，签发后此提示会消失。
+        当前分发包<b>未做代码签名</b>，首次运行 SmartScreen 会拦截一次，属正常现象（不是病毒）。点「更多信息」→「仍要运行」即可。建议下载后核对 SHA-256。签名可确立发布者身份并防篡改，但按微软现行规则，OV / EV 证书都不再即时豁免，信誉需靠真实下载量逐步建立，首次拦截不会因签名立刻消失。
       </div>
     </div>
   </div>
@@ -744,7 +744,7 @@ footer{border-top:1px solid var(--line);margin-top:40px;background:rgba(0,0,0,.2
       </ul>
     </div>
   </div>
-  <p style="margin-top:18px;color:var(--dim);font-size:13px">把 ❌ 项反馈到仓库 Issue，我按现象定位。下一步可选：研究低价代码签名证书消掉 SmartScreen 拦截。</p>
+  <p style="margin-top:18px;color:var(--dim);font-size:13px">把 ❌ 项反馈到仓库 Issue，我按现象定位。签名已评估：证书不能即时消除首次拦截，当前以「公开 SHA-256 + 放行引导」为准。</p>
 </section>
 
 <!-- ===== FOOTER ===== -->
