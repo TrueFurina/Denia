@@ -1209,21 +1209,39 @@ def check_voice_backend(cfg: object) -> tuple[str, str, str, str]:
             import tempfile
 
             from src.voice.tts_backends import TTSBackend  # noqa: F401
-            out = os.path.join(tempfile.gettempdir(), "daniya_doctor_tts.wav")
-            if os.path.exists(out):
-                os.unlink(out)
             fn = be.speak if hasattr(be, "speak") else be.synthesize
-            asyncio.run(_await_maybe(fn, "自检", out))
-            if not (os.path.exists(out) and os.path.getsize(out) > 800):
+
+            def _synth_once() -> int:
+                """合成一次，返回产物字节数（0 = 没落盘）。
+
+                2026-11-10：临时文件名改成**唯一名**。原来固定用
+                tempdir/daniya_doctor_tts.wav，两次 doctor（或 doctor 与别的合成任务）
+                同时跑会互相 unlink，或者读到还没落盘的 0 字节。
+                """
+                fd, out = tempfile.mkstemp(prefix="daniya_doctor_tts_", suffix=".wav")
+                os.close(fd)
+                try:
+                    os.unlink(out)  # 让引擎自己创建，避免 mkstemp 的空占位被当成产物
+                except OSError:
+                    pass
+                asyncio.run(_await_maybe(fn, "自检", out))
+                size = os.path.getsize(out) if os.path.exists(out) else 0
+                try:
+                    os.unlink(out)  # 试听用的临时音频，删不掉由临时目录回收
+                except OSError:
+                    pass
+                return size
+
+            # 2026-11-08 与 2026-11-10 各见过一次「合成返回了但产物 0 字节」：都是多次
+            # 连跑里 1 次、随后连续复跑全绿的**单次抖动**（不是管线坏）。瞬时失败与真故障
+            # 必须分开判 —— 重试一次仍为空才 FAIL，免得把一次抖动报成「她永远不说话」。
+            size = _synth_once()
+            if size <= 800:
+                size = _synth_once()
+            if size <= 800:
                 return (FAIL, "语音合成",
-                        f"{label}：合成返回了但产物为空/过小（{os.path.getsize(out) if os.path.exists(out) else 0} 字节）",
+                        f"{label}：重试一次后产物仍为空/过小（{size} 字节）",
                         "换一个 engine 试试；本机 pyttsx3 一定能响")
-            size = os.path.getsize(out)
-            try:
-                os.unlink(out)
-            except OSError:
-                # 试听用的临时音频删不掉由临时目录回收
-                pass
             return (PASS, "语音合成", f"{label} · 真合成 OK（{size} 字节）", "")
         except Exception as e:  # noqa: BLE001
             return (FAIL, "语音合成", f"{label}：真合成失败 {type(e).__name__}: {e}",
