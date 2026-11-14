@@ -49,11 +49,22 @@ GATES: list[tuple[str, str, list[str], bool]] = [
     # await/调度`（协程对象直接丢弃，函数体一行不执行）。自测守着闸门本身别退化。
     ("协程调度", PY_RUNTIME, ["tools/check_await_sync.py", "src"], False),
     ("协程调度自测", PY_RUNTIME, ["src/tests/test_check_await_sync.py"], False),
+    # 【2026-11-09 加】自测七条**全部只调 `scan()`，从不碰 `main()`** ——
+    # 于是「退出码那一行改成 return 0」没有任何判据：闸门退化成只打印不判红，
+    # 自测照样打印「全部通过 ✅」。先给自测补了「有可疑点 → 1 / 干净 → 0」
+    # 两条断言，这把刀才有东西可砍。五刀：退出码 / 消费者表 / 规则 1 / 规则 2 /
+    # 异步生成器排除。每一条都对应一条具体的误判方向（漏报或误报）。
+    ("协程调度变异", PY_RUNTIME, ["tools/_qc_await_sync_mutation.py"], False),
     # 异步阻塞：async 里做同步 HTTP/sleep 会把事件循环占住（"卡一下"，不报错）。
     # 一天内撞到四处：gewechat 回发、qzone 发布、tts 的 time.sleep(0.6)、
     # heavy_apps 的 urlopen(timeout=5)。嵌套同步 worker（交给 to_thread）不算。
     ("异步阻塞", PY_RUNTIME, ["tools/check_async_blocking.py", "src"], False),
     ("异步阻塞自测", PY_RUNTIME, ["src/tests/test_check_async_blocking.py"], False),
+    # 【2026-11-09 加】与上面同源：自测只测 `scan()`，退出码零判据。
+    # 这把刀顺手还砍出一个真缺陷：原来有一段 `WRAPPERS` 豁免，会把
+    # `to_thread(urlopen(...))` 的实参标成 safe —— 而实参是在**事件循环里先求值**的，
+    # 那段阻塞已经发生了。实测这种写法报 0 处。已删掉豁免并补一条正例。
+    ("异步阻塞变异", PY_RUNTIME, ["tools/_qc_async_blocking_mutation.py"], False),
     ("文本编码", PY_RUNTIME, ["tools/check_open_encoding.py", "--all", "--strict", "src", "tools", "main.py", "launch_companion.py", "run_webui.py"], False),
     # 主链路静默异常：`except: pass/continue` 且块内无注释 = 出错零痕迹
     # （NameError 和"设备不存在"长得一模一样）。--strict 才判红；带注释的有意降级放行。
@@ -170,11 +181,26 @@ GATES: list[tuple[str, str, list[str], bool]] = [
     # 实测本轮第一遍 ✓ 27.9s、第二遍 ✗ 95.0s，最后判 FAIL —— 光看汇总根本分不清
     # 是"测试本身不稳"还是"跑了两遍"。判据只该有一条真身。
     ("壳层能力", PY_VENV, ["src/tests/test_win_shell.py"], True),
+    # RPC 通道：19 条等价性 + 三条安全边界。失效形状和端口绑定相反 ——
+    # 端口坏了是「起不来」，这条坏了是「照样 200，只是返回的东西不对」，
+    # 或者更糟：**私有方法能调到**。2026-11-10 补了子对象用例（`sub.ping`）与
+    # 四段点号安全检查（私有段 / 不存在 / 空段 / 中间 dunder）。
     ("RPC 通道", PY_VENV, ["src/tests/test_rpc_server.py"], False),
+    # 上面那道门的刀：十刀。补判据之前有两处空转（逐段检查→整串检查、
+    # _resolve 不支持点号），见 `_qc_rpc_mutation.py` 的模块注释。
+    ("RPC 通道变异", PY_VENV, ["tools/_qc_rpc_mutation.py"], False),
     # WS 端口绑定契约（2026-10-20 03:11 启动崩溃的回归）：空闲一次起、被占先重试
-    # 再报人话（PID/退出指引）、占用探测不扰民。两刀变异已验：删重试→「确有重试」
-    # 红；改回裸 raise→三条诊断断言红。
+    # 再报人话（PID/退出指引）、占用探测不扰民。
+    # 【2026-11-09 修·这条注释曾经是假的】它原来写着「两刀变异已验：删重试→
+    # 「确有重试」红；改回裸 raise→三条诊断断言红」，但仓库里**没有任何
+    # `_qc_*ws*` 文件** —— 那两刀是手工跑过一次、没提交，验完就蒸发了，
+    # 此后一年谁改坏了都不会红。手工验过的刀不会回潮，注释也不会。
+    # 现在有 `tools/_qc_ws_port_bind_mutation.py`（八刀，已进 PAIRS）。
     ("WS 端口绑定", PY_VENV, ["src/tests/test_ws_port_bind.py"], False),
+    # 上面那道门的刀：八刀。补判据之前它有两处空转（删重试日志 / serve 提出循环
+    # 只 bind 一次空睡 5 次），见 `_qc_ws_port_bind_mutation.py` 的模块注释。
+    # 慢：每刀都要真占端口 + 走满重试预算，八刀约 60s。
+    ("WS 端口绑定变异", PY_VENV, ["tools/_qc_ws_port_bind_mutation.py"], True),
     # README/文档的本地链接不悬空。坏法很安静——**没人会点**，断了也不会有人报错，
     # 直到新来的人照着点一次 404。而"文档搬家"正是最容易制造悬空的动作。
     # 变异 3 刀全红：搬家没改链接 / 图片路径写错 / 指向不存在的文档。
@@ -182,7 +208,14 @@ GATES: list[tuple[str, str, list[str], bool]] = [
     ("壳桌宠回退", PY_VENV, ["src/tests/test_pet_shell_fallback.py"], False),
     ("桌宠后端决策", PY_VENV, ["src/tests/test_pet_backend.py"], False),
     ("桌宠位置持久化", PY_VENV, ["src/tests/test_pet_state.py"], False),
+    # 壳自愈与退出清理：15 节、四十来条断言。看着最扎实，但 2026-11-10 一查，
+    # 「进程回收」和「重启时恢复状态」这两条支路上五处关键行为全都没判据
+    # （恢复置顶 / 杀子进程树 / 升级强杀 / 退避 / close 前的 quit）。
+    # **节数多不等于覆盖面广** —— 15 节里有 9 节在测配额/降级/握手文件。
     ("壳自愈与退出清理", PY_VENV, ["src/tests/test_pet_shell_selfheal.py"], False),
+    # 上面那道门的刀：八刀（A–E 是补判据之后才砍得动的五刀）。
+    # 慢：每刀都要跑满 15 节（含 GPU 回退那条真 _launch），八刀约 80s。
+    ("壳自愈变异", PY_VENV, ["tools/_qc_pet_shell_mutation.py"], True),
     ("壳自愈端到端", PY_VENV, ["tools/pet_shell_selfheal_smoke.py"], True),
     ("日志轮转", PY_VENV, ["src/tests/test_log_rotate.py"], False),
     ("配置校验", PY_VENV, ["src/tests/test_config_schema.py"], False),
@@ -191,6 +224,13 @@ GATES: list[tuple[str, str, list[str], bool]] = [
     # 零调用）——用户已建的音色档绑着下线模型，试听永远 400 而启动期从没人修。
     # 这道测的重点是「接线」而不是「算得对」：唯一入口是否真跑两半、webapp 是否
     # 真调了入口、写盘是否真是原子替换（不是原地截断）。
+    # 【2026-11-10 第 43 轮】探针捅出 5 处零判据，最狠的一处是**接线只有源码文本断言**：
+    # 把调用改写成 `if False: migrate_stale_tts_config(...)`，那行字符串还躺在文件里，
+    # 五条文本判据全绿而迁移永不执行 —— 与 2026-10-19「函数写了没接线」同型。
+    # 现改为运行时断言（真造 CharacterAPI 看盘上文件变没变）。另外补了条数总账
+    # （56 条）：`backup` 失效时原来崩在 open(.bak) 上、写盘失败改抛异常时原来崩在
+    # 调用点上 —— 崩掉的门说不清是哪条判据在守。十八刀见
+    # tools/_qc_config_migrate_mutation.py。
     ("TTS 配置迁移", PY_VENV, ["src/tests/test_config_migrate.py"], False),
     # 「别一直说同一句话」：屏幕活动入缓冲时去掉几乎相同的摘要。_similar_summary
     # 写好很久但零调用（注释里承诺的"防重复搭话"实际只靠输出侧兜着），轨迹里
@@ -251,6 +291,18 @@ GATES: list[tuple[str, str, list[str], bool]] = [
     # ④文案承诺的「原话还在输入框里」有代码保证。判据真值表直接交给 node 跑，
     # 不在 Python 里复刻逻辑（复刻只能证明"我两次写得一样"）。变异 9 刀全红。
     ("首启承接浮层", PY_VENV, ["src/tests/test_setup_hint.py"], False),
+    # 【2026-11-11 第 48 轮】首启承接浮层的刀：四十一刀。门 256 行 / 43 条判据，
+    # 探针下去捅出 **25 处零判据**。三类最刺眼：
+    # ① **源码文本量不出接线**：S01~S12 十二把刀把调用/点亮/闸门塞进注释或
+    #    if(false)，字符串、下标先后、count==2 全保留，门一条不红（整片洞，不是个别）；
+    # ② **判据绿的原因跟它名字无关**：S28 把 bottom:104px 改成 bottom:0 压住输入框，
+    #    判据只查 "bottom:" in body；S20 更离谱，旧正则 setup-hint" 遇到
+    #    class="setup-hint show" 直接匹配不到，红的是「没找到标签」而不是 show；
+    # ③ **等价变异**：真值表缺 success:true 且无 health 的样本，S18/S42 没样本能击中。
+    # 修法（判据先行）：判据 43 → 70 + EXPECTED_CHECKS=70；H00~H14 把页面里两段
+    # <script> 与两条发送失败分支原文注入假 DOM 的 node 环境真跑；C00~C09 判 CSS
+    # 值语义；T01/T02-01..10/T03 静态命名真值表并补样本；静态标签正则放宽。
+    ("首启承接浮层变异", PY_VENV, ["tools/_qc_setup_hint_mutation.py"], True),
     # 会话上下文落盘（写穿透 / 重启回填 / 老日志迁移 / **初始化顺序无关**）。
     # 最后那条是 2026-10-21 补的：`_make_history()` 只在建桶那一刻决定挂不挂写回调，
     # 顺序反过来（先 shared_history 后 enable）那个桶就永远纯内存——对话照常、日志正常、
@@ -268,13 +320,49 @@ GATES: list[tuple[str, str, list[str], bool]] = [
     # 串行复核包装器本身的自测：救得回来的必须救、真缺陷绝不重试、救不回来的仍红。
     ("内存抖动复核自测", PY_VENV, ["tools/test_mem_retry_wrapper.py"], False),
     ("密钥盒加密", PY_VENV, ["src/tests/test_secret_box.py"], False),
+    # 【2026-11-09 加·最硬的一条安全底线没有刀】上面这道门守「磁盘上不许出现明文 Key」
+    # —— 用户的 OpenAI / 百炼 Key 和 QQ cookie 全在 config.yaml 里。20 条判据从
+    # 2026-10-18 起就在跑，**从来没有刀**。这类判据的失效方式特别阴：加密函数照常返回、
+    # `Config.save` 照常写盘、日志照常打「已加密」，只是密文里其实还是明文 ——
+    # 没有报错，只有某天有人 `cat config.yaml` 才看得见。
+    # 五刀：密文不带前缀 / 不递归进嵌套 dict / 密钥字段表加宽 / 解不开不记失败 /
+    # is_sealed 恒 False。
+    # 记一笔：本想用「is_sealed 恒 True」，但它会让 decrypt_secret 去 base64 解普通文本、
+    # 直接抛 binascii.Error 带 Traceback 退出 —— 那是「崩了」不是「认出来了」。
+    # **刀的变异方向要选判据能开口的那条，不能选让判据闭嘴的那条。**
+    ("密钥盒加密变异", PY_VENV, ["tools/_qc_secret_box_mutation.py"], True),
     ("开机自启", PY_VENV, ["src/tests/test_autostart.py"], False),
+    # 【2026-11-09 加·这条判据自己就踩过坑，却从没配过刀】上面这道门守的是「用户登录时
+    # 到底跑什么」。2026-10-18 实锤过一次：某个变异让 enable 写死 VALUE_NAME、disable
+    # 删的却是 TEST_VALUE → 真实 HKCU Run 泄漏一条指向已删 tempfile 的死命令，用户登录
+    # 弹「无法运行」。测试因此自带快照 + 污染守卫，但 18 条断言从没配过刀。
+    # 五刀：不加引号 / 用 python.exe 不是 pythonw / is_enabled 遇 OSError 返回 True /
+    # sync(False) 也去 enable / read_command 异常返回空串。
+    # **故意不写「disable 删错值名」那一刀**：刀的 finally 只还原源码字节，删不掉已被
+    # 错误逻辑漏掉的注册表项，而测试自己的 finally 用的正是被变异的 disable —— 每跑一次
+    # 刀，用户登录就多一条死命令。要验 disable 得先给测试加「干净实现兜底清理」的钩子，
+    # 那是改判据不是加刀，另开一轮。
+    ("开机自启变异", PY_VENV, ["tools/_qc_autostart_mutation.py"], True),
     ("裁判确认条款", PY_VENV, ["tools/test_judge_confirm_clause.py"], False),
     ("陪伴话术条款", PY_VENV, ["tools/test_prompt_companion_clause.py"], False),
     ("历史隔离", PY_VENV, ["tools/test_history_isolation.py"], False),
     ("js_api 状态分叉", PY_VENV, ["tools/test_jsapi_state_split.py"], False),
     ("虚构守卫", PY_VENV, ["tools/test_fabrication_guard.py"], False),
     ("主动开口冒烟", PY_VENV, ["tools/test_proactive_smoke.py"], False),
+    # 【2026-11-11 第 47 轮】主动开口冒烟的刀：五十二刀。门 243 行 / 31 条判据，
+    # 探针下去捅出 **16 处零判据**。最刺眼的三类：
+    # ① **源码文本量不出接线**：管理器「委托 engine」只靠 inspect.getsource 找字符串，
+    #    改成「调用 engine 但丢掉返回值」照样绿；让位判据同理，注释里留着
+    #    `self._in_call()` 字符串就能骗过源码文本判据。
+    # ② **判据绿的原因跟它名字无关**：「不回翻倍」只查理由串里有没有「翻倍」两个字、
+    #    没量冷却时长；warmth 权重判据的样本全为 0、唯一非 0 样本已饱和；B6 的 else
+    #    分支干脆是无条件 `ok(..., True, "skip")`（跳过算通过，第 45 轮同型）。
+    # ③ **桩钉死的分支不可见 / 文档里的判据不算判据**：四道守卫被钉成「必然放行」，
+    #    空闲 / 批冷却 / 8s / 开机起算整段不可达；`_on_user_text_input` 与
+    #    `subscribe()` 文档写着却一次都没执行过。另钉死一处真接线漏洞：双工让位
+    #    只看 `_duplex_call_mode`，`_duplex_app_call_active` 这条 OR 分支门里没样本。
+    # 判据 31 → 48 + 条数总账；畸形输入改走 `_safe` 包装（判据崩 ≠ 判据错）。
+    ("主动开口冒烟变异", PY_VENV, ["tools/_qc_proactive_smoke_mutation.py"], True),
     ("关系主动修复", PY_VENV, ["tools/test_relationship_proactive_fixes.py"], False),
     ("写入层", PY_VENV, ["tools/test_write_layer.py"], False),
     # 第二批普查（2026-10-21 02:0x）：又试跑 8 个，6 个能过 → 收进来。
@@ -302,6 +390,17 @@ GATES: list[tuple[str, str, list[str], bool]] = [
     # 而数量本身不表达"为什么是 11"；改成"非空下限 + 由白名单逐字比对守具体集合"。
     # 变异（把 edge-tts 塞回表）→ `[FAIL] 引擎表漂移`，退出码 1。
     ("投影层自检", PY_VENV, ["tools/check_models_layer.py"], False),
+    # 【2026-11-09 加·第二份真相必须被对账】上面那道门从 2026-10-21 起就在跑，
+    # 但**从来没有刀** —— 它绿了两年多，「判据有没有牙」这件事一次都没被验过。
+    # 本轮补刀时先撞上一个更靠前的问题：`src/models/catalog.py` 里 `CALL_SITES`
+    # 是「13 个调用点」的第二份声明，`__all__` 导出、被 UI 和文档引用，可
+    # `build_model_view` 建视图走的是 13 段手写 `sites.append`，**根本不读它**。
+    # 于是把 `CALL_SITES` 删一项、或改成两个 id 撞车，视图照样 13 条、这道门照样全绿
+    # —— 声明与实现可以任意漂移，没有任何人会发现。这正是 `catalog.py` 自己那句
+    # 「不复制逻辑（第二份真相是 bug 温床）」要防的事，却唯独漏了它自己。
+    # 所以先给闸门加一条逐项对账判据，再用 M5 刀对准那条新判据。
+    # 记一笔给以后的自己：刀的锚点腐烂只是噪音，**刀指向一条不存在的判据**才是真问题。
+    ("投影层自检变异", PY_VENV, ["tools/_qc_models_layer_mutation.py"], True),
     # 【2026-10-21】doctor「配置文件」检查项的升级覆盖检测：原判据 `raw_cfg.get("api_key")`
     # **恒真**（顶层根本没这个键），只要有 data/ 就恒报「配置可能被覆盖」——所有真正在用的
     # 人都看到假警。改成递归扫任何非空 api_key。三态 + 对照组（有 Key 的老用户不许报）。
@@ -376,7 +475,20 @@ GATES: list[tuple[str, str, list[str], bool]] = [
     ("渠道探活判级变异", PY_VENV, ["tools/_qc_channel_mutation.py"], True),
     # 配置里的 ${ENV} 引用：展开、缺失告警、保存不把明文 key 落盘。
     ("配置环境变量引用", PY_VENV, ["src/tests/test_config_env_refs.py"], False),
+    # 【2026-11-10 加·最厚的一道门，三处空转】1047 行、六十来条断言，而且写得比
+    # 大多数门都讲究（[14] 专门写了「先判 env 是否存在，再判内容」这种防空洞通过
+    # 的话）。但按「有没有刀」的读数是「没有刀」，一探三处全空：
+    #   ① [C10-6] 配了凭证但没 signtool → 原写法在"没抛异常"的分支里断言
+    #      `not os.path.isfile("signtool.exe")` —— 那是断言**文件系统**，不是断言代码；
+    #   ② [C10-14] `--sign` 必须连着 `--installer` → 原判据只 grep 错误文案，
+    #      守卫改成 `if False:` 后文案还在、门全绿；
+    #   ③ `install_deps` 末尾 `if verify: return verify_deps(...)` **整段没有判据**，
+    #      换成 `return True`（装完不验收）全门全绿 —— 这是 [14] 那件事的镜像：
+    #      「规矩没写进 env=，等于没写」/「验收没被调用，等于没验收」。
+    # 三处先补判据（显式不存在的 DANIA_SIGN_TOOL / AST 验守卫条件 / 新增 [26]），
+    # 再上十二刀，见 tools/_qc_make_dist_mutation.py。
     ("打包依赖分级", PY_VENV, ["src/tests/test_make_dist_deps.py"], False),
+    ("打包依赖分级变异", PY_VENV, ["tools/_qc_make_dist_mutation.py"], True),
     ("队列语义", PY_VENV, ["src/tests/test_queue_util.py"], True),
     ("通话冒烟", PY_VENV, ["src/ui/tests/test_call_smoke.py"], True),
     ("通道状态", PY_VENV, ["src/channels/tests/test_agent_status.py"], True),
@@ -406,8 +518,33 @@ GATES: list[tuple[str, str, list[str], bool]] = [
     ("空间说说", PY_VENV, ["src/channels/tests/test_gewechat_qzone.py"], False),
     ("媒体路由", PY_VENV, ["src/channels/tests/test_media_routing.py"], False),
     ("视频观看", PY_VENV, ["src/channels/tests/test_video_watch.py"], False),
+    # 【2026-11-09 加·改动最频繁的判据反而没有刀】上面这道门是第三十轮刚修过的
+    # （`test_success` 漏 mock 前置能力探测 `_resolve_ffmpeg()`，结论取决于跑它的
+    # 机器），它守的是一条完整链路：URL 白名单 → 抽帧 → 送 VLM → 拼上下文。
+    # 这条链上任何一环断掉，用户看到的都是「点开只会看个空壳」，而测试全绿。
+    # 六刀：抽帧闸短路 / 帧描述不送进上下文 / 上下文丢掉帧条目 / 视觉能力恒不可用 /
+    # 视频被判成图文 / pixiv 掉出白名单。判据输出是 unittest 的，所以 `_judged()`
+    # 用 `FAILED (` 而不是 `[FAIL]` 把「判出来了」和「崩了」分开。
+    ("视频观看变异", PY_VENV, ["tools/_qc_video_watch_mutation.py"], True),
     ("视频进度", PY_VENV, ["src/channels/tests/test_video_watch_progress.py"], False),
+    # 【2026-11-09 加·守「用户能看见的那一层」】上面这道门守的是进度条：
+    # `watch_video` 发阶段 → `Dialogue._make_video_progress` 转事件 → 总线
+    # `publish_threadsafe`。这条链断在哪一环，现象都是「进度条不动 / 一直转圈」，
+    # 而回调异常被 `except` 吞掉、日志里看不出所以然 —— 所以判据本身必须有牙。
+    # 五刀：诊断 frames 恒 0 / 不发 frame 阶段 / 诊断不暴露 ffmpeg /
+    # 失败抹空错误信息 / 失败不发 error 阶段。
+    ("视频进度变异", PY_VENV, ["tools/_qc_video_watch_progress_mutation.py"], True),
+    # 【2026-11-10 加·这道门以前测的是自己抄的一份副本】A/B/C 三段的注释里明写
+    # 「复刻 …的分派核心 / 电平滑化 / engine_ui 判定」，把生产实现手抄进测试再测
+    # 抄件 —— 生产代码怎么改都不会红。同一个文件 D 段的注释早就写对了：
+    # 「不复制逻辑，避免"假绿"——复刻逻辑两次写得一样不算测试」。
+    # 换成调真实实现后，又逼出两件事：① A1 括号里那句「stopped 恒 False」是假的
+    # （`await f()` 先求值 `f()`，客户端真停了；实测回退成 BUG-1 原形 A1/A2 全绿，
+    # 唯一会红的是 A5 的日志判据），生产代码里同一条假因果一并改正；
+    # ② `_watchdog_tick` 的换轮保护 `and self._mic_proc is proc` 一条判据都没有，
+    # 删掉也全绿 → 补 D9。十刀见 tools/_qc_duplex_stop_mic_mutation.py。
     ("双工停止与麦克风", PY_VENV, ["tools/test_duplex_stop_and_mic.py"], False),
+    ("双工停止与麦克风变异", PY_VENV, ["tools/_qc_duplex_stop_mic_mutation.py"], True),
     # 过渡期看门狗接线（2026-10-23）：重连卡死时禁言闸门没有出口 → 她永久静默。
     # 方法 09-08 就写好了但从来没有启动点（注释却一直承诺"配合看门狗兜底"）。
     # 测试守行为两对照组 + 三处接线源码断言 + 死包装墓碑；四刀变异全红。
@@ -418,11 +555,49 @@ GATES: list[tuple[str, str, list[str], bool]] = [
     ("里程碑落盘", PY_VENV, ["tools/test_milestone_persist.py"], False),
     ("模型下载器", PY_VENV, ["tools/test_model_downloader.py"], False),
     ("P1 增量", PY_VENV, ["tools/test_p1_incremental.py"], False),
+    # 【2026-11-11 第 46 轮】P1 增量的刀：六十五刀。门 263 行 / 44 条判据，探针捅出
+    # **40 处零判据**。最刺眼的两处：① 文档字符串第 ⑤ 条写着「老接口
+    # save_text_chat_providers 行为不变（回归）」，但整份文件**一次都没调用过老接口**；
+    # ② `⑦ 中途失败 ⇒ 配置回到原样` 绿在「桩压根没改过 raw」上 —— 把回滚代码整段
+    # 删掉照样绿（第 44 轮饱和度同型）。探针还挖出一个真 bug：原子混合模式关闭路径
+    # 只把两步成败记进 steps 却不检查，双工回 local 失败照样返回 success=True，已修。
+    ("P1 增量变异", PY_VENV, ["tools/_qc_p1_incremental_mutation.py"], True),
     ("主动开口空闲", PY_VENV, ["tools/test_proactive_boot_idle.py"], False),
+    # 【2026-11-10 第 44 轮】这道门 41 条判据、写得挺细（连"新手期把创建时间钉到 t0"
+    # 这种坑都在注释里），探针下去还是捅出 **21 处零判据**。最刺眼的两处不是"没写判据"，
+    # 而是"判据绿的原因跟它名字无关"：「重复内容增益打折」绿是因为好感越接近 100 单轮
+    # 增益本来就越小（饱和），把 DEDUP_FACTOR 改成 1.0 照样满足那个不等式；「软每日上限」
+    # 同理 —— 末 3 轮增益小是饱和造成的。另有 v2 引擎（阶段迟滞/疤自愈/交情沉淀/情绪
+    # 降温）整层零判据，而 `RelationshipManager` 用的正是 v2。现补 32 条（73 条）+ 条数总账。
+    # 三十二刀见 tools/_qc_relationship_model_mutation.py。
     ("关系模型", PY_VENV, ["tools/test_relationship.py"], False),
     ("关系里程碑", PY_VENV, ["tools/test_relationship_milestone.py"], False),
     ("抓屏性能闸", PY_VENV, ["tools/test_screen_capture_perf_guard.py"], False),
+    # 【2026-11-09 加·守的是一条真炸过的底线】上面这道门守 2026-08-25 修掉的
+    # 「抽帧 / 核显本卡炸」：游戏或锁快照期间画面长时间静止，`_next_interval` 的
+    # static 加速会把间隔打到 ~1s，每帧全屏抓屏 + resize + pHash + JPEG 编码。
+    # 27 条判据（A/B/C/D/E/F）**从来没有刀** —— 「27 条到底有没有牙」一次没验过；
+    # 而第三十轮刚改过它的 D8（缺夹具退回出厂模板）。
+    # 五刀：low_rate 档不守低频底线 / 静态加速乘数被去掉 / 主路径不传 low_rate /
+    # 让位分支不传 low_rate=True / main.py 两处构造去掉 low_rate_check。
+    # 最后一把的锚点在 main.py 里**逐字出现两次**（1346 / 3214），因为 D11 的判据就是
+    # 「每一处构造都要带」—— 所以这把刀多带一个「期望命中次数=2」，命中数不符即判腐烂。
+    ("抓屏性能闸变异", PY_VENV, ["tools/_qc_screen_capture_perf_guard_mutation.py"], True),
     ("看屏热生效", PY_VENV, ["tools/test_desktop_watch_hotapply.py"], False),
+    # 【2026-11-10 加】这道门的名字是对的，判据是空的。三处「绿得跟名字无关」：
+    #  ① B 组「关闸后不再抓屏」：关闸后只等 0.6s 就断言计数不涨 —— 而采样周期是 3s
+    #    （`_next_interval` 下限 0.5s），**一个周期都没走完**，把「每轮重读开关」
+    #    整段删掉照样绿。现把间隔调到 0.2s、关闸后再跨三个周期。
+    #  ② E 组「自动恢复不推翻用户关闸」：断言的是 `_disabled_at==0` 时不该被唤醒，
+    #    但那段代码在用户关闸路径上**根本执行不到**（硬闸更靠前就 return），而且
+    #    测试还手工把 `_disabled_at` 置 0 来「造已过窗口的假象」——正好把原始 bug
+    #    （先熔断后关闸、90s 后自己复活）盖住。现按真实时序造：先打熔断再关闸。
+    #  ③ C 组只测「关闸不分析」，不测「开闸真抓一帧」—— capture_now 整条改成
+    #    `return` 也全绿。
+    # 另外补 H 组：关掉再打开，循环必须自己活回来（原版没有用例关闸后再开闸，
+    # 把 `continue` 改成 `return`（循环退出、重开要重启）照样绿）。
+    # 十二刀见 tools/_qc_hotapply_mutation.py。
+    ("看屏热生效变异", PY_VENV, ["tools/_qc_hotapply_mutation.py"], True),
     ("引导页 TTS 键", PY_VENV, ["tools/test_onboarding_tts_key.py"], False),
     # ---- 第三批普查的第二轮（同日）：又修好 5 个，同样是"判据/桩过时"而非功能坏。
     #      test_onboarding_role_backend 退出码 0 但跑 29s，不进闸门。
@@ -439,9 +614,39 @@ GATES: list[tuple[str, str, list[str], bool]] = [
     ("通知浮窗死路径", PY_RUNTIME, ["src/tests/test_notify_dead_path.py"], False),
     ("通知浮窗死路径变异", PY_RUNTIME, ["tools/_qc_notify_dead_path_mutation.py"], False),
     ("TTS 多供应商", PY_VENV, ["tools/test_tts_multi_provider.py"], False),
+    # 【2026-11-10 加】这道门 30 条判据、五个服务商、写得挺细，但它有**静默跳过**：
+    # 第 3 段（FishAudioBackend 全链路）整块包在 `try/except Exception: print("! 跳过")`
+    # 里 —— 把 synthesize 改成直接抛错，这段 5 条一条不跑，结果打成「27 通过 / 0 失败」，
+    # **exit 0 全绿**。合成功能彻底坏了、门是绿的，这正是「跳过不是通过」最贵的一种。
+    # 另有五处零判据：全局 Key 多源兜底（cloud_tts → cloud_omni，2026-10-17 修过
+    # 「又要搞一遍 key」）、merge「空字符串=不改」（F3）、JSON(audio_url) 二次下载、
+    # 空音频、缺 reference_id。
+    # 修法：异常本身记 FAIL + 末尾钉条数总账 EXPECTED_CHECKS（少跑一条就红）；
+    # 补 15 条判据（45 条）。十四刀见 tools/_qc_tts_multi_provider_mutation.py。
+    ("TTS 多供应商变异", PY_VENV, ["tools/_qc_tts_multi_provider_mutation.py"], True),
+    # 【2026-11-10 加】TTS 配置迁移的刀：十八刀。五处零判据，最狠的是「接线」那一条
+    # 只有源码文本断言 —— 调用塞进 `if False:` 照样全绿；另外 `copy.deepcopy` 的样本
+    # 字段 `api_key_probe` 根本不是 secret_box 认的密钥名，摘掉深拷贝门也绿；
+    # 子串判定的唯一样本 `cosyvoice-v2` 本身就在失效清单里，等于从没验过子串分支。
+    ("TTS 配置迁移变异", PY_VENV, ["tools/_qc_config_migrate_mutation.py"], True),
+    # 【2026-11-10 加】关系模型的刀：三十二刀。21 处零判据，其中两处是"判据绿的原因跟
+    # 它名字无关"（去重/日上限被饱和度满足），四处是 v2 引擎整层没判据。
+    ("关系模型变异", PY_VENV, ["tools/_qc_relationship_model_mutation.py"], True),
     ("主动输出分流", PY_VENV, ["tools/test_proactive_chat_routing.py"], False),
+    # 【2026-11-11 加】主动输出分流的刀：四十三刀。这道门是「聊天页主动消息永不出现」
+    # 那个用户反复报的 bug 的唯一一道门，而它原来有 32 处零判据 —— 最狠的两处：
+    # ① 第 5 组命中不了就 SKIP，而 SKIP 在返回值里算通过（整条记忆主动路径可断而不红）；
+    # ② 桩把 `_in_call_flag` 钉成 False，`_flush_duplex_emit` 后半段 130 行通话生命周期
+    #    闸门（2026-09-23「她不理我」那次的全部修复）一次都没跑过。
+    ("主动输出分流变异", PY_VENV, ["tools/_qc_proactive_routing_mutation.py"], True),
     ("关系接线", PY_VENV, ["tools/test_relationship_wiring.py"], False),
     ("关系集成", PY_VENV, ["tools/test_relationship_integration.py"], False),
+    # 【2026-11-10 加】关系集成的刀：十三刀。这道门 13 个用例、绿得很稳，探针捅出七处
+    # 零判据 —— 最狠的是 test_04「同一句 AI 文本 5s 内只记一次」：它绿是因为**队列只有
+    # 一句**（第一次回复就把队列取空了），去重那一行根本执行不到，删掉去重整段照样绿；
+    # 其次是 test_20「publish 不阻塞」—— 它从头到尾**没跑 `bus.run()`**，量的是两次
+    # `queue.put` 的耗时，把判定改成同步 await 也不会红。
+    ("关系集成变异", PY_VENV, ["tools/_qc_relationship_mutation.py"], False),
     # 关系面板的两个新入口（2026-10-21）：原型下拉 + 最近事件列表。判据是"界面变成
     # 什么样"，所以**原样加载 relation_panel.js** 在假 DOM + 假 pywebview 里跑（不是
     # 复刻逻辑）。24 项，含两个对照组：老后端没有 archetypes 时**不许**写死枚举兜底、
@@ -463,7 +668,7 @@ GATES: list[tuple[str, str, list[str], bool]] = [
     # 后端侧：use_bundled_ref_audio 把随包资产物化成 data/voice_ref/ 真实路径 +
     # 白名单（防路径穿越）+ /local_img 音频 Content-Type + register_local_img_dir。
     ("参考音频物化", PY_VENV, ["tools/test_clone_ref_audio.py"], False),
-    # ---- 引导页集成（106 项）----
+    # ---- 引导页集成（119 项）----
     # 【为什么现在收了】上一轮我判定「不收：5 个 FAIL 是设计稿未落地的产品待办」——
     # 那个判断是**错的**。逐个查下来 5 个里没有一个是"要动产品"的：A1 拿仓库里
     # 从没进过库的本地设计稿当判据、A4 盯着两种已不存在的代码形态、A9 是
@@ -474,6 +679,12 @@ GATES: list[tuple[str, str, list[str], bool]] = [
     # 【输入】它把 config.release.yaml 复制到临时目录当沙盒（绝不写真实配置），
     # 所以验的是**出厂状态**而不是"我这台机器现在什么样"。
     ("引导页集成", PY_VENV, ["tools/test_onboarding_integration.py"], True),
+    # 【2026-11-10 加】引导页集成的刀：二十四刀。这道门 108 条断言、绿得很稳，
+    # 但探针一捅五个洞：首启实际链路零判据（判据盯着一段没人调用的 buildFlow）、
+    # 「返回失败」只验了"是不是 dict"、「接受 payload」只验了"有个 success 键"、
+    # 运行时切角色分支一次都没跑过、C1 的判据是从被测代码里读出来的（删守卫=删判据）。
+    # 标慢项：24 次整门重跑。
+    ("引导页集成变异", PY_VENV, ["tools/_qc_onboarding_mutation.py"], True),
     # ---- 变异脚本（判据的判据）：验证闸门里的检查器**真的还有牙齿** ----
     # 【为什么必须收进来】2026-10-21 实测：doctor.run_all 里加了一项之后，
     # `_qc_voice_mutation` 的 A/B/C/E 四刀与 `_qc_asr_mutation` 的若干刀
@@ -561,6 +772,10 @@ GATES: list[tuple[str, str, list[str], bool]] = [
     ("权限模式矩阵变异", PY_VENV, ["tools/_qc_permission_modes_mutation.py"], True),
     # 【2026-11-04 加】文件读写的工作区边界。原来越界会「悄悄改名塞进沙箱」并回报
     # 「已写入」——用户以为改的是那个文件，实际写到了别处。守的是"越界必须明说"。
+    # 【2026-11-09 补·判据只盖了三兄弟里的一个】`_read_file` / `_write_file` /
+    # `_append_file` 是同一段 `_safe_path` + `except WorkspaceEscape` 的三份复制粘贴，
+    # 但之前只有 `_write_file` 有判据，另外两个在整个 tools/ 下出现 0 次。
+    # 其中读越界不拦的后果最重：不是写坏一个文件，是**任意文件读取**。已补第 6b 节。
     ("工作区边界", PY_VENV, ["tools/test_workspace_guard.py"], False),
     ("工作区边界变异", PY_VENV, ["tools/_qc_workspace_mutation.py"], True),
     # 【2026-11-04 加】run_command 的守卫：fail-closed 白名单 / 禁元字符 / cwd 落在工作区。
@@ -646,8 +861,41 @@ GATES: list[tuple[str, str, list[str], bool]] = [
     # 但那只证明「闸门正常时刀会红」，没证明「闸门恒绿/恒红时刀会不会红」。
     # 这道闸门把闸门文件换成两行退化实现（import-safe 的 `if __name__=="__main__"`），
     # 看刀套件还认不认得出来 —— 认不出就是空转，判据被改松改紧它都发现不了。
-    ("变异刀空转体检", PY_VENV, ["tools/check_knife_vacuity.py"], True),
+    # 【2026-11-08 修·本地全量只跑一层】这里原来没带 `--tier`，于是默认的
+    # `portable` 层（7 对）是跑了的，而第二十三轮补进来的 `dev` 层（9 对）
+    # **只在本轮手工跑过一次** —— 手工跑出来的结论不会回潮检测，等于白测。
+    # 本机（装了 `.venv` 的开发机）能跑两层，就必须跑两层；CI 跑不了 dev 层，
+    # 由 `.github/workflows/ci.yml` 显式写 `--tier portable`，不靠默认值。
+    ("变异刀空转体检", PY_VENV, ["tools/check_knife_vacuity.py", "--tier", "all"], True),
     ("变异刀空转体检变异", PY_VENV, ["tools/_qc_knife_vacuity_mutation.py"], True),
+    # 【2026-11-08 加·空转变检的另一半】上面那道是「把**判定文件**换成退化实现」，
+    # 前提是刀有一个独立的判定文件 —— 全仓 61 把 `_qc_*_mutation.py` 里只有 28 把有，
+    # 其余是改完源码**自己在进程内断言**，换文件那招对它们完全无效。这一道换方向：
+    # 不退化判定，**退化变异本身**（把 (old, new) 换成 (old, old)），于是
+    # 「什么都没改时刀会不会假绿」对有模块级 MUTS 的刀一视同仁。
+    # 两道合起来才闭环：换判定证明「判定变坏时刀会红」，空变异证明「没东西可抓时刀不假红」。
+    ("变异刀空转变检", PY_VENV, ["tools/check_knife_noop.py"], True),
+    ("变异刀空转变检变异", PY_VENV, ["tools/_qc_knife_noop_mutation.py"], True),
+    # 【2026-11-08 加·空转体检的第三个方向】前两道各堵一半，而且都只堵"有模块级
+    # MUTS 的刀"。剩下 27 把把 (old,new) 写在函数里、或者根本不改源码（往 src/ 扔
+    # 一个语法坏文件、复制一份配置、删一个目录）——前两招都够不着。这一道**不碰变异**，
+    # 而是把 `builtins.open` / `io.open` 的写模式重定向到临时文件，让"变异根本没发生"：
+    # 此时刀还报 PASS 就是空转。三个方向合起来才覆盖全部 61 把。
+    ("变异刀空写体检", PY_VENV, ["tools/check_knife_nowrite.py"], True),
+    ("变异刀空写体检变异", PY_VENV, ["tools/_qc_knife_nowrite_mutation.py"], True),
+    # 【2026-11-09 加·闸门自己起不来这件事没人守】前三道体检判的是「刀有没有牙」，
+    # 这一道判的是更靠前的一步：**闸门在推荐解释器下能不能起来**。
+    # 交付包自带的是可嵌入运行时（python/python312._pth），它的 sys.path 只有
+    # python/ 下的几个目录加一个 `..`（仓根），**不含 tools/**；普通 CPython 会
+    # 把脚本目录塞进 sys.path[0]，可嵌入版不会。于是 `python tools/x.py` 能跑、
+    # `.venv/Scripts/python.exe tools/x.py` 直接 ModuleNotFoundError —— 而 .venv
+    # 才是要三方依赖时的推荐解释器。
+    # 2026-11-09 实证：check_all.py 自己就中招（尾巴的 `from _gate_lock import`），
+    # 全量跑一行闸门没执行就崩，报的是 ModuleNotFoundError，看起来像环境坏了。
+    # 同族还有 PR #17 的 check_web_js_syntax、以及本轮这道门抓出来的
+    # _qc_api_wiring_mutation（函数里的 `from check_api_wiring import`）。
+    ("工具脚本导入路径", PY_VENV, ["tools/check_tool_sys_path.py"], False),
+    ("工具脚本导入路径变异", PY_VENV, ["tools/_qc_tool_sys_path_mutation.py"], False),
     # 【2026-11-09】试听播放生命周期：防孤儿 ffplay（关 App 后继续响）/ 叠播 / 线程堆积。
     # 判据用真实子进程哨兵 + 真实线程验可观测后果，非查标志位。
     ("试听播放生命周期回归", PY_VENV, ["src/tests/test_voice_playback_lifecycle.py"], False),
@@ -670,18 +918,45 @@ def main(argv: list[str]) -> int:
     fast = "--fast" in argv
     todo = [g for g in GATES if not (fast and g[3])]
     print(f"共 {len(todo)} 项闸门{'（--fast：已跳过慢项）' if fast else ''}\n")
+    # 【2026-11-09 加·不许静默降级】GATES 里 32 项声明用内置运行时、其余用 .venv。
+    # `_pick_python` 在内置运行时不存在时会**静默**换成 sys.executable ——
+    # 于是"用哪个解释器跑"这件事在读数里看不出来。在交付包工作副本里（没有
+    # `python/` 目录）全部 211 项其实都由当前解释器跑，而汇总一个字都不提。
+    # 这与本轮的主题（缺环境要说缺环境，别装成正常）是同一件事，所以打出来。
+    if not os.path.exists(PY_RUNTIME):
+        print("⚠ 内置运行时不存在：%s" % PY_RUNTIME)
+        print("   声明用它跑的那几项会改由当前解释器执行：%s" % sys.executable)
+        print("   —— 分档在这台机器上不成立；不是失败，但读数时要知道\n")
 
     results: list[tuple[str, bool, float, str]] = []
     skips: list[tuple[str, str]] = []
-    for name, py, args, _slow in todo:
+    for name, py, args, slow in todo:
         exe = _pick_python(py)
         if not os.path.exists(exe):
             results.append((name, False, 0.0, f"解释器不存在：{exe}"))
             print(f"  ✗ {name:14s}  解释器不存在")
             continue
+        # 【2026-11-09 修·超时会静默吃掉一道闸门】这里原来是写死的 timeout=600。
+        # 慢项（`slow=True`，原来只用来给 `--fast` 跳过）根本跑不完 —— 实测
+        # `check_knife_nowrite.py` 要 14 分钟，全量跑时必然在第 600 秒被 kill，
+        # 而 `subprocess.TimeoutExpired` 没被接住，**整轮 check_all 直接抛异常退出**，
+        # 前面跑完的结果一条都留不下。两处一起修：
+        #   ① 预算按档给：慢项 30 分钟、其余 10 分钟；
+        #   ② 超时不再让整轮崩，记成一条**有名字的失败**（"跑不完" ≠ "判据失败"，
+        #      但两者都不能当通过，所以都进失败列表并写明原因）。
+        budget = 1800 if slow else 600
         t0 = time.time()
-        p = subprocess.run([exe] + args, cwd=ROOT, capture_output=True,
-                           text=True, encoding="utf-8", errors="replace", timeout=600)
+        try:
+            p = subprocess.run([exe] + args, cwd=ROOT, capture_output=True,
+                               text=True, encoding="utf-8", errors="replace",
+                               timeout=budget)
+        except subprocess.TimeoutExpired:
+            cost = time.time() - t0
+            results.append((name, False, cost,
+                            f"超过 {budget}s 被中止 —— **跑不完，不是判据失败**；"
+                            f"要么优化它，要么给它加 slow 档"))
+            print(f"  ✗ {name:14s} {cost:5.1f}s  超时（>{budget}s，跑不完）")
+            continue
         cost = time.time() - t0
         # 退出码 77 = 跳过（环境不满足，且该能力当前不是产品承诺）。
         # **不能当通过**：跳过项会单独列出来，并说明"本轮未验证"。
@@ -755,6 +1030,19 @@ if __name__ == "__main__":
     # 【2026-11-04 加·并发护栏】变异刀会临时改源码；两个会话同时跑会互相覆盖
     # 还原结果，把好代码留在工作区，之后每一轮都判红（今天踩到两次）。
     # 拿不到锁时按仓库惯例 exit 77（跳过，不是通过）。
+    #
+    # 【2026-11-09 加·必须显式补 sys.path】交付包自带的是**可嵌入运行时**
+    # （python/python312._pth），它的 sys.path 被 `._pth` 写死成
+    # [python, python/DLLs, python/Lib]，**不含脚本目录、也不含 cwd**。
+    # 普通 CPython 会把脚本目录放进 sys.path[0]，所以这句 `from _gate_lock`
+    # 在 `python tools/check_all.py` 下能过、在 `.venv/Scripts/python.exe
+    # tools/check_all.py` 下直接 ModuleNotFoundError —— 而 .venv 正是本项目
+    # 推荐解释器（要三方依赖）。症状极隐蔽：不是判据失败，是整轮一行没跑就崩。
+    # 同一族问题见 PR #17 的 check_web_js_syntax（只把仓根塞进 sys.path，
+    # 而 check_bridge_methods 在 tools/ 下）。
+    _HERE = os.path.dirname(os.path.abspath(__file__))
+    if _HERE not in sys.path:
+        sys.path.insert(0, _HERE)
     from _gate_lock import acquire, release
     _got, _why = acquire()
     if not _got:

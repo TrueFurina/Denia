@@ -109,6 +109,40 @@ def main() -> int:
     finally:
         T.configure_workspace("")
 
+    print("\n6b) 越界时**不许读**、**不许追加**（同一类越界的另外两个兄弟）")
+
+    # 【2026-11-09 加·判据只覆盖了三兄弟里的一个】上面第 6 节守的是 `_write_file`。
+    # 但 `_read_file` / `_append_file` 是同一个 `_safe_path` + 同一个
+    # `except WorkspaceEscape: return str(e)` 形状的三份复制粘贴，
+    # 而**在加这一节之前，`_read_file` 和 `_append_file` 在整个 tools/ 目录下
+    # 出现 0 次** —— 没有任何判据碰过它们。
+    # 后果不对称得很厉害：
+    #   · `_read_file` 越界不拦 → 不是"写坏一个文件"，是**任意文件读取**，
+    #     密钥盒、`config.yaml`、`HKCU` 导出的凭据都能被模型读进上下文；
+    #   · `_append_file` 越界被改名塞进沙箱 → 和 2026-10 那个 bug 一模一样的
+    #     "假绿"：用户以为追加到了 `../那个日志`，实际进了工作区。
+    # 判据必须能开口，所以这里先造一个**真的存在、真的可读**的区外文件：
+    # 不造的话，"读不到"可能只是因为文件不存在，而不是因为越界被拦。
+    T.configure_workspace(ws)
+    try:
+        secret = os.path.join(outside, "secret.txt")
+        with open(secret, "w", encoding="utf-8") as f:
+            f.write("TOPSECRET-PAYLOAD")
+        rel_secret = "../" + os.path.basename(outside) + "/secret.txt"
+
+        msg = T._read_file(rel_secret)
+        chk("读越界：返回里说明越界", "越界" in msg, msg[:60])
+        chk("读越界：没把区外内容读进来", "TOPSECRET-PAYLOAD" not in msg)
+
+        target2 = os.path.join(outside, "append_not_exist.txt")
+        msg = T._append_file("../" + os.path.basename(outside) + "/append_not_exist.txt", "x")
+        chk("追加越界：返回里说明越界", "越界" in msg, msg[:60])
+        chk("追加越界：区外文件没有被创建", not os.path.isfile(target2), target2)
+        chk("追加越界：沙箱里也没多出这个文件",
+            not os.path.isfile(os.path.join(ws, "append_not_exist.txt")))
+    finally:
+        T.configure_workspace("")
+
     print("\n7) 区内写入仍然正常")
     T.configure_workspace(ws)
     try:

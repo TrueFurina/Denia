@@ -93,11 +93,26 @@ class Chain:
         return all(c["ok"] for c in self.checks)
 
 
+class NoGitWorkTree(RuntimeError):
+    """本机不是 git 工作树 —— 「按 git ls-files 造干净副本」这件事问不到。
+
+    【2026-11-09 加·「问不到」不是「答否」】交付包的工作副本没有 `.git`
+    （安装包/解压目录/拷给队友的副本都没有），`git ls-files` 返回 128 +
+    "fatal: not a git repository"。原来这被包成普通 RuntimeError，于是
+    整条首启验收在第一步就判 FAIL —— 而它**一条产品判据都没验到**，
+    报出来的却是"副本建立失败"，看起来像产品坏了。
+    本仓约定：缺环境 → exit 77（未验证），不许报成 FAIL。
+    """
+
+
 def git_files() -> list[str]:
     p = subprocess.run(["git", "ls-files"], cwd=ROOT, capture_output=True,
                        text=True, encoding="utf-8", errors="replace")
     if p.returncode != 0:
-        raise RuntimeError("git ls-files 失败：%s" % (p.stderr or "")[:200])
+        err = (p.stderr or "")[:200]
+        if "not a git repository" in err.lower():
+            raise NoGitWorkTree(err.strip())
+        raise RuntimeError("git ls-files 失败：%s" % err)
     return [x for x in p.stdout.splitlines() if x.strip()]
 
 
@@ -317,6 +332,15 @@ def main() -> int:
         try:
             ws = make_copy(args.dir, scratch)
             c.chk("副本建立成功", os.path.isdir(ws), ws)
+        except NoGitWorkTree as exc:
+            # 缺环境 ≠ 判据失败：这一步连副本都没造出来，后面六步一条也没跑，
+            # 所以既不能报 PASS 也不能报 FAIL —— 报「未验证」。
+            print("  ↷ 副本建立跳过：%s" % exc)
+            write_report(c, args.report, args.dir)
+            print("[SKIP] 本机不是 git 工作树（工作副本没有 .git），"
+                  "造不出「只含 git ls-files 的干净副本」——"
+                  "首启验收 7 步一条都没跑（不是通过）")
+            return 77
         except Exception as exc:
             c.chk("副本建立成功", False, repr(exc))
             write_report(c, args.report, args.dir)

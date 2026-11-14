@@ -1,0 +1,423 @@
+# -*- coding: utf-8 -*-
+"""空变异体检：把每一刀的 `new` 换成 `old`，看它还认不认得出来。
+
+为什么需要
+----------
+`check_knife_vacuity.py` 用的是「把**判定文件**换成退化实现」，前提是刀有一个独立的
+判定文件。全仓 61 把 `_qc_*_mutation.py` 里只有 28 把有，其余是**改完源码自己在进程内
+断言**，换文件这招对它们完全无效——也就是说那些刀的空转风险一直是零覆盖。
+
+这一轮换一个方向：不退化判定，**退化变异本身**。
+
+    空变异 = 把 MUTS 里的 (old, new) 换成 (old, old)
+
+它等于"什么都没改"。此时：
+
+  · 判定有牙 → 判定应该是**绿的** → 刀必须报「没抓住」→ 刀 exit != 0
+  · 判定空转 → 刀照样报「N 刀全红」→ **exit 0**
+
+这个方向不需要知道判定在哪、也不需要它是文件还是进程内断言——**对 78 个刀一视同仁**。
+它和第二十二轮那个工具是互补的两半：
+
+    换判定 → 证明「判定变坏时刀会红」
+    空变异 → 证明「什么都没变时刀不会假红」
+
+缺哪一半，那一半的空转就没人管。
+
+分类
+----
+  CERTIFIED  空变异下刀 exit != 0（它发现"没东西可抓"）
+  VACUOUS    空变异下刀 exit == 0（**什么都没改，它却说全抓到了**）
+  SKIP       没有模块级 `MUTS` —— 刀不用这个机制，本工具不适用（不算通过）
+  SHAPE      有 `MUTS` 但形状看不懂（含 `NOOP_SHAPE` 声明写坏）——
+             **刀用了这个机制，是本工具退化不了**（这两种原来挤在同一个
+             SKIP 数字里，读不出来谁是谁）
+  ERROR      起点本来就红 / 跑崩了 —— 无法判定
+
+分母只算 `_qc_*_mutation.py`。tools/ 下还有十几个 `_qc_*.py` 是**一次性探针**，
+不是变异刀，单列一句、不计入——否则"SKIP 50"里一半是压根不是刀的东西。
+
+退出码：0 无 VACUOUS / 1 有 VACUOUS / 2 一把都没跑成
+
+已知边界
+--------
+① 只认模块级的 `MUTS`。没有它的刀 → SKIP，有但形状看不懂 → SHAPE，
+   两者都不算通过。`_qc_*_mutation.py` 里没有模块级 MUTS 的归
+   `check_knife_nowrite.py`（封住写入口）——三个工具的分工写在那个文件头上。
+
+   形状看不懂的刀可以**自己声明**，工具照读，不用工具这边另建一张会烂的表：
+
+       NOOP_SHAPE = ("idx", 1, 2)       # 第 1 项是 old、第 2 项是 new
+       NOOP_SHAPE = ("filearg", 1, 2)   # 第 1 项是文件路径、第 2 项是"执行变异的函数"
+
+   声明写坏（越界 / 类型不对 / 指的两项本来就相同）一律判 SHAPE，**不许硬着头皮改**
+   —— 改错一项不会报错，只会产出一个假 CERTIFIED，那比没有结论更糟。
+   目前四把刀这么声明：`_qc_smoke_retry`(1,2)、`_qc_voice_ref`(2,3)、
+   `_qc_partial_reply`(1,2)、`_qc_site_counts`(filearg 1,2)。
+② 空变异只证明"没东西可抓时它不会假红"，**不证明"有东西可抓时它抓得住"**。
+   后者要靠每把刀自己的正向刀，以及 `check_knife_vacuity.py`。
+③ 有的刀在 `main()` 里除了 MUTS 还有别的判据（比如"还原字节一致"），
+   空变异下这些判据仍然会跑，所以 CERTIFIED 里混着"因为别的原因红"。
+   这是有意的：本工具只回答"它有没有假绿"，不回答"它红得对不对"。
+
+用法
+----
+    python tools/check_knife_noop.py                 # 全部
+    python tools/check_knife_noop.py --only presence # 名字含 presence 的
+    python tools/check_knife_noop.py --knife _qc_x_mutation.py
+    python tools/check_knife_noop.py --root <另一个仓根>
+"""
+from __future__ import annotations
+
+import argparse
+import ast
+import io
+import os
+import shutil
+import subprocess
+import sys
+import tempfile
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+ROOT = os.path.dirname(HERE)
+
+SKIP_DIRS = {"__pycache__", ".git", "node_modules", "dist", "build"}
+
+# 已知空转的刀：**不是垃圾桶，是待办清单**。每条都要写清"为什么现在还空转、
+# 什么条件下就能修"。新出现的空转不在这里 → 直接判失败（exit 1）。
+#
+# 为什么要这张表而不是"修完再上线"：这些刀的空转原因各不相同，有的要等真机样本，
+# 有的要改判定的写法。把它们一次性修完不现实，但**让数量只减不增**是现实的。
+#
+# 【2026-11-08 清空】上一轮唯一的条目 `_qc_a5_probe_mutation.py` 已经修好了。
+# 修法留在这里，当作"下次遇到同类怎么写"的样本：
+#   它的判定 `tools/probe_a5_env.py` 原来直接扫本仓 `logs/`，而 `logs/` 在 `.gitignore`
+#   里 → 新克隆的树上必然没有 launch_run*.log → 两条硬 FAIL → 判定恒红 → 六把刀
+#   "全红"是白送的。只补 `_judged()` + `_baseline_green()` 没用（起点本来就是红的），
+#   必须**让判定不再依赖"这台机器碰巧有没有日志"**：给探针加 `--root`，刀在 tempfile
+#   里造一份合成日志当夹具。同一天本工具自己造桩仓、第二十四轮 `_qc_pathrefs_mutation`
+#   造 tempfile 样本，都是这个路子。
+# **空表是有意义的读数**：它说的是"没有已知空转"，不是"没有空转"。真要新增条目，
+# 必须同时写清原因和修法，否则下一次它就成了遮羞布。
+KNOWN_VACUOUS = {
+}
+
+# 在**子进程**里跑：import 刀 → 把 MUTS 改成空变异 → 调 main()。
+# 用子进程而不是进程内，是因为刀会改源码；崩了也只是崩一个子进程，副本可以整份丢掉。
+RUNNER = r'''# -*- coding: utf-8 -*-
+import importlib.util
+import io
+import os
+import sys
+
+# 【2026-11-08 修·仪器比现实窄】刀平时是 `python tools/_qc_x.py` 跑的，
+# 那时 sys.path[0] 就是 `tools/`，所以 `import check_api_wiring` 这类
+# **同目录兄弟模块**的 import 成立。本工具改成从临时目录跑 runner，
+# sys.path[0] 变成了 runner 所在目录 —— 于是 `_qc_api_wiring_mutation`
+# 一进来就 `ModuleNotFoundError: No module named 'check_api_wiring'`，
+# 被记成 ERROR（无法判定）。**这不是刀的缺陷，是仪器把刀换了个环境跑。**
+# 把刀所在目录放回 sys.path[0]，让它和平时完全一样地被跑。
+sys.path.insert(0, os.path.dirname(os.path.abspath(sys.argv[1])))
+
+spec = importlib.util.spec_from_file_location("knife_under_test", sys.argv[1])
+m = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(m)
+
+if "--noop" not in sys.argv:
+    sys.exit(m.main())          # 起点：原样跑
+
+muts = getattr(m, "MUTS", None)
+if muts is None:
+    print("__NOOP_SKIP__ 没有 MUTS")
+    raise SystemExit(0)
+
+
+def _callables(e):
+    return [i for i, x in enumerate(e) if callable(x)]
+
+
+def _byteses(e):
+    return [i for i, x in enumerate(e) if isinstance(x, (bytes, bytearray))]
+
+
+# 【2026-11-09 加·刀自己声明形状】有的刀把 (old, new) 夹在说明文字中间，
+# 光看类型分不出来（`(标签, old, new, 说明)` 里三个都是 str）。原来只能判 SHAPE
+# 放过 —— 那等于"该验没验"。现在刀可以在自己文件里写一行
+#     NOOP_SHAPE = ("idx", 1, 2)          # 第 1 项是 old、第 2 项是 new
+#     NOOP_SHAPE = ("filearg", 1, 2)      # 第 1 项是文件路径、第 2 项是"执行变异的函数"
+# 工具照读。**知识放在数据旁边**，不放到工具里另建一张会烂的表。
+SHAPE = getattr(m, "NOOP_SHAPE", None)
+
+
+def _noop(entry):
+    """把一条变异改成"空变异"，并**返回证据**。
+
+    【2026-11-08 修·第一版把「说明」当成了 new】第一版一律取「最后两个元素」当
+    (old, new)。实测 `_qc_about_tier_mutation` 的形状是
+    `(名字, old_thunk, new_thunk, 说明)` —— 于是它把 **说明** 换成了 new_thunk，
+    空变异根本没发生，刀照常跑、照常全红，工具却判它 VACUOUS。
+    **一个假发现，来自没自检的仪器。**
+
+    现在按"载荷类型"定位，并且**改完要验证 old 与 new 是同一个对象**：
+      · 两个以上可调用对象 → 最后两个（old_thunk / new_thunk）
+      · 两个以上 bytes      → 最后两个（old / new）
+      · 嵌套 `[(old, new), ...]` → 每对都改成 (old, old)
+      · 只有 str（说明文字和 old/new 分不开）→ 抛，判 SKIP
+    验证不过就抛 —— 宁可 SKIP，也不产出一个假的 VACUOUS。
+    """
+    e = list(entry)
+
+    # ① 刀自己声明了形状 → 按声明来（并且自检，声明错了要抛，不许静默产假 VACUOUS）
+    if SHAPE is not None:
+        if not (isinstance(SHAPE, (list, tuple)) and len(SHAPE) == 3
+                and SHAPE[0] in ("idx", "filearg")):
+            raise ValueError("NOOP_SHAPE 形状看不懂：%r" % (SHAPE,))
+        kind, i, j = SHAPE
+        if not (0 <= i < len(e) and 0 <= j < len(e)):
+            raise ValueError("NOOP_SHAPE 下标越界：%r（条目只有 %d 项）" % (SHAPE, len(e)))
+        if kind == "idx":
+            if e[i] is e[j]:
+                raise ValueError("NOOP_SHAPE 指的两项本来就相同 —— 声明错了")
+            e[j] = e[i]
+            if e[j] is not e[i]:
+                raise ValueError("空变异自检失败")
+            return tuple(e), "declared-idx"
+        # filearg：第 i 项是文件路径、第 j 项是"执行变异的函数"。
+        # 空变异 = 换成"读回原文"的函数 —— 刀写出去的内容与原文一字不差，
+        # 于是它必须自己发现"变异没生效"。若它照样报全红，就是空转。
+        rel = e[i]
+        if not isinstance(rel, str) or not callable(e[j]):
+            raise ValueError("NOOP_SHAPE=filearg 要求 (路径, 可调用)，实际是 (%r, %r)"
+                             % (type(rel).__name__, type(e[j]).__name__))
+        def _same(_rel=rel):
+            with io.open(_rel, encoding="utf-8", newline="") as f:
+                return f.read()
+        e[j] = _same
+        if not callable(e[j]):
+            raise ValueError("空变异自检失败")
+        return tuple(e), "declared-filearg"
+
+    # ② 没声明 → 按载荷类型自动定位
+    last = e[-1]
+    if (isinstance(last, (list, tuple)) and len(last) > 0
+            and isinstance(last[0], (list, tuple)) and len(last[0]) == 2):
+        e[-1] = [(s[0], s[0]) for s in last]
+        if any(p[0] is not p[1] for p in e[-1]):
+            raise ValueError("嵌套空变异自检失败")
+        return tuple(e), "nested"
+
+    idx = _callables(e)
+    how = "thunk"
+    if len(idx) < 2:
+        idx = _byteses(e)
+        how = "bytes"
+    if len(idx) < 2:
+        raise ValueError("分不清 old / new（没有两个可调用对象或两个 bytes）")
+    a, b = idx[-2], idx[-1]
+    e[b] = e[a]
+    if e[a] is not e[b]:                       # 自检：必须是同一个对象
+        raise ValueError("空变异自检失败")
+    return tuple(e), how
+
+
+try:
+    patched = [_noop(t) for t in muts]
+except ValueError as exc:
+    # 【2026-11-08 拆】原来这里和"没有 MUTS"共用 __NOOP_SKIP__，于是结果行里
+    # 两种完全不同的东西被算进同一个 SKIP 数字：
+    #   · 没有模块级 MUTS  —— 刀根本不用这个机制（要换另一招）
+    #   · 有 MUTS 但形状看不懂 —— 刀用了这个机制，是本工具退化不了
+    # 前者是"不适用"，后者是"该验没验"，混在一起读不出来。分开。
+    print("__NOOP_SHAPE__ %s" % exc)
+    raise SystemExit(0)
+
+m.MUTS = [p[0] for p in patched]
+print("__NOOP_ARMED__ %d 条（%s）"
+      % (len(m.MUTS), ",".join(sorted({p[1] for p in patched}))))
+sys.exit(m.main())
+'''
+
+
+def _has_muts(path: str) -> bool:
+    try:
+        t = ast.parse(io.open(path, encoding="utf-8", errors="replace").read(), filename=path)
+    except (OSError, SyntaxError):
+        return False
+    for n in t.body:
+        if isinstance(n, ast.Assign) and any(getattr(x, "id", "") == "MUTS" for x in n.targets):
+            return isinstance(n.value, (ast.List, ast.Tuple))
+    return False
+
+
+def _copy_repo(root: str) -> str:
+    d = tempfile.mkdtemp(prefix="qc_noop_")
+    dst = os.path.join(d, "repo")
+    shutil.copytree(root, dst, ignore=shutil.ignore_patterns(*SKIP_DIRS))
+    return dst
+
+
+def _pick_python(repo: str) -> str:
+    p = os.path.join(repo, ".venv", "Scripts", "python.exe")
+    return p if os.path.exists(p) else sys.executable
+
+
+def _run(py: str, runner: str, knife: str, cwd: str, noop: bool) -> tuple[int, str]:
+    argv = [py, "-u", runner, knife] + (["--noop"] if noop else [])
+    try:
+        p = subprocess.run(argv, cwd=cwd, capture_output=True, text=True,
+                           encoding="utf-8", errors="replace", timeout=1800)
+    except subprocess.TimeoutExpired:
+        return 124, "TIMEOUT"
+    return p.returncode, (p.stdout or "") + (p.stderr or "")
+
+
+def _tail(out: str) -> str:
+    lines = [l.strip() for l in out.splitlines() if l.strip()]
+    return (lines[-1][:140] if lines else "<无输出>")
+
+
+def certify(root: str, knife: str) -> tuple[str, list[str]]:
+    """返回 (分类, 说明)。"""
+    log: list[str] = []
+    src = os.path.join(root, "tools", knife)
+    if not os.path.isfile(src):
+        return "ABSENT", ["本树没有 %s —— 不计失败，也不计通过" % knife]
+    if not _has_muts(src):
+        return "SKIP", ["没有模块级 MUTS —— 本工具不覆盖（不算通过）"]
+
+    d = _copy_repo(root)
+    try:
+        repo = d                                  # _copy_repo 返回的就是副本仓根
+        runner = os.path.join(os.path.dirname(d), "noop_runner.py")
+        io.open(runner, "w", encoding="utf-8", newline="\n").write(RUNNER)
+        py = _pick_python(repo)
+        kp = os.path.join(repo, "tools", knife)
+
+        # ① 起点必须绿：不绿的话"空变异也红"什么都不能说明
+        code, out = _run(py, runner, kp, repo, noop=False)
+        if code != 0:
+            return "ERROR", ["起点本来就红（exit %d：%s）—— 无法判定" % (code, _tail(out))]
+        log.append("✓ 起点绿（exit 0）")
+
+        # ② 空变异：什么都没改，刀必须自己发现"没东西可抓"
+        code2, out2 = _run(py, runner, kp, repo, noop=True)
+        if "__NOOP_SKIP__" in out2:
+            return "SKIP", [out2.split("__NOOP_SKIP__", 1)[1].splitlines()[0].strip()]
+        if "__NOOP_SHAPE__" in out2:
+            return "SHAPE", ["有 MUTS 但形状看不懂（%s）—— 本工具退化不了它，不算通过"
+                             % out2.split("__NOOP_SHAPE__", 1)[1].splitlines()[0].strip()]
+        if code2 == 0:
+            return "VACUOUS", ["空变异下仍然 exit 0（%s）—— 它没在看变异改了什么" % _tail(out2)]
+        log.append("✓ 空变异：exit %d（%s）" % (code2, _tail(out2)))
+        return "CERTIFIED", log
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser(description="空变异体检")
+    ap.add_argument("--root", default=ROOT, help="仓根（默认本仓）")
+    ap.add_argument("--only", default="", help="只跑名字含该子串的")
+    ap.add_argument("--knife", action="append", default=[], help="显式指定刀文件名，可重复")
+    args = ap.parse_args()
+
+    root = os.path.abspath(args.root)
+    tdir = os.path.join(root, "tools")
+    if not os.path.isdir(tdir):
+        print("✗ 找不到 %s —— 无法判定" % tdir, file=sys.stderr)
+        return 2
+
+    # 【2026-11-08 修·分母里混进了不是刀的东西】原来选的是"tools/ 下所有
+    # `_qc_*.py`"——79 个。其中 18 个是**一次性探针**（`_qc_paint_matrix`、
+    # `_qc_path_refs`、`_qc_wake_word`……），既没有 MUTS 也不做变异，永远 SKIP。
+    # 于是"SKIP 50"这个读数里，27 把是真没验的刀、18 个压根不是刀、还有 5 把
+    # 有 MUTS 但形状退化不了——三种东西挤在一个数字里，谁都读不出来。
+    # 口径改成：**刀 = `_qc_*_mutation.py`**（本仓的命名约定），其余单列不计入分母。
+    others: list[str] = []
+    if args.knife:
+        knives = [k for k in args.knife if args.only in k]
+    else:
+        knives = []
+        for f in sorted(os.listdir(tdir)):
+            if not (f.startswith("_qc_") and f.endswith(".py") and args.only in f):
+                continue
+            (knives if f.endswith("_mutation.py") else others).append(f)
+    if not knives:
+        print("✗ 一把都没选上（--only 过滤掉了全部？）无法判定", file=sys.stderr)
+        return 2
+
+    print("仓根：%s" % root)
+    print("待检 %d 把刀\n" % len(knives))
+    if others:
+        print("（另有 %d 个 `_qc_*.py` 不是变异刀（一次性探针），不计入分母）" % len(others))
+
+    # 【2026-11-08 加·表会腐烂】KNOWN_VACUOUS 是"允许空转"的额度。额度只减不增还不够，
+    # 它还得**跟得上现实**，否则会以两种方式变成遮羞布：
+    #   ① 名字还在表里、刀已经删了/改名了 → 这条额度永远用不上，却一直占着名额；
+    #   ② 名字还在表里、刀已经被修好不再空转 → 表在说"我知道它坏着"，其实已经不坏了。
+    # 两种都是"声称的现状 ≠ 实际现状"。所以全量跑时对账一次：对不上就 exit 2。
+    # （`--knife` / `--only` 时跳过：那时只跑子集，表里其它条目当然不会出现。）
+    if not args.knife and not args.only and KNOWN_VACUOUS:
+        dead = [k for k in KNOWN_VACUOUS if not os.path.isfile(os.path.join(tdir, k))]
+        if dead:
+            print("✗ KNOWN_VACUOUS 里有不存在的刀（额度指向空气）：", file=sys.stderr)
+            for k in dead:
+                print("   " + k, file=sys.stderr)
+            return 2
+
+    counts: dict[str, int] = {}
+    vacuous: list[str] = []
+    for k in knives:
+        print("== %s" % k)
+        kind, log = certify(root, k)
+        for line in log:
+            print("   " + line)
+        print("   → %s\n" % kind)
+        counts[kind] = counts.get(kind, 0) + 1
+        if kind == "VACUOUS":
+            vacuous.append(k)
+
+    order = ["CERTIFIED", "VACUOUS", "SKIP", "SHAPE", "ABSENT", "ERROR"]
+    print("结果：" + " / ".join("%s %d" % (x, counts[x]) for x in order if x in counts))
+
+    ran = sum(counts.get(x, 0) for x in ("CERTIFIED", "VACUOUS"))
+    if ran == 0:
+        print("✗ 一把都没跑成，无法判定（全部 SKIP/ERROR 不算通过）", file=sys.stderr)
+        return 2
+    # 【2026-11-08 加】ERROR 单独点名。结果行里它只是一个数字，很容易被读成
+    # "其余都过了"——而这正是第二十四轮 ABSENT 吞掉 13 对的那个坑。
+    # 本工具的口径与 `check_knife_vacuity.py` 保持一致：ERROR 不计失败也不计通过，
+    # 但必须**显式**说清有几把没验，否则 exit 0 会被当成"全部验过"。
+    if counts.get("ERROR"):
+        print("\n（另有 %d 把**无法判定** —— 不计失败，也不计通过；"
+              "上面每把都写了原因）" % counts["ERROR"])
+    # ② 表里的刀本轮不再空转 → 这条额度已经失效，删掉它（理由见上面 ① 的注释）
+    if not args.knife and not args.only:
+        stale = sorted(set(KNOWN_VACUOUS) - set(vacuous))
+        if stale:
+            print("\n✗ KNOWN_VACUOUS 里有已经不空转的刀 —— 表在说「我知道它坏着」，"
+                  "其实已经不坏了：", file=sys.stderr)
+            for k in stale:
+                print("   " + k, file=sys.stderr)
+            print("   删掉这些条目。额度留着不用不会变安全，只会变成遮羞布。",
+                  file=sys.stderr)
+            return 2
+
+    if vacuous:
+        new = [k for k in vacuous if k not in KNOWN_VACUOUS]
+        known = [k for k in vacuous if k in KNOWN_VACUOUS]
+        if known:
+            print("\n（已知空转 %d 把，见 KNOWN_VACUOUS —— 不判失败，但只许减不许增）" % len(known))
+            for k in known:
+                print("   · " + k)
+        if not new:
+            return 0
+        print("\n✗ 新出现的空转刀（它没在看变异改了什么）：", file=sys.stderr)
+        for k in new:
+            print("   " + k, file=sys.stderr)
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

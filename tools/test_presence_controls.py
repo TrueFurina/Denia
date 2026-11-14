@@ -69,6 +69,27 @@ def main() -> int:
     chk("重复组合只保留一条", len(m4) == 1, str(m4.keys()))
     chk("重复被记下", any("重复" in w for w in why4), str(why4))
 
+    print("\nA2b) 没有 pynput 时的兜底校验（键名白名单）")
+    # 【2026-11-08 加】这一节直接打 `_fallback_ok`，**不经过 `_validate`**：
+    # 装了 pynput 的机器上 `_validate` 走的是 pynput 的 parser，兜底分支根本不执行，
+    # 于是"兜底会不会放过拼错的键名"在任何一台装了依赖的机器上都判不到。
+    # 而兜底恰恰是"用户机器上没装成 pynput"时唯一还在工作的那道校验 ——
+    # 它坏了没人发现，症状是**热键绑不上还一声不响**。
+    try:
+        fb = HK._fallback_ok
+    except AttributeError:
+        chk("兜底校验存在（_fallback_ok）", False, "hotkeys 里没有 _fallback_ok")
+        fb = None
+    if fb is not None:
+        chk("兜底：拼错的键名被拒", fb("<ctrl>+<alt>+<nosuchkey>") is False,
+            "<nosuchkey> 被放行了")
+        chk("兜底：合法单字符键仍放行", fb("<ctrl>+<alt>+m") is True)
+        chk("兜底：合法功能键仍放行", fb("<ctrl>+<f12>") is True)
+        chk("兜底：合法媒体键仍放行", fb("<media_play_pause>") is True)
+        chk("兜底：空格键仍放行", fb("<ctrl>+<space>") is True)
+        chk("兜底：空段被拒", fb("<ctrl>++m") is False)
+        chk("兜底：非 <> 形态不误判", fb("<ctrl>+7") is True)
+
     print("\nA3) 回调异常不许弄死 listener 线程")
     def boom():
         raise RuntimeError("boom")

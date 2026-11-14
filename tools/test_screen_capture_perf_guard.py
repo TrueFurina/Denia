@@ -40,6 +40,8 @@ sys.path.insert(0, str(ROOT))
 
 PASS: list[str] = []
 FAIL: list[str] = []
+# 未验证（缺夹具）：既不算 PASS 也不算 FAIL —— 末尾统一 exit 77。
+SKIP: list[str] = []
 
 
 def ok(name: str, cond: bool, extra: str = "") -> None:
@@ -311,22 +313,38 @@ def test_main_wiring_truth_table() -> None:
            C({"vision_models": {"game_cloud_watch": True, "models": [oai_nok]}})))
 
     # D8：对真实 config.yaml 的判定必须与配置原文一致（接线读的是真配置）
-    try:
-        import yaml
-        cfg_real = yaml.safe_load((ROOT / "config.yaml").read_text(encoding="utf-8"))
-        vm = (cfg_real or {}).get("vision_models") or {}
-        models = vm.get("models") or []
-        expect = bool(vm.get("game_cloud_watch")) and any(
-            isinstance(m, dict) and (
-                str(m.get("provider", "")).strip().lower() == "minicpm"
-                or (str(m.get("provider", "")).strip().lower() == "openai"
-                    and bool(str(m.get("api_key", "") or "").strip())))
-            for m in models)
-        got = main_mod._game_cloud_watch_active(_RawCfg(raw=cfg_real))
-        ok("D8 真实 config.yaml 判定与原文一致", got == expect,
-           f"game_cloud_watch={vm.get('game_cloud_watch')} expect={expect} got={got}")
-    except Exception as e:  # noqa: BLE001
-        ok("D8 真实 config.yaml 判定与原文一致", False, f"{type(e).__name__}: {e}")
+    # 【2026-11-09 修·「缺环境」不是「判据失败」】`config.yaml` 在 `.gitignore` 里，
+    # 任何新克隆的树上都没有 → 原来这里抛 FileNotFoundError，被 except 兜成
+    # 「D8 FAIL」，于是 26 PASS / 1 FAIL，而那一条红是**这台机器没实配**造成的，
+    # 不是接线漂了。改为：有实配就用实配，没有就退到出厂模板（同样是一份合法配置，
+    # 而且用户拿到的就是它），两份都没有才把 D8 记成「未验证」（末尾 exit 77）。
+    _cfg_path = None
+    for _name in ("config.yaml", "config.release.yaml"):
+        if (ROOT / _name).is_file():
+            _cfg_path = ROOT / _name
+            break
+    if _cfg_path is None:
+        SKIP.append("D8 真实配置判定")
+        print("  ↷ D8 跳过：既没有 config.yaml 也没有 config.release.yaml"
+              "（未验证，不是通过）")
+    else:
+        try:
+            import yaml
+            cfg_real = yaml.safe_load(_cfg_path.read_text(encoding="utf-8"))
+            vm = (cfg_real or {}).get("vision_models") or {}
+            models = vm.get("models") or []
+            expect = bool(vm.get("game_cloud_watch")) and any(
+                isinstance(m, dict) and (
+                    str(m.get("provider", "")).strip().lower() == "minicpm"
+                    or (str(m.get("provider", "")).strip().lower() == "openai"
+                        and bool(str(m.get("api_key", "") or "").strip())))
+                for m in models)
+            got = main_mod._game_cloud_watch_active(_RawCfg(raw=cfg_real))
+            ok("D8 真实 config.yaml 判定与原文一致（夹具 %s）" % _cfg_path.name,
+               got == expect,
+               f"game_cloud_watch={vm.get('game_cloud_watch')} expect={expect} got={got}")
+        except Exception as e:  # noqa: BLE001
+            ok("D8 真实 config.yaml 判定与原文一致", False, f"{type(e).__name__}: {e}")
 
     # D9-D11：AST 校验 main.py 两处接线不漂移
     tree = _ast.parse((ROOT / "main.py").read_text(encoding="utf-8"))
@@ -449,10 +467,20 @@ def main() -> int:
             FAIL.append(fn.__name__)
             print(f"  ERROR {fn.__name__}: {type(e).__name__}: {e}")
     print("\n" + "=" * 68)
-    print(f"PASS {len(PASS)} / FAIL {len(FAIL)}")
+    print(f"PASS {len(PASS)} / FAIL {len(FAIL)}"
+          + (f" / {len(SKIP)} 未验证" if SKIP else ""))
     for f in FAIL:
         print("  x", f)
-    return 1 if FAIL else 0
+    for s in SKIP:
+        print("  ~", s)
+    if FAIL:
+        return 1
+    if SKIP:
+        # 有判据没验过就不许报绿：绿会让下一轮的人以为它验过了。
+        print("[SKIP] 缺夹具：%s 未验证（其余 %d 项已判，不是通过）"
+              % ("、".join(SKIP), len(PASS)))
+        return 77
+    return 0
 
 
 if __name__ == "__main__":

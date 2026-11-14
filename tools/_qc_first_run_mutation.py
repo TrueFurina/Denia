@@ -139,7 +139,21 @@ def main() -> int:
     bad: list[str] = []
     try:
         print("构造基准 fixture（git ls-files 干净副本，只造一次）")
-        base = V.make_copy(None, scratch)
+        try:
+            base = V.make_copy(None, scratch)
+        except Exception as exc:  # noqa: BLE001
+            # 【2026-11-09 修·77 不是红】判据链在非 git 工作树里会 exit 77
+            # （「问不到」不等于「答否」）。本刀的 fixture 也靠 git ls-files，
+            # 同样造不出来 —— 这时候**一把刀都没跑**，不能报「有异常」，
+            # 更不能抛 traceback（那会被读成"刀坏了"）。按仓库约定报 77。
+            name = type(exc).__name__
+            if name != "NoGitWorkTree" and "not a git repository" not in str(exc):
+                raise
+            print("  跳过：本机不是 git 工作树（%s）" % str(exc)[:120])
+            print("[SKIP] 本机不是 git 工作树，造不出「只含 git ls-files 的干净副本」"
+                  "—— 首启判据链的 %d 把刀一把都没跑（不是通过）"
+                  % (5 + len(SOURCE_MUTS)))
+            return 77
         print("  副本：%s\n" % base)
         fixture_muts(scratch, base, bad)
         source_muts(scratch, base, bad)

@@ -35,6 +35,37 @@ KEY_BY_ACTION = {
 }
 
 
+# pynput 的 Key 枚举里那些写成 `<名字>` 的键。**只在没有 pynput 时**用得上。
+#
+# 【2026-11-08 加·没装 pynput 时拼错的键名会静默进映射表】原来的兜底是
+#     return all(part.strip() for part in combo.split("+"))
+# 也就是说只要每段非空就算"合法"。于是 `<ctrl>+<alt>+<nosuchkey>` 会通过校验、
+# 进 `out` 映射表，而 `skipped` 里一个字都不记 —— 用户以为绑上了，按下去什么都不发生，
+# 日志里也没有任何线索（正是本仓反复出现的「静默失效」）。
+# 现在：`<...>` 形态的键名必须在这张表里，不认识的当"组合键非法"报出来。
+# 非 `<>` 形态（`a` / `7` / `/` 这类单字符键）保持原来的宽松，不做多余判断。
+_NAMED_KEYS = frozenset("""
+alt alt_gr alt_l alt_r backspace caps_lock cmd cmd_l cmd_r ctrl ctrl_l ctrl_r
+delete down end enter esc home insert left menu num_lock page_down page_up
+pause print_screen right scroll_lock shift shift_l shift_r space tab up
+f1 f2 f3 f4 f5 f6 f7 f8 f9 f10 f11 f12 f13 f14 f15 f16 f17 f18 f19 f20
+media_next media_play_pause media_previous
+media_volume_down media_volume_up media_volume_mute
+""".split())
+
+
+def _fallback_ok(combo: str) -> bool:
+    """没有 pynput 时的组合键校验（纯函数，可离线单测，不依赖装没装依赖）。"""
+    parts = [p.strip() for p in str(combo).split("+")]
+    if not all(parts):
+        return False
+    for part in parts:
+        if part.startswith("<") and part.endswith(">"):
+            if part[1:-1].strip().lower() not in _NAMED_KEYS:
+                return False
+    return True
+
+
 def _validate(combo: str) -> bool:
     """组合键字符串是否合法。pynput 在时用它自己的 parser，保证和运行时一致。"""
     if not isinstance(combo, str) or not combo.strip() or "+" not in combo:
@@ -49,7 +80,7 @@ def _validate(combo: str) -> bool:
             import pynput  # noqa: F401
             return False
         except Exception:  # noqa: BLE001
-            return all(part.strip() for part in combo.split("+"))
+            return _fallback_ok(combo)
 
 
 def build_hotkey_map(

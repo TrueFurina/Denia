@@ -54,13 +54,30 @@ _MEM_FAIL_MARK = "Memory allocation still failed"
 
 
 def is_mem_contention(result: dict) -> bool:
-    """这条失败是不是「并发下 OpenBLAS 分配不到内存」—— 唯一允许串行复核一次的错。
+    """这条失败是不是「并发下 OpenBLAS 分配不到内存」—— 允许串行复核一次的错之一。
 
-    为什么只认这一种：**复核会掩盖真缺陷**。这条错误有外部证据（同一模块单独跑就过、
+    为什么只认这一类：**复核会掩盖真缺陷**。这条错误有外部证据（同一模块单独跑就过、
     文案来自 OpenBLAS 而不是产品代码），别的错误没有这个证据。所以判据是"错误文案"
     而不是"失败了几条"或"是不是第一次跑"。
     """
     return _MEM_FAIL_MARK in ((result.get("detail") or "") + (result.get("trace") or ""))
+
+
+def is_load_artifact(result: dict) -> bool:
+    """这条失败是不是「机器忙」造成的假红 —— 允许串行复核一次的第二种。
+
+    【2026-11-10】全量 `check_all`（242 道门连跑 1.5 小时）里，`src.agent_pro.selftest`
+    报了 `[超时] >25s` —— 而它单独跑只要几秒。当时机器正被前后几道重闸门压着，
+    182 个模块 × 8 并发子进程一起抢 CPU，25s 的墙钟超时被撞穿。
+    后果和 2026-10-21 那次内存假红一模一样：**门红成噪音之后，真红就没人看了**。
+
+    为什么超时够格进复核名单（和内存那条同一个证据标准）：
+      · 复核用的是**同一个 timeout**，所以"真的卡死"的模块复核还会超时，仍然红；
+      · 复核是**串行**的，排除并发抢 CPU 这个唯一变量；
+      · 判据是 `status == "TIMEOUT"`（异常类型），不是"第几次跑"。
+    别的错误一律不重试 —— 重试会把真缺陷盖掉。
+    """
+    return result.get("status") == "TIMEOUT" or is_mem_contention(result)
 
 
 def classify(err: str) -> str:
@@ -80,7 +97,20 @@ def classify(err: str) -> str:
 
 
 def run_one(exe: str, root: str, mod: str, timeout: int) -> dict:
-    code = f"import {mod}"
+    # 【2026-11-08 修·PYTHONPATH 会被嵌入式运行时静默忽略】原来是
+    #     code = "import %s" % mod
+    #     env["PYTHONPATH"] = root
+    # 两条一起指望"子进程能从 root 导入"。但本仓的 `.venv` 是用**随包的嵌入式运行时**
+    # （`python/python.exe`，带 `python312._pth`）建的，那个运行时 `sys.path` 里
+    # 既没有 `''`（cwd）也不吃 `PYTHONPATH` —— 于是 `--root` 形同虚设，
+    # 所有模块一律 `ModuleNotFoundError`。
+    # 实测（`tools/test_smoke_import_retry.py` 的自建假根）：
+    #     python            → 12 PASS / 0 FAIL
+    #     .venv/Scripts/python → 6 PASS / 6 FAIL（四条夹具全报 No module named 'src.fixturepkg'）
+    # 而 `check_all.py` 给这道门配的正是 `PY_VENV`。
+    # 修法：**不靠环境变量，直接在子进程里插 sys.path** —— 任何解释器都吃这一套。
+    # PYTHONPATH 保留，对吃它的解释器无害。
+    code = "import sys; sys.path.insert(0, %r); import %s" % (root, mod)
     env = dict(os.environ)
     env["PYTHONIOENCODING"] = "utf-8"
     env["PYTHONPATH"] = root
@@ -172,14 +202,17 @@ def main() -> int:
     # 任何问题（同一批模块单独跑就过）。这是**闸门自己在造噪音**：红成噪音之后，真红
     # 就没人看了。
     # 三条边界，缺一条就变成"用重试糊过去"：
-    #   ① 只复核**这一种错误**（别的错不重试 —— 重试会把真缺陷盖掉）；
-    #   ② **串行**复核（一次一个子进程，这才是排除内存竞争的办法）；
+    #   ① 只复核**这两类错误**（内存分配失败 / 墙钟超时；别的错不重试 —— 重试会把真缺陷盖掉）；
+    #   ② **串行**复核（一次一个子进程，这才是排除并发竞争的办法）；
     #   ③ **打印复核了几条、结果如何**，不静默。
     # ④ 复核范围是**全部失败项**，不只是"非预期失败"（2026-10-21 修）：白名单里的模块
     #    同样会因为并发抢内存而假红，而它会被印成「白名单内 N 条」—— 数字上没错，但
     #    那个 N 在骗人（它让"白名单条目是否还该留着"这个判断失去依据）。
+    # ⑤ 【2026-11-10】超时也进复核名单：全量 check_all 连跑 1.5 小时时，
+    #    `src.agent_pro.selftest` 撞穿 25s 墙钟超时（单独跑只要几秒），整份门报红。
+    #    复核用**同一个 timeout**、且**串行**，所以真卡死的模块复核还会超时、仍然红。
     serial_ok: list[str] = []
-    _mem = [r for r in fails if is_mem_contention(r)]
+    _mem = [r for r in fails if is_load_artifact(r)]
     for r in _mem:
         again = run_one(exe, root, r["module"], args.timeout)
         if again["status"] == "OK":
@@ -206,7 +239,7 @@ def main() -> int:
     print(f"\n=== 结果：{len(results)} 个模块，通过 {len(results) - len(fails)}，失败 {len(fails)} ===")
     print(f"    其中白名单内（已知可选）{len(known)}，**非预期失败 {len(unexpected)}**")
     if serial_ok:
-        print(f"    [串行复核] {len(serial_ok)} 条并发下 OpenBLAS 内存分配失败，"
+        print(f"    [串行复核] {len(serial_ok)} 条并发下的假红（OpenBLAS 抢内存 / 超时），"
               f"串行后全部通过：{', '.join(serial_ok)}")
     for k, c in sorted(kinds.items(), key=lambda x: -x[1]):
         print(f"  {k:10s} {c}")

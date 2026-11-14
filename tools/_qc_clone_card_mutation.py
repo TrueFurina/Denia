@@ -112,6 +112,16 @@ def main() -> int:
     for test in (JS_TEST, PY_TEST):
         code, out = run_test(test)
         if code != 0:
+            # 【2026-11-08 修·缺环境 ≠ 判据失败】jsdom 是 node 侧依赖，不在
+            # requirements.txt 里，新克隆的树上没有 node_modules —— 这时
+            # `test_clone_card_ui.py` 自己会打印 `[SKIP] 找不到 jsdom` 并以 1 退出。
+            # 那是"没验成"，不是"判据坏了"。按本仓口径：未验证 exit 77，
+            # 不许混进 1（1 会被读成"这把刀发现产品有问题"，而它其实什么都没看到）。
+            if "[SKIP]" in out and "jsdom" in out:
+                print("  SKIP 起点未验证（%s）：本机缺 jsdom —— 不计失败，也不计通过" % test)
+                print("       装法：npm i jsdom 到仓库 node_modules，"
+                      "或设 DANIYA_JSDOM 指向含 jsdom 的目录")
+                return 77
             print("  FAIL 起点就不是绿的（%s），变异没有意义" % test)
             print(out[-800:])
             return 1

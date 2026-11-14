@@ -10,10 +10,35 @@
 
 所以这里的重点不是"函数算得对不对"，而是：
   ① 唯一入口 `migrate_stale_tts_config` 是否**真的把两半都跑了**；
-  ② `webapp` 启动路径是否**真的调了那个入口**（源码级断言）；
+  ② `webapp` 启动路径是否**真的调了那个入口**（**运行时**断言，不是源码文本）；
   ③ 写盘是否**真的原子**（不再出现裸 `io.open(path, "w")`）。
+
+**2026-11-10 判据大修（第 43 轮变异探针）**
+
+探针把生产代码一处一处改坏，查出五处"刀落下去门还绿"：
+
+  1. `[10]` 五条**源码文本**断言（`"migrate_stale_tts_config(" in web_txt`）。
+     把调用改写成 `_mig = []` + `if False: _mig = migrate_stale_tts_config(...)`
+     之后，字符串原封不动躺在文件里 —— 五条全绿，迁移永不执行。这正是
+     2026-10-19 那次「函数写了没接线」的同型失效，只是藏在分支后面。
+     修法：新增 `[10b]`，真造一个 `CharacterAPI(config_path=…)`，看盘上文件变没变。
+  2. `[9]` 的「调用方 dict 未被就地改动」用 `api_key_probe` 当样本，而
+     `secret_box._SECRET_FIELDS` 只认 `api_key` / `cookie` —— `seal_tree` 根本不碰
+     它，摘掉 `copy.deepcopy` 也绿。修法：样本换成真会被加密的
+     `cloud_tts.dashscope_cosy.api_key`，并拆成「盘上是密文」+「内存里还是明文」。
+  3. `[5]` 子串判定的唯一样本 `voice_id="cosyvoice-v2"` **本身就在
+     `STALE_TTS_MODELS` 里**，`v in STALE_TTS_MODELS` 那一半就够了 ——
+     `"cosyvoice" in v` / `"qwen-audio" in v` 两个分支从没被逼住。真实用户配置里
+     是克隆 id（`cosyvoice-v3.5-plus-bailian-e683d3f9`），它不在清单里。
+  4. `backup` 参数失效时门直接崩在 `open(bak)`（无汇总行）；写盘失败改抛异常时
+     崩在 `[9]` 的调用点上 —— 崩掉的门说不清是哪条判据在守。修法：两处都自己接住。
+  5. 整段判据被 `try/except` 吞掉就少跑几条而没人发现。修法：末尾条数总账
+     `EXPECTED_CHECKS`（少跑一条就红）。
+
+十八刀见 `tools/_qc_config_migrate_mutation.py`。
 """
 import os
+import shutil
 import sys
 import tempfile
 
@@ -22,15 +47,36 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspa
 from src import config_migrate as cm  # noqa: E402
 from src.config import load_config   # noqa: E402
 
+PASS = 0
 FAIL = 0
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+# 【2026-11-10 判据条数总账】第 43 轮变异探针发现：本门有 5 处"刀落下去门还绿"。
+# 其中一处的成因是整段判据被 `try/except` 吞掉就少跑几条，而少跑不报错。
+# 所以除了逐条判据，还要一条"跑了几条"的总账 —— 条数不对本身就是红的。
+EXPECTED_CHECKS = 56
+
 
 def check(cond, msg):
-    global FAIL
-    print(("  ✓ " if cond else "  ✗ ") + msg)
-    if not cond:
+    global PASS, FAIL
+    if cond:
+        PASS += 1
+        print("  ✓ " + msg)
+    else:
         FAIL += 1
+        print("  ✗ " + msg)
+
+
+def _finish() -> int:
+    """汇总 + 条数总账（少跑的判据不算通过）。"""
+    global FAIL
+    ran = PASS + FAIL
+    if ran != EXPECTED_CHECKS:
+        FAIL += 1
+        print(f"  ✗ 判据条数 {ran} != 期望 {EXPECTED_CHECKS}"
+              f"（有整段被跳过/异常吞掉了 —— 少跑的判据不算通过）")
+    print(f"\n结果：{PASS} 通过 / {FAIL} 失败")
+    return 1 if FAIL else 0
 
 
 def _raw_voice(model="qwen-audio-3.0-tts-plus", voice="longxiaochun"):
@@ -91,12 +137,35 @@ check(changed4 == ["voice_profile:p1"], f"只报真正改动的档（实际 {cha
 
 print()
 print("[5] 历史脏数据：模型名被填进音色字段也要救")
+# 【2026-11-10 补】原先这里只有一条 `voice_id="cosyvoice-v2"`，而 `cosyvoice-v2`
+# **本身就在 STALE_TTS_MODELS 里**——`v in STALE_TTS_MODELS` 那一半就够了。
+# 于是 `"cosyvoice" in v` / `"qwen-audio" in v` 这两个子串分支从来没有被判据
+# 真正逼住：探针把整段子串判定拆掉，门照样全绿。真正需要子串判定的是**克隆
+# 音色 id**（`cosyvoice-v3.5-plus-bailian-e683d3f9`，用户配置里实际长这样）和
+# 带后缀的 qwen-audio 名 —— 它们都不在清单里。
 raw5 = {"voice_profiles": [
     {"id": "dirty", "engine": "dashscope_cosy", "model": "qwen3-tts-flash",
-     "voice_id": "cosyvoice-v2"}]}
-check(cm.migrate_stale_voice_profiles(raw5) == ["voice_profile:dirty"],
-      "voice_id 里含 cosyvoice 子串 → 判为失效并迁移")
+     "voice_id": "cosyvoice-v2"},
+    {"id": "clone", "engine": "dashscope_cosy", "model": "qwen3-tts-flash",
+     "voice_id": "cosyvoice-v3.5-plus-bailian-e683d3f9"},
+    {"id": "qa", "engine": "dashscope_cosy", "model": "qwen3-tts-flash",
+     "voice_id": "qwen-audio-3.0-tts-plus-clone"},
+    {"id": "clean", "engine": "dashscope_cosy", "model": "qwen3-tts-flash",
+     "voice_id": "Cherry"},
+]}
+# 前提断言：如果哪天这几个 id 被加进清单，下面的子串判据又会退化成"清单判定"，
+# 变异就再也打不红。这条把前提本身钉住。
+check("cosyvoice-v3.5-plus-bailian-e683d3f9" not in cm.STALE_TTS_MODELS
+      and "qwen-audio-3.0-tts-plus-clone" not in cm.STALE_TTS_MODELS,
+      "（前提）克隆音色 id 不在失效清单里 —— 只能靠子串判定救")
+ch5 = cm.migrate_stale_voice_profiles(raw5)
+check("voice_profile:clone" in ch5,
+      "voice_id 是 cosyvoice 克隆 id（不在清单里）→ 子串判定判为失效")
+check("voice_profile:qa" in ch5, "voice_id 含 qwen-audio 子串 → 子串判定判为失效")
+check("voice_profile:clean" not in ch5, "正常音色档不被子串误伤（Cherry 保持原样）")
 check(raw5["voice_profiles"][0]["voice_id"] == cm.TTS_MIGRATE_VOICE, "已换成 Cherry")
+check(raw5["voice_profiles"][1]["voice_id"] == cm.TTS_MIGRATE_VOICE,
+      "克隆 id 也被换成 Cherry（否则请求照样 418）")
 
 print()
 print("[6] 非 dashscope_cosy 引擎的档不许动（本地引擎没有模型下线问题）")
@@ -144,22 +213,36 @@ finally:
 
 print()
 print("[9] 原子写：不动调用方的 dict、失败不抛、目录不可写返回 False")
-raw9 = {"cloud_tts": {"dashscope_cosy": {"model_name": "cosyvoice-v2"}},
-        "api_key_probe": "plain"}
+# 【2026-11-10 补】原先这里用 `api_key_probe: "plain"` 当"不许被改动"的样本，
+# 但 `api_key_probe` **不是** secret_box 认的密钥字段（认的是 api_key / cookie），
+# 于是 seal_tree 根本不会碰它 —— 把 `copy.deepcopy(data)` 摘掉，调用方 dict 也
+# 不会被改，判据照样绿。要逼住深拷贝，样本必须落在**真会被就地加密**的字段上。
+raw9 = {"cloud_tts": {"dashscope_cosy": {"model_name": "cosyvoice-v2",
+                                        "api_key": "plain-key-123"}}}
 snapshot = repr(raw9)
 fd, p9 = tempfile.mkstemp(suffix=".yaml", text=True)
 os.close(fd)
 try:
     check(cm.dump_config_atomic(p9, raw9) is True, "正常路径写盘成功")
+    txt9 = open(p9, encoding="utf-8").read()
+    check("cosyvoice-v2" in txt9, "内容确实落盘")
+    # 这两条是一对：盘上是密文、内存里还是明文，才说明"加密的是副本"。
+    # 摘掉 deepcopy 时 seal_tree 直接就地改调用方的 dict，第二条立刻红。
+    check("dpapi:" in txt9, "落盘的是密文（seal 生效，样本确实会被加密）")
+    check("plain-key-123" in repr(raw9),
+          "调用方 dict 里的 api_key 仍是明文（加密的是写盘副本，不是原地改）")
     check(repr(raw9) == snapshot, "调用方 dict 未被就地改动（写的是副本）")
-    with open(p9, encoding="utf-8") as f:
-        check("cosyvoice-v2" in f.read(), "内容确实落盘")
 finally:
     os.unlink(p9)
-check(cm.dump_config_atomic(os.path.join(tempfile.gettempdir(),
-                                         "no_such_dir_xyz", "c.yaml"),
-                            {"a": 1}) is False,
-      "目录不存在 → 返回 False（不抛异常，迁移失败不该让软件打不开）")
+# 【2026-11-10 补】这条原先是"裸调用 + 直接比较返回值"：实现一旦改成抛异常，
+# 门不是红，而是崩在调用点上（无汇总行）。要断言的是"不抛"，就必须自己接住。
+try:
+    _bad = cm.dump_config_atomic(
+        os.path.join(tempfile.gettempdir(), "no_such_dir_xyz", "c.yaml"), {"a": 1})
+    check(_bad is False,
+          "目录不存在 → 返回 False（不抛异常，迁移失败不该让软件打不开）")
+except Exception as e:  # noqa: BLE001
+    check(False, f"目录不存在时抛了 {type(e).__name__}（迁移失败不该让软件打不开）")
 
 print()
 print("[12] 原子性：落盘必须是「新文件整体换上去」，不是原地截断重写")
@@ -201,6 +284,59 @@ check("migrate_stale_tts_model(_raw_mig)" not in web_txt,
       "webapp 不再只跑模型那一半（那正是死代码的来源）")
 
 print()
+print("[10b] 接线（运行时）：真造一个 CharacterAPI，看盘上文件到底变没变")
+# 【2026-11-10 补·本门最大的洞】
+# [10] 全是**源码文本**断言，只证明"那行字符串还在文件里"。探针把调用改写成
+#
+#     _mig = []
+#     if False:
+#         _mig = migrate_stale_tts_config(_raw_mig)
+#
+# 之后，字符串原封不动躺在文件里，[10] 五条全绿，而迁移从此永不执行 ——
+# 这与 2026-10-19 那次"函数写了没接线"是**同一种失效**，只是藏在 if False 后面。
+# 判据必须落在行为上：造一个真实例，配置里塞失效模型，看盘上的文件改没改。
+import yaml as _yaml_rt  # noqa: E402
+
+_CA = None
+try:
+    from src.ui.webapp import CharacterAPI as _CA  # noqa: E402
+except Exception as e:  # noqa: BLE001
+    check(False, f"导入 CharacterAPI 失败（{type(e).__name__}: {e}）")
+if _CA is not None:
+    d10 = tempfile.mkdtemp(prefix="cfg_mig_rt_")
+    p10 = os.path.join(d10, "config.yaml")
+    try:
+        with open(p10, "w", encoding="utf-8") as f:
+            f.write("voice:\n"
+                    "  clone:\n"
+                    "    cloud:\n"
+                    "      dashscope_cosy:\n"
+                    "        model_name: qwen-audio-3.0-tts-plus\n"
+                    "voice_profiles:\n"
+                    "- id: rt\n"
+                    "  engine: dashscope_cosy\n"
+                    "  model: cosyvoice-v3.5-plus\n"
+                    "  voice_id: cosyvoice-v3.5-plus-bailian-e683d3f9\n")
+        _CA(config_path=p10)
+        try:
+            _a10 = _yaml_rt.safe_load(open(p10, encoding="utf-8")) or {}
+            _cosy10 = (((_a10.get("voice") or {}).get("clone") or {})
+                       .get("cloud") or {}).get("dashscope_cosy") or {}
+            _m10 = _cosy10.get("model_name") if isinstance(_cosy10, dict) else None
+            _profs10 = _a10.get("voice_profiles") or [{}]
+            _v10 = (_profs10[0] or {}).get("voice_id")
+        except Exception as e:  # noqa: BLE001  配置被写坏时别崩，让判据红
+            _m10 = _v10 = f"<解析失败 {type(e).__name__}>"
+        check(_m10 == cm.TTS_MIGRATE_TO,
+              f"CharacterAPI 启动后盘上的模型名已迁移（实际 {_m10}）")
+        check(_v10 == cm.TTS_MIGRATE_VOICE,
+              f"CharacterAPI 启动后盘上的音色档已迁移（实际 {_v10}）")
+        check(os.path.exists(p10 + ".bak"),
+              "CharacterAPI 自动迁移前留了 .bak（用户没点任何按钮，必须留后路）")
+    finally:
+        shutil.rmtree(d10, ignore_errors=True)
+
+print()
 print("[11] 入口自身必须真的调用两半（源码级，防以后又拆开只留一半）")
 cm_txt = open(os.path.join(ROOT, "src", "config_migrate.py"),
               encoding="utf-8").read()
@@ -219,8 +355,15 @@ try:
     check(not os.path.exists(bak), "起点没有 .bak")
     check(cm.dump_config_atomic(p14, {"new": 2}, backup=True) is True, "带备份写盘成功")
     check(os.path.exists(bak), "产生了 .bak")
-    with open(bak, encoding="utf-8") as f:
-        check("# 用户手写的注释" in f.read(), ".bak 保留了原文（含注释）")
+    # 【2026-11-10 补】`backup` 参数一旦失效，这里原来直接 open 就崩在
+    # FileNotFoundError 上：门没有汇总行，变异探针只能判成"崩了"而不是
+    # "某条判据红了"。崩掉的门说不清是哪条判据在守，必须自己接住。
+    try:
+        with open(bak, encoding="utf-8") as f:
+            _bak_txt = f.read()
+    except OSError as e:
+        _bak_txt = f"<读不到 .bak: {type(e).__name__}>"
+    check("# 用户手写的注释" in _bak_txt, ".bak 保留了原文（含注释）")
     # 已有 .bak 时不许覆盖：反复启动不能把「最初那份」冲掉
     with open(bak, "w", encoding="utf-8") as f:
         f.write("first_backup\n")
@@ -228,7 +371,11 @@ try:
     with open(bak, encoding="utf-8") as f:
         check(f.read() == "first_backup\n", "已有 .bak 不被覆盖（保留最初那份）")
     # 不带 backup 时不产生新备份
-    os.unlink(bak)
+    try:
+        os.unlink(bak)
+    except OSError:
+        # 测试收尾清理：备份没生成时这里可能不存在
+        pass
     cm.dump_config_atomic(p14, {"new": 4})
     check(not os.path.exists(bak), "backup=False 时不产生 .bak")
 finally:
@@ -274,7 +421,4 @@ check("qwen3-tts-flash" in open(rel_path, encoding="utf-8").read(),
       "模板里确实写着 qwen3-tts-flash（不是靠删配置过关）")
 
 print()
-if FAIL:
-    print(f"❌ {FAIL} 项未通过")
-    sys.exit(1)
-print("✅ TTS 配置迁移测试全部通过")
+sys.exit(_finish())

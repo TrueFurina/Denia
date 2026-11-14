@@ -38,6 +38,10 @@ def run_test():
     return r.returncode, (r.stdout or "") + (r.stderr or "")
 
 
+# 【2026-11-09 加】`(标签, old, new)` —— 三个都是 str，空变异体检光看类型分不清。
+# 声明 old/new 在第 1、2 项。
+NOOP_SHAPE = ("idx", 1, 2)
+
 MUTS = [
     ("A helper 直接返回原始错误串（不列工具事实）",
      '    names = "、".join(dict.fromkeys(tools))  # 保序去重，次数仍用原始长度\n'

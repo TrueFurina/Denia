@@ -167,12 +167,60 @@ jobs:
         run: python tools/check_cross_ref.py
       - name: cross-ref mutation (twelve knives)
         run: python tools/_qc_cross_ref_mutation.py
+      # 【2026-11-09】壳层两道静态闸门 + 它们的变异刀。纯 stdlib、只读 AST、各约 1s。
+      # 这两道守的是「事件循环被同步调用占住」和「协程写错方向」—— 症状都是
+      # "卡一下 / 不响应"，不报错、不告警，只能静态查；坏了也没人会发现。
+      # 它们的自测原来只调 `scan()`、从不碰 `main()`，退出码那一行零判据 ——
+      # 本轮补了断言才让「退出码恒 0」这把刀有东西可砍。
+      - name: await-sync judgement
+        run: python tools/check_await_sync.py src
+      - name: await-sync mutation (five knives)
+        run: python tools/_qc_await_sync_mutation.py
+      - name: async-blocking judgement
+        run: python tools/check_async_blocking.py src
+      - name: async-blocking mutation (five knives)
+        run: python tools/_qc_async_blocking_mutation.py
       # 【2026-11-08】「刀全绿」只证明闸门正常时刀会红，不证明闸门恒绿/恒红时刀会不会红。
       # 这两步把闸门文件换成 import-safe 的退化实现（`if __name__=="__main__"` 里 exit 0 / 1），
       # 看刀套件认不认得出来。7 对（unreachable / duplicate-def / finally-jump /
       # constant-cond / gate-exit / cross-ref / web-js-syntax）实测全 CERTIFIED。
       # 代价：判据 16s、刀 18s（每对要复制一次仓副本、跑 3 次套件），是本 job 里最慢的两步。
+      #
+      # 【2026-11-08 PR #18】`--tier portable` 是**显式**写的，不靠默认值：
+      # 另有 21 对 `dev` 层的刀要 `.venv`（验 check_*.py / test_*.py），本 job
+      # 不装依赖、没有 venv，跑它们只会全 ERROR、把整道门变成恒红。
+      # 所以 CI 只覆盖 8 对，另外 21 对由本机 `check_all.py`（`--tier all`）覆盖。
+      # **这句话必须留在这里**：CI 全绿只说明这 8 对不是空转，不说明全部 29 对。
       - name: knife vacuity judgement
-        run: python tools/check_knife_vacuity.py
-      - name: knife vacuity mutation (ten knives)
+        run: python tools/check_knife_vacuity.py --tier portable
+      - name: knife vacuity mutation (thirteen knives)
         run: python tools/_qc_knife_vacuity_mutation.py
+      # 【2026-11-08 PR #18】**故意不在 CI 跑**：`check_knife_noop.py` 与
+      # `_qc_knife_noop_mutation.py` 要 import 并执行 78 把刀（含它们依赖的
+      # `.venv` 三方包）。本 job 不装依赖，78 把里大多数会卡在
+      # `ModuleNotFoundError` → ERROR，于是这道门在 CI 里只会「绿得毫无内容」；
+      # 而它的对照项 N7 还会因为"一把都没跑成"变成 exit 2 让 job 恒红。
+      # 所以它和 dev 层 18 对一样，**只由本机 `check_all.py` 覆盖**：
+      #     python tools/check_knife_noop.py
+      #     python tools/_qc_knife_noop_mutation.py
+      # 这句话必须留着：CI 全绿不等于空变异体检跑过。
+      #
+      # 【2026-11-09 第二十七轮】同理，第三道 `check_knife_nowrite.py`（封住写入口）
+      # 与 `_qc_knife_nowrite_mutation.py` **也不在 CI 跑**：它要 import 并执行 62 把刀
+      # （含 `.venv` 三方包），且每把刀要复制一次仓副本跑两遍，本机实测 14 分钟。
+      # 放进 CI 只会得到"全 ERROR 的绿"或超时。它同样**只由本机 `check_all.py` 覆盖**：
+      #     python tools/check_knife_nowrite.py
+      #     python tools/_qc_knife_nowrite_mutation.py
+      # 于是三道的覆盖分布是：CI 8 对（换判定·portable）/ 本机 29 对（换判定·全部）
+      # + 33 把（空变异）+ 29 把（封写）。**CI 全绿 ≠ 三道都跑过。**
+      #
+      # 【2026-11-09 第二十八轮】**这道必须进 CI**，理由与上面两道相反：
+      # `check_tool_sys_path.py` 纯 stdlib、只读 AST、181 个脚本约 0.2s，没有环境依赖；
+      # 而它守的正是「闸门在推荐解释器下起不来」—— 这个故障只在**特定解释器**下出现
+      # （可嵌入运行时的 `python312._pth` 不补脚本目录，普通 CPython 补），
+      # 恰恰是最容易在 CI 与本机之间**结论相反**的一类，所以两边都要判。
+      # 变异刀用临时目录摆桩脚本、不碰仓库，约 3s。
+      - name: tool sys.path judgement
+        run: python tools/check_tool_sys_path.py
+      - name: tool sys.path mutation (eleven knives)
+        run: python tools/_qc_tool_sys_path_mutation.py

@@ -27,6 +27,16 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PY = sys.executable
 GATE = os.path.join(ROOT, "tools", "check_api_wiring.py")
 
+# 【2026-11-09 修·import 路径】下面两处 `from check_api_wiring import KNOWN_UNWIRED`
+# 靠的是「解释器把脚本目录塞进 sys.path[0]」：普通 CPython 会，交付包自带的可嵌入
+# 运行时（python/python312._pth）不会 —— 它只给 python/ 下几个目录加一个 `..`
+# （仓根），tools/ 不在里面。于是 `python tools/...` 能跑、
+# `.venv/Scripts/python.exe tools/...` 直接 ModuleNotFoundError: check_api_wiring。
+# 2026-11-09 全量跑实测就红在这里（`反向接线变异` 整条挂掉），是
+# check_tool_sys_path.py 这道静态闸门先指出来、再被真跑确认的。
+if os.path.join(ROOT, "tools") not in sys.path:
+    sys.path.insert(0, os.path.join(ROOT, "tools"))
+
 WEBAPP = os.path.join("src", "ui", "webapp.py")
 PANEL = os.path.join("src", "ui", "web", "redesign", "relation_panel.js")
 

@@ -13,6 +13,8 @@
 """
 from __future__ import annotations
 
+import contextlib
+import io
 import os
 import sys
 import tempfile
@@ -81,6 +83,38 @@ class A:
 ]
 
 
+def _exit_code_cases() -> int:
+    """`main()` 的退出码：有可疑点必须 1，干净必须 0。
+
+    【2026-11-09 加·自测从来没碰过 `main()`】上面七条**全部只调 `C.scan()`**。
+    `C.main()` 末尾的 `return 1 if all_hits else 0` 改成 `return 0`，闸门就退化成
+    「只打印不判红」，而本文件照样打印「全部通过 ✅」（2026-11-09 实测）。
+
+    这道门的退化尤其难发现：它守的是「微信回复从来没真正发出去过」那个事故
+    （`await` 一个同步方法 → TypeError 被事件总线吞掉 → 只剩一行日志）。
+    判据一旦只看 `scan()`，退化的闸门在 CI 里是一道永远绿的装饰。
+    """
+    bad = 0
+    cases = [
+        ("有可疑点 → 1", "class A:\n    def sync_work(self):\n        return 1\n"
+                        "    async def go(self):\n        await self.sync_work()\n", 1),
+        ("干净 → 0", "class A:\n    async def work(self):\n        return 1\n"
+                    "    async def go(self):\n        await self.work()\n", 0),
+    ]
+    for name, code, want in cases:
+        d = tempfile.mkdtemp()
+        with open(os.path.join(d, "x.py"), "w", encoding="utf-8") as f:
+            f.write(code)
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            rc = C.main([d])
+        ok = rc == want
+        print(f"{'✓' if ok else '✗'} main() 退出码 / {name}：期望 {want}，实际 {rc}")
+        if not ok:
+            bad += 1
+    return bad
+
+
 def main() -> int:
     bad = 0
     d = tempfile.mkdtemp()
@@ -95,6 +129,7 @@ def main() -> int:
             bad += 1
             for h in hits:
                 print("   ", h)
+    bad += _exit_code_cases()
     print(f"\n{'全部通过 ✅' if not bad else f'❌ {bad} 项未通过'}")
     return 1 if bad else 0
 

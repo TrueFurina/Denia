@@ -49,6 +49,23 @@ _MEM_ERR = "OpenBLAS error: Memory allocation still failed after 10 retries, giv
 def build_fixture(base: str) -> None:
     pkg = os.path.join(base, "src", "fixturepkg")
     os.makedirs(pkg, exist_ok=True)
+    # 【2026-11-08 修·夹具的 `src` 少了 __init__.py，整套自测在 .venv 下变成 6 FAIL】
+    # 只写 `src/fixturepkg/__init__.py` 时，`src` 是**命名空间包**（namespace package）。
+    # 命名空间包是"兜底"：`PathFinder` 会把各 sys.path 条目里的同名片段收集起来，
+    # **只有在所有条目里都没找到常规包/模块时才返回它**。
+    # 而随包的嵌入式运行时（`python/python.exe` 带 `._pth`）把包根 `DaniaAI` 也放进了
+    # sys.path，那里有一个**常规包** `src/`（真仓库的源码包，带 `__init__.py`）——
+    # 于是常规包胜出，`src.fixturepkg` 永远解析不到：
+    #     python               → 12 PASS / 0 FAIL
+    #     .venv/Scripts/python →  6 PASS / 6 FAIL（四条夹具全报 No module named 'src.fixturepkg'）
+    # 而 `check_all.py` 给这道门配的正是 `PY_VENV`，也就是说**这道门在本机一直是红的**，
+    # 只是没人把它和 `.venv` 联系起来。夹具的 `src` 也必须是常规包，才和真仓库同构。
+    #
+    # 这一行**没有**对应的变异刀，而且不该硬造一把：在常规 CPython 下把这一行删掉，
+    # 整套自测仍然 12 PASS（没有第二个 `src` 来抢），刀抓不到任何东西——那就是空转刀。
+    # 能钉住它的只有"换一个把包根放进 sys.path 的解释器跑"，也就是本文件上面那两行实测。
+    io.open(os.path.join(base, "src", "__init__.py"), "w",
+            encoding="utf-8", newline="\n").write("")
     io.open(os.path.join(pkg, "__init__.py"), "w", encoding="utf-8", newline="\n").write("")
     io.open(os.path.join(pkg, "ok.py"), "w", encoding="utf-8", newline="\n").write("VALUE = 1\n")
     # 第一次失败（模拟并发抢不到内存），第二次成功

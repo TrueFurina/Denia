@@ -42,18 +42,71 @@ class _FakeProc:
         return self._rc
 
 
-def _make_client(**kw) -> pet_shell.PetShellClient:
+class _LiveProc:
+    """活着、但 wait 永远超时的假进程：测「先 terminate，等不到就升级强杀」。"""
+
+    def __init__(self, pid: int) -> None:
+        self.pid = pid
+        self.terminated = 0
+
+    def poll(self):
+        return None
+
+    def terminate(self) -> None:
+        self.terminated += 1
+
+    def wait(self, timeout=None):
+        raise TimeoutError("模拟 wait 超时（进程赖着不走）")
+
+
+class _TopProbe(pet_shell.PetShellClient):
+    """把 on_top 换成可数的探针。
+
+    【2026-11-10 加】原来的 [1] 里有个 `calls = {"launch": 0, "show": 0, "top": 0}`
+    —— `top` 这个计数器**从头到尾没被 ++ 过**，也没有任何断言读它。想测的东西
+    忘了写，但字典留了下来，看起来像测过了。实测：把 `_try_restart` 里的
+    `if was_top: self.on_top = True` 整段删掉，本文件**照样全绿 exit 0**。
+    """
+
+    def __init__(self, **kw) -> None:
+        super().__init__(**kw)
+        self.top_calls: list[bool] = []
+
+    @property
+    def on_top(self) -> bool:
+        return False
+
+    @on_top.setter
+    def on_top(self, value: bool) -> None:
+        self.top_calls.append(bool(value))
+
+
+class _RecSock:
+    """记录 sendall 的假 socket：测 close() 里那句「先礼后兵」的 quit。"""
+
+    def __init__(self) -> None:
+        self.sent: list[bytes] = []
+        self.closed = False
+
+    def sendall(self, data: bytes) -> None:
+        self.sent.append(bytes(data))
+
+    def close(self) -> None:
+        self.closed = True
+
+
+def _make_client(cls=pet_shell.PetShellClient, **kw) -> pet_shell.PetShellClient:
     params = dict(rpc_info={"url": "http://127.0.0.1:1/rpc", "token": "t"},
                  web_base="http://127.0.0.1:1/",
                  x=100, y=200, width=420, height=540)
     params.update(kw)
-    return pet_shell.PetShellClient(**params)
+    return cls(**params)
 
 
 def main() -> int:
     print("[1] 壳进程意外退出 → 能自愈重启，并恢复生前可见状态")
-    client = _make_client()
-    calls = {"launch": 0, "show": 0, "top": 0}
+    client = _make_client(cls=_TopProbe)
+    calls = {"launch": 0, "show": 0}
     client._visible = True
     client._topmost = True
 
@@ -72,6 +125,16 @@ def main() -> int:
     check(ok, "_try_restart 返回 True")
     check(calls["launch"] == 1, "确实重新拉起了一次壳进程")
     check(calls["show"] == 1, "生前是显示着的 → 重启后自动恢复显示")
+    # 【2026-11-10 加】生前置顶也要恢复。原来这里只有一个从没被 ++ 过的
+    # `calls["top"]` 计数器 —— 想测的东西忘了写。
+    check(client.top_calls == [True], "生前置顶 → 重启后重新置顶（%r）"
+          % (client.top_calls,))
+
+    print("[1b] 生前没置顶 → 重启后不去动置顶状态")
+    c1b = _make_client(cls=_TopProbe)
+    c1b._launch = lambda *a, **k: True
+    c1b._try_restart()
+    check(c1b.top_calls == [], "没置顶过就不碰 on_top（%r）" % (c1b.top_calls,))
 
     print("[2] 反复崩溃 → 配额用尽后停手，不再无限重启")
     client2 = _make_client()
@@ -148,6 +211,36 @@ def main() -> int:
     check(client6._lines.empty(), "队列已清空")
     check(client6._proc is None, "进程引用已释放")
 
+    # 【2026-11-10 加】杀进程树的三条分支。此前一条判据都没有 ——
+    # 把 `elif force: _kill_tree(proc.pid)` 或升级强杀那行删掉，本文件全绿。
+    # 而这两处正是「孤儿 Electron 窗口滞留桌面 + 下次启动撞单实例限制」那个坑
+    # （Electron 会**无输出地立刻退出**，项目里最难查的一类故障）。
+    killed: list[int] = []
+    old_kt = pet_shell._kill_tree
+    try:
+        pet_shell._kill_tree = lambda pid: killed.append(pid)
+
+        c6b = _make_client()
+        c6b._proc = _FakeProc(pid=4242)          # 主进程已退（rc=0）
+        c6b._cleanup_proc(force=True)
+        check(killed == [4242], "主进程已退 + force → 杀子进程树（%r）" % (killed,))
+
+        c6c = _make_client()
+        c6c._proc = _FakeProc(pid=4343)
+        c6c._cleanup_proc(force=False)
+        check(killed == [4242], "force=False 时不越权杀（先礼后兵的分界，%r）"
+              % (killed,))
+
+        live = _LiveProc(pid=4444)
+        c6d = _make_client()
+        c6d._proc = live
+        c6d._cleanup_proc(force=True)
+        check(live.terminated == 1, "活进程先 terminate（先礼）")
+        check(killed == [4242, 4444],
+              "wait 等不到 → 升级强杀（后兵，%r）" % (killed,))
+    finally:
+        pet_shell._kill_tree = old_kt
+
     print("[7] _kill_tree 对垃圾 PID / 非 Windows 都不抛异常")
     try:
         pet_shell._kill_tree(0)
@@ -222,10 +315,17 @@ def main() -> int:
     try:
         client11 = _make_client()
         client11._proc = _FakeProc()
+        sock11 = _RecSock()
+        client11._sock = sock11
         with open(hs11, "w", encoding="utf-8") as fh:
             fh.write('{"token":"secret"}')
         client11.close()
         check(not os.path.exists(hs11), "close() 后握手文件被删除")
+        # 【2026-11-10 加】先礼后兵的第一步：关之前先给壳发一句 quit。
+        # 少了它，壳只能被 terminate/kill，Electron 的渲染进程就更容易留成孤儿。
+        check(b"quit\n" in sock11.sent, "close() 先发 quit 让壳自己退（%r）"
+              % (sock11.sent,))
+        check(sock11.closed, "socket 随后被关闭")
     finally:
         if os.path.exists(hs11):
             os.remove(hs11)
@@ -409,6 +509,27 @@ def main() -> int:
         pet_shell.HANDSHAKE_PATH = old_hs
         pet_shell._remove_handshake = old_rm
         pet_shell.electron_binary = old_bin
+
+    print("[16] 连续崩溃要退避：第一次不白等，第二次起等 RESTART_BACKOFF")
+    # 【2026-11-10 加】`_try_restart` 里 `if len(self._restarts) > 1:
+    # time.sleep(RESTART_BACKOFF)` 此前零判据 —— 删掉它本文件照样全绿。
+    # 而它的作用正是「一个必然崩的配置不要把 CPU 打满」（模块注释原话）。
+    # 只断言下界（sleep 至少睡够），不赌上界，避免在慢机器上抖。
+    old_bk = pet_shell.RESTART_BACKOFF
+    try:
+        pet_shell.RESTART_BACKOFF = 0.35
+        c16 = _make_client()
+        c16._launch = lambda *a, **k: True
+        t0 = time.time()
+        c16._try_restart()
+        d1 = time.time() - t0
+        t0 = time.time()
+        c16._try_restart()
+        d2 = time.time() - t0
+        check(d1 < 0.35, "第一次重启不白等（%.3fs < 0.35s）" % d1)
+        check(d2 >= 0.35, "第二次起退避生效（%.3fs ≥ 0.35s）" % d2)
+    finally:
+        pet_shell.RESTART_BACKOFF = old_bk
 
     print()
     if _fails:

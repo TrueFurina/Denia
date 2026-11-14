@@ -13,6 +13,38 @@
 
 | commit | 时间 | 类型 | 一句话 | 验证 |
 |---|---|---|---|---|
+| `PR#18ac` | 09:32 | test | **源码文本量不出接线，CSS 判据只查字符串存在，等价变异藏在缺样本里**：① `首启承接浮层`（`src/tests/test_setup_hint.py`，256 行 / 43 条判据）守「只在发送失败那一刻出现 / 用能力槽状态 / 三态 unknown / 文案承诺有代码保证」，41 把探针下去捅出 **25 处零判据**。② 最刺眼的是**整片接线洞**：S01~S12 把 `__maybeSetupHint(false/true)`、`classList.add('show')`、能力槽闸门、两处跳转塞进注释或 `if(false)`，`n_add==1`、`i_call_text > i_toast`、`in gate_fn`、`count==2` 这些文本判据**一条都没红**。③ 第二类：**判据绿的原因跟它名字无关** —— S28 把 `bottom:104px` 改成 `bottom:0` 压住输入框，判据只查 `"bottom:" in body`；S20 更离谱，旧正则 `setup-hint"` 遇 `class="setup-hint show"` 直接匹配不到，红的是「没找到标签」而不是 show。④ 第三类 **等价变异**：真值表缺 `success:true` 且无 `health` 的样本，S18（`none→ok`）与 S42（去掉 `health` 兜底会抛）都没样本能击中，按第 41/44 轮规矩不「修」刀、补样本。⑤ 修法（判据先行）：判据 **43 → 70** + 条数总账 `EXPECTED_CHECKS=70` + `PASS=N FAIL=M` 汇总行；H00~H14 把页面两段 `<script>` 与**两条发送失败分支的原文片段**注入假 DOM 的 node 环境真跑（不复刻逻辑），量出调用、点亮、让位、稍后、跳转、标题、副文、原话回填；C00~C09 把 CSS 从「字符串存在」升级为**值语义**（z-index / bottom / width / background / font-size / line-height / padding / 标题色 / 副文间距）；T01 与 T02-01..10/T03 静态命名真值表并补 `{"success": true}` 样本；静态标签正则放宽到 `setup-hint[^"]*`，让 S20 真的红在「带 show」上。⑥ 新刀 `tools/_qc_setup_hint_mutation.py` 四十一刀。 | 判据 **43 → 70**；四十一刀 **41/41 全红且各自点名**；还原后 sha256 逐字节一致；空变异体检 **CERTIFIED**；`check_gate_registry` 全部有着落；站点 7 PASS/0 FAIL（GATES 245→**246**）；K11 分层 8/38=**46**、0 处异常；全量 `check_all` **246 道门 → 241 通过 / 5 跳过 / 0 红（1h40m27s，EXIT=0）** |
+| `PR#18ab` | 07:43 | test | **源码文本量不出接线，判据绿的原因跟它名字无关，桩钉死的守卫整段不可见**：① `主动开口冒烟`（`tools/test_proactive_smoke.py`，243 行 / 31 条判据）守的是关系分档标签、`_proactive_decision` 六道闸门与 `check_and_trigger` 的主动管线，52 把探针下去捅出 **16 处零判据**。② 最刺眼的一处是「接线」：管理器「委托 engine」原来只靠 `inspect.getsource` 找字符串，改成「调用 engine 但丢掉返回值」照样绿；让位判据同理，注释里留着 `self._in_call()` 字符串就能骗过源码文本判据（第 43 轮同型，这次藏在返回值与 OR 分支里）。③ 第二类：**判据绿的原因跟它名字无关** —— 「不回翻倍」只查理由串里有没有「翻倍」两个字、没量冷却时长（B06）；warmth 权重判据的样本全为 0、唯一非 0 样本已饱和，把权重改成 0 照样绿（A03）；B6 的 else 分支干脆是无条件 `ok(..., True, "skip")`，跳过算通过（第 45 轮同型）。④ 第三类：**桩把分支钉死了** —— `_last_input_ts` / `_last_proactive` / `_duplex_last_speak_ts` 被钉成「守卫必然放行」，空闲 / 批冷却 / 8s 防打断 / 开机时刻起算四道守卫整段不可达；`reached_decision` 是门自己塞的标记、生产代码从不写，于是「无 llm 提前返回」拆掉也绿。⑤ 第四类 **文档里的判据不算判据**：`_on_user_text_input` 与 `subscribe()` 一次都没执行过，handler 写 `_last_input_ts`、USER_TEXT 订阅、无 bus 提前返回可以整段删掉。⑥ 一处 **判据崩 ≠ 判据错**：畸形 affinity 原是裸调用，实现一抛异常整个门连汇总行都没有（A18 探针报 CRASH），全部改走 `_safe` 包装。⑦ 另钉死一处 **真接线漏洞**：双工让位只看 `_duplex_call_mode`，`_duplex_app_call_active` 这条 OR 分支门里原本一个样本都没有（C08）。⑧ 修法（判据先行）：判据 **31 → 48** + 条数总账 `EXPECTED_CHECKS=48`；A13b 用 `0/0/150` 隔离样本量 warmth 权重；A14 用 `_SpyEngine` 量「state 真的交给了 engine 且返回值被采纳」；B4b/B4c 用 30h 时长正反向对照量 48h 冷却；B6a 补前提断言「至少一个不主动原型且黏人是主动原型」+ B6b 黏人原型反面对照，替掉无条件 skip；`run_guard()` 全程留在 patched `REL._proactive_decision` 区域内（`finally` 不能提前还原 spy）；假 bus 用 `subscribe(ev, handler)` 真执行 handler 并断言 `_last_input_ts > 0`；四道守卫各配一条隔离反面对照。⑨ 新刀 `tools/_qc_proactive_smoke_mutation.py` 五十二刀。 | 判据 **31 → 48**；五十二刀 **52/52 全红且各自点名**；还原后 sha256 逐字节一致；空变异体检 **CERTIFIED**；`check_gate_registry` 全部有着落；站点 7 PASS/0 FAIL（GATES 244→**245**）；K11 分层 8/37=**45**、0 处异常；全量 `check_all` **245 道门 → 240 通过 / 5 跳过 / 0 红（1h38m44s，EXIT=0）** |
+| `PR#18aa` | 05:39 | test | **文档字符串里的判据不算判据，回滚判据绿在「压根没改过」上**：① `P1 增量`（`tools/test_p1_incremental.py`，263 行 / 44 条判据）守的是 `upsert_text_chat_provider` / `delete_text_chat_provider` / `set_mixed_mode(atomic)` —— 直接改 `config.yaml` 的 LLM 端口表，写坏就是「用户的 Key 丢了」。63 把探针下去捅出 **40 处零判据**。② 最刺眼的一处：文档字符串第 ⑤ 条白纸黑字写着「老接口 `save_text_chat_providers` 行为不变（回归）」，可整份文件**一次都没调用过老接口** —— 重复 id / 非法 provider / 缺 model / 缺 base_url / 漏传 Key 保留 / 非法 mode / manual 不存在 / 写盘，八处全零判据。③ 第二处是第 44 轮饱和度同型：`⑦ 中途失败 ⇒ 配置回到原样` 的桩 `save_duplex_settings` 只记录调用、**不改 raw**，`_Pro.set_mixed_mode` 同理，于是把回滚整段删掉，`raw == snap` 照样成立。桩不改内存态，就量不出回滚。修法：让桩**先真改内存态再失败**。④ 第三类：**副作用全被桩吃掉** —— `_apply_llm_live` / `_cfg.ns` 重建 / `commit_model_write` 写入收口 / 删除与幂等路径的写盘次数，一条判据都没有；第四类：只走 happy path（平铺入参、非法值归一、去尾斜杠、timeout 坏值、caps 缺键、vision、ollama 豁免、三端口回落点、step2 失败、视觉管线失败不阻断）。⑤ 探针还挖出一个**真 bug**：`_set_mixed_mode_atomic` 关闭路径只把两步成败记进 `steps` 却不检查 —— 双工回 local 失败时 `steps` 里明明是 `('duplex', False)`，接口照样返回 `success=True`，与它自己的 docstring「任一步失败时回滚」直接矛盾。已按开启路径对称补上两道 raise，并用两条判据 + 两把刀（M17/M18）钉死。⑥ 一处**判据崩 ≠ 判据错**：`③ 新增项字段完整` 原直接下标 `providers[2]`，实现一坏就 IndexError 炸掉整个门、连汇总行都没有（U01 探针 CRASH 的元凶）；改成 `_at()` 安全读，坏实现只报 `[FAIL]` 不崩门。⑦ 修法：判据 **44 → 94**，加条数总账 `EXPECTED_CHECKS=94`；桩补齐四类副作用记账 （`ns_writes` / `_live_calls` / `_vision_calls` / `_duplex_calls`）与写入收口、Key 归一的模块级 spy；老接口补 9 条真调用判据。三处 HOLE 复现后是**样本没击中刀改的变量**，改成隔离对照：缺 id 样本要补齐 model+base_url（否则被下一道校验拦下、绿的原因与 id 无关）、caps 缺键要用空字典（否则 `or []` 是等价变异）、不回落判据要三端口且 manual 指第二项（两端口时过度回落落到 `kept[0]` 正好等于原值）。⑧ 两把刀的**点名**如实修正：U07 红的是 `① upsert 返回 success` —— 无条件覆盖清空 base_url 触发校验+回滚，门只能看见「操作失败」，而 `① 目标 base_url 未动` 反而绿在回滚上；M01 红的是 `⑦ 标记 atomic` —— `⑦ 开启成功` 只查 `success is True`，老路径的桩也返回 True，分不出走哪条路。 | 判据 **44 → 94**；六十五刀 **65/65 全红且各自点名**；还原后 sha256 逐字节一致；空变异体检 **CERTIFIED**；`check_gate_registry` 全部有着落；站点 7 PASS/0 FAIL（GATES 243→**244**）；K11 分层 8/36=**44**、0 处异常；全量 `check_all` **244 道门 → 239 通过 / 5 跳过 / 0 红（1h36m18s）** |
+| `PR#18z` | 03:27 | test | **`SKIP` 在返回值里算通过 —— 记忆主动整段改成 `return False`，门照样绿**：① `主动输出分流`（`tools/test_proactive_chat_routing.py`，21 条判据）是「聊天页主动消息永不出现」那个用户反复报的 bug 的**唯一一道门**，43 把探针下去捅出 **32 处零判据**。② 最刺眼的一处不是「没写判据」，是「跳过了还算通过」：第 5 组「记忆型主动」命中不了就 `SKIP += 1`，而 `return 0 if FAIL == 0 else 1` 根本不看 SKIP —— 把 `_maybe_memory_initiative` 整段改成 `return False`，门打出 `21 PASS / 0 FAIL` 照样绿。③ 第二类：**桩把整段分支钉死了**。`_mk_stub` 里 `_in_call_flag = False`，于是 `_flush_duplex_emit` 后半段 130 行**通话生命周期闸门**（2026-09-23「她不理我」那次的全部修复：开场白放行 / 系统兜底豁免且**不刷新** `_la` / 12 秒回应窗口 / 静默暂存待补发）一次都没跑过；`_duplex_native_audio = False` 同理，2026-09-23 的原生音频硬闸（含 8s 起点回看窗、10s 过期）整段不可见。④ 第三类：只测 payload 不测记账 —— `_duplex_emit_start_ts` / `_duplex_emit_is_fallback` / `_long_session_warned` / `_mem_init_idx` 一条判据都没有，而这些字段正是「下一句」要用的；第四类：六道前置闸门（通话让位 / LLM 未就绪 / 8s 防打断 / `0.0` 当无解 / 空闲阈值 / 批冷却）只走了 happy path。⑤ 修法：判据 21 → **67**，加条数总账 `EXPECTED_CHECKS=67`（**SKIP 计入总账**）；桩补齐 20 个字段；每组「闸门拦下」都配一条「放行时真的开口」的反面对照，避免再出现「绿的原因跟名字无关」；`check_and_trigger` 的判据一律看 `_last_message`（只有真开口时才置上），不吃 debounce 定时器的时序抖动。⑥ 一处**等价变异**如实记录：删掉 `if not facts: return False` 没有行为差异 —— `% len(facts)` 会先抛 ZeroDivisionError，被最外层 except 吞掉、照样 `return False`；按第 41 轮的规矩不「修」，换刀为「无记忆时编一条事实」（这才是真实故障模式）。⑦ 新刀 `tools/_qc_proactive_routing_mutation.py` 四十三刀。 | 判据 **21 → 67**；四十三刀 **43/43 全红且各自点名**（`empty_text_guard_off` 连坐 3 项）；还原后 sha256 逐字节一致；空变异体检 **CERTIFIED**；`check_gate_registry` 全部有着落；站点 7 PASS/0 FAIL（GATES 242→**243**）；K11 分层 8/35=**43**、0 处异常；全量 `check_all` **243 道门 → 238 通过 / 5 跳过 / 0 红**（1h33m23s） |
+| `PR#18y` | 01:41 | test | **判据绿的原因跟它名字无关 —— 「重复内容打折」绿的是饱和度，「每日上限」也是**：① `关系模型`（`tools/test_relationship.py`，41 条判据）写得挺细（连"新手期要把 created_ts 钉到 t0 否则被真实时钟干扰"这种坑都写在注释里），探针下去捅出 **21 处零判据**。② 最刺眼的两处不是"没写判据"，而是"写了判据但绿的原因跟名字无关"：`(a2-a1) < (a1-a0)*0.7`「重复内容增益打折」—— 好感越接近 100，单轮增益本来就越小（`delta *= 1 - aff/100`），第二次增益天然更小，把 `DEDUP_FACTOR` 改成 1.0（去重彻底失效）照样满足那个不等式；「软每日上限」同理，末 3 轮增益小是**饱和**造成的，跟上限无关。③ 第三类：`RelationshipManager` 用的是 `RelationshipEngineV2`，而门里**一条 v2 专属判据都没有** —— 阶段迟滞（升档要够稳）、疤自愈、交情沉淀（老关系掉得慢）、情绪降温（气头会过去）四处整层零判据。④ 第四类「只覆盖一半分支」：心情只看 6 句加权均值不看"最近三句最负"（代码注释明确承诺"不能被均值稀释"，但把 spike 拆掉照样绿）、72h 空窗分支、雀跃分支、想你 45 分门槛、旧档补字段、`_safe_id` 路径穿越、未知原型回落、`load_recent` 截断、`count` 空行、两字敷衍阈值、裁判的否定语境守卫。⑤ 修法：去重/日上限改成**只差一个变量的隔离对照**（同一基线，第二句是否重复 / daily_gain.sum 预置 0 vs 99）；补 32 条判据（41 → **73**）+ 条数总账 `EXPECTED_CHECKS=73`；雀跃分支直接打在 v1 上（v2 的 `_refine` 会用语义信号改写成"感动/心动"，用户可见层测不出来，但它是 `_refine` 的兜底 base_label）。⑥ 一处**等价变异**如实记录：`_in_night` 的 `NIGHT_START_H <= h` 下界是冗余的（`tm_hour` 恒 >= 0），删掉没有行为差异 —— 改刀为 `NIGHT_END_H 5→9`（早七点被算成熬夜）。⑦ 新刀 `tools/_qc_relationship_model_mutation.py` 三十二刀，横跨 5 个生产文件（`relationship.py` / `relationship_v2.py` / `history_store.py` / `session_clock.py` / `relationship_judge.py`）。 | 判据 **41 → 73**；三十二刀 **32/32 全红且各自点名**（`history_max_content_off` 连坐 4 项）；还原后 sha256 逐字节一致；空变异体检 **CERTIFIED**；`check_gate_registry` **242 项全部有着落**；站点 7 PASS/0 FAIL（GATES 241→**242**）；K11 分层 8/34=**42**、0 处异常；全量 `check_all` **242 道门 → 237 通过 / 5 跳过 / 0 红**（1h31m17s） |
+| `PR#18x` | 20:4x | test | **接线判据是从源码里读出来的 —— 把调用塞进 `if False:`，五条判据全绿而迁移永不执行**：① `TTS 配置迁移`（`src/tests/test_config_migrate.py`，47 条判据）守的是 2026-10-19 合并队友工作树时抓到的死代码（`migrate_stale_voice_profiles` 定义完整、注释完整、全仓零调用 → 用户音色档绑着下线模型，试听永远 400），定位和判据都写得挺细，探针下去捅出**五处零判据**。② 最狠的一处是「接线」：`[10]` 五条全是**源码文本**断言（`"migrate_stale_tts_config(" in web_txt`）。把调用改写成 `_mig = []` + `if False: _mig = migrate_stale_tts_config(_raw_mig)` 之后，那行字符串原封不动躺在文件里，**五条全绿而迁移从此永不执行** —— 与 2026-10-19 那次「函数写了没接线」是同一种失效，只是这次藏在分支后面，文本断言看不出来。③ 第二处：`[9]` 的「调用方 dict 未被就地改动（写的是副本）」用 `api_key_probe: "plain"` 当样本，而 `api_key_probe` **不是** `secret_box` 认的密钥字段（认的是 `api_key` / `cookie`）—— `seal_tree` 根本不碰它，把 `copy.deepcopy(data)` 摘掉照样绿。④ 第三处：`[5]` 的「voice_id 里含 cosyvoice 子串 → 判为失效」唯一用 `voice_id="cosyvoice-v2"`，而 `cosyvoice-v2` **本身就在 `STALE_TTS_MODELS` 里** —— `v in STALE_TTS_MODELS` 那一半就够了，`"cosyvoice" in v` / `"qwen-audio" in v` 两个子串分支从没被逼住；真实用户配置里是克隆 id（`cosyvoice-v3.5-plus-bailian-e683d3f9`），它不在清单里。⑤ 另两处不是「判据错」而是「判据崩」：`backup` 参数失效时门直接崩在 `open(bak)`（FileNotFoundError），写盘失败改抛异常时崩在 `[9]` 的调用点上 —— 两种都**没有汇总行**，报告里只有 Traceback，说不清是哪条判据在守。⑥ 判据先行 47 → **56 条**：新增 `[10b]` 运行时接线（真造一个 `CharacterAPI(config_path=…)`，配置里塞失效模型 + 失效音色档，断言盘上模型名/音色档都变了、`.bak` 也留了 —— 只有这条逼得住「塞进 `if False:`」）；`[9]` 的样本换成真会被加密的 `cloud_tts.dashscope_cosy.api_key`，拆成「盘上是密文」+「内存里还是明文」一对判据（摘掉深拷贝时第二条立刻红）；`[5]` 加克隆 id 与 `qwen-audio-…-clone` 两个样本 + 一条「正常音色档不被误伤」，另加**前提断言**（这两个 id 不许被加进清单，否则子串判据又会退化成清单判定）；`[9]` 的失败路径自己接住异常；`[14]` 读 `.bak` 自己接住 OSError；末尾加条数总账 `EXPECTED_CHECKS=56`。⑦ 新刀 `tools/_qc_config_migrate_mutation.py` 十八刀：云端那半不迁 / 入口只跑一半 / 清单清空 / 音色写错字段 / 只换音色不换模型 / 子串判定拆掉 / 音色档不看 model / 引擎过滤拆掉 / 原地截断重写 / 不 fsync / 不深拷贝 / 不加密 / 覆盖已有 .bak / backup 失效 / 失败抛异常 / 接线塞 `if False:` / 接线去掉 backup / 接线退回裸写。 | 判据 **47 → 56**；十八刀 **18/18 全红且各自点名**（`voice_field_typo` 连坐 7 项、`wiring_bare_write` 6 项）；还原后 sha256 逐字节一致；空变异体检 **CERTIFIED**；`check_gate_registry` **241 项全部有着落**；站点 7 PASS/0 FAIL（GATES 240→**241**）；K11 分层 8/33=**41**、0 处异常；全量 `check_all` **241 道门 → 236 通过 / 5 跳过 / 0 红，exit 0**（1h31m32s） |
+| `PR#18w` | 19:0x | test | **跳过不是通过 —— 合成功能整段坏了，门打出「27 通过 / 0 失败」**：① `TTS 多供应商`（`tools/test_tts_multi_provider.py`，30 条判据 / 5 个服务商）写得挺细，连「硬编码 6 个预设」这种脆判据都在 2026-10-21 被改成「非空 + 每项有 id」。② 但它有**静默跳过**：第 3 段（`FishAudioBackend` 全链路）整块包在 `try/except Exception: print("! 跳过")` 里 —— 把 `synthesize` 改成直接抛错，这段 5 条判据一条不跑，结果打成「**27 通过 / 0 失败**」→ **exit 0 全绿**。合成功能彻底坏了，门是绿的。③ 另有五处零判据（改完门仍 30/0 绿）：**全局 Key 多源兜底**（`cloud_tts` → `cloud_omni`，2026-10-17 修「又要搞一遍 key」那条）、**merge「空字符串=不改」**（F3：引导页只回传 model 时把已配 Key 静默擦空）、**JSON(audio_url) 二次下载**、**空音频**、**缺 reference_id**。④ 还有一处「红了但崩了」：旧单层升级逻辑坏掉时，`raw6["voice"]["clone"]["cloud"]["dashscope_cosy"]["api_key"]` 抛 KeyError，**整份文件崩在半路** —— 第 6 段一条不跑，报告里只有 Traceback、没有「哪条判据红了」。⑤ 修法：`check()` 支持附注；新增 `_finish()` **条数总账** `EXPECTED_CHECKS=45`（少跑一条就红，多跑也红提醒改数）；第 3 段的异常本身记 FAIL 并打出原因；产物从 `tools/_fa_test_out.mp3` 改成 `tempfile` 目录（原版中途崩了会留脏文件）。⑥ 补 15 条：全局 Key 回填 + 「显式 Key 优先于全局兜底」+ `cloud_omni` 兜底、merge 三条（空=不改 / 显式新 Key 覆盖 / 别名 aliyun 入 `dashscope_cosy` 桶）、请求体 `reference_id`+`format=mp3`、请求头 Bearer+model、HTTP 401 带状态码、JSON `audio_url` 二次下载并落盘、JSON 缺 `audio_url` 抛错、空音频抛错、缺 `reference_id` 抛错且指名。⑦ 新刀 `tools/_qc_tts_multi_provider_mutation.py` 十四刀：别名归一 / 全局 Key 兜底 / merge 清 Key / merge 旧值优先 / 旧单层不升级 / merge 不归一别名 / fish 占位提示 / payload format / HTTP 错误吞掉 / JSON 分支 / 空音频 / reference_id / 工厂丢 fish / 合成整段抛错。 | 判据 **30 → 45**；十四刀 **14/14 全红且各自点名**；还原后 sha256 逐字节一致；空变异体检 **CERTIFIED**；`check_gate_registry` **240 项全部有着落**；站点 7 PASS/0 FAIL（GATES 239→**240**）；K11 分层 8/32=**40**、0 处异常；全量 `check_all` **240 道门 → 235 通过 / 5 跳过 / 0 红，exit 0**（1h29m04s） |
+| `PR#18v` | 17:1x | test | **判据在，牙齿不在 —— 关闸后只等 0.6 秒就断言「不抓屏」，而采样周期是 3 秒**：① `看屏热生效`（`tools/test_desktop_watch_hotapply.py`，14 条断言 / 6 组）守的是 2026-10-09 用户实锤的「设置页关掉看屏，模型还在挂载、截图/分析管线还在跑，必须重启才停」，名字和定位都对，判据是空的。② 十把探针下去，**六处零判据**。最刺眼的是 B 组：`B2 关闸后不再抓屏` 在关闸后只等 **0.6s** 就断言计数不涨 —— 而基础采样间隔是 **3.0s**（`_next_interval` 下限 0.5s），**一个周期都没走完**，`after == before` 恒真；把 while 里「每轮重读开关」整段删掉照样绿。③ E 组更绕：`E1/E2 自动恢复不推翻用户关闸` 断言的是 `_disabled_at==0` 时不该被 AUTO_RECOVER 唤醒，但**用户关闸路径上那段代码根本执行不到**（硬闸在更前面就 `return None`），而且用例还手工 `an._disabled_at = 0.0` 去「造已过恢复窗口的假象」—— 正好把原始 bug 的时序盖住。实测：删掉自动恢复整段（永久哑火）全绿；硬闸不再把 `_disabled_at` 归零（**原始 bug 回归**：先熔断、用户再关闸，90s 后分析线自己复活）也全绿。④ C 组只测了一半：只验「关闸不分析」，不验「开闸真抓」—— `capture_now` 整条改成 `return` 全绿。⑤ 从没测过「关掉再打开」：把关闸分支的 `continue` 改成 `return`（循环退出、重开必须重启进程）全绿；不清 `_last_hash`（重开后同画面永远不分析）也全绿。⑥ 还有一处是**等价变异**而非洞：`_disabled_at > 0` 这个守卫不可达（关闸→硬闸先 return；开闸→上面那段重开分支先清），删掉没有任何行为差异 —— 注释把功劳记在它身上，实际承重的是「硬闸先跑 + 关闸时归零」。⑦ 判据先行 14 → **32 条**：B 组把间隔调到 0.2s、开闸先跑满 1.2s 拿基线（before=3）、关闸后再跨三个周期；C 补「关闸连帧都不抓」「开闸真抓一帧并送分析」「事件计数只在真抓时加」；D 的桩换成会记账的正常桩（原桩没有 `vision_describe`，闸门被拆时崩在 AttributeError 也返回 None，`r is None` 分不清是被挡还是崩了）；E 按真实时序重写（先连败 3 次打熔断 → 再关闸 → 再时间流逝）；F 补「关闸时没打云端」「重开后确实放行一次」；新增 **G**（失败熔断 90s 后自动恢复，含 `VISION_DISABLED` 广播）与 **H**（关掉再打开：循环自己活回来 + 重新分析一帧）。⑧ 抓屏桩从「抛异常计数」改成「返回合法小帧计数」—— 异常路径会刷 Traceback，且跳过 `_last_hash`/`_next_interval` 更新，测的不是正常采样节奏。 | 断言 **14 → 32**；十二刀 **12/12 全红且各自点名**；还原后 sha256 逐字节一致；空变异体检 **CERTIFIED**；`check_gate_registry` **239 项全部有着落**；站点 7 PASS/0 FAIL（GATES 238→**239**）；K11 分层 8/31=**39**、0 处异常；全量 `check_all` **239 道门 → 234 通过 / 5 跳过 / 0 红，exit 0** |
+| `PR#18u` | 09:5x | test | **测试绿的原因，跟它名字里那件事无关**：① `关系集成`（`tools/test_relationship_integration.py`，13 个用例）绿得很稳，探针捅出**七处零判据**，其中最刺眼的两处不是"没写判据"，而是"写了判据但测的不是那件事"。② `test_04`「同一句 AI 文本 5s 内只记一次」：场景是「1 句用户话 + 3 次同样的 AI 回复」，断言 `turns <= 1`。它绿是因为**队列只有一句** —— 第一次回复就把队列取空了，后两次走到 `if not self._pending_user_queue: return` 就返回，**去重那一行根本执行不到**。探针：把去重整段删掉，照样绿。顺带 `<= 1` 连"根本没判"（turns=0）也算过。③ `test_20`「publish 不应等裁判跑完」：它从头到尾**没有 `bus.run()`** —— 事件只进了队列，一个 handler 都没执行，SlowLLM 那 1.5s 从没被等过，`dt < 0.5` 恒真。探针：把 `self._spawn_judge(...)` 换成 `await self._judge_and_apply(...)`（同步判定会把整条总线堵 1.5s），照样绿。④ 另外五处是**整条支路零判据**：`enabled` 三处早退（所有用例都用 `enabled=True`）、裁判异常兜底（没有任何用例让裁判抛过）、失败气泡 `blocked/failed` 过滤、`source` 缺省回退 `chat`、`source=duplex` 当场判（语音用户的话）、以及 `is_proactive` 那条支路（`test_03` 用的是 `source=proactive`，在更早的 `_CHAT_SOURCES` 过滤处就返回了，走不到它）。⑤ 判据先行 13 → **19 个用例**：`test_04` 改成「连发两句 + 同一句回复投两次」（队列还有货才验得到去重），断言 `turns == 1` 且队列剩第二句；`test_20` 改成量**后一条事件多久被处理**（异步毫秒级 / 同步 1.5s）；新增 `test_08` 关掉关系后一句不判（并单独隔离 AI 侧守卫 —— 第一版这把刀没红，因为 `_on_user_text` 的守卫让队列恒空，AI 侧早退永远走不到"有货可配"）、`test_09` 裁判抛异常仍按规则兜底记一轮（测试期间把该 logger 压到 CRITICAL，不往绿着的门里掺 Traceback）、`test_14` 失败气泡/被拦/空文本不算一句、`test_15` 缺省 source 回退 chat、`test_16` duplex 用户话当场判且不进配对队列、`test_17` 聊天页主动发言记 initiative 但不清空用户队列。⑥ 新刀 `tools/_qc_relationship_mutation.py` 十三刀：去重/开关/裁判兜底/气泡过滤/source 回退/duplex 分支/同步判定/streamed 过滤/队列 LIFO/主动发言清队列/上下文丢失/单例失效/角色共用状态文件。 | 门 **13 → 19 个用例（断言 29 → 49）**；十三刀 **13/13 全红且各自点名**（`streamed_filter` 连坐 8 项、`queue_lifo` 2 项）；还原后 sha256 逐字节一致；空变异体检 **CERTIFIED**；`check_gate_registry` **238 项全部有着落**；站点 7 PASS/0 FAIL（GATES 237→**238**）；K11 分层 8/30=**38**、0 处异常 |
+| `PR#18t` | 06:5x | test | **判据是从被测代码里读出来的 —— 删掉守卫，判据跟着消失**：① `引导页集成`（`tools/test_onboarding_integration.py`，108 条断言）绿得很稳，探针捅出五个洞。② 最狠的是 `[C1]`：它用 `_guards_cfg(nm)` 去 `webapp.py` 里找 `if not self._cfg`，**再用这个结果决定**该不该断言 `success is False` —— 等于让被测代码自己出考卷。把 `getModelCatalog` 的守卫删掉，端点被静默降级成「无守卫端点，返回 dict 就行」，**门全绿**。③ 第二个：`[A4]` 的四条判据全压在 `MODE_SEQ` / `buildFlow` 上，而 `buildFlow` 自 2026-10-20「首启只做建角色→体检」那次起**全仓零调用**（只剩定义和两处注释），真正跑的链路是写死的 `let FLOW = []; ['screenRole','screenSummary'].forEach(...)` —— 一句判据都没有；更糟的是第四条断言叫「FLOW 由 buildFlow 动态拼（**不再写死单条**）」，**与现状正好相反**。把 `'screenRole'` 从实际链路里删掉，门照样全绿。④ 第三个：`[A8]` 验的是 `docs/mockups/…v8_20261012.html`，那份设计稿从没进过库，`r8` 恒为 `None` → `if r8:` 里两条断言**永久不执行**，不红、不报、不留痕 —— 比"发现栏腐烂"更隐蔽（发现至少还打印一行 ⚠）。⑤ 另外三处是「断言名承诺的比条件验的多」：`[B6]`「deleteModelQuant 未装档**返回失败**」只查了 `isinstance(dlq, dict)`；`[B17]`「validateOnboarding **接受**精简 payload」只查了 `"success" in vo`（`{"success": False}` 也满足）；`[B11]`「switchCharacter 不存在角色被拒」只走了「无运行时 → 配置级回退」那条路，`if result is False:` 的运行时分支**一次都没执行过**（`_dialogue` 是 `None`，`_run_coro` 直接返回 `None`）。⑥ 判据先行 108 → **119**：A4 改成验**实际链路字面量**（含"屏 id 必须在 DOM 里"），MODE_SEQ/buildFlow 如实降级成「回滚备用」；A8 搬到真身 `src/ui/web/onboarding_role.js`（先剥注释再断言，否则注释自己就满足判据）；A1 补下限（一个调用都没解析出来时「全部存在」是真空真）；B6 验 `success is False` + error 说清"不存在"，另加未知档位；B11 造最小运行时（真事件循环 + 桩 dialogue）让运行时分支真跑一次；B17 验 `success is True` + checks 结构 + `ok` 的自洽定义；C1 把契约**手写**成 `CFG_GUARDED`（14 个）/ `CFG_FREE`（3 个）两张表，行为断言只认表，源码一致性另立一条断言（删守卫会**红**，不再消失）。⑦ 新刀 `tools/_qc_onboarding_mutation.py` 二十四刀：A 首启链路丢角色/顺序反/屏 id 写错、回滚表断链、桥面改名、下载器不走桥、建角色写错槽/自建厂商表、外壳守卫失效；B 模型名不落桶、空 Key 擦 Key、卸载不存在的档报成功、未知档位放行、Live2D 兜底被拆、运行时/回退两条拒绝、体检报失败、`ok` 取反、档位不映射、引擎清单少一家；C 删 `_cfg` 守卫、守卫在但返回成功、脏数据必抛、未知引擎照写。 | 门 **108 → 119 条**；二十四刀 **24/24 全红且各自点名**（`flow_bad_id` 2 项 / `b10_m3d_guard` 2 项 / `b17_validate_fail` 2 项 / `b18_mode` 3 项 / `b19_engines` 4 项 / `c1_guard_gone` 2 项 / `c3_unknown_engine` 2 项）；还原后 sha256 逐字节一致；空变异体检 **CERTIFIED**；`check_gate_registry` **237 项全部有着落**；站点 7 PASS/0 FAIL（GATES 236→**237**）；K11 分层 8/29=**37**、0 处异常 |
+| `PR#18s` | 04:5x | test | **最厚的一道门（1047 行）三处空转，最狠的是「装完不验收」**：① `打包依赖分级`（`src/tests/test_make_dist_deps.py`）是全项目最厚的一道门，而且**写得比大多数门都讲究** —— [14] 专门写了「先判 env 是否存在，再判内容：否则 `"PYTHONPATH" not in {}` 会恒真……空洞通过比不通过更危险」。所以这一轮不能假设它漏，只能一处一处探。② 三处全空（实测，改完门仍 EXIT 0 全绿）：`[C10-6]`「配了凭证但没 signtool 应拒绝」在**没抛异常**的分支里断言 `not os.path.isfile("signtool.exe")` —— 那是断言**文件系统**不是代码，把守卫改成 `if False:` 全门全绿；`[C10-14]`「`--sign` 必须连着 `--installer`」只 grep 错误文案，守卫改成 `if False:` 后文案还在、门全绿而 `--sign` 已不再报错；`install_deps` 末尾 `if verify: return verify_deps(...)` **整段没有判据**，换成 `return True`（装完不验收）全门全绿 —— 这是 [14] 那件事的镜像：「规矩没写进 `env=`，等于没写」→「验收没被调用，等于没验收」，而 [14] 只直接测 `verify_deps` 本身，从没测过 `install_deps` 调不调它。③ 先补判据 135 → **142**：C10-6 改成显式给不存在的 `DANIA_SIGN_TOOL`（任何机器都必抛）+ 先问 `find_signtool()` 再定判据（装了 SDK 就如实说「不适用，未验证」）；C10-14 改成用 `ast` 找「body 含那句提示」的 `if` 直接验**条件**；新增 `[26]`（verify=True 必调一次、拿到包内解释器路径、verify=False/defer_verify 不许调、验收不过必须返回 False）。④ 新刀 `tools/_qc_make_dist_mutation.py` 十二刀：A 不查 signtool / B `--sign` 守卫失效 / C 装完不验收 / D `_pth` 写 LF / E DLL 落 `DLLs/` / F 非 DLL 也搬 / G `enable=False` 不删 / H `tier_specs` 永不 break / I purge 清到 `python/` / J 指纹不含壳脚本 / K 档位静默降级 / L 不裁 locales。| 门 **135 → 142 条**；十二刀 **12/12 全红**且各自点名（A 2 项 / C 3 项 / E 2 项 / F 3 项 / K 7 项）；还原后 sha256 逐字节一致；空变异体检 **CERTIFIED**；`check_gate_registry` **236 项全部有着落**；站点 7 PASS/0 FAIL（GATES 235→**236**）；K11 分层 8/28=**36**、0 处异常 |
+| `PR#18r` | 03:1x | test | **测试里抄了一遍生产代码，然后测抄件**：① `双工停止与麦克风`（`tools/test_duplex_stop_and_mic.py`）的 A/B/C 三段函数注释明写「复刻 `_stop_duplex_client` 的分派核心 / 复刻 `_track_mic_level` 的电平平滑 / 复刻 `get_role_voice_context` 的 engine_ui 判定」—— 生产实现被手抄进测试，然后测这份抄件，生产代码改成什么样都不会红。而**同一个文件 D 段的注释早就写对了**：「不复制逻辑，避免"假绿"——复刻逻辑两次写得一样不算测试」。② 改法：三段全改成调真实实现（`__new__` 绕过 `__init__`），B 段从「造假浮点数喂抄件」改成「造 16-bit PCM 喂 `_track_mic_level`」，实测复现 BUG-2 原始形状（`level=0.00375` < 阈值 / `disp=0.04501` > 阈值）。③ 换成真实现后逼出两件「注释在骗人」：A1 括号里那句「旧代码 `await None` → TypeError → **stopped 恒 False**」是**假的** —— `await f()` 必然先求值 `f()`，客户端真的停了；探针实测把生产代码回退成 BUG-1 原形，A1/A2 **照样绿**，唯一会红的只有日志。真正坏掉的是「异常逃逸 → 调用方 `self._duplex_client = None` 被跳过 → 引用仍指着已停客户端」，而现在 try/except 已挡住逃逸、可观测后果只剩一条日志 → 补 **A5**（ERROR handler 挂 `proactive.logger`，正常分派零异常日志）；`proactive.py` 里同一条假因果一并改正。④ 第二件：`_watchdog_tick` 的 `and self._mic_proc is proc`（换轮保护，旧看门狗别杀新一轮子进程）**一条判据都没有**（D5/D6 都是 `is proc`，D7 桩成 False 又不过它），删掉全绿 → 补 **D9** 真实竞态用例。⑤ 新刀 `tools/_qc_duplex_stop_mic_mutation.py` 十刀跨三文件：A 分派回退 / B `_mic_disp` 退化 / C 停滞判据比较反向 / D 不看 running / E 不看 `_mic_proc` / F 去掉换轮保护 / G 停滞也不杀 / H 杀完不清引用 / I 只清引用不 kill / J 出声方式只读静态 config。| 门 **21 → 22 条**（A5/B4/D9 本轮新补）；十刀 **10/10 全红**且各自点名（C 连坐 4 项、G 连坐 2 项、I 连坐 2 项、J 连坐 3 项）；还原后 sha256 逐字节一致；空变异体检 **CERTIFIED**；`check_gate_registry` **235 项全部有着落**；站点 7 PASS/0 FAIL（GATES 234→**235**）；K11 分层 8/27=**35**、0 处异常 |
+| `PR#18q` | 02:2x | test | **15 节、四十来条断言的「最扎实」那道门，进程回收这条支路上五处关键行为全都没判据**：① `壳自愈与退出清理`（`src/tests/test_pet_shell_selfheal.py`）守的是「桌宠无声消失」「无限 spawn Electron」「孤儿窗口滞留」三类用户看不懂的故障。② 读判据时五处全空（实测，删掉后自测照样全绿 exit 0）：`_try_restart` 的 `if was_top: self.on_top = True`（恢复置顶）—— 而原文件 [1] 里有个 `calls = {"launch": 0, "show": 0, "top": 0}`，**`top` 从头到尾没被 ++ 过**，也没人读它；`_cleanup_proc` 的 `elif force: _kill_tree(proc.pid)`（主进程已退、子进程还在 = 孤儿 Electron 窗口，Electron 会**无输出地立刻退出**，项目里最难查的坑）；活进程 `wait(5)` 超时后的升级强杀；`time.sleep(RESTART_BACKOFF)`（连续崩时的退避，作用是「别把 CPU 打满」）；`close()` 里的 `sendall(b"quit\n")`（先礼后兵）。③ **为什么 15 节还是漏**：节数多不等于覆盖面广。15 节里有 9 节在测配额/降级/握手文件，而五处全在「进程回收」和「重启时恢复状态」两条支路上 —— **分支比断言更值得数**。④ 先补判据：47 → **57** 条（[1] 加置顶、[1b] 加「没置顶就不碰」、[6] 加三条杀进程树分支（含 force=False 的不越权边界）、[11] 加 quit、[16] 加退避（只断言下界，不赌上界））。⑤ 新刀 `tools/_qc_pet_shell_mutation.py` 八刀：A 不恢复置顶 / B 不杀子进程树 / C 不升级强杀 / D 不退避 / E 不发 quit / F 配额差一 / G 拿掉整条守卫 / H 窗口不滚动。| 断言 **47 → 57**；八刀 **8/8 全红**且各自点名（B 连坐 3 项、F 连坐 11 项、G 连坐 2 项）；还原字节一致；空变异体检 **CERTIFIED**；`check_gate_registry` **234 项全部有着落**；站点 7 PASS/0 FAIL（GATES 233→**234**）；K11 分层 8/26=34、0 处异常 |
+| `PR#18p` | 00:5x | test | **这条通道坏了不会报错，只会「照样返回 200，返回的东西不对」—— 而它唯一的名字检查只被单段名字验过**：① `RPC 通道`（`src/tests/test_rpc_server.py`）守壳↔后端那条没有类型检查的 HTTP 通道：19 条等价性 + 三条安全边界。失效形状与端口绑定相反：端口坏了是「起不来」，这条坏了是「照样 200」，或者更糟 —— **私有方法能调到**。② 读判据读到两处空转（实测）：把 `all(_is_exposed(p) for p in method.split("."))` 改成 `_is_exposed(method)`（整串检查）→ 自测**照样全绿 exit 0**，而那个退化正是**点号绕过**：`sub._secret` 整串不以 `_` 开头，校验通过、私有方法被调走；把 `_resolve` 换成 `getattr(api, dotted, None)`（不再支持点号）→ 同样全绿，而它的注释写着「与 pywebview 的 `get_nested_attribute` 一致，支持子对象」。③ 根因：19 条等价性用例**全是单段名字**，而单段名字上「逐段检查」与「整串检查」完全等价、「点号循环」跑一轮与直接 `getattr` 完全等价 —— **判据只覆盖了退化不产生差别的那个输入域**。④ 先补判据：FakeAPI 加子对象 `sub`（`ping` / `_secret` / `a__b`），等价性加 `sub.ping`，安全检查加四段点号用例（私有段 403 + 不泄漏 / 不存在 404 / 空段 403 / 中间 dunder 403）；运行时断言 21 → **26**。顺带把参照实现从 `getattr(api, method)` 换成自己走点号的 `_direct_call()` —— **不能拿 `_resolve` 当参照**，它坏了参照一起坏，等价性永远成立。⑤ 新刀 `tools/_qc_rpc_mutation.py` 十刀：A 令牌恒真 / B 逐段→整串 / C 不支持点号 / D 不排空请求体 / E 去掉 MAX_BODY / F 去掉 degraded / G stop 空操作 / H 业务异常改 200 / I 去掉中间 dunder 限制 / J 去掉空段限制。| 运行时断言 **21 → 26**（19 → 24 个 `check()` 调用点）；十刀 **10/10 全红**且各自点名（A 3 项 / B 3 项 / C 1 项 / D 3 项 / E 2 项 / F 1 项 / G 1 项 / H 1 项 / I 1 项 / J 1 项）；还原字节一致；空变异体检 **CERTIFIED**；`check_gate_registry` **233 项全部有着落**；站点 7 PASS/0 FAIL（GATES 232→**233**）；K11 分层 8/25=33、0 处异常 |
+| `PR#18o` | 23:3x | test | **这道门自称「两刀变异已验」，而仓库里一把刀都没有 —— 手工验过的刀不会回潮，注释也不会**：① `check_all.py` 里 `WS 端口绑定` 的注释写着「两刀变异已验：删重试→「确有重试」红；改回裸 raise→三条诊断断言红」，`ls tools/_qc_*ws*` 返回 `No such file`。手工跑过一次、没提交，验完就蒸发了。② 读判据时读到**两处空转**（都是实测）：把 `logger.warning(...)` 整段删掉，自测**照样全绿 exit 0** —— 「先重试再报错」里的「重试」在日志上毫无痕迹；把 `serve()` 提到循环外（**只真的 bind 一次**，然后空睡 5 次再抛同样的错），自测**照样全绿** —— 耗时 5.0s 骗过了「确有重试（耗时 ≥ 5s）」。③ 第二条是致命的：闸门测的「重试」只是「等了 5 秒」，不是「又 bind 了 5 次」。而 2026-10-20 03:11 那次崩溃的形状恰恰是「旧实例占用 1~2 秒后释放」—— 空睡 5 秒一秒都修不了它，原文件却只有两端（一直空闲 / 一直被占），中间那段从来没测过。④ **先补判据再加刀**：契约 2 补日志断言（每次重试都要留痕、日志带端口号+「重试」字样），新增契约 4「端口中途释放必须真的重绑」（1.2s 定时器关掉监听 socket 模拟旧实例退出）；13 条 → **19 条**，八刀才有东西可砍。⑤ 顺手修一个正文缺陷：`rstrip("。")` 把 OSError 末尾句号吃掉却不再补，拼出「…只允许使用一次若这是第二个达妮娅实例…」，崩溃弹窗里就是一整句读不通的话。⑥ 补判据时踩到一个**第二份真相**：先写的断言是 `"。若" in msg`，八刀里 H 刀没红 —— 因为 `holder` 自己就带句号（「端口 18794 正被进程 PID=… 占用。」），拼在「若这是」前面，那条断言**恒真**。改成把 last_err 那一段单独切出来判，H 刀才红。⑦ 刀里也踩了一次「崩了 ≠ 认出来了」：H 刀第一版写成 `rstrip("。")  # 注释`，行尾注释把后面的 `, holder)` 一起吞了 → SyntaxError，套件判它「没抓住」（正确），改成 `+ ""` 才是「语法正确、行为退回旧 bug」。| 自测 **19 项全 PASS**（13→19，新增 6 条）；八刀 **8/8 全红**且各自点名（删重试 / 间隔归零 / 裸 raise / holder 恒空 / 空闲误报 / 删日志 / 假重试 / 吃掉句号）；空变异体检 **CERTIFIED**（D0 绿 / D1 exit 1 / D2 exit 1 均自行报失败）；`check_gate_registry` **232 项全部有着落**；站点 7 PASS/0 FAIL（GATES 231→**232**）；`_qc_knife_vacuity_mutation` K11 分层 8/24=32、0 处异常 |
+| `PR#18n` | 22:2x | fix | **两道壳层静态闸门的自测只测 `scan()`，退出码零判据 —— 而「只会打印不会判红，比没有更危险」正是这两个文件自己写在头部的告诫**：① `check_async_blocking.py` 守「事件循环被同步调用占住」（2026-10-18 一天撞到四处：gewechat 回发 / qzone 发布 / tts 的 `time.sleep(0.6)` / heavy_apps 的 `urlopen(timeout=5)`）；`check_await_sync.py` 守「`await` 一个同步方法」（微信回复从来没真正发出去过那次）。两道都自带自测、七条正反例，**但七条全部只调 `C.scan()`，从不碰 `C.main()`**。② 实测：把 `return 1 if all_hits else 0` 改成 `return 0`，闸门退化成「只打印不判红」—— 可疑点一个不少地打印出来、全量里永远绿 —— 而自测照样打印「全部通过 ✅」并 exit 0。两个文件都中。③ **先补判据再加刀**：自测各加「有可疑点 → 1 / 干净 → 0」两条断言，验证改完退出码后自测确实变红，A 刀才写得出来。④ 补刀时撞出一个**真缺陷**：`check_async_blocking` 有一段 `WRAPPERS` 豁免，把 `to_thread(...)` / `run_in_executor(...)` **实参里**的调用标成 safe —— 可实参是在**事件循环里先求值**的，`to_thread(urlopen(...))` 的阻塞已经发生了。实测这种写法报 **0 处**，而它正是 `heavy_apps.pull_cloud` 卡首启 5s 的形状。删掉豁免、补一条正例（规范用法 `to_thread(time.sleep, 1)` 传的是函数引用、没有 Call 节点，不会被误伤），全仓 src 命中仍是 0 → 0。⑤ 两把刀各五刀，共 10 条变异，逐条对应一个漏报或误报方向。 | 协程调度自测 9/9、异步阻塞自测 10/10（分别新增 2 条与 3 条）；两把刀 **5/5、5/5 全红**且各自点名（退出码 / to_thread 实参 / 嵌套 worker / time.sleep / 同步函数；退出码 / 消费者表 / 规则 1 / 规则 2 / 异步生成器）；空变异体检均 **CERTIFIED**；`check_gate_registry` **231 项全部有着落**；站点 7 PASS/0 FAIL（GATES 229→**231**）；四步接进 CI `portable-gates` |
+| `PR#18m` | 21:3x | test | **同一类越界，三个兄弟函数只测了一个；顺手跟进 master 4 个提交解掉合并冲突**：① `_read_file` / `_write_file` / `_append_file` 是同一段 `_safe_path` + `except WorkspaceEscape: return str(e)` 的三份复制粘贴，但 `test_workspace_guard.py` 只守了 `_write_file` —— `_read_file` 与 `_append_file` 在**整个 `tools/` 目录下出现 0 次**。后果不对称得很厉害：写越界是脏数据，**读越界是任意文件读取**（密钥盒 / `config.yaml` / 导出的凭据都能被模型读进上下文），而它一条判据都没有。② **先补判据再加刀**：第 6b 节先造一个真存在、真可读的区外文件（不造的话，「读不到」可能只是因为文件不存在，而不是因为越界被拦），再断言「返回里说明越界」+「没把区外内容读进来」+「区外文件没有被创建」+「沙箱里也没多出这个文件」。③ 刀跟着补：`工作区边界` D 写越界改名进沙箱（2026-10 那个 bug 的形状）/ E 读越界也照读 / F 追加越界改名进沙箱，三刀 → **六刀**；`命令守卫` D `allow_cmd` fail-closed 关掉 / E `shell=True`，三刀 → **五刀**（前四把都在前置检查上，没有一把碰真正执行的那一行）。④ **一个被自己否掉的做法**：先新建了 `_qc_workspace_guard_mutation.py` / `_qc_run_command_guard_mutation.py` 各砍一遍，跑出来 4/4、5/5 全红 —— 但那是**同一判据的第二把刀**，等于给覆盖率造第二份真相，还把 CI 时间翻倍。删掉两个新文件，只把真正新增的三把并进既有文件。⑤ master 从 `b945b4ca` 前进到 `c264700e`（含合入 89 个 PR），PR 被 GitHub 标成 `dirty`；做了一次真合并，5 处冲突：`check_delivery` 两边**独立修了同一个 bug**（取 master 侧，它的修法更完整）/ `check_all.py` 两边各加门禁（**都留**）/ 站点 4 处数字锚点（两边都不对，合并后是 229，由 `check_site_counts --fix` 回填）。 | 工作区边界 **20 PASS / 0 FAIL**（15→20）；六刀全红且各自点名（D「沙箱里也没多出这个文件」/ E「没把区外内容读进来」/ F 同 D）；命令守卫五刀全红（D「allow_cmd=false 拒绝」/ E「shell=False :: True」）；两把刀空变异体检 **CERTIFIED**（起点绿 / 空变异 exit 1 报 6 处、5 处异常）；合并后 `check_gate_registry` **229 项全部有着落**、`check_site_counts` 7 PASS/0 FAIL；PR 恢复 `mergeable=true / clean` |
+| `PR#18l` | 20:5x | fix | **第五道补刀，补的过程发现判据自己有缺陷：`开机自启` 的清理路径依赖了被测代码**。这道门守「用户登录时到底跑什么」，18 条断言从没配过刀。最想打的一刀是「`disable` 删错值名」—— 那正是 2026-10-18 真实泄漏的那次（真实 HKCU Run 留一条指向已删 tempfile 的死命令，用户登录弹「无法运行」）。但写不出来：刀的 finally 只还原源码字节，删不掉已被错误逻辑漏掉的注册表项，而测试自己的 finally 调的**正是被变异的 `disable`** → 每跑一次刀就多留一条。想清楚之后发现这不是「刀不能写」，是**判据有缺陷**：清理依赖被测对象，`disable` 一旦真回归，`test_autostart` 自己每跑一次也会留残留。**先修判据再加刀**：`finally` 换成 `_raw_delete()`（直接用 winreg，与 `autostart` 实现解耦），A6 才安全。六刀：A1 不加引号 / A2 用 python.exe 不是 pythonw / A3 `is_enabled` 遇 OSError 返回 True / A4 `sync(False)` 也去 enable / A5 `read_command` 异常返回空串 / A6 `disable` 删错值名。 | 开机自启 18/18；六刀全红且各自点名；**A6 跑完复查 HKCU Run：7 个既有值、0 残留**（`_raw_delete` 在 `disable` 被破坏时仍清干净，这就是修复的实证）；空变异体检 **CERTIFIED**；登记对账 ✓（227）；站点 7 PASS/0 FAIL（GATES 226→**227**） |
+| `PR#18k` | 20:4x | test | **第四道补刀：`密钥盒加密` 五刀 —— 最硬的一条安全底线，20 条判据从来没有刀**：它守的是「磁盘上不许出现明文 Key」（用户的 OpenAI / 百炼 Key、QQ cookie 全在 config.yaml 里），2026-10-18 起在跑，一次都没被验过牙。**这类判据的失效方式特别阴**：加密函数照常返回、`Config.save` 照常写盘、日志照常打「已加密」，只是密文里其实还是明文—— 没有任何报错，只有某天有人 `cat config.yaml` 才看得见。五刀：S1 密文不带 `dpapi:` 前缀（等于没加密）/ S2 `seal_tree` 不递归进嵌套 dict / S3 密钥字段表加宽（把 `name` 也当密钥）/ S4 解不开的密文不记失败（换机时静默丢 Key）/ S5 `is_sealed` 恒 False。**一个被否掉的变异方向**：本想用「`is_sealed` 恒 True」，但它会让 `decrypt_secret` 去 base64 解普通文本、`validate=True` 直接抛 `binascii.Error`，脚本带 Traceback 退出 —— 那是「崩了」不是「认出来了」。改成恒 False 才是判据该红的那条路。**刀的变异方向要选判据能开口的那条，不能选让判据闭嘴的那条。** | 密钥盒 20/0；五刀全红且各自点名；空变异体检 **CERTIFIED**；`闸门退出码` 0 命中；登记对账 ✓（226）；站点 7 PASS/0 FAIL（GATES 225→**226**） |
+| `PR#18j` | 20:1x | test | **第三道补刀：`抓屏性能闸` 五刀** —— 它守的是一条**真炸过**的底线：2026-08-25 修掉的「抽帧 / 核显本卡炸」，游戏或锁快照期间画面长时间静止时 `_next_interval` 的 static 加速会把采样间隔打到 ~1s，每帧全屏抓屏 + resize + pHash + JPEG 编码。这道门 27 条判据（A/B/C/D/E/F）**从来没有刀** —— 「27 条到底有没有牙」一次没验过，而第三十轮刚改过它的 D8（缺夹具退回出厂模板）。五刀：G1 low_rate 档不再守低频底线（落回 static 加速）/ G2 静态加速乘数被去掉 / G3 主路径不再传 low_rate（云端接管时偷偷提速）/ G4 让位分支不再传 `low_rate=True` / G5 `main.py` 两处 `ScreenCapture` 构造去掉 `low_rate_check`。**G5 的锚点逐字出现两次**（1346 / 3214），因为 D11 的判据就是「**每一处**构造都要带」—— 所以这把刀给 MUTS 加了一个「期望命中次数」字段，G5 写 2、其余写 1，命中数不符一律报「锚点已腐烂」而不硬改。 | 抓屏性能闸 **27/0**；五刀全红且各自点名（A2 / A3 / B1 / B3 / D11）；空变异体检 **CERTIFIED**；`闸门退出码` 0 命中；登记对账 ✓（225）；站点 7 PASS/0 FAIL（GATES 224→**225**） |
+| `PR#18i` | 19:4x | test | **继续还债：`视频观看` 六刀、`视频进度` 五刀** —— 这两道是「用户能看见的那一层」，偏偏都没有刀。`视频观看` 守一条完整链路（URL 白名单 → 抽帧 → 送 VLM → 拼上下文），任何一环断掉，现象都是「点开只会看个空壳」而测试全绿：V1 抽帧闸短路 / V2 帧描述不送进上下文 / V3 上下文丢掉帧条目（说了看了 N 帧却不列出来）/ V4 视觉能力恒判不可用 / V5 视频被判成图文 / V6 pixiv 掉出白名单。`视频进度` 守的是进度条：`watch_video` 发阶段 → `_make_video_progress` 转事件 → 总线 `publish_threadsafe`，断在哪一环都是「进度条不动 / 一直转圈」，而回调异常被 `except` 吞掉、日志看不出所以然：P1 诊断 frames 恒 0 / P2 不发 frame 阶段 / P3 诊断不暴露 ffmpeg / P4 失败抹空错误信息 / P5 失败不发 error 阶段。两把刀共 11 个变异，**一次全红**（锚点全部先在源码里验过命中恰好 1 次）。另记：这两道判据的输出是 unittest 的 `FAILED (`，不是本仓惯用的 `[FAIL]` 行，所以 `_judged()` 换判据 —— 但**语义不变**：崩溃（ImportError/Traceback）同样 exit 1 却不打 `FAILED (`，因此仍能把「判出来了」和「崩了」分开。 | 视频观看 21/21、六刀全红且各自点名；视频进度 7/7、五刀全红；两把刀的空变异体检均 **CERTIFIED**；`闸门退出码` 0 命中；登记对账 ✓（224）；站点 7 PASS/0 FAIL（GATES 222→**224**） |
+| `PR#18h` | 19:1x | test | **覆盖率盘点：151 道判据门里 88 道没有变异刀；先给刚动过判据的那道补，补的过程撞出一个真缺陷**：① 逐门扫 `tools/_qc_*.py` 正文，统计「判据门 / 有刀 / 没刀」= **151 / 63 / 88（42%）**，另有 6 道非 lookalike 闸门（字节码编译 / 前端死引用 / 壳自愈端到端 / 导入冒烟 / 陌生人首启判据链 / A5 环境探针）。② 先补 `投影层自检`——它 2026-10-21 转绿后跑了两年多，**从来没有刀**，而第三十轮刚改过它的入口（缺 config.yaml 退到出厂模板），动了判据就得证明牙还在。③ 补刀时头一版是去改 `CALL_SITES`（删一项 / 让两个 id 撞车），跑出来是「锚点命中 0 次」。修锚点才发现更要命的事：**改 `CALL_SITES` 根本不会让这道门变红**——它只是 `__all__` 导出的一份声明，`build_model_view` 建视图走的是 13 段手写 `sites.append`，压根不读它。于是那道「调用点数应为 13」守的从来不是 `CALL_SITES`：删掉一项、或改成两个 id 撞车，视图照样 13 条、门照样全绿，**声明与实现可以任意漂移而没有任何人发现**。这正是 `catalog.py` 自己写的「不复制逻辑（第二份真相是 bug 温床）」要防的事，却唯独漏了它自己。④ 分两步补：先给闸门加一条 `CALL_SITES` 与视图的**逐项对账**判据（含重复计数），再让 M5 刀对准这条新判据——**有判据才有刀，不是有刀就有判据**。五刀各打一条判据：只读性 / 13 点齐全 / id 重复 / summary 自洽 / 声明对账。⑤ 刀的锚点腐烂只是噪音，**刀指向一条不存在的判据**才是真问题；这条写进注释留给以后。⑥ 新刀首跑被判 SHAPE（五元组分不清 old/new），补 `NOOP_SHAPE=("idx",2,3")` 后空变异体检 CERTIFIED。 | 投影层自检 16/0 → **17/0**（新增对账一行）；五刀全红且各自点名，还原后仍绿、sha256 逐字节一致；空变异体检 **CERTIFIED**（起点绿 / 空变异 exit 1 报 5 处异常）；空写体检 COVERED_ELSEWHERE（归空变异管）；`闸门退出码` 221 脚本 0 命中；`工具脚本导入路径` 33 PASS/0 FAIL；登记对账 ✓（222）；站点 7 PASS/0 FAIL（GATES 221→**222**） |
+| `PR#18g` | 18:0x | fix | **最后 12 个红点：4 道门在新克隆上必红，2 道门的红是「测试自己没隔离 ffmpeg」**：① `config.yaml` 在 `.gitignore` 里（实配含 api_key），任何新克隆都没有 → 投影层自检 / ASR 事件流 / 桌面视频 e2e / 抓屏性能闸 D8 / 视频进度 五处直接 `FileNotFoundError`，**一条判据都没跑到**。四道退回出厂模板 `config.release.yaml` 当夹具（它才是「用户拿到的默认值」，验默认值比验实配更有意义），两份都没有才 77。② **视频两道不是缺环境，是测试有缺陷**：`test_video_watch.test_success` 已经 mock 了 `download_media` 和 `sample_frames`，却没 mock 前置能力探测 `_resolve_ffmpeg()` —— 而 `watch_video` 的闸是 `if video_files and ffmpeg_exe:`，于是**没装 ffmpeg 的机器上 frame 阶段根本不触发、那个 `sample_frames` mock 一次都没被调用**，结论取决于跑它的机器而不是代码。补 mock 后 21/21、7/7。③ `test_phash` 缺 `imagehash`（**故意**不在 requirements，它是被自实现取代的对照源）原来 `return 1`，在汇总里与真回归长得一样 → 改 77 并给出安装命令。④ 顺带把 `_pick_python` 的**静默降级**说出来：内置运行时不存在时 32 项声明 `PY_RUNTIME` 的闸门会静默改由 `sys.executable` 跑，汇总一个字不提。 | 全量 **14 红 → 0 红**（211 项判完 / 10 项跳过）；投影层 16/0、ASR 事件流全过、桌面视频 e2e 7 OK（原 7 errors）、抓屏性能闸 **27/0**（原 26/1）、视频观看 **21/21**、视频进度 **7/7**；感知哈希 → `[SKIP]` 77；静态闸门全绿 |
+| `PR#18f` | 17:3x | fix | **「问不到」被当成「答否」：三道闸门在非 git 工作树里恒红**：交付包工作副本没有 `.git`，`git ls-files` 返回 128 + `fatal: not a git repository`。三道闸门把它当成「文件没入库」：`test_bundled_assets` 于是对 **10 件产品素材**逐个报「在磁盘上但没进 git —— 包里会缺」（**这是它没验证过的断言**）；`verify_first_run` 在第一步「造干净副本」就 `RuntimeError` 判红，**后面 7 步一条没跑**；`test_pack_for_teammate` 的 `[3]` 直接抛「取不到 git 文件清单」。三把变异刀跟着连环自爆（「起点不绿」「基线就不绿」）。修法分两种，都不许报绿：① `test_bundled_assets` 把「入库」拆成 `yes/no/unknown` 三态 —— 存在/非空壳/真格式照常逐件判，只有「入库」这一项报未验证，`exit 77`；② `verify_first_run` 加 `NoGitWorkTree` 异常 → `[SKIP]` + 77（整条链一步没跑，不能说验过）；③ `test_pack_for_teammate` 只把依赖 git 的 `[3]/[3b]` 跳过，其余四节照常判，末尾 77。刀的处理也分两种：`_qc_bundled_assets_mutation` 的三刀（删/截断/假格式）**不需要 git**，让基线认 (0,77) 后照常跑，仍三刀全红；`_qc_pack_exclude_mutation` 的变异目标就在 `[3]` 里，前提没了就整把报 77，不硬凑。 | 必需资产 0 PASS/**10 FAIL** → `0 PASS / 0 FAIL / 10 未验证` exit 77；首启链 RuntimeError → `[SKIP]` exit 77；打包排除 `取不到清单` → 四节照判 + `[SKIP]` exit 77；三把刀 `起点不绿/traceback` → 77 与三刀全红；静态闸门（编码/全局名/同名/不可达/常量条件/静默异常/导入路径）全绿 |
+| `PR#18e` | 17:0x | fix | **闸门在推荐解释器下起不来：全量跑一行没执行就退出**：`check_all.py` 尾巴的 `from _gate_lock import` 在 `.venv/Scripts/python.exe` 下必崩（`ModuleNotFoundError`），在普通 `python` 下正常 —— 交付包自带的是**可嵌入运行时**，`python312._pth` 只把 `python/` 下几个目录加一个 `..`（仓根）塞进 sys.path，**不含 `tools/`**；普通 CPython 会补「脚本目录」，可嵌入版不补。而 `.venv` 才是要三方依赖时的推荐解释器 → **这道门在官方姿势下从未跑起来过**。同一族 PR #17 已修过一次（`check_web_js_syntax`），所以这次不只修还补判据：新增 `check_tool_sys_path.py`（纯 stdlib 静态判定，181 脚本 0.2s）——兄弟 import 前必须有由 `__file__` 推导的 sys.path 改写（模块层或更早行号），写死盘符路径判红，接 `ImportError` 的降级导入与免登脚本不计分但必须打印。**它第一次跑就抓到 `_qc_api_wiring_mutation`**（函数里 `from check_api_wiring import`），补完后全量跑里那条 `反向接线变异` 整条挂掉的记录随之消失。顺带把上一轮写死的 600s 闸门超时按档改成 1800/600 并把超时记成有名字的失败。**并记录未修的发现**：交付包工作副本（无 `.git`／无 `config.yaml`）里全量 14/215 红，其中 12 项是「问不到被当成答否」，按约定该报 77 却报了 1。 | `check_all.py` 在 `.venv` 下能拿到锁并跑完（215 项判完 / 4 跳过 / 14 红，红的构成已分类）；`变异刀空写体检` 428.9s < 1800s 预算，不再被 kill；新闸门 **33 PASS / 0 FAIL**；新刀 **11 项全过**；`_qc_api_wiring_mutation` 4 刀恢复全红 + 起点绿；登记对账 ✓（220）；站点 7 PASS/0 FAIL（GATES 219→**221**） |
+| `PR#18d` | 17:4x | test | **第三种空转体检：封住写入口** —— 「SKIP 50 不算通过」这句话压了三轮，这一轮把它拆开：那 50 里 18 个是**一次性探针**（压根不是刀）、28 把是「没有模块级 MUTS 也没有独立判定文件」的真刀、4 把有 MUTS 但形状退化不了。新工具 `check_knife_nowrite.py` 不碰变异，把 `builtins.open`/`io.open` 的**写模式**重定向到临时文件，让「变异根本没发生」：此时刀还 exit 0 就是空转。这个方向与变异长什么样无关 —— 改源码的、往 `src/` 扔坏文件的、复制配置的、删目录的，一视同仁。**三方向闭环**：换判定（判定坏了刀会不会红）/ 空变异（源码没变时会不会假绿）/ 封写（**什么都没变**时会不会假绿）。顺带：`check_knife_vacuity.py` 的仓副本改成「重新 init 一个 git 仓」（`tools/_qc_repo_copy.py`），最后一条 `EXCUSED` 解开、表清空；`check_knife_noop.py` 的刀口径改成 `_qc_*_mutation.py`；**`check_delivery.py:check_template` 还在断言 `force_first_run is True`，而 10-20 的修复故意改成 false —— 它对任何正确打的包都判 FAIL，`_qc_delivery_mutation` 466 行 14 个用例因此永久红、等于从来没在跑**。 | 空写体检 **CERTIFIED 21 / COVERED_ELSEWHERE 33 / META 3 / SKIP 1 / ERROR 4（62 把），VACUOUS 0**，exit 0（14m）；空转变检 **CERTIFIED 33 / SKIP 29 / SHAPE 0**（口径修正后 62 把，原「29 / 50」是 79 个文件混算）；空转体检 **28 CERTIFIED / 1 SKIP**（29 对，上轮 27/1）；**三合一覆盖 54/62（装上 jsdom 后 55/62）**；三道体检的变异刀 16 项 / 13 刀 / 9 刀全过；出厂模板判据修正后 `check_delivery` 该行 PASS；GATES 217→219，站点 7 PASS/0 FAIL |
+| `PR#18c` | 17:1x | fix | **「缺环境」被报成「判据失败」：四个红点，四个都不是产品坏了**：① `A5环境探针` 扫 `logs/launch_run*.log`，而 `logs/` 在 `.gitignore` 里 → **新克隆的树上恒红**；改为三态（有样本逐条判 / 有日志扫出 0 份=FAIL / 没日志=WARN+exit 77），并加 `--root` 让判据能被夹具驱动。② `_qc_a5_probe_mutation` 起点恒红 → 六把刀"全红"白送；改用 tempfile 合成日志当夹具 + `_judged()` + 三把限位（77 / FAIL / 0）。③ `_qc_tray_switch_mutation` 要 `config.yaml`（也在 gitignore 里）→ 缺文件时回落到出厂模板 `config.release.yaml`。④ `hotkeys._validate` 在**没装 pynput** 时只做形状校验，`<ctrl>+<alt>+<nosuchkey>` 静默进映射表（**用户以为绑上了，按下去什么都不发生**）；新增 `_fallback_ok` + 键名白名单。**并更正上一轮的错误归因**（原写成"无桌面会话返回空表"，与桌面会话无关）。⑤ 17 把刀的 `_baseline_green()` 比判定还严（禁 `Traceback`），把"判定故意打的异常日志"判成起点红 → 改为"退出码 0 且无 FAIL 行"。⑥ `KNOWN_VACUOUS` 清空 + 额度对账（N8 指向空气 / N9 表在说谎 / N10 限位）。 | 空转变检 **CERTIFIED 29 / SKIP 50，VACUOUS 0 / ERROR 0**（上轮 26 / 1 / 50 / 2）；空转体检 27 / SKIP 1（上轮 25 / 1）；A5 探针 7/0/2 未验证 exit 77、夹具下 9/0 exit 0；A5 刀 6 刀 + 3 限位全过；在场感 33/1 → **41/0**；托盘 29/0；四腿 CI 全绿 |
+| `PR#18b` | 16:4x | test | **空变异体检：另外 48 把刀的空转风险一直是零覆盖**：上一道工具靠「把判定文件换成退化实现」，前提是刀有独立判定文件——79 把里只有 26 对有，另外 48 把在进程内断言，换文件完全无效。本轮换方向：**退化变异本身**（`(old,new)` → `(old,old)`，即"什么都没改"），判定有牙就该绿 → 刀必须报「没抓住」→ `exit != 0`；若仍 `exit 0` 就是没在看变异。这个方向不需要知道判定在哪，对 79 把一视同仁。普查中修掉自己仪器的两处假发现（`_noop()` 盲取最后两个元素，把「说明」当成 `new_thunk`，5 把刀被误判 VACUOUS；runner 的 `sys.path[0]` 不是 `tools/`，让 `_qc_api_wiring_mutation` 白记 ERROR）。**顺带查出真缺陷**：`导入冒烟复核` 在 `PY_VENV` 下一直是 6 FAIL——`smoke_import` 的 `env["PYTHONPATH"]=root` 在随包嵌入式运行时下是死代码（`._pth` 固定 sys.path），且夹具的 `src/` 少了 `__init__.py` 成了命名空间包、被 `DaniaAI\src` 这个常规包压住。 | `check_knife_noop.py` CERTIFIED 26 / VACUOUS 1（已知）/ SKIP 50 / ERROR 2，exit 0（5m56s）；七刀 + 对照全 PASS；`导入冒烟复核` venv 6 PASS/6 FAIL → **12 PASS/0 FAIL**，刀在 venv 下也 3 刀全红 + 起点绿；`GATES` 215→217，站点 4 处锚点同步（7 PASS/0 FAIL） |
+| `PR#18` | 16:0x | fix | **18 把变异刀是空转的：判定崩了也被算成「抓住了」**：`caught = r.returncode != 0` 把「判出了问题」和「根本没跑起来」当同一件事——把判定整个换成 `raise RuntimeError(...)`，套件照样印「已抓住：<无输出>」「N 刀全红」并 exit 0。18 把刀补 `_judged()`（非零退出 **且** 有 FAIL/✗）+ `_baseline_green()`（起点不绿直接 FAIL）。工具补 `_resolve()`（判定不一定在 `tools/` 下）、ABSENT/ERROR 拆分、完整性检查、`--tier` 分层。顺带查出 `_qc_pathrefs_mutation` H 刀锚点缩进差 4 格、`count(old)==1` 拦不住子串匹配。 | `--tier portable` 8 / `dev` 17+SKIP1 / `all` 25+SKIP1；13 刀 + 对照全 PASS；修前旧版被体检判 VACUOUS、注入崩溃后仍 exit 0，修后 exit 1 并点名「起点就不是绿的」 |
+| `PR#17` | 15:2x | fix | **`check_web_js_syntax` 在交付包运行时下从未跑过 + 新增「变异刀空转体检」**：该闸门只把仓根塞进 `sys.path`，而 `check_bridge_methods` 在 `tools/` 下；正常 CPython 会补脚本目录，交付包自带的可嵌入运行时（`python312._pth`）不会 → `ModuleNotFoundError` 一启动就崩，87 段 JS/HTML 从未被检查。补齐 `tools/` 路径。另新增把闸门换成退化实现的体检工具（D0 原样 / D1 恒 0 / D2 恒 1），7 对全 CERTIFIED。 | 修后 87 段 / 0 错 / exit 0（修前崩溃）；7 对全 CERTIFIED；十刀 + 对照全 PASS |
+| `PR#16` | 14:5x | fix | **通知线第三处跨模块死引用（`_push_cmd`）+ 新增「跨模块引用对账」闸门**：`notify_geom._notify_slide()` 调的 `_mn._push_cmd` 全仓无定义——WebView2→WPF 迁移后旧 API 调用点没删（前两处是 `NotifyJsBridge` / `_notify_slide_if`）。新增 AST 闸门：`from M import y` 与 `mod.attr` 必须指向真实存在的本地符号（外部包 / star 污染 / rebound 别名 / `hasattr` 声明过的一律不判）。顺带修 `real_software_drive.py` 里一条一直往裸 `except` 里抛 `ImportError` 的探针。 | 跨模块引用 0 命中（全仓 700+ 文件）；十二刀 + 对照全 PASS；`--root` 建 tempfile 样本，不碰仓库 |
+| `PR#14` | 14:3x | ci | **补上 #9/#12/#13 推迟的三道闸门接线**（unreachable / constant-cond / gate-exit）：三个 PR 都要往 `portable-gates` 末尾追加、同时追加必然互相冲突，所以各自在 body 里留了待办。只登记进 `GATES` 而 CI 不跑 = 「本机才守」，接进 CI 才挡得住别人合进来。 | `portable-gates` 6 族 / 12 步；三道闸门本机实测全绿、纯 stdlib、总耗时 17s |
 | `30dddf9` | 10:2x | fix | **设置页切麦热切换 守卫写错名（写了没接线）**：`webapp.setCallAudioDevice` 用 `hasattr(self._proactive, "set_duplex_mic")` 守卫，但 `ProactiveStrategy` 上**没有** `set_duplex_mic`（全仓零定义），守卫恒 False → 注释承诺的「让运行中的双工立即用新设备（不必重开整通电话）」**从未生效**（用户切麦后当前通话仍用旧设备）。真名是 `apply_call_settings(mic_device=...)`：更新 `_duplex_mic_device` 并对当前双工客户端调 `set_mic_device()` 热切换（webapp 另三处扬声器/通用设置早就在用这个真名，唯独切麦这条写错）。修为真名直调 + `logger.debug` 兜底；守卫去掉（真名 + try/except 足够，与本仓 17243 那条「幽灵调用」墓碑同一修法）。 | 新增回归 `src/tests/test_duplex_mic_hotswitch_wiring.py` 7/7（真方法写字段+调 client.set_mic_device / None 不动客户端 / 无客户端不炸 / tokenize 剥注释后代码含精确调用串 / 旧名已不在代码）；**变异刀**：改回 `set_duplex_mic` → 两条源码判据全红、还原字节一致；门禁对账 `✓ 全部有着落` |
 | `XXXXXXXX` | 03:1x | test | **补齐「感知指示器」变异刀（隐私门此前无变异=装饰品）+ TODO 审计口径纠正**：`test_perception_indicator.py` 早已登记为门，但其 docstring 提到的「变异刀3」从未提交——按「加门必须同时加变异」补 `_qc_perception_indicator_mutation.py` 四刀（watching 写死 true / privacy 恒 false / 静态 class=on / toggle 改无条件 add），全红 + 还原全绿，登记为慢项。另：此前「21 处 TODO」是口径错误，剥掉 `XXX` 占位符后**真 TODO 仅 1 处**（qzone.py 图片发布「需联调」，qzone 默认关、dormant），无隐藏债。 | 感知门 EXIT=0；变异四刀全红 + 还原全绿；登记对账「全部有着落」；py_compile 通过 |
 | `XXXXXXXX` | 17:5x | test | **主动搭话「去重 + 冷却时间戳守卫」单测（26 项）+ 变异刀**：proactive.py 的「不刷屏骚扰」靠 `_screen_activity_repeat`/`_similar_summary` 输入轨迹去重、`_similar_to_recent` 输出去重、`_last_proactive_or_zero` 冷却时间戳守卫撑着，此前零断言只靠人工。新增 `src/tests/test_proactive_dedup_cooldown.py` 26 项；变异刀 `tools/_qc_proactive_dedup_mutation.py` 三刀（子串判定恒假 / 轨迹去重恒 None / None→None 重演旧 bug）全红、还原 26 全绿；已登记进 check_all（测试门走 OpenBLAS 串行复核包装器，变异刀标慢项）。 | 测试 26/26；变异三刀全红 + 还原全绿；登记对账「全部有着落」；py_compile 通过 |
@@ -548,6 +580,1518 @@ find_spec 返回 None → 误报「唤醒词退化」；
 
 **验证**：变异 4 刀全红 + 还原后回归 12/12 全绿；`tools/check_all.py` 登记对账 ✓；
 CI 全绿（pytest / self-check scripts / syntax gate 三腿 success）。
+
+#### PR #18（续十四）· 最厚的一道门三处空转，最狠的是「装完不验收」
+
+**为什么挑它**：`打包依赖分级`（`src/tests/test_make_dist_deps.py`）1047 行、
+六十来条断言，是全项目最厚的一道门，按「有没有刀」的读数是「没有刀」。
+
+**它写得比大多数门都讲究。** [14] 那节甚至专门写了这句：
+
+> 「先判 env 是否存在，再判内容：否则 `"PYTHONPATH" not in {}` 会恒真，
+> 变异体（删掉 `env=`）下那两条照样打勾 —— **空洞通过比不通过更危险**。」
+
+[20] 也写了「这两条是『别做过头』的护栏：静默删目录比留下垃圾更危险」。
+所以这一轮不能假设它漏，只能一处一处去探。
+
+##### 三处空转（全部实测：改完门仍 EXIT 0 全绿）
+
+**① `[C10-6]` 断言的是文件系统，不是代码。**
+
+```python
+try:
+    make_dist.resolve_sign_config({"DANIA_SIGN_SUBJECT": "X"})
+    check(not os.path.isfile("signtool.exe"),
+          "无 TOOL 且 PATH 无 signtool 时应抛 ValueError（本机没有裸 signtool.exe）")
+except ValueError:
+    check(True, "凭证配了但没工具 → ValueError")
+```
+
+没抛异常时，它去断言「当前目录没有 `signtool.exe`」——那是**文件系统**的事实。
+把 `if not cfg["tool"] or not os.path.isfile(cfg["tool"]): raise` 改成 `if False:`，
+门照样全绿：这个守卫从来没被测过。
+
+**② `[C10-14]` 只 grep 错误文案。**
+
+```python
+check('"--sign"' in src_txt10 and "--sign 需要 --installer" in src_txt10, ...)
+```
+
+把守卫改成 `if False:`，提示原样留在源码里、门全绿，而 `--sign` 单跑已经不再报错。
+
+**③ `install_deps` 末尾「装完验收」整段没有判据。**
+
+```python
+if verify:
+    return verify_deps(out_dir, python_exe)
+return True
+```
+
+换成 `return True` 全门全绿。**这是 [14] 那件事的镜像**：
+「规矩没写进 `env=`，等于没写」——「验收没被调用，等于没验收」。
+而 [14] 只**直接**测 `verify_deps` 本身，从没测过 `install_deps` 到底调不调它。
+
+##### 判据先行：135 → 142
+
+- `[C10-6]` 改成显式给一个不存在的 `DANIA_SIGN_TOOL`（任何机器上都必抛），
+  直接钉住 `os.path.isfile(cfg["tool"])` 这半句；「本机完全没有工具」那一半
+  改成先问 `find_signtool()` 再定判据，机器上装了 SDK 时如实打印「不适用，未验证」。
+- `[C10-14]` 改成用 `ast` 找到「body 里含那句提示」的 `if`，直接验它的**条件**
+  是否同时含 `sign` 与 `installer`。
+- 新增 `[26]`：`verify=True` 必须调一次 `verify_deps`、拿到的是包内解释器路径、
+  `verify=False` / `defer_verify=True` 不许调、验收不过必须让 `install_deps` 返回 False。
+
+##### 十二刀
+
+`tools/_qc_make_dist_mutation.py`：A 不查 signtool / B `--sign` 守卫失效 /
+C 装完不验收 / D `_pth` 写 LF / E DLL 落 `DLLs/` / F 非 DLL 也搬 /
+G `enable=False` 不删 / H `tier_specs` 永不 break / I purge 清到 `python/` /
+J 指纹不含壳脚本 / K 档位静默降级 / L 不裁 locales。**12/12 全红**。
+
+##### 一个仪器错误，留档
+
+第一版探针按 `✗` 过滤判「有没有红」，结果七处全报「抓住了」——**全错**。
+因为 `make_dist` 的负向场景自己会打印 `  ✗ ...`（「包内没有 python.exe」
+「核心档安装失败」……），和本门 `check()` 的前缀一模一样。按 `✗` 过滤，
+等于把「门在验证某个失败场景」当成「门失败了」。
+改成本门自己的汇总行 `❌ N 项未通过` 才看对。
+
+同一轮里还有两把刀**砍断了多行语句**（`if ...startswith(` 只替换了第一行），
+留下悬空的续行 → `make_dist.py` SyntaxError → 门崩了。`_judged()` 正确地拒绝
+把「崩了」算成「抓住了」，两把刀都报「没抓住」。改成整块替换才红。
+这是第三次踩「崩了 ≠ 认出来了」，但这次是**刀自己**崩。
+
+**验证**：门 **135 → 142 条**；十二刀 12/12 全红且各自点名；还原后 sha256
+逐字节一致；空变异体检 **CERTIFIED**；`check_gate_registry` **236 项全部有着落**；
+站点 7 PASS/0 FAIL（GATES 235→**236**）；K11 分层 portable 8 / dev 28 = **36**。
+
+#### PR #18（续十三）· 测试里抄了一遍生产代码，然后测抄件
+
+**这一轮的问题比「没有刀」更严重。** 前面十二轮都在还「判据没有牙」的债，
+这一轮撞见的是**牙长在一副假牙上**。
+
+`tools/test_duplex_stop_and_mic.py` 的 A/B/C 三段，函数注释明写：
+
+```python
+async def _dispatch(client):
+    """复刻 proactive._stop_duplex_client 的分派核心。"""
+
+def track(...):
+    """复刻 _track_mic_level 的电平平滑…"""
+
+def resolve_engine_ui(...):
+    """复刻 get_role_voice_context 的 engine_ui 判定"""
+```
+
+三个「复刻」。生产实现被手抄进测试，然后测试**测这份抄件**。
+`proactive._stop_duplex_client` 改成什么样，A 段都不会红 —— 它跑的是自己那份。
+
+讽刺的是同一个文件的 D 段早就写对了：
+
+> 「本场景直接对真实 CloudOmniRealtime 的看门狗方法做确定性断言（**不复制逻辑，
+> 避免"假绿"——复刻逻辑两次写得一样不算测试**）」
+
+**文件自己写下的规矩，被自己另外三段违反了。**
+
+**改法**：三段全部改成调真实实现（`__new__` 绕过 `__init__`，只注入必要字段）。
+B 段从「造几个假浮点数喂给抄件」改成「造 16-bit PCM 喂给 `_track_mic_level`」，
+读它真算出来的 `_mic_level` / `_mic_disp`。实测复现出 BUG-2 的原始形状：
+
+```
+level=0.00375（< 0.004 阈值 → 判"没声音"）
+disp =0.04501（> 0.004 → 判"刚才有人说话"）
+```
+
+同一个数，以前证明的是抄件的行为，现在证明的是生产代码的行为。
+
+##### 换成真实现之后，逼出两件「注释在骗人」
+
+**① A1 的括号是假的。** 原文：
+
+```python
+ok("A1 同步 stop() 被正确调用", c1.stopped is True,
+   "(旧代码此处 await None → TypeError → stopped 恒 False)")
+```
+
+把生产代码回退成 BUG-1 原形 `await client.stop()`，探针跑出来：
+
+```
+== A 回退成 await client.stop()（BUG-1 原形） -> EXIT 0     ← 没抓住
+```
+
+A1/A2 **照样绿**。因为 `await f()` 必然先求值 `f()` —— `client.stop()` 执行了、
+客户端真的停了，`stopped` 就是 True。那句「stopped 恒 False」是编的。
+
+真正坏掉的是**之后**：原始 bug 里没有 try/except，异常从分派处逃逸，调用方
+`self._duplex_client = None` 与收尾全被跳过 → 引用仍指着已停的客户端。
+而现在 try/except 已经挡住了逃逸，**可观测的后果只剩一条日志**。
+
+所以补 A5（ERROR 级 handler 挂在 `proactive.logger` 上，正常分派必须零异常日志）——
+它是唯一能区分「分派写对了」和「分派回退了」的判据：
+
+```
+== A 回退成 await client.stop()（BUG-1 原形） -> EXIT 1
+     [FAIL] A5 正常分派零异常日志 ['停止双工客户端失败（自测）']
+```
+
+`proactive.py` 里同一条假因果（docstring 写着「旧客户端从未停止」）本轮一并改正。
+**一把刀逼出了一条假注释** —— 这和第三十四轮「自称两刀变异已验、仓库里一把刀
+都没有」是同一类病：注释里的证据没人复核，就会一直错下去。
+
+**② 有一行守卫，删掉也全绿。** `_watchdog_tick`：
+
+```python
+if self._capture_stalled(time.time()) and self._mic_proc is proc:
+```
+
+后半句是「换轮保护」——上一轮的看门狗线程别把新一轮的子进程杀掉。而 D5/D6 都是
+`_mic_proc is proc` 的情形，D7 把判据桩成 `lambda now: False` 又不经过它。
+**这条守卫一条判据都没有。** 补 D9：造出「看门狗手里拿着旧 proc、实例上已经是
+新 proc」的真实竞态，断言两边都不许被杀。
+
+##### 十刀
+
+新刀 `tools/_qc_duplex_stop_mic_mutation.py`，跨三个生产文件：
+
+| # | 文件 | 砍掉什么 | 红在哪 |
+|---|---|---|---|
+| A | `proactive.py` | 分派回退成 `await client.stop()` | A5 |
+| B | `cloud_omni_realtime.py` | `_mic_disp` 退化成被稀释的 `_mic_level` | B2 |
+| C | 同上 | 停滞判据 `>` 改成 `<` | D1 / D2 / D5 / D6 |
+| D | 同上 | 停滞判据不再看 `running` | D3 |
+| E | 同上 | 停滞判据不再看 `_mic_proc` | D4 |
+| F | 同上 | 看门狗去掉换轮保护 | **D9** |
+| G | 同上 | 检测到停滞也不杀 | D5 / D6 |
+| H | 同上 | 杀完不清 `_mic_proc` 引用 | D6 |
+| I | 同上 | 只清引用不真 kill | D5 / D8 |
+| J | `webapp.py` | 出声方式只读静态 config（BUG-3 原形） | C1 / C2 / C4 |
+
+**验证**：门本身 21 → **22 条**（A5、B4、D9 三条是本轮新补的判据）；十刀
+**10/10 全红**且各自点名；还原后 sha256 逐字节一致；空变异体检 **CERTIFIED**；
+`check_gate_registry` **235 项全部有着落**；站点 7 PASS/0 FAIL（GATES 234→**235**）；
+K11 分层 portable 8 / dev 27 = **35**、0 处异常。
+
+**留档的教训**：判据里出现「复刻」「模拟实现」「参照实现」这类词，就该警觉。
+参照实现必须是**独立的**（RPC 那轮已经踩过一次：拿被测的 `_resolve` 当参照，
+它坏了两边一起坏，等价性永远成立），但**被测对象本身绝不能是参照**。
+
+#### PR #18（续十二）· 15 节、四十来条断言的「最扎实」那道门，有一整条支路没有判据
+
+**为什么挑它**：壳层最后一道没刀的门，也是断言最多的一道 —— 15 节、47 条。
+按「有没有刀」的读数是「没刀」，但真正的问题不是没刀，是**有一整条支路没人测**。
+
+**五处空转**（删掉后自测照样全绿 exit 0，全部实测）：
+
+| # | 砍掉什么 | 后果 |
+|---|---|---|
+| 1 | `_try_restart` 里 `if was_top: self.on_top = True` | 重启后不再置顶 |
+| 2 | `_cleanup_proc` 里 `elif force: _kill_tree(proc.pid)` | **孤儿 Electron 窗口滞留桌面** |
+| 3 | 活进程 `wait(5)` 超时后的 `_kill_tree(pid)` | 渲染进程/GPU 进程留下残影 |
+| 4 | `if len(self._restarts) > 1: time.sleep(RESTART_BACKOFF)` | 连续崩时把 CPU 打满 |
+| 5 | `close()` 里 `self._sock.sendall(b"quit\n")` | 先礼后兵变直接强杀 |
+
+第 1 条尤其刺眼。原文件 [1] 里写着：
+
+```python
+calls = {"launch": 0, "show": 0, "top": 0}
+```
+
+`launch` 和 `show` 都被断言了，**`top` 从头到尾没被 ++ 过，也没有任何断言读它**。
+想测的东西忘了写，但字典留了下来 —— 下一个人读到这行会以为「置顶也测过了」。
+
+第 2 条是模块注释里点名的那个坑：
+
+> 为什么不能直接 terminate：Electron 是多进程架构，只杀主进程常常留下渲染进程/GPU
+> 进程，桌宠的残影会留在桌面上，且下次启动会撞上 userData 单实例限制
+> （Electron 会**无输出地立刻退出**，极难排查）。
+
+而测试里 `_FakeProc()` 的 `pid` 是 `0`，`_kill_tree(0)` 是个空操作 —— 于是
+「主进程已退、子进程还在」这条分支**跑过，但什么都没验证**。
+
+**为什么 15 节还是漏**：节数多不等于覆盖面广。15 节里 9 节在测「配额 / 降级 /
+握手文件」，五处空转全在「进程回收」和「重启时恢复状态」这两条支路上。
+
+> **分支比断言更值得数。** 一道门有 47 条断言，但只走 3 条支路，那它测的是 3 件事。
+
+**改动**
+
+1. 判据 47 → 57：
+   - `_TopProbe`（`on_top` 换成可数探针）+ `_RecSock`（记录 `sendall`）+ `_LiveProc`
+     （活着但 `wait` 永远超时）；
+   - [1] 断言恢复置顶；新增 [1b] 断言「生前没置顶就不碰 `on_top`」（反方向）；
+   - [6] 加三条杀进程树分支：`force=True` 必杀、`force=False` **不越权杀**、
+     活进程先 `terminate` 再升级强杀；
+   - [11] 加 `quit` 与 socket 关闭；
+   - [16] 加退避：第一次不白等、第二次起 ≥ `RESTART_BACKOFF`（只断言下界）。
+2. 新刀八把：A 不恢复置顶 / B 不杀子进程树 / C 不升级强杀 / D 不退避 /
+   E 不发 quit / F 配额差一 / G 拿掉整条守卫 / H 窗口不滚动。
+
+**八刀全红**，B 连坐 3 项、F 连坐 11 项、G 连坐 2 项，还原后 sha256 一致。
+
+**一处「写不出刀」的记录**：G 的第一版只砍 `if self._closed or self._wd_stop.is_set()`
+里的 `self._closed` 那一半 —— **没红**。因为 `close()` 会顺手 `_stop_watchdog()`，
+`_wd_stop` 也是置位的，两个条件互为备份。也就是说 `_closed` 这一半是**冗余**的
+（留着无害，防将来有人单独置位），单独砍它测不出来。改成砍整条守卫才红 ——
+**那才是「已关闭的壳不会被复活」这个判断的真身**。
+
+按本项目的规矩：写不出刀时第一反应是查判据或实现，不是换一把更容易红的变异。
+这一次查出来的是「一行里有两个互为备份的条件」，属于实现层面的事实，不是判据缺陷。
+
+**验证**
+
+- 断言 **47 → 57**，起点绿
+- 八刀 8/8 全红；还原字节一致
+- 空变异体检 `--tier all --only pet_shell` → **CERTIFIED**
+- `check_gate_registry` 234 项全部有着落；站点 7 PASS / 0 FAIL（GATES 233 → 234）
+- `_qc_knife_vacuity_mutation` 13 项全 PASS，K11 `portable 8 / dev 26`，0 处异常
+- 全量 `check_all.py` 见文末
+
+**GATES 233 → 234**；判据门 160 ｜ 有刀 **70** ｜ 没刀 **90**。
+
+壳层三道没刀的门到这一轮全部补完。下一步按 `质检基线` §8 的优先级回到
+`必需资产清单` / `陌生人首启判据链` / `源码包排除规则`。
+#### PR #18（续十一）· 这条通道坏了不会报错，只会「照样返回 200，返回的东西不对」
+
+**为什么挑它**：壳层还剩三道没刀的门，`RPC 通道` 是其中失效形状最阴的一道。
+`WS 端口绑定` 坏了是「起不来」，用户立刻知道；这条通道坏了是**照样 200**，
+前端拿到一个格式对、内容错的结果，或者更糟 —— **私有方法能调到**。
+
+它守的是壳 ↔ 后端之间那条没有类型检查的 HTTP 通道（`src/ui/rpc_server.py`）：
+19 条等价性用例（RPC 结果必须等于直调结果）+ 三条安全边界（只绑回环、缺令牌拒绝、
+内部方法不可调用）+ 协议形态 + 长连接卫生 + 关闭。
+
+**读判据，读到两处空转**（实测，不是推测）：
+
+| 变异 | 自测结果 | 说明 |
+|---|---|---|
+| `all(_is_exposed(p) for p in method.split("."))` → `_is_exposed(method)` | **21 项全绿 / exit 0** | 逐段检查退化成整串检查 |
+| `_resolve` 换成 `getattr(api, dotted, None)` | **21 项全绿 / exit 0** | 点号支持整个删掉 |
+
+第一条不是「检查变松了」这么轻。整串检查下 `sub._secret` 不以 `_` 开头，
+于是**校验通过**，`_resolve` 按点号走下去就拿到了私有方法 —— 这是**点号绕过**，
+不是漏报。
+
+第二条更荒唐：`_resolve` 的注释白纸黑字写着
+
+```python
+"""按点号解析成员（与 pywebview 的 get_nested_attribute 一致，支持子对象）。"""
+```
+
+而 19 条等价性用例里**没有一条带点**。
+
+**根因只有一句**：判据只覆盖了「退化不产生差别的那个输入域」。单段名字上
+「逐段检查」与「整串检查」完全等价，「点号循环跑一轮」与「直接 `getattr`」
+完全等价 —— 于是两种退化都能全绿通过。
+
+**改动**
+
+1. 判据先行，运行时断言 21 → 26：
+   - `FakeAPI` 加子对象 `sub`（`ping` 正常、`_secret` 私有、`a__b` 名字中间带 dunder）；
+   - 等价性加 `sub.ping` —— 19 条用例里唯一带点的一条；
+   - 安全检查加四段：`sub._secret` 必须 403 **且响应体里不能有私有返回值**、
+     `sub.no_such` 404、`sub..ping` 403（空段）、`sub.a__b` 403（中间 dunder）。
+2. 参照实现也换了。原来直调是 `getattr(api, method)(...)`，遇到点号会
+   AttributeError。改成 `_direct_call()` 自己走一遍点号 —— **不能拿 `_resolve`
+   当参照**：它坏了参照一起坏，等价性永远成立。这是**故意**重复的一份逻辑。
+3. 新刀 `tools/_qc_rpc_mutation.py`，十刀：
+
+| 刀 | 砍什么 | 抓住它的判据 |
+|---|---|---|
+| A | 令牌校验恒真 | 缺令牌 / 错令牌 / 未授权（3 条） |
+| B | 逐段检查 → 整串检查 | 点号私有段 / 不泄漏 / 空段（3 条） |
+| C | `_resolve` 不支持点号 | 20 个方法结果一致（1 条） |
+| D | 拒绝分支不排空请求体 | 401 / 413 / 404 之后同一连接仍可用（3 条） |
+| E | 去掉 `MAX_BODY` 上限 | 超大请求体（2 条） |
+| F | 不可 JSON 化不再标记 `degraded` | 降级断言（1 条） |
+| G | `stop()` 空操作 | 端口已关闭（1 条） |
+| H | 业务异常改回 200 | 500 + 异常类型（1 条） |
+| I | 去掉中间 dunder 限制 | `sub.a__b` 403（1 条） |
+| J | 去掉空段限制 | `sub..ping` 403（1 条） |
+
+**10/10 全红**，逐条点名，还原后 sha256 一致，空变异体检 CERTIFIED。
+
+**这一轮没有踩新坑，但有一处值得记**：I 刀和 J 刀砍的是同一行
+（`_is_exposed` 的两个条件）。同一行两把刀不算「第二份真相」—— 它们打中的是
+两条不同的判据（中间 dunder / 空段），去掉任何一个条件，只有对应的那条会红。
+**判据与刀是两条不同的线：一刀可以砍多行，一行也可以被多刀砍。**
+
+**验证**
+
+- 运行时断言 **21 → 26**（`check()` 调用点 19 → 24），起点绿
+- 十刀 10/10 全红；还原字节一致
+- 空变异体检 `--tier all --only rpc` → **CERTIFIED**
+- `check_gate_registry` 233 项全部有着落；站点 7 PASS / 0 FAIL（GATES 232 → 233）
+- `_qc_knife_vacuity_mutation` 13 项全 PASS，K11 `portable 8 / dev 25`，0 处异常
+- 全量 `check_all.py` 见文末
+
+**GATES 232 → 233**；判据门 160 ｜ 有刀 **69** ｜ 没刀 **91**。
+
+壳层现在只剩 `壳自愈与退出清理`（`src/tests/test_pet_shell_selfheal.py`，424 行）
+一道没刀。
+#### PR #18（续十）· 这道门自称「两刀变异已验」，而仓库里一把刀都没有
+
+**发现的方式**：上两轮把壳层两道静态门（`check_async_blocking` / `check_await_sync`）
+补了刀之后，顺手 `ls tools/_qc_*ws*` —— 返回 `No such file`。而 `tools/check_all.py`
+里 `WS 端口绑定` 上面那段注释写得很笃定：
+
+```
+# WS 端口绑定契约（2026-10-20 03:11 启动崩溃的回归）：空闲一次起、被占先重试
+# 再报人话（PID/退出指引）、占用探测不扰民。两刀变异已验：删重试→「确有重试」
+# 红；改回裸 raise→三条诊断断言红。
+```
+
+刀是真的跑过（描述里的两处红都属实），但**没提交**。手工验过一次的刀，在
+下一次重构时一文不值：它不会在 CI 里跑，也不会在别人改坏 `ws_server.py` 时叫。
+`check_knife_vacuity.py` 的整张表就是为了消灭这种「我记得验过」，而这里恰好是
+它的盲区 —— 表里没有的刀，工具不会去找。
+
+**读判据，读到两处空转**（先跑实验，再动刀，两处都是实测不是推测）：
+
+1. 把 `logger.warning(...)` 整段删掉 → 自测**照样全绿 exit 0**。
+   「先重试再报错」里的「重试」在日志上毫无痕迹：用户事后翻日志只看到最后一次
+   错误，看不到「试过 6 次」。而这段日志正是「03:11 那次到底为什么崩」的唯一线索。
+2. 把 `serve()` 提到循环外 —— **只真的 bind 一次**，然后空睡 5 次、再抛一模一样
+   的错 —— 自测**照样全绿**。`check(dt >= _BIND_ATTEMPTS - 1 - 0.5)` 量的是
+   **等待时长**，不是**重绑次数**；空睡 5.0s ≥ 4.5s，稳稳过关。
+
+第 2 条是致命的。2026-10-20 那次崩溃的形状不是「端口一直被占」，而是
+**旧实例正在退出、1~2 秒后释放**。空睡 5 秒对这个 bug 一点用都没有，而闸门
+分不出它和真修复的区别。原文件只有两端（一直空闲 / 一直被占），中间那段空白。
+
+**改动**
+
+1. 判据先行，13 条 → 19 条：
+   - 契约 2 补日志断言：`每次重试都留了日志（5 条 ≥ 5）` + `重试日志带端口号 + 「重试」字样`；
+   - 新增契约 4 `test_retry_then_success`：占住端口，1.2s 后用
+     `threading.Timer` 关掉监听 socket 模拟旧实例退出，断言 `start()` **成功起来**、
+     且确实经历过重试 warning、且没走满 6 次预算（2.0s < 5s）。
+2. `_WarnCatcher` 改挂**模块自己的 logger 对象**（`from src.ws_server import logger`），
+   不再挂 `logging.getLogger("src.ws_server")` 这个字符串名 —— 名字一改，判据就
+   静默变空转，「零 warning」永远是绿的，因为根本没人往这个 handler 里塞东西。
+3. 顺手修一个正文缺陷：报错串里 `str(last_err).rstrip("。")` 把 OSError 末尾的
+   句号吃掉却不再补，拼出来是「…只允许使用一次**若这是**第二个达妮娅实例…」。
+   崩溃弹窗里就是这么一整句读不通的话。改成 `rstrip("。") + "。"`。
+4. 新刀 `tools/_qc_ws_port_bind_mutation.py`，八刀：
+   A 只 bind 一次（删重试循环）/ B 重试但不等待（`sleep(1.0)`→`sleep(0)`）/
+   C 改回裸 `raise last_err` / D `_describe_port_holder` 恒空串 /
+   E 空闲时也开嘴（误报噪声）/ F 删掉 `logger.warning` / G `serve()` 提出循环
+   只 bind 一次空睡 5 次 / H 吃掉补回的句号。
+5. 登记：`GATES` 231 → **232**（`WS 端口绑定变异`，`slow=True`）；`PAIRS` 加一对；
+   `_qc_knife_vacuity_mutation.py` K11 额度 `dev 23 → 24`、总数 `31 → 32`。
+
+**两个坑，都是这一轮现踩的**
+
+① **第二份真相**。第一版的句读断言写的是 `"。若" in msg`。H 刀（吃掉句号）跑出来
+**没红** —— 因为 `holder` 自己就带句号（「端口 18794 正被进程 PID=… 占用。」），
+它拼在「若这是」前面，于是整条消息**永远**有「。若」，那条断言恒真。
+改成把 last_err 那一段单独切出来（`msg.split("次）：")[1].split("端口 18794 正被")[0]`）
+再判 `endswith("。")`，H 刀才红。**一条判据只要能因为别的原因通过，它就没在判它
+以为在判的东西。**
+
+② **崩了 ≠ 认出来了**（本轮第二次撞到）。H 刀第一版写成
+`str(last_err).rstrip("。")  # 变异刀：句号不补了` —— 行尾注释把后面的 `, holder)`
+一起吞掉，直接 SyntaxError。套件报「没抓住（测试失效）」，而 `_judged()` 拒绝把
+崩溃算成抓住，于是它以「有 1 处异常」收场。这个判定是对的：**换成 `+ ""` 之后
+它才是「语法正确、行为退回旧 bug」的刀**。工具没有把崩溃当成功，这一点值得记。
+
+**验证**
+
+- 自测 19 项全 PASS（13 → 19，新增 6 条），起点绿。
+- 八刀 8/8 全红，逐条点名：
+  A →「确有重试 / 每次重试都留了日志 / 端口中途释放后 start() 成功」3 项；
+  B → 2 项；C → 4 项（PID / 托盘指引 / data/ / 句读）；D → 2 项；E → 1 项；
+  F → 3 项；**G → 1 项（正是本轮新加的那条判据）**；H → 1 项（句读）。
+- 还原字节一致（sha256 前后相同）。
+- 空变异体检 `check_knife_vacuity.py --tier all --only ws_port_bind` → **CERTIFIED**
+  （D0 原样 exit 0 / D1 闸门≡0 exit 1 且自行报失败 / D2 闸门≡1 exit 1 且自行报失败）。
+- `check_gate_registry` 232 项全部有着落；`check_site_counts` 7 PASS / 0 FAIL
+  （`GATES` 231 → 232 回填 `site/index.html` 与 `site/PUBLISH.md`）。
+- `_qc_knife_vacuity_mutation` 13 项全 PASS，`K11 分层：portable 8 / dev 24`，0 处异常。
+
+**这道门以前从没被变异验过，现在它守得住自己声称守住的东西** —— 包括那条
+「重试」到底是「等了 5 秒」还是「又 bind 了 5 次」。
+
+#### PR #18（续九）· 两道闸门自己写着「只会打印不会判红，比没有更危险」，而它们的自测正好漏了这一条
+
+**选这两道门的理由**不是覆盖率排名，而是它们的失效形状。壳层那组闸门的共同点是
+**坏掉不报错，只是卡住**：
+
+- `check_async_blocking.py` 守「async 函数里做同步调用」——事件循环被占住，
+  症状是"卡一下"，不报错、不告警。2026-10-18 一天撞到四处（gewechat 回发 /
+  qzone 发布 / tts 的 `time.sleep(0.6)` / heavy_apps 的 `urlopen(timeout=5)`）。
+- `check_await_sync.py` 守「`await` 一个同步方法」——`await None` 抛 TypeError，
+  被事件总线 `except` 吞掉，功能静默失效。真实事故：`gewechat._on_decision` 里
+  `await self._safe_post(...)`，**微信回复从来没真正发出去过**，症状像"AI 不理人"。
+
+两道都自带自测、七条正反例，看上去是这一批里最不需要担心的。
+
+**但自测只测 `scan()`。** 两道门的自测都是这个形状：
+
+```python
+hits = C.scan(p)          # ← 七条全部只走这里
+ok = len(hits) == want
+```
+
+而真正决定闸门会不会判红的，是 `main()` 的最后一行：
+
+```python
+return 1 if all_hits else 0
+```
+
+这条路径**没有任何判据**。实测（不是推测）：把它改成 `return 0`，
+
+- 闸门退化成「只打印不判红」：可疑点一个不少地打印出来，但退出码永远是 0，
+  全量里永远绿；
+- 而自测**照样打印「全部通过 ✅」并 exit 0**。
+
+两个文件都中。讽刺的是 `test_check_async_blocking.py` 第 3 行自己写着：
+
+> 闸门如果只会打印不会判红，比没有更危险（本项目吃过"文本编码闸门永远 exit 0"的亏）。
+
+这句话守住了 `scan()`，却没守住 `main()` —— 它描述的正是它自己漏掉的那个洞。
+
+**先补判据，再加刀。** 两个自测各加两条断言：
+
+```python
+("有可疑点 → 1", "import time\nasync def f():\n    time.sleep(1)\n", 1),
+("干净 → 0",   "import time\ndef f():\n    time.sleep(1)\n", 0),
+```
+
+做法是建临时目录、写一个文件、调 `C.main([d])` 拿退出码（`main` 会打印，用
+`contextlib.redirect_stdout` 收走）。补完先验证它能开口：把退出码改回恒 0，
+两个自测都从「全部通过 ✅」变成「❌ 1 项未通过」。**验证过才动刀。**
+
+**补刀时撞出一个真缺陷。** 写 B 刀（取消 `to_thread` 豁免）时它没红，查下去发现
+`WRAPPERS` 那段逻辑是这样的：
+
+```python
+if nm and nm[1] in WRAPPERS:          # to_thread / run_in_executor
+    for a in n.args:                   # 把**实参里**的调用标成 safe
+        ...safe.add(id(c))
+```
+
+两件事同时成立：
+
+1. 对规范用法它**多余**——`to_thread(time.sleep, 1)` 传的是函数引用，`time.sleep`
+   是一个 `ast.Attribute`，根本没有 `Call` 节点可标；
+2. 对错误用法它**有害**——`to_thread(urlopen(...))` 的实参是在**事件循环里先求值**的，
+   那段阻塞已经发生了，豁免它等于把真阻塞标成安全。
+
+实测：
+
+```
+await asyncio.to_thread(urllib.request.urlopen("http://x").read())
+→ 修复前：可疑点 0 处
+```
+
+这正是 `heavy_apps.pull_cloud` 卡首启 5s 的形状。删掉豁免，补一条正例
+（`to_thread 实参里的同步调用（真阻塞，必须报）`），再确认规范用法不被误伤：
+全仓 `src` 命中 0 → 0，七条旧用例全绿。刀 B 改成「把豁免加回去」，它现在红了。
+
+**十刀。**
+
+| 门 | 刀 | 变异 | 被哪条判据点名 |
+|---|---|---|---|
+| 异步阻塞 | A | `return 1 if all_hits else 0` → `return 0` | main() 退出码 / 有可疑点 → 1 |
+| 异步阻塞 | B | 恢复 `to_thread` 实参豁免 | to_thread 实参里的同步调用（真阻塞，必须报） |
+| 异步阻塞 | C | 下钻嵌套 def（把 to_thread 的 worker 也查） | 嵌套 worker + to_thread（正常） |
+| 异步阻塞 | D | 阻塞表里删掉 `time.sleep` | async 里 time.sleep |
+| 异步阻塞 | E | 同步函数也一起扫 | 嵌套 worker / 同步函数里 sleep / main() 退出码（3 项） |
+| 协程调度 | A | `return 1 if all_hits else 0` → `return 0` | main() 退出码 / 有可疑点 → 1 |
+| 协程调度 | B | 消费者表删掉 `create_task` / `run` / `gather` | create_task 调度 / asyncio.run 消费 |
+| 协程调度 | C | 规则 1 失效（`await` 同步方法不再报） | await 同步方法 |
+| 协程调度 | D | 规则 2 失效（async 没调度不再报） | async 没调度 |
+| 协程调度 | E | 不再排除异步生成器 | 异步生成器 async for（正常） |
+
+C 和 E 这两类方向是**误报**方向，不是漏报。误报比漏报更快杀死一道闸门 ——
+所有人开始无视它，然后它就真的没用了。所以刀不能只砍「检测变弱」那一侧。
+
+**验证。** 协程调度自测 9/9、异步阻塞自测 10/10；两把刀 5/5、5/5 全红且各自点名；
+空变异体检均 CERTIFIED；`check_gate_registry` 231 项全部有着落、无重复登记；
+站点 7 PASS / 0 FAIL；四步（两道门的判据 + 两把刀）接进 CI `portable-gates` ——
+纯 stdlib、只读 AST，各约 1s，没有理由只在本机守。
+
+**空转体检自己抓到了这两把新刀。** `check_knife_vacuity.py` 有一条硬约束：声明了
+判定文件的刀必须进 `PAIRS`，否则直接报「这些刀声明了判定文件，却既不在 PAIRS 里、
+也没写不进的理由」。第一次全量跑就卡在这一步（0.1s 退出）—— 这不是意外，是那道门
+按设计工作。加完两对：31 对，**CERTIFIED 30 / SKIP 1**，D0 原样 exit 0、
+D1 判定≡0、D2 判定≡1 三向都过。
+
+加完之后 CI 立刻又红了一次，红在 `_qc_knife_vacuity_mutation.py` 的 K11 —— 它把
+「portable 8 对 / dev 21 对、合计 29」写死了。这不是它过时，是**额度对账**按设计工作：
+加了对却忘了改额度，说明你可能是「顺手加的」而不是「想清楚了」。同步改成
+portable 8 / dev 23、合计 31，K11 重新 PASS（`portable 8 / dev 23，互不混入`）。
+
+顺带记一条：第一次全量跑在 `变异刀空转体检` 上红了之后，我改的是 `PAIRS`（不是那道门
+测的东西），所以**上一轮 224 个绿点的结论已经作废** —— 必须重跑整轮，不能只重跑
+红的那一道。只重跑红的，等于默认「别的门在这次改动里不受影响」，而这个默认没有依据。
+
+#### PR #18（续八）· 同一类越界，三个兄弟函数只测了一个
+
+**怎么发现的。** 上一轮补完 `投影层自检` 之后，按盘点表继续还债，轮到产品关键路径
+上的三条安全边界：工作区边界、命令守卫、权限模式。打开 `tools/test_workspace_guard.py`
+准备给它补刀时先看它守什么 —— 六节里第 6 节写着「越界时**不写文件**（本轮修的核心）」，
+守的是 2026-10 那个 bug：越界路径被**悄悄改名塞进沙箱**，还回报「已写入」，用户以为
+改的是 `../那个文件`。
+
+顺手搜了一下另外两个兄弟函数：
+
+```
+grep -rn "_append_file\|_read_file" tools/*.py
+→ （无输出）
+```
+
+`_read_file` 和 `_append_file` 在**整个 `tools/` 目录下出现 0 次**。三个函数是同一段
+`_safe_path(name)` + `except WorkspaceEscape as e: return str(e)` 的三份复制粘贴，
+但只有 `_write_file` 有判据。
+
+**为什么这条比「覆盖率 42%」更值得先修。** 覆盖率是个平均数，平均数会盖住分布。
+这三个兄弟的失效后果完全不对称：
+
+| 函数 | 越界不拦的后果 | 有判据？ |
+|---|---|---|
+| `_write_file` | 脏数据：用户以为改了 A，实际改了 B | 有（第 6 节） |
+| `_append_file` | 同上，且是**追加**——把内容混进一个不该动的文件 | **无** |
+| `_read_file` | **任意文件读取**：密钥盒、`config.yaml`（用户 API Key 全在里面）、导出的凭据，全部能进模型上下文 | **无** |
+
+写坏一个文件是事故，读穿一次是**泄露**，而且读穿的痕迹比写坏小得多：没有文件被改，
+没有任何报错，只有上下文里多了一段本该看不见的东西。
+
+**先有判据，才有刀。** 第 6b 节的第一条断言不是「读越界被拒」，而是先**造一个真存在、
+真可读的区外文件**：
+
+```python
+secret = os.path.join(outside, "secret.txt")
+with open(secret, "w", encoding="utf-8") as f:
+    f.write("TOPSECRET-PAYLOAD")
+```
+
+不造这个文件的话，「读不到」可能只是因为文件不存在 —— 判据会在实现完全坏掉的情况下
+照样绿。这和本仓「先有判据，才有刀」是同一条纪律的另一面：**判据必须能开口，而
+「开口」要求被测的那条路本来是走得通的**。
+
+四条断言：返回里说明越界 / 没把区外内容读进来 / 区外文件没有被创建 /
+沙箱里也没多出这个文件。最后一条专门钉 2026-10 那个 bug 在 append 分支上的同形复制。
+
+**刀。** `工作区边界` 从三刀到六刀：
+
+| 刀 | 变异 | 被哪条判据点名 |
+|---|---|---|
+| D | `_write_file` 的 except 分支改成改名写进沙箱 | 沙箱里也没多出这个文件 |
+| E | `_read_file` 的 except 分支改成拼到工作区再读一次 | 没把区外内容读进来 |
+| F | `_append_file` 的 except 分支改成改名写进沙箱 | 沙箱里也没多出这个文件 |
+
+`命令守卫` 从三刀到五刀。原来三刀全在**前置检查**上（cwd / 白名单为空 / 元字符），
+没有一把碰真正执行的那一行：
+
+| 刀 | 变异 | 被哪条判据点名 |
+|---|---|---|
+| D | `if not ctx.get("allow_cmd"):` → `if False:` | allow_cmd=false 拒绝 |
+| E | `shell=False` → `shell=True` | shell=False :: True |
+
+D 是「没配就等于全开」的翻版，但入口不同：`allow_cmd` 是**模型自报**的开关，
+原判据是 fail-closed（缺省即拒）。改成只在显式 false 时拒，任何没配白名单的会话
+都会直接落到后面的白名单检查 —— 白名单里恰好有 `echo`，就变成「模型说可以就可以」。
+
+**一个被自己否掉的做法（记下来，免得下次再走）。** 这两条判据的第一版，是新建
+`tools/_qc_workspace_guard_mutation.py`（四刀）和 `tools/_qc_run_command_guard_mutation.py`
+（五刀），跑出来 4/4、5/5 全红，空变异体检 CERTIFIED，看上去完全合格。
+
+问题在于：仓库里**已经有** `_qc_workspace_mutation.py` 和 `_qc_run_command_mutation.py`，
+砍的是同一条判据。两把刀同时存在不会让判据更硬，只会：① 让 CI 时间翻倍；
+② 给「覆盖率」造出第二份真相 —— 以后统计「有多少道判据有刀」时，两个文件各算一次，
+数字虚高；③ 谁改坏了其中一个，另一个还在，**红不红取决于哪把先跑**。
+这正是 `catalog.py:98` 自己写的那句「不复制逻辑（第二份真相是 bug 温床）」。
+删掉两个新文件，只把真正新增的三把（D/E/F、D/E）并进既有文件。
+
+**顺带：跟进 master，解掉合并冲突。** 这轮开始时 master 还是 `b945b4ca`，推到一半
+发现它前进到了 `c264700e`（中间合入了 89 个 PR），GitHub 已经把 PR #18 标成
+`mergeable=false / dirty`。做了一次真合并（不是 rebase：冲突只解一次，历史保留），
+5 处冲突三种判法：
+
+1. `tools/check_delivery.py` + `tools/_qc_delivery_mutation.py` —— **取 master 侧**。
+   两边**独立修了同一个 bug**（`check_template` 断言 `force_first_run is True`，
+   方向写反）。master 的修法更新且更完整（多一条「出厂模板不许预置 `first_run_done`」），
+   本分支那两处属于被取代 —— 同一判据留两份实现，就是又造一份第二真相。
+2. `tools/check_all.py` —— **两边都留**。本分支在 `GATES` 尾巴加了 6 条，master 加了
+   2 条（试听播放生命周期），互不相干，谁都不该被删。合并后 `len(GATES) = 229`。
+3. `site/PUBLISH.md` + `site/index.html` —— **两边都不对**。纯数字锚点（227 vs 217），
+   而合并后是 229。先取本侧再由 `check_site_counts.py --fix` 回填，锚点重新对账。
+
+**验证。** `test_workspace_guard` 20 PASS / 0 FAIL（原 15）；六刀全红且各自点名，
+还原后 sha256 逐字节一致；五刀全红；两把刀空变异体检均 CERTIFIED（起点绿，空变异
+exit 1 分别报 6 处、5 处异常）；合并后 `check_gate_registry` 229 项全部有着落、
+无重复登记；`check_site_counts` 7 PASS / 0 FAIL；PR 恢复 `mergeable=true / clean`。
+
+#### PR #18（续七）· 刀指向了一条不存在的判据：`CALL_SITES` 是一份没人对账的第二真相
+
+**为什么这一轮不修产品、只修仪器。** 前几轮的红点都来自「跑一遍全量」。全量已经
+0 红了，可 0 红只说明**现有的判据没被违反**，不说明**判据本身有牙**。这两件事差得
+很远：一道恒绿的判据，在全量里和一个真判据长得一模一样。所以本轮改做盘点。
+
+**盘点方法**（试了三次才对）：`GATES` 是 `AnnAssign` 不是 `Assign`（第一版
+`ast.Assign` 匹配到 0 条）；刀名 `_qc_X_mutation` 与门名 `check_X` 不同名，靠
+归一化去配对会漏掉一半；最后改成**逐门扫 `tools/_qc_*.py` 正文里有没有出现该门的
+脚本文件名**，得到：
+
+    判据门 151 ｜ 有刀 63 ｜ 没刀 88（42%）
+    非 lookalike 的其它闸门 6：字节码编译 / 前端死引用 / 壳自愈端到端 /
+                              导入冒烟 / 陌生人首启判据链 / A5环境探针
+
+88 道没刀的门里，本轮先挑 `投影层自检`：它在 2026-10-21 转绿后跑了两年多，
+**从来没有刀**，而第三十轮刚动过它的入口（缺 `config.yaml` 就退到出厂模板）。
+我动了判据的入口，就得证明牙还在 —— 这是本仓自己的规矩。
+
+**头一版四把刀，两把是废刀。** M2 打算「`CALL_SITES` 删一项」、M3 打算「让两个 id
+撞车」，跑出来是：
+
+    FAIL M2 CALL_SITES 少一项（13 → 12）：锚点命中 0 次（应恰好 1 次），锚点已腐烂
+    FAIL M3 CALL_SITES 两个 id 撞车：锚点命中 0 次（应恰好 1 次），锚点已腐烂
+
+第一反应是锚点写错了 —— 确实写错了，真实源码里三个 id 挤在同一行
+（`"brain.cascade", "brain.agent", "ocr.engine",`），我却按每行一个去写。
+但修锚点时撞见了更麻烦的事：**改 `CALL_SITES` 根本不会让这道门变红。**
+
+    CALL_SITES = ["chat.text", ..., "credentials.inventory"]   # __all__ 里导出
+    def build_model_view(raw):
+        sites.append({...})   # ← 13 段手写，逐个 append
+        sites.append({...})
+
+`CALL_SITES` 是「13 个调用点」的**第二份声明**，被 `__all__` 导出、被 UI 和文档引用，
+可建视图的代码压根不读它。于是：删掉一项、或改成两个 id 撞车，视图照样 13 条、
+`[OK] 13 个调用点齐全` 照样打印、门照样 exit 0 —— **声明与实现可以任意漂移，
+没有任何人会发现**。那道「调用点数应为 13」的判据，守的从来不是 `CALL_SITES`。
+
+这正是 `catalog.py` 第 98 行自己写的那句：
+
+    # 6 槽位：**直接调** model_registry，不复制逻辑（第二份真相是 bug 温床）
+
+它防住了槽位那一层，唯独漏了自己文件里的这个常量。
+
+**修法分两步，顺序不能反：先有判据，才有刀。** 在闸门里补一条逐项对账
+（`sorted(declared) == sorted(ids)`，重复也计入，不一致就点名两边各自的差集），
+然后让 M5 刀去撞这条**新**判据。最终五刀：
+
+| 刀 | 打哪条判据 | 期望点名 |
+|---|---|---|
+| M1 | 让 `build_model_view` 偷改 `raw` | 只读性 |
+| M2 | 返回前 `sites = sites[:-1]`（13 → 12） | 调用点数应为 13 |
+| M3 | 把 `credentials.inventory` 的 id 改成 `ocr.engine`（撞车） | id 重复 |
+| M4 | `summary` 里 `in_slot` 凭空 +1 | summary 不自洽 |
+| M5 | `CALL_SITES` 删一项（声明漂移） | CALL_SITES 与视图不一致 |
+
+M2/M3 的锚点也一并换成**真正会跑的代码**（`ready_n = sum(...)` 之前、
+`"id": "credentials.inventory"` 那一行），不再指向常量。
+
+**两处仪器自身的坑，记下来。**
+
+① 新刀首跑被空变异体检判 `SHAPE`：
+
+    有 MUTS 但形状看不懂（分不清 old / new（没有两个可调用对象或两个 bytes））
+
+五元组 `(标签, 目标文件, 原文, 替换, 关键词)` 里三项都是 str，工具没法靠类型猜。
+按本仓约定补一行 `NOOP_SHAPE = ("idx", 2, 3)` 后 → `CERTIFIED`
+（起点绿 / 空变异 exit 1 报 5 处异常）。**判 SHAPE 不算通过**，别当绿灯读。
+
+② `check_knife_nowrite.py` 对这把刀报 `COVERED_ELSEWHERE` —— 有模块级 `MUTS`
+的归空变异体检管，不重复算。三道体检的分工要在读数时心里有数，别把
+「没跑」当成「跑了且通过」。
+
+**留给以后的自己一句话**：锚点腐烂只是噪音，**刀指向一条不存在的判据**才是真问题。
+前者报错很响（命中 0 次），后者悄无声息 —— 你会以为自己在验，其实在验空气。
+
+**验证**：投影层自检 16/0 → **17/0**（新增对账一行 `CALL_SITES 声明与视图逐项一致（13 项）`）；
+五刀全红且各自点名，还原后仍绿、sha256 逐字节一致；空变异体检 **CERTIFIED**；
+`闸门退出码` 221 脚本 0 命中；`工具脚本导入路径` 33 PASS/0 FAIL；
+登记对账 ✓（222）；站点 7 PASS/0 FAIL（GATES 221→**222**）。
+
+
+**续：接着还债，先还「用户能看见的那一层」。** 88 道没刀的门里，`视频观看` 和
+`视频进度` 排在最前面 —— 不是因为它们最核心，而是因为它们**刚被我动过**（第三十轮
+修 `_resolve_ffmpeg` 的 mock），而且它们守的东西用户真的看得见：
+
+- `视频观看` 是一条链：URL 白名单 → 抽帧 → 送 VLM → 拼上下文。任何一环断掉，
+  现象都是「点开只会看个空壳」，而测试全绿。
+- `视频进度` 是进度条：`watch_video` 发阶段 → `_make_video_progress` 转事件 →
+  总线 `publish_threadsafe`。断在哪一环都是「进度条不动 / 一直转圈」，而回调异常
+  被 `except` 吞掉、日志里看不出所以然。
+
+六刀 + 五刀，**一次全红**（11 个变异，锚点都先在源码里验过命中恰好 1 次）。
+这里有一个判据形态上的差异值得记下来：这两道判据的输出是 unittest 的
+`FAILED (failures=1)`，不是本仓闸门惯用的 `[FAIL]` 行。所以 `_judged()` 换成
+`rc != 0 and "FAILED (" in out` —— 但**语义没变**：崩溃（ImportError / Traceback）
+同样 exit 1 却不打 `FAILED (`，仍然能把「判出来了」和「崩了」分开。
+换形态不换语义，这是这条纪律的关键。
+
+
+**再补一道：`抓屏性能闸`。** 它和前面两道不同 —— 它守的不是「功能对不对」，而是一条
+**真炸过**的性能底线。2026-08-25 修掉的那个 bug：游戏或锁快照期间画面长时间静止，
+`_next_interval` 的 static 加速会把采样间隔打到 ~1s，每帧全屏抓屏 + resize + pHash +
+JPEG 编码，核显本直接被拖垮。27 条判据分 A/B/C/D/E/F 六组，**从来没有刀**。
+
+五刀打 A/B/D 三组：
+
+| 刀 | 变异 | 点名 |
+|---|---|---|
+| G1 | `low_rate` 档不再守低频底线（落回 static 加速） | A2 |
+| G2 | 静态加速乘数被去掉（`*= 1.0`） | A3 |
+| G3 | 主路径不再传 `low_rate`（云端接管时偷偷提速） | B1 |
+| G4 | 让位分支不再传 `low_rate=True` | B3 |
+| G5 | `main.py` 两处构造去掉 `low_rate_check` | D11 |
+
+**G5 有一个别处没有的形状**：它的锚点 `low_rate_check=_game_check_or_locked,` 在
+`main.py` 里**逐字出现两次**（1346 / 3214）。这不是巧合，而是 D11 判据的语义 ——
+「**每一处** `ScreenCapture` 构造都要带 `low_rate_check`」，`all(...)` 少一处就红。
+所以这把刀给 MUTS 加了一个「期望命中次数」字段：G5 写 2，其余写 1；
+命中数不符一律报「锚点已腐烂」，**不硬改**。
+
+这条比「锚点命中 0 次」更隐蔽：命中 2 次时如果按 `replace` 改掉两处，
+判据红了、刀报 PASS，看着完全正常 —— 但如果那两处本来就该只改一处（比如
+`_qc_models_layer_mutation` 的 M2），改两处就是**过度变异**，红的原因和刀想验的原因
+不是同一件事。把期望次数写进数据，这类错误就没法悄悄发生。
+
+
+**第四道：`密钥盒加密`。** 这道和前面三道性质不同 —— 它守的是**安全底线**：
+磁盘上不许出现明文 Key。用户的 OpenAI / 百炼 Key、QQ cookie 全在 `config.yaml` 里。
+20 条判据从 2026-10-18 起就在跑，**从来没有刀**。
+
+这类判据的失效方式特别阴：加密函数照常返回、`Config.save` 照常写盘、日志照常打
+「已加密」，只是密文里其实还是明文 —— 没有报错，只有某天有人 `cat config.yaml` 才看得见。
+
+| 刀 | 变异 | 点名 |
+|---|---|---|
+| S1 | 密文不带 `dpapi:` 前缀（等于没加密） | 密文带 dpapi: 前缀 |
+| S2 | `seal_tree` 不递归进嵌套 dict | 嵌套 dict 已加密 |
+| S3 | 密钥字段表加宽（把 `name` 也当密钥） | 空串与非密钥字段不动 |
+| S4 | 解不开的密文不记失败（换机时静默丢 Key） | 解不开的密文给出降级提示 |
+| S5 | `is_sealed` 恒 False | encrypt→decrypt 往返还原明文 |
+
+**一个被否掉的变异方向，值得单独写下来。** S5 最初写的是「`is_sealed` 恒 **True**」，
+逻辑上更「激进」—— 谁都被当成密文，判据应该炸得更响。实际跑出来是：
+
+    binascii.Error: Invalid base64-encoded string
+
+因为 `decrypt_secret(PLAIN)` 会拿一段普通文本去 base64 解，`validate=True` 当场抛。
+脚本带 Traceback 退出，`  ✗ ` 一行都没打 —— 我的 `_judged()` 判它「红了但没点名」，
+刀自己报 FAIL。这不是判据的错，是**刀选错了方向**：恒 True 让判据还没开口就崩了，
+恒 False 才让它走到「往返还原失败」那一句。
+
+**刀的变异方向要选判据能开口的那条，不能选让判据闭嘴的那条。** 这条和第三十轮
+「崩了 ≠ 认出来了」是同一件事的两面：那边防的是把崩溃当抓取，这边防的是
+**自己制造崩溃然后怪判据**。
+
+
+**第五道：`开机自启`，以及它暴露的判据缺陷。** 这道门守「用户登录时到底跑什么」，
+18 条断言从没配过刀。最想打的一刀是「`disable` 删错值名」—— 那正是 2026-10-18
+真实泄漏的那次：真实 `HKCU\...\Run` 里留下一条指向已删 tempfile 的死命令，
+用户下次登录弹「无法运行」。
+
+**这一刀一开始写不出来。** 原因很实在：刀的 finally 只还原**源码字节**，删不掉
+已经被错误逻辑漏掉的注册表项；而测试自己的 finally 调的**正是被变异的 `disable`**。
+于是每跑一次刀，本机就多一条死命令 —— 验个判据反而污染用户环境，这笔账不划算。
+所以第一版刀只写了五把，并在注释里写明「要验 disable，得先给测试加钩子，另开一轮」。
+
+**然后想明白：这不是「刀不能写」，是判据有缺陷。** 清理路径依赖被测对象 ——
+`disable` 一旦真回归，`test_autostart` 自己每跑一次也会留一条残留，只是没人注意到。
+清理是测试的卫生责任，不能托付给被验的对象，就像不能用一个坏掉的删除键去证明
+「删干净了」。改法很小：
+
+    def _raw_delete(value_name: str) -> None:
+        import winreg
+        try:
+            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, autostart.RUN_KEY, 0,
+                                winreg.KEY_SET_VALUE) as k:
+                winreg.DeleteValue(k, value_name)
+        except OSError:
+            pass
+
+`finally` 里三处 `autostart.disable(...)` 全换成 `_raw_delete(...)`，与实现彻底解耦。
+改完 A6 才写得出来，而且**跑完复查 HKCU Run：7 个既有值、0 残留** ——
+`disable` 被破坏时清理仍然干净，这就是修复的实证，不是「我读了一遍代码觉得对」。
+
+**顺序又出现了：先修判据，再加刀。** 与 M5 那次「先有判据才有刀」是同一个道理，
+只是这次修的不是「判据缺一条」，而是「判据自己的卫生不可靠」。
+
+| 刀 | 变异 | 点名 |
+|---|---|---|
+| A1 | `command_for` 不加引号 | 带空格路径须有引号包裹 |
+| A2 | 用 `python.exe` 而不是 `pythonw` | 用 pythonw（无控制台） |
+| A3 | `is_enabled` 遇 OSError 返回 True | 不抛不误报 |
+| A4 | `sync(False)` 也去 enable | sync(False) → 关 |
+| A5 | `read_command` 异常时返回 `""` | read_command 同路径 |
+| A6 | `disable` 删错值名 | disable → False |
+
+#### PR #18（续六）· 最后 12 个红点：一半是缺夹具，一半是测试自己没隔离
+
+上一轮把「`git ls-files` 问不到」那一族修完，剩下 5 道门 + 2 个视频用例。逐条查下来，
+**没有一条是产品缺陷** —— 但它们分成性质完全不同的两类，处理方式也不该一样。
+
+**一、`config.yaml` 一族（4 道门 + 1 个文件）**
+
+`config.yaml` 在 `.gitignore` 里（实配，含 api_key），所以**任何新克隆的树上都没有它**：
+
+```
+投影层自检      FileNotFoundError: .../config.yaml
+ASR 事件流      FileNotFoundError: 'config.yaml'
+桌面视频 e2e    FileNotFoundError: .../config.yaml   （7 个用例全 error）
+抓屏性能闸      D8 真实 config.yaml 判定与原文一致   ← 26 PASS / 1 FAIL
+视频进度        3 个用例 FileNotFoundError
+```
+
+处理：退回出厂模板 `config.release.yaml` 当夹具。这不是"凑绿"—— 这几条验的是
+「视图构建对一份合法配置做了什么」「进度事件有没有发到总线」「`desktop.media.watch_videos`
+默认是不是 true」，**与 api_key 无关**；而且出厂模板恰恰是"用户拿到的那份默认值"，
+拿它验默认值比拿实配验更有意义。两份都没有才报 77。
+
+**二、视频两道：不是缺 ffmpeg，是测试自己没隔离**
+
+这条值得单独写，因为它的失败长相极具误导性：
+
+```
+[媒体观看] 无 ffmpeg，跳过抽帧（仅基于标题/简介理解）
+FAIL: test_success ... AssertionError: '厨房' not found in '…（未能取到可看的画面/图片…）'
+```
+
+看起来是"本机没装 ffmpeg"，加个 `pip install imageio-ffmpeg` 就完事。但读测试：
+
+```python
+with patch.object(vw, "download_media", ...), \
+     patch.object(vw, "sample_frames", ...):     # ← 抽帧已经 mock 了
+```
+
+**它已经 mock 了 `sample_frames`。** 那为什么还走到"无 ffmpeg"分支？因为
+`watch_video` 里那道闸是：
+
+```python
+ffmpeg_exe = _resolve_ffmpeg()
+if video_files and ffmpeg_exe:      # ← 前置能力探测，没被 mock
+    raw_frames = await sample_frames(...)
+```
+
+`_resolve_ffmpeg()` 是**前置探测**，mock 的是**下游**。没装 ffmpeg 时前置探测返回
+`None`，整个分支被跳过，那个 `sample_frames` mock **一次都没被调用**。
+
+所以这条用例的结论取决于**跑它的机器有没有 ffmpeg**，而不是代码对不对：
+装了 → 绿，没装 → 红，而 `sample_frames` 这个 mock 形同装饰。
+`test_video_watch_progress` 里 `test_success_run_recorded` 断言 `frames == 2`
+失败（拿到 0）也是同一个原因。
+
+修法不是装 ffmpeg，是**把前置探测一起 mock**：
+
+```python
+patch.object(vw, "_resolve_ffmpeg", return_value="/fake/ffmpeg")
+```
+
+补完后 `test_video_watch` **21/21**、`test_video_watch_progress` **7/7**。
+**注意这里没有用 77** —— 这条判据在缺 ffmpeg 的机器上**完全跑得起来**，
+只是它自己没隔离环境；报 77 会把一份本来能拿到的覆盖白白丢掉。
+
+**三、感知哈希：`imagehash` 是故意不在 requirements 里的**
+
+`requirements.txt:25` 写着用 numpy 自实现替代 imagehash。所以"本机没装 imagehash"
+是**正常状态**。原来 `test_phash.main()` 直接 `return 1`，在汇总里与真回归长得一模一样，
+只能靠人去看那一行文字。改为 `[SKIP]` + 77，并给出 `pip install imagehash==4.3.2`。
+
+**四、顺带：`_pick_python` 的静默降级现在会说出来**
+
+GATES 里 32 项声明用内置运行时、其余用 `.venv`。但内置运行时不存在时
+`_pick_python` **静默**换成 `sys.executable` —— 在交付包工作副本里（没有 `python/`），
+全部闸门其实都由当前解释器跑，而汇总一个字不提。这与本轮主题（缺环境要说缺环境）
+是同一件事，所以开跑前打一行：
+
+```
+⚠ 内置运行时不存在：…\python\python.exe
+   声明用它跑的那几项会改由当前解释器执行：…\.venv\Scripts\python.exe
+   —— 分档在这台机器上不成立；不是失败，但读数时要知道
+```
+
+**验证**：全量 **14 红 → 0 红**（211 项判完 / 10 项跳过 / 0 红）。
+逐门读数：投影层 16/0、ASR 事件流全过、桌面视频 e2e 7 OK（原 7 errors）、
+抓屏性能闸 **27/0**（原 26/1）、视频观看 **21/21**、视频进度 **7/7**、感知哈希 77。
+
+#### PR #18（续五）· 「问不到」被当成「答否」：三道闸门在非 git 工作树里恒红
+
+
+上一轮记录了一个没修的发现：在交付包工作副本里跑全量，14 项红里有 12 项与产品无关。
+这一轮先修其中最硬的一族 —— **`git ls-files` 问不到**。
+
+**现象**（同一台机器，只是目录没有 `.git`）：
+
+```
+【必需资产清单】FAIL app.ico :: 在磁盘上但没进 git —— 打包只取 git ls-files，包里会缺
+               结果: 0 PASS / 10 FAIL          ← 10 件产品素材全被判"没入库"
+【陌生人首启判据链】FAIL 副本建立成功  <- RuntimeError('git ls-files 失败：fatal: not a git repository')
+【源码包排除规则】✗ 取不到 git 文件清单（exit 128）。本脚本要求仓库是 git 工作树。
+```
+
+**根因不是 git 坏了，是判据把「问不到」当成了「答否」**：`git ls-files` 在非仓目录里
+返回 128 + `fatal: not a git repository`，而「这个文件确实没入库」返回 1。原来的代码
+只判 `returncode != 0`，两种完全不同的情况走进同一个分支，于是输出了一句
+**它没有验证过的断言**：「在磁盘上但没进 git —— 包里会缺」。而文件在上游是跟踪的。
+
+这比"误报"更糟：它给的是一个**看起来可执行**的错误结论（去 `git add` 吧），
+真去做了反而会把 `config.yaml` 之类的实配加进仓库。
+
+**修法分两种，都不许报绿**：
+
+| 闸门 | 依赖 git 的部分 | 处理 |
+|---|---|---|
+| `test_bundled_assets` | 只有「是否入库」这一项 | 拆成 `yes/no/unknown` 三态：存在 / 非空壳 / 真格式**照常逐件判**，只有入库报「未验证」，末尾 `exit 77` |
+| `verify_first_run` | 第一步「按 `git ls-files` 造干净副本」 | 新增 `NoGitWorkTree` 异常 → `[SKIP]` + 77。**整条链 7 步一步没跑，不能说验过** |
+| `test_pack_for_teammate` | 只有 `[3]/[3b]` | 只跳过这两节，红线 / 规则表 / `verify_zip` / 随包说明四节照常判，末尾 77 |
+
+**三把刀也跟着连环自爆，处理同样分两种**：
+
+- `_qc_bundled_assets_mutation`：三刀（删文件 / 截断成空壳 / 换成假格式）**都不需要 git**。
+  基线判据从「`returncode == 0`」放宽成「`returncode in (0, 77)` 且没有 FAIL 行」，
+  三刀照常跑 —— 实测仍**三刀全红 + 还原字节一致**。能验的继续验。
+- `_qc_pack_exclude_mutation`：变异目标就在 `[3]` 里，前提没了。整把报 77，
+  不硬凑一个"全红"出来 —— 那种红什么都不证明。
+
+**验证**：
+
+- `必需资产清单`：`0 PASS / 10 FAIL` → `0 PASS / 0 FAIL / 10 未验证`，exit 77，
+  逐件打印「存在/非空壳/真格式 已验，但「是否入库」未验证」。
+- `陌生人首启判据链`：`RuntimeError` 判红 → `[SKIP]` exit 77（原因写清"7 步一条都没跑"）。
+- `源码包排除规则`：四节照判全 ✓，末尾 `[SKIP]` exit 77。
+- `_qc_bundled_assets_mutation`：`起点不绿` → **起点绿 + 三刀全红 + 还原字节一致**。
+- `_qc_pack_exclude_mutation`：`基线就不绿` → `[SKIP]` exit 77。
+- 静态闸门（字节码 / 编码 / 全局名 / 同名 / 不可达 / 常量条件 / 静默异常 / 导入路径）全绿。
+
+**还剩**：`config.yaml` 一族（投影层自检 / ASR 事件流 / 桌面视频 e2e / 抓屏性能闸 D8）
+与 `感知哈希`（缺 `imagehash`）共 5 项，同一处理，下一轮。
+
+#### PR #18（续四）· 闸门在推荐解释器下起不来：「跑得起来的那个会掩盖跑不起来的那个」
+
+
+**问题**：`check_all.py` 全量跑，**一行闸门都没执行就退出**，报
+
+```
+File "...\tools\check_all.py", line 787, in <module>
+    from _gate_lock import acquire, release
+ModuleNotFoundError: No module named '_gate_lock'
+```
+
+看起来像环境坏了（少装了什么），实际是这道门**在推荐解释器下从来起不来**：
+`.venv/Scripts/python.exe tools/check_all.py` 必崩，`python tools/check_all.py` 正常。
+
+**根因**：交付包自带的是**可嵌入运行时**，`python/python312._pth` 把 sys.path 写死成
+
+```
+.   DLLs   Lib   Lib\site-packages   …   ..
+```
+
+最后那个 `..` 是仓根 —— 所以 `main.py` 顶部的 `from src.xxx import` 能用，
+但 **`tools/` 不在里面**。普通 CPython 会把「脚本所在目录」放进 `sys.path[0]`，
+可嵌入运行时不补这一条。于是同一份代码：
+
+| 解释器 | `tools/check_all.py` |
+|---|---|
+| `python`（普通 CPython） | 能跑（`sys.path[0] == tools/`） |
+| `.venv/Scripts/python.exe`（推荐解释器） | `ModuleNotFoundError: _gate_lock` |
+
+而 `.venv` 恰恰是要三方依赖时的推荐解释器 —— 也就是说**这道门在官方推荐姿势下从未跑起来过**。
+
+**为什么一直没暴露**：因为这属于「跑得起来的那个解释器会掩盖跑不起来的那个」。
+开发机上两条路都试过，先用普通 `python` 试通了就不再怀疑；而 CI 里 `python` 也是
+普通 CPython。这类故障有个共同特征：**报的是 ModuleNotFoundError，不像判据失败，
+更像环境问题**，于是人第一反应是去装包，越查越远。
+
+**修**：`check_all.py` 尾巴补三行（`sys.path.insert(0, 脚本目录)`）。同一族在
+PR #17 已经修过一次（`check_web_js_syntax` 只把仓根塞进 sys.path，而
+`check_bridge_methods` 在 `tools/` 下）——**同一族第二次复发**，所以这次不只修，
+还补了判据。
+
+**新闸门 `tools/check_tool_sys_path.py`**（纯 stdlib、只读 AST、181 个脚本约 0.2s）
+三条判据：
+
+1. 【正向】`check_*` / `test_*` / `_qc_*` 里凡 import 了兄弟模块（`tools/<名>.py` 存在），
+   就必须在**模块层**、或该 import 之前同一/更外层作用域里，有一次 sys.path 改写。
+2. 【自洽】那次改写的实参必须由本脚本路径推导（`__file__` 或其派生名，
+   含 `for p in (ROOT, …)` 这种一层中转），**不许写死盘符路径** —— 写死的换台机器等于没写。
+3. 【覆盖】必须真的扫到兄弟 import；扫到 0 个 = 判据自己瞎了，不算通过。
+
+两类**不计分**但必须打印：写在接了 `ImportError` 的 `try` 里的「降级导入」
+（如 `check_package_secrets` 找不到 `check_web_assets` 就转警告）、以及带
+「不进闸门：」标记的免登脚本。理由：这两种都不是「起不来」。
+
+为什么不用「跑一遍试试」当判据：那要求每道闸门都真跑起来，而闸门里有一半要声卡 /
+模型 / 14 分钟；更关键的是**试出来的绿是假绿**（见上表第一行）。
+
+**这道门第一次跑就抓到一个真的**：`_qc_api_wiring_mutation.py` 函数里两处
+`from check_api_wiring import KNOWN_UNWIRED`，靠的正是「解释器补脚本目录」。
+补 `sys.path` 后，本轮全量跑里那条 **`反向接线变异` 整条挂掉的记录**（`ModuleNotFoundError:
+No module named 'check_api_wiring'`）随之消失，四把刀（起点绿 / M1 / M2 / M3 / 还原后绿）
+全部回到正常。**先被静态判据指出来、再被真跑确认** —— 这也是新闸门有牙的证据之一。
+
+**顺手发现但本轮没修（记在这里，别让它消失）**：在**交付包工作副本**（无 `.git`、
+无 `config.yaml`）里跑全量，**14/215 项红**，其中 12 项与产品无关：
+
+| 类 | 闸门 | 真实原因 |
+|---|---|---|
+| 无 git 工作树 | 必需资产清单 / 源码包排除规则 / 陌生人首启判据链（+2 把变异刀） | `git ls-files` 失败，脚本**把「问不到」当成了「答否」**，于是报「在磁盘上但没进 git —— 包里会缺」，而文件在上游是跟踪的 |
+| 无实配 | 投影层自检 / ASR 事件流 / 桌面视频 e2e / 抓屏性能闸 D8 | `config.yaml` 在 `.gitignore` 里，工作副本没有 |
+| 缺三方包 | 感知哈希 | venv 里没有 `imagehash` |
+
+这七道闸门全都 `exit 1`，而按本仓既有约定**「缺环境 ≠ 判据失败」应报 77**。
+本轮只记录、不改：改它们要逐道确认「真的缺环境」与「真的判据红」的边界，
+属于下一轮的事；但**现在这 12 个红点会把真红点淹掉**，所以先写进这里。
+
+**验证**：
+
+- `check_all.py` 在 `.venv` 下**能拿到锁并跑完**（本轮全量 215 项判完、4 项跳过、
+  14 项红，红的构成见上表 + 2 项视频用例）；修复前是 5 行 traceback。
+- 全量跑里 **`变异刀空写体检` 428.9s**，远低于新给的 1800s 慢项预算 —— 上一轮
+  「新闸门放进整轮里能跑完」这个断言到此为止才算证实（原来 600s 写死超时会把它 kill）。
+- 新闸门 **33 PASS / 0 FAIL**：扫到 181 个脚本，15 个真 import 兄弟模块，
+  1 个降级导入（`check_package_secrets`），2 个免登跳过。
+- 新变异刀 **11 项全过**：G 正常 / T 路径经 `for` 中转 / M 漏补 / H 写死盘符 /
+  A 先 import 后补 / S 补在函数里 / B 语法错误 / D 降级导入不算红 / K 免登不算红 /
+  X1 空目录 / X2 目录不存在。桩脚本全在临时目录里，不碰仓库。
+- `check_gate_registry` ✓ 全部有着落（220 个登记脚本）；`check_gate_exit` 220 脚本 0 命中；
+  `check_site_counts` 7 PASS / 0 FAIL（GATES 219 → **221**，站点 4 处锚点同步）；
+  `check_open_encoding --strict` 0 处；`check_module_globals` / `check_duplicate_def` /
+  `check_unreachable` 对 `tools` 全干净。
+
+#### PR #18 · 18 把变异刀是空转的：判定崩了也被算成「抓住了」
+
+
+**问题**：第二十二轮新增「变异刀空转体检」——把判定文件换成退化实现（恒 exit 0 / 恒 exit 1），
+看刀认不认得出来。那一轮只覆盖 7 对 `portable` 的，body 里明确留了"另外 9 个闸门族 +
+61 个特性族的刀没验"。本轮把这两块都过了一遍，**18 把刀在「判定恒红」方向判据失效**。
+
+根因是同一句：
+
+```python
+caught = r.returncode != 0
+```
+
+它把两件事当成一件事：**判定判出了问题** 和 **判定根本没跑起来**。
+实测把 `check_release_numbers.py` 换成一句 `raise RuntimeError("闸门自己崩了")`，
+`_qc_release_numbers_mutation.py` 仍然逐条打印「已抓住：<无输出>」、最后打印
+「5 刀全红」并 **exit 0** —— 一个连第一行都跑不完的判定，被认证成"五刀全抓"。
+
+更隐蔽的一层：**恒红的判定能让每一把刀都变红**。所以"全红"这个读数，在起点不绿的时候
+什么都不证明；而旧版套件从来不检查起点。
+
+**改动**：18 把刀统一加 `_judged()` + `_baseline_green()`：
+
+- `_judged(r)`：判定是「判出了问题」——`returncode != 0` **且** 输出里有 `FAIL`/`✗`
+- `_baseline_green()`：起点必须绿，否则直接 `FAIL 起点就不是绿的` 并 `return 1`
+
+**这个判据改了两版，第二版更值钱**。第一版还要求「输出里没有 `Traceback`」，
+实测把**先印 FAIL、随后收尾时崩掉**的判定判成了"没抓住"：
+
+- `_qc_asr_mutation` ①②：印了 `FAIL lang='zh-cn'`，随后 vosk 桩抛
+  `AttributeError: 'Model' object has no attribute '_handle'`
+- `_qc_config_bootstrap_mutation` B：印了 `FAIL 状态 created`，随后读临时
+  `config.yaml` 抛 `FileNotFoundError`
+
+两次都是**仪器太窄**（本轮第三次）。真正的判别是**有没有点名**：退化桩只印一个
+`exit 1`，一个字都没有——那才叫"什么都没说"。
+
+**工具侧**：
+
+- `PAIRS` 加 `tier` 字段（`--tier portable|dev|all`）。分层不是"重要性"分层，
+  是"这台机器能不能跑"分层：dev 层要 `.venv`，CI 上没有，混进去只会全 ERROR。
+- `.venv` 不再从仓副本里排除（dev 层靠副本里的 venv 跑）。
+- `FAIL_MARKS` 补 `没抓住` / `未抓住`。
+- **`_resolve()`：判定文件不一定在 `tools/` 下**。第一版一律拼 `tools/<名字>`，
+  于是特性族的 13 对（判定在 `src/tests/test_*.py` 或 `tools/test_*.py`）
+  **全部 ABSENT** —— 而 ABSENT 是"不计失败也不计通过"，`结果：ABSENT 13`、
+  **exit 0**：一个都没验，却什么都没说。
+- **ABSENT / ERROR 拆开**：套件在、判定不在 = **PAIRS 声明错了**（改名/拼错/路径规则不对），
+  是 ERROR；只有"套件本身都不在"才是 ABSENT。
+- **完整性检查**：模块级声明了 `TEST` 的刀，必须在 `PAIRS` 里，或者在 `EXCUSED` 里
+  写清"为什么现在验不了、什么条件下能验"。空理由等于没写。
+  这样"哪些刀被验过"是可数的，不再靠"我记得验过哪些"。
+
+**顺带查出的一处变异失效**：`_qc_pathrefs_mutation.py` 的 H 刀锚点写的是 **20 空格**
+的 `except OSError:`，而 `tools/_qc_path_refs.py:144` 是 **24 空格**。
+`orig.count(old) != 1` 这道锚点守卫**没能拦住**它——20 空格的串正好是 24 空格那一行的
+**子串**，命中次数还是 1。于是 replace 之后缩进全乱，产出
+`IndentationError: expected an indented block after 'except' statement on line 144`，
+而刀把"变异把代码改坏了"算成了"抓住了"。
+**教训：`count(old) == 1` 只保证"只出现一次"，不保证从行首开始。**
+
+**结果**：
+
+```
+check_knife_vacuity.py --tier portable   → CERTIFIED 8            exit 0
+check_knife_vacuity.py --tier dev        → CERTIFIED 17 / SKIP 1  exit 0
+check_knife_vacuity.py --tier all        → CERTIFIED 25 / SKIP 1  exit 0（2m07s）
+_qc_knife_vacuity_mutation.py            → 13 刀 + 对照 全 PASS    exit 0
+```
+
+唯一的 `SKIP` 是 `_qc_site_counts_mutation`：它 `import check_site_counts as C`
+进程内直调，换文件对它无效。**SKIP 不算通过**，所以是 25 而不是 26。
+
+**三把刀起点就是红的**（已列进 `EXCUSED`，每条写明原因）：
+
+| 刀 | 为什么验不了 |
+|---|---|
+| `_qc_bundled_assets_mutation` | 判定用 `git ls-files` 判「在盘上但没进 git」；本工具在仓副本里跑，`.git` 被排除 → 判定恒红（10 FAIL） |
+| `_qc_tray_switch_mutation` | 判定要 `config.yaml`（在 `.gitignore` 里，CI 由 prepare 步骤生成）→ `FileNotFoundError` |
+| `_qc_presence_mutation` | 判定在**干净树上就红**：33 PASS / 1 FAIL（`非法的不影响其它绑定 ← []`）。**这条本身是待查项** |
+
+前两条是环境，第三条当时记成"真红"——**而它一直是红的，所以那 6 把刀从来不需要抓住任何东西**。
+这就是"起点必须先绿"存在的理由。
+
+> **【2026-11-08 更正】上表第三条的归因是错的。** 当时写的是"全局热键注册在无桌面会话时
+> 返回空表"，实际跟桌面会话毫无关系：本机 `.venv` 里**没有装 `pynput`**（`requirements.txt:53`
+> 有声明），于是 `hotkeys._validate` 走到"没装依赖"的兜底分支，只做形状校验 →
+> `<nosuchkey>` 被当成合法键名 → `why3` 为空 → 那条断言红。
+> 也就是说这**不是产品缺陷**，是"判定依赖了一个可能不存在的依赖，却把它报成断言失败"。
+> 真正的修法在第二十六轮：让兜底自己认识键名（`_fallback_ok` + 白名单），
+> 于是判定不再依赖装没装依赖；`_qc_presence_mutation` 也从 `EXCUSED` 挪进了 `PAIRS`。
+> **一条错误的归因比没有归因更贵**：它会让下一个人去查热键后端和桌面会话。
+
+**已知边界**：78 个 `_qc_*` 里还有 **48 把**是"改源码后自己在进程内断言"，没有独立判定
+文件，换文件这个手法用不上。它们的空转风险与这 26 对完全相同，只是需要另一种做法，
+本轮没做——**不要把这 25 个 CERTIFIED 读成"全部刀都验过了"**。
+
+#### PR #18（续三）· 第三种方向：封住写入口 —— 「SKIP 50」拆开是三种东西
+
+**一、先把读数拆开。** 前三轮的报告末尾一直挂着同一句话：`SKIP 50 不算通过`。这一轮先去
+看这 50 到底是什么：
+
+| 类别 | 数量 | 是什么 |
+|---|---|---|
+| 一次性探针 | 18 | `_qc_paint_matrix` / `_qc_path_refs` / `_qc_wake_word`…… 既没有 `MUTS` 也不做变异，永远 SKIP —— **根本不该进分母** |
+| 真刀，无模块级 `MUTS` | 28 | 把 `(old,new)` 写在函数里，或者根本不改源码（往 `src/` 扔语法坏文件、复制一份配置、删一个目录） |
+| 有 `MUTS`，形状退化不了 | 4 | 元组里分不清哪两个元素是 old/new |
+
+一个数字里挤着三种东西，谁都读不出来。先把口径改对：**刀 = `_qc_*_mutation.py`**（本仓的命名约定），
+探针单列、不进分母。
+
+**二、新机制：不碰变异，封住写入口。** 前两道工具都要"知道变异长什么样"才能退化它，
+而上面那 28 把的变异不是一次字符串替换。这一道换思路：
+
+```
+把 builtins.open / io.open 的**写模式**重定向到临时文件
+→ 目标路径一个字节都不会变 → 等于"变异根本没发生"
+→ 判定有牙 → 它看不见任何变化 → 刀必须报「没抓住」→ exit != 0
+→ 判定空转 → 刀照样报「N 刀全红」→ exit 0
+```
+
+这个方向和变异形态无关：改源码的、扔坏文件的、删目录的，一视同仁。
+
+**三、三个方向各自管什么（合起来才闭环）：**
+
+| 工具 | 退化的东西 | 证明了什么 | 覆盖 |
+|---|---|---|---|
+| `check_knife_vacuity.py` | **判定文件**换成退化实现 | 判定变坏时刀会不会红 | 29 对（有独立判定文件的） |
+| `check_knife_noop.py` | **变异本身**（`(old,new)` → `(old,old)`） | 源码没变时会不会假绿 | 33 把（有模块级 MUTS 的） |
+| `check_knife_nowrite.py` | **写入口**（变异落不了地） | **什么都没变**时会不会假绿 | 29 把（其余全部） |
+
+两个读数能互相对上，这是这一轮最想要的东西：
+`noop 的 29 CERTIFIED + 4 SHAPE = 33` 正是 `nowrite 的 COVERED_ELSEWHERE 33`；
+`nowrite 的 21 + 4 + 1 + 3 = 29` 正是 `noop 的 SKIP 29`。**分母对上了，才谈得上覆盖。**
+
+**四、途中修掉的五个真问题：**
+
+1. **`check_delivery.py:check_template` 停在旧认知**：它断言 `force_first_run is True`，
+   而 2026-10-20 的修复**故意**把它改成了 `false`（注释就写在 `config.release.yaml` 文件头：
+   带 true 会让每个用户每次启动都被拽回引导页重填 Key；首启判定是
+   `force or not first_run_done`，取 false 照样只走一次）。`src/tests/test_release_template.py`
+   当时跟着改了，这个闸门没跟 —— 于是它对**任何正确打的包**都判 FAIL，
+   连带 `_qc_delivery_mutation` 466 行 14 个用例**永久红**，那 14 个用例等于从来没在跑。
+2. **`_qc_clone_card_mutation` 起点 exit 77 被记成 ERROR**：77 是刀自己举手说"这台机器缺
+   jsdom，我没验"。记 ERROR 等于把环境问题算成刀坏了，记 CERTIFIED 更是胡说 —— 单列 SKIP。
+   顺带把 `check_knife_nowrite.py` 的 77 分支也定成 SKIP（同一个道理）。
+3. **`_qc_asr_event_flow_mutation` 读 `config.yaml`**（gitignore 的实配）→ 缺文件时回落到出厂模板。
+4. **`check_knife_vacuity.py` 的仓副本造得不像仓库**：它 `copytree` 时排除了 `.git`，于是
+   `check_bundled_assets` / `check_pack_exclude` / `_qc_first_run_mutation` 这些靠 `git ls-files`
+   取清单的判定恒红 —— 最后一条 `EXCUSED`（`_qc_bundled_assets_mutation`）就是这么来的。
+   代价估对了（"每对多拷几十 MB"），结论错了：**副本里重新 `git init` + `add -A` + commit
+   只要几十毫秒**，而且比复制原仓更接近"新克隆"（天然遵守 `.gitignore`）。
+   抽成 `tools/_qc_repo_copy.py`，**`EXCUSED` 表现在是空的**。
+5. **`check_knife_noop.py` 的刀口径**：18 个一次性探针原来混在 SKIP 里，改成单列不计入分母。
+
+**五、仪器自己的两个坑（这一轮最贵的部分）：**
+
+- **起点跑和封写跑共用一份副本 → 起点留下的产物替封写作弊。** 两把桩刀当场露馅：老实刀把
+  `mutated` 写进 `probe.txt`，封写时写入被吞但 `isfile()` 仍为真 → 打印 PASS → 被误判 VACUOUS；
+  生成模块再 import 的刀，起点把 `gen_mod.py` 留在 `tools/` 里，封写时 `import gen_mod` 从残留
+  文件里成功了 → 同样误判。方向上是"把好刀记成空转"（比漏报吵），但仍然是**仪器在说谎**：
+  它测到的是上一次的副作用。修法：`_qc_repo_copy.reset()` —— 副本本来就是 git 仓，
+  `git checkout -- .` + `git clean -fd`（**故意不带 `-x`**，`.venv/` `config.yaml` `logs/` 要留着，
+  带 `-x` 会把它们删掉，下一遍就变成"缺环境"）。
+- **封写用 `io.BytesIO` 当写目标 → 文本模式写崩。** 第一版 17 把刀里 7 把崩在
+  `TypeError: a bytes-like object is required`，差点被记成"认出来了"。改成"真临时文件"后
+  这 7 把才真的被验。教训：**"崩了"和"认出来了"必须分开记**，否则工具在自欺。
+
+**六、还剩什么没验（必须和读数一起读）。** 三合一之后 **54/62 把至少被一道判为 CERTIFIED**，
+剩下 8 把每一把都有名有姓的理由：
+
+| 刀 | 原因 |
+|---|---|
+| `_qc_asr_event_flow` / `_qc_delivery` / `_qc_dialogue_voice_chain` / `_qc_wake` | 机制要求**真写出一个文件再 import**，封写等于抽掉前提 → 归 ERROR（本工具无能为力，不是它们的缺陷） |
+| `_qc_clone_card` | 缺 jsdom（`npm i jsdom` 或设 `DANIYA_JSDOM`）→ SKIP 未验证 |
+| `_qc_knife_noop` / `_qc_knife_nowrite` / `_qc_knife_vacuity` | 质检仪器自身的刀，由各自门禁互检 → META（**单列而不是静默跳过**，静默跳过正是这一轮在修的病） |
+
+> **不要把 54/62 读成"刀都验过了"。** 它说的是"62 把里有 54 把至少被一种机制证明过它不会假绿"，
+> 另外 8 把的原因写在上表。这个数字以前是 26/79（且分母里混着 18 个不是刀的文件）。
+
+**七、SHAPE 归零：让刀自己声明形状。** 上一版把「有 `MUTS` 但分不清 old/new」的 4 把判成
+SHAPE（该验没验）。这一版让**刀自己声明形状**，工具照读：
+
+```python
+NOOP_SHAPE = ("idx", 1, 2)       # (标签, old, new, 说明) —— 第 1 项 old、第 2 项 new
+NOOP_SHAPE = ("filearg", 1, 2)   # (标签, 文件路径, 执行变异的函数) —— 空变异 = 读回原文
+```
+
+**知识放在数据旁边**，不另建一张会烂的表。声明写坏（越界 / 类型不对 / 指的两项本来就相同）
+一律判 SHAPE 并**拒绝硬改** —— 改错一项不会报错，只会产出一个假 CERTIFIED，比没有结论更糟。
+四把刀这么声明：`_qc_smoke_retry`(1,2)、`_qc_voice_ref`(2,3)、`_qc_partial_reply`(1,2)、
+`_qc_site_counts`(filearg 1,2)；`check_knife_noop.py` 因此 **CERTIFIED 29 → 33、SHAPE 4 → 0**。
+
+**八、另外两道门在这台机器上从来没真跑过。** 查 `_qc_clone_card_mutation` 为什么一直 SKIP，
+顺藤摸到两条：
+
+- **`克隆面板真值表`**（`test_clone_card_ui.py`）缺 jsdom → 一直 `exit 77`（这是**正确**的：
+  环境不满足，单列未验证）。临时装一份 jsdom 指向 `DANIYA_JSDOM` 之后：**24 PASS / 0 FAIL**，
+  变异刀 6 刀全红、还原后仍全绿。也就是说这道门的牙齿一直在，只是这台机器上从没张过嘴。
+- **`参考音频物化`**（`test_clone_ref_audio.py`）是**真缺陷**：`main()` 里
+  `shutil.copy2(ROOT/config.yaml, ...)` —— `config.yaml` 是 `.gitignore` 的实配，源码仓里没有，
+  于是它在任何"刚克隆"的树上都崩在 `FileNotFoundError: [WinError 2]`，**连第一条断言都没跑到**。
+  和上一轮托盘刀同一修法：缺文件时回落到出厂模板（本门验的是"参考音频怎么物化"，与 api_key
+  填没填无关）。修后 **22 PASS / 0 FAIL**。
+
+装上 jsdom 之后 `_qc_clone_card_mutation` 在三合一里也转 CERTIFIED（封写下 exit 1，"6 处有问题"），
+覆盖 **54/62 → 55/62**。
+
+
+#### PR #18（续二）· 「缺环境」被报成「判据失败」：四个红点，四个都不是产品坏了
+
+上一轮把「空转」和「无法判定」两个计数器压到 1 和 2。这一轮把那 3 个读数**逐个查清**，
+结论是它们同源：**判定依赖了某个"这台机器上可能没有"的东西，然后把它报成断言失败。**
+
+| 红点 | 表面症状 | 真实原因 |
+|---|---|---|
+| `A5环境探针` 闸门 | 7 PASS / 2 FAIL，exit 1 | `logs/` 在 `.gitignore` 里 → 新克隆的树上一份 `launch_run*.log` 都没有 |
+| `_qc_a5_probe_mutation` | 六把刀"全红" | 起点恒红（同上）→ 红是白送的 |
+| `_qc_tray_switch_mutation` | 起点就红 | 判定要 `config.yaml`，而它也在 `.gitignore` 里 |
+| `_qc_presence_mutation` | 33 PASS / 1 FAIL | 本机没装 `pynput` → `_validate` 走兜底只做形状校验 → 拼错的键名被放行 |
+
+四个都不是产品缺陷，也都不该记成"待查项"。**它们的共同点是：判定把"我没法判"说成了"它坏了"。**
+
+**① A5 探针：给"没有样本"一个自己的状态**
+
+原来两条硬 FAIL：
+
+```python
+chk("至少扫到 1 份 launch_run 日志", len(heartbeat["files"]) >= 1)
+chk("至少 1 条 [UI心跳] 被分类", heartbeat["total_lines"] >= 1)
+```
+
+`logs/` 是 gitignore 的，所以这两条**对每个新克隆的人恒红**。现在分三态：
+
+| 现场 | 判据 | 退出码 |
+|---|---|---|
+| 有日志、扫得到 | 逐条判 | 0 / 1 |
+| 有日志、扫出 0 份 | **FAIL**（探针坏了） | 1 |
+| 压根没有日志 | **WARN 未验证** | **77** |
+
+`77` 是本仓既有约定，`check_all` 会把它单列成「未验证」而不是「通过」；探针还会打一行
+`[SKIP] …`，因为 `check_all` 正是从这一行摘原因——不写就会显示「未说明原因」，
+那等于把"为什么没验"又丢一次。
+
+顺带给探针加了 `--root`：**判据得能被夹具驱动**，否则"探针在缺样本时怎么说话"永远
+只能靠"这台机器碰巧有没有日志"来验。
+
+**② A5 刀：先修起点，再修刀**
+
+只补 `_judged()` + `_baseline_green()` 没用——起点本来就是红的，补完只会诚实地说
+"起点不是绿的"。所以两件事一起做：探针加 `--root`（见上），刀在 tempfile 里造一份
+合成日志当夹具。判据从此不依赖本机日志。
+
+加了**三把限位刀**：
+
+```
+G 夹具里没有日志            → 77 + WARN（未验证 ≠ 失败）
+H 日志在、但没有 [UI心跳] 行 → 1 + FAIL（有样本却量不到，是真失败）
+I 夹具正常                  → 0（起点必须绿）
+```
+
+G 和 H 必须成对：只加 G 会让人把 H 也放宽成 77，只加 H 会让 G 退回硬 FAIL。
+
+**③ 托盘：缺 `config.yaml` 时用出厂模板当夹具**
+
+判定里 `shutil.copy2(ROOT/config.yaml, …)`，而 `config.yaml` 在 `.gitignore` 里。
+本文件测的是 `toggle_mute` 的状态机，**不测"用户的配置长什么样"**——所以缺文件时
+回落到 `config.release.yaml`（在 git 里的出厂模板），并打印一句说明。
+29 PASS / 0 FAIL。
+
+**④ 在场感：修产品，不修测试**
+
+`hotkeys._validate` 在没有 `pynput` 时的兜底是：
+
+```python
+return all(part.strip() for part in combo.split("+"))    # 每段非空就算合法
+```
+
+于是 `<ctrl>+<alt>+<nosuchkey>` 通过校验、进映射表，`skipped` 里一个字都不记——
+**用户以为绑上了，按下去什么都不发生，日志里也没有线索**。这是本仓反复出现的
+「静默失效」，只不过触发条件是"pynput 没装成"。
+
+修法是让兜底自己认识键名：`<...>` 形态必须在 `_NAMED_KEYS` 白名单里（modifier /
+功能键 f1–f20 / 媒体键），非 `<>` 形态（`a` / `7`）保持原来的宽松。抽成纯函数
+`_fallback_ok`，于是**判定不再依赖装没装 pynput**，在任何机器上都能判。
+测试 33 PASS / 1 FAIL → **41 PASS / 0 FAIL**，另加 7 条兜底断言和一把新刀 G
+（兜底放行未知键名 → 必须红）。
+
+> **同时更正上一轮的一处错误归因。** 我当时把这条记成"全局热键注册在无桌面会话时
+> 返回空表"，**跟桌面会话毫无关系**。错误的归因比没有归因更贵：它会让下一个人
+> 去查热键后端和会话状态。更正已写进 PR #18 的对应小节，并在原处留了说明。
+
+**⑤ 顺带：17 把刀的 `_baseline_green()` 比判定本身还严**
+
+它们都写着 `return r.returncode == 0 and "Traceback" not in out`。但**判定自己故意打出来
+的** Traceback 也算——`test_presence_controls.py` 的 A3 就故意让回调抛异常、再验证
+listener 没被弄死，那一段经 logger 打到 stderr。于是测试 41 PASS / 0 FAIL / exit 0，
+刀却判"起点不是绿的"，整把刀一进来就自爆，**而报错信息把矛头指向产品**。
+
+判据改成"退出码 0 且没有 `FAIL` 行"：崩了的判定一定非零退出，Traceback 本身不证明
+任何事。这与第二十四轮 `_judged()` 的改法是同一条道理，只是当时只改了一半。
+
+**⑥ 额度表清空，并给它加对账**
+
+`KNOWN_VACUOUS` 从 1 条变成**空表**。空表是有意义的读数：它说的是"没有已知空转"，
+不是"没有空转"。为了让这张表不至于重新变成遮羞布，加了两道对账 + 一把限位：
+
+```
+N8  额度指向不存在的刀        → exit 2 并点名（额度对着空气）
+N9  额度指向已经不空转的刀    → exit 2 并点名（表在说谎）
+N10 限位：额度指向真的空转的刀 → exit 0（不许把额度表判成恒错）
+```
+
+没有 N10，N8/N9 可以靠"永远 exit 2"满足——结果是没人再敢往表里写东西，
+空转又变回没人管。
+
+**结果**
+
+```
+check_knife_vacuity.py --tier all   → CERTIFIED 27 / SKIP 1        exit 0（上轮 25 / 1）
+_qc_knife_vacuity_mutation.py       → 13 刀 + 对照 全 PASS          exit 0
+check_knife_noop.py                 → CERTIFIED 29 / SKIP 50        exit 0（上轮 26 / 1 / 50 / 2）
+_qc_knife_noop_mutation.py          → 9 刀 + 对照 全 PASS           exit 0
+A5 探针（无日志）                    → 7 PASS / 0 FAIL / 2 未验证    exit 77
+A5 探针（夹具）                      → 9 PASS / 0 FAIL               exit 0
+A5 刀                                → 6 刀 + 3 限位 全过            exit 0
+在场感                               → 41 PASS / 0 FAIL              exit 0
+托盘                                 → 29 PASS / 0 FAIL              exit 0
+```
+
+**`VACUOUS 0 / ERROR 0` 是这一轮唯一值得说的读数**：79 把刀里 29 把判完且不是空转，
+50 把没有模块级 `MUTS`（本工具不覆盖），**没有一把是"不知道"**。上一轮那张表还写着
+1 把已知空转、2 把无法判定。
+
+`SKIP 50` 仍然不算通过——它们要另一种做法，这 29 个 CERTIFIED 依旧不许读成"全部验过"。
+
+**这一轮踩的两个坑（都写进代码注释了）**
+
+1. **`io.open(path, "wb").write(compute())` 会先把文件清空。** Python 先求值
+   `io.open(...)`（那一刻文件已被截断），再求值 `compute()`。我的 `compute()` 抛了，
+   于是 `tools/check_knife_noop.py` 被清成 **0 字节**，只能从远端重新取回来。
+   教训：**先算好要写什么，再打开文件。**
+2. **`"FAIL" in out` 会命中汇总行 `结果: 9 PASS / 0 FAIL`。** 起点明明是绿的，
+   却被判成"有 FAIL"。和第四轮那个 `count(old) == 1` 是同一类：**子串命中不等于语义命中**。
+   改成逐行 `startswith("FAIL")`。
+
+#### PR #18（续）· 空变异体检：另外 48 把刀的空转风险一直是零覆盖
+
+上面那套「换判定文件」有个前提：刀得有一个**独立的判定文件**。79 把刀里只有 26 对有，
+另外 48 把是「改完源码自己在进程内断言」——换文件这招对它们完全无效，也就是说这 48 把
+的空转风险一直是零覆盖。本轮换方向：**不退化判定，退化变异本身**。
+
+```
+空变异 = 把 MUTS 里的 (old, new) 换成 (old, old)
+```
+
+它等于"什么都没改"。此时判定有牙 → 判定该是绿的 → 刀必须报「没抓住」→ `exit != 0`；
+判定空转 → 刀照样报「N 刀全红」→ `exit 0`。**这个方向不需要知道判定在哪**，对 79 把一视同仁。
+
+两个方向是互补的两半，缺哪一半，那一半的空转就没人管：
+
+| 手法 | 证明什么 | 覆盖 |
+|---|---|---|
+| 换判定文件（第二十二/二十三/二十四轮） | 判定变坏时刀会红 | 26 对（有独立判定文件的） |
+| 空变异（本轮） | 没东西可抓时刀不会假红 | 79 把里 29 把能判定 |
+
+**第一次普查就是 5 个假发现——仪器自己没自检**
+
+`_noop()` 第一版一律取「最后两个元素」当 `(old, new)`。实测 `_qc_about_tier_mutation`
+的形状是 `(名字, old_thunk, new_thunk, 说明)`，于是它把 **说明** 换成了 `new_thunk`：
+空变异根本没发生，刀照常跑、照常全红，工具却判它 `VACUOUS`。**一个假发现，来自没自检的仪器。**
+改成按"载荷类型"定位（两个可调用对象 / 两个 bytes / 嵌套对），并且改完用 `is` 验证
+old 与 new 是同一个对象——宁可 `SKIP`，也不产出一个假的 `VACUOUS`。修完 6 把里 5 把变 `CERTIFIED`。
+
+**第二次是仪器比现实窄**
+
+runner 从临时目录跑刀，`sys.path[0]` 变成了 runner 所在目录。于是
+`_qc_api_wiring_mutation` 一进来就 `ModuleNotFoundError: No module named 'check_api_wiring'`，
+被记成 `ERROR`（无法判定）——**这不是刀的缺陷，是仪器把刀换了个环境跑**：刀平时是
+`python tools/_qc_x.py` 跑的，那时 `sys.path[0]` 就是 `tools/`。补一行 `sys.path.insert`
+之后，这把刀从 `ERROR` 变成 `CERTIFIED`。本轮第二次「仪器太窄」。
+
+**顺带查出的真缺陷：`导入冒烟复核` 在 `PY_VENV` 下一直是 6 FAIL**
+
+普查里 `_qc_smoke_retry_mutation` 报「起点就红」，可直接 `python tools/test_smoke_import_retry.py`
+是 12 PASS / 0 FAIL。差别只在解释器——而 `check_all.py` 给这道门配的正是 `PY_VENV`。两层原因：
+
+1. **`env["PYTHONPATH"] = root` 在随包嵌入式运行时下是死代码。** `python/` 是带 `._pth` 的
+   嵌入式运行时：`sys.path` 固定、不吃 `PYTHONPATH`、也不加 cwd。实测
+   `PYTHONPATH=<root> .venv/Scripts/python.exe -c "import src.fixturepkg.ok"` →
+   `ModuleNotFoundError`；改成在子进程里 `sys.path.insert(0, root)` → `rc 0`。
+   后果不止夹具：`--root` 指向的树**可能根本不是被 import 的那棵树**（`._pth` 里有包根 `DaniaAI`）。
+2. **夹具的 `src/` 少了 `__init__.py`**，成了**命名空间包**。命名空间包是兜底——只有所有
+   `sys.path` 条目里都没找到常规包时才用它；而 `DaniaAI\src` 是常规包，直接胜出，
+   `src.fixturepkg` 永远解析不到。
+
+修法：子进程显式插 `sys.path`（`PYTHONPATH` 保留，对吃它的解释器无害）；夹具补 `src/__init__.py`
+让夹具和真仓库同构。结果：
+
+```
+                                    before            after
+.venv/Scripts/python.exe            6 PASS / 6 FAIL   12 PASS / 0 FAIL   exit 0
+python                              12 PASS / 0 FAIL  12 PASS / 0 FAIL   exit 0
+_qc_smoke_retry_mutation（venv）     起点就红           3 刀全红 + 起点绿 + 还原后绿  exit 0
+```
+
+**这两处没有变异刀，而且不该硬造**：在常规 CPython 下把它们改回去，整套自测仍然全绿
+（没有第二个 `src` 来抢，`PYTHONPATH` 也照常生效），刀抓不到任何东西——那就是一把空转刀。
+能钉住它们的只有「换一个把包根放进 `sys.path` 的解释器跑」，也就是上面那三行实测。
+
+**`KNOWN_VACUOUS`：只许减不许增**
+
+唯一一把 `_qc_a5_probe_mutation`：它的判定 `tools/probe_a5_env.py` 在**本机就是红的**
+（7 PASS / 2 FAIL，`至少 1 条 [UI心跳] 被分类 ← 0`：`logs/` 里没有 UI 心跳样本）。
+判定恒红 → 任何变异之后它都会红 → 6 把刀「全红」是白送的。
+这张表不是垃圾桶，是待办清单，每条都写清"为什么现在还空转、什么条件下能修"。
+
+**结果**
+
+```
+check_knife_noop.py          → CERTIFIED 26 / VACUOUS 1 / SKIP 50 / ERROR 2   exit 0（5m56s）
+_qc_knife_noop_mutation.py   → 7 刀 + 对照 全 PASS                            exit 0（5m21s）
+```
+
+`ERROR` 两把都是环境，不是新缺陷：`_qc_presence_mutation`（上一轮就记过：干净树上
+33 PASS / 1 FAIL）与 `_qc_tray_switch_mutation`（判定要 `config.yaml`，在 `.gitignore` 里）。
+`SKIP` 五十把是没有模块级 `MUTS` 的——**SKIP 不算通过**。
+
+**边界（必须连着结果一起读）**：空变异只证明「没东西可抓时它不会假红」，
+**不证明「有东西可抓时它抓得住」**——后者仍靠每把刀自己的正向刀，以及上一轮那道
+`check_knife_vacuity.py`。**这 26 个 CERTIFIED 不许读成"全部刀都验过了"**：79 把里
+50 把本工具看不见。
+
+**登记**：`tools/check_knife_noop.py` + `tools/_qc_knife_noop_mutation.py` 进 `check_all.GATES`
+（都标慢项），`GATES` 从 215 涨到 217，`site/index.html` 与 `site/PUBLISH.md` 的 4 处锚点
+同步改（`check_site_counts.py` 先红后绿，7 PASS / 0 FAIL）。
+**这两步故意不进 `ci.yml`**：它们要 `.venv`，CI 里 79 把大多卡在 `ModuleNotFoundError` →
+`ERROR`，N7 对照还会因"一把都没跑成"变成 `exit 2` 让 job 恒红。所以它和 dev 层 18 对一样，
+只由本机 `check_all.py` 覆盖——`ci.yml` 里写了这句话，免得下次有人把 CI 全绿读成"空变异体检跑过"。
 
 ### 2026-10-22 · 克隆面板「预填她的」：试听静默失效 + 克隆画假进度条还谎报「已完成」
 

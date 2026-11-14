@@ -50,7 +50,16 @@ def main() -> int:
 
     tmp = tempfile.mkdtemp(prefix="clone_ref_")
     cfg_copy = os.path.join(tmp, "config.yaml")
-    shutil.copy2(os.path.join(ROOT, "config.yaml"), cfg_copy)
+    # 【2026-11-09 修·新克隆上必崩】`config.yaml` 是 `.gitignore` 的实配，源码仓里没有。
+    # 原来直接 `copy2(ROOT/config.yaml)` —— 在任何"刚克隆"的树上都是
+    # `FileNotFoundError: [WinError 2]`，于是这道门（以及 `_qc_clone_card_mutation`）
+    # 从来跑不到断言那一步。缺文件时回落到出厂模板：本门验的是"参考音频怎么物化"，
+    # 跟 api_key 填没填无关，模板足够当夹具。
+    src_cfg = os.path.join(ROOT, "config.yaml")
+    if not os.path.isfile(src_cfg):
+        src_cfg = os.path.join(ROOT, "config.release.yaml")
+        print("  （本机没有 config.yaml，用出厂模板 config.release.yaml 当夹具）")
+    shutil.copy2(src_cfg, cfg_copy)
     api = CharacterAPI(cfg_copy)
     api._cfg = load_config(cfg_copy)
 

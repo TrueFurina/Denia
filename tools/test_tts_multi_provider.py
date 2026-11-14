@@ -1,13 +1,26 @@
 """音色获取器 · 多服务商适配 单测（2026-10-09）。
 
 验证点：
-  1) _cloud_tts_providers 归一：旧单 provider / 新多 provider 分桶 / 空 / 别名兼容。
+  1) _cloud_tts_providers 归一：旧单 provider / 新多 provider 分桶 / 空 / 别名兼容 /
+     **全局 Key 多源兜底（cloud_tts → cloud_omni）**。
   2) fetch_provider_voices：各服务商预设音色恒在；克隆音色在有 Key(+group) 时出现；
      网络异常被吞，不连真实外网。
-  3) FishAudioBackend.synthesize：用假 httpx 跑通「请求→落盘假 mp3」全链路（不联网）。
+  3) FishAudioBackend.synthesize：用假 httpx 跑通「请求→落盘假 mp3」全链路（不联网），
+     并覆盖 **HTTP 错误 / JSON(audio_url) 二次下载 / 空音频 / 缺 reference_id** 四条错路。
   4) create_backend 工厂能按 'fish_audio' 造出 FishAudioBackend。
+  5) merge_cloud_tts_provider 不覆盖其它服务商；旧单层升级不丢 Key；
+     **空字符串=不改**（只回传部分字段时不许把已存 Key 擦空）。
+  6) TTS worker 异常隔离。
 
 不依赖 giant Backend / 不联网。运行：python tools/test_tts_multi_provider.py
+
+【2026-11-10 判据大修】此前 30 条判据里五处零判据 + 一处**静默跳过**：
+  · 第 3 段整块包在 `try/except Exception: print("! 跳过")` 里 —— 把 synthesize 改成
+    直接抛错，这段整段被吞掉，结果打成「27 通过 / 0 失败」→ **exit 0 全绿**。
+    现在钉总数 EXPECTED_CHECKS，少一条就是红，且异常本身记 FAIL。
+  · 全局 Key 多源兜底、merge「空字符串=不改」、JSON(audio_url) 分支、空音频、
+    缺 reference_id —— 全部没有判据（改完门仍 30/0 绿）。详见
+    tools/_qc_tts_multi_provider_mutation.py 十一刀。
 """
 from __future__ import annotations
 import asyncio
@@ -20,15 +33,33 @@ sys.path.insert(0, os.path.join(ROOT, "src"))
 
 PASS, FAIL = 0, 0
 
+# 本文件不用测试框架，**没有东西帮你数条数** —— 少跑一整段也不会有人喊。
+# 2026-11-10 实测：把 FishAudioBackend.synthesize 改成直接抛错，第 3 段整块被
+# `except Exception: print("! 跳过…")` 吞掉，结果打成「27 通过 / 0 失败」→ exit 0 全绿。
+# 所以这里钉一个总数：跑完必须恰好这么多条，少一条就是红（多一条也红，提醒改这个数）。
+EXPECTED_CHECKS = 45
 
-def check(name, cond):
+
+def check(name, cond, extra=""):
     global PASS, FAIL
     if cond:
         PASS += 1
-        print(f"  ✓ {name}")
+        print(f"  ✓ {name}" + (f"   {extra}" if extra else ""))
     else:
         FAIL += 1
-        print(f"  ✗ {name}")
+        print(f"  ✗ {name}" + (f"   {extra}" if extra else ""))
+
+
+def _finish() -> int:
+    """汇总 + **条数总账**：静默跳过比失败更危险，必须让它红。"""
+    global FAIL
+    ran = PASS + FAIL
+    if ran != EXPECTED_CHECKS:
+        FAIL += 1
+        print(f"  ✗ 判据条数 {ran} != 期望 {EXPECTED_CHECKS}"
+              f"（有整段被跳过/异常吞掉了 —— 少跑的判据不算通过）")
+    print(f"\n结果：{PASS} 通过 / {FAIL} 失败")
+    return 1 if FAIL else 0
 
 
 # ---------- 1) 归一 ----------
@@ -53,6 +84,32 @@ c2 = _cloud_tts_providers(new)
 check("新格式两个 provider 都在", set(c2.keys()) == {"dashscope_cosy", "fish_audio"})
 # 空
 check("空 cloud → 空 dict", _cloud_tts_providers({"voice": {"clone": {}}}) == {})
+
+# 【2026-11-10 补】全局 Key 多源兜底（2026-10-17 修「又要搞一遍 key」）
+# 用户实际是在「设置 → 模型与API → 一键配置」里填的 Key，落在 cloud_tts / cloud_omni，
+# 不在 voice.clone.cloud。只读 voice.clone.cloud 的话，角色卡会把已配好的服务当
+# 「没配 Key」隐藏起来，用户只能手填一遍。这条路径此前**一条判据都没有**。
+_fb1 = _cloud_tts_providers({
+    "voice": {"clone": {"cloud": {"provider": "dashscope_cosy"}}},
+    "cloud_tts": {"dashscope_cosy": {"api_key": "k-global", "model_name": "m-global"}},
+})
+check("cloud_tts 全局 Key 回填到分桶", _fb1.get("dashscope_cosy", {}).get("api_key") == "k-global")
+check("cloud_tts 全局 model_name 一并回填",
+      _fb1.get("dashscope_cosy", {}).get("model_name") == "m-global")
+
+_fb2 = _cloud_tts_providers({
+    "voice": {"clone": {"cloud": {}}},
+    "cloud_omni": {"api_key": "k-omni", "model": "m-omni"},
+})
+check("cloud_omni 兜底：空 cloud 也能归出一个 dashscope_cosy",
+      _fb2.get("dashscope_cosy", {}).get("api_key") == "k-omni")
+
+# 已有 Key 时不许被全局 Key 覆盖（用户显式配的优先）
+_fb3 = _cloud_tts_providers({
+    "voice": {"clone": {"cloud": {"dashscope_cosy": {"api_key": "k-own"}}}},
+    "cloud_tts": {"dashscope_cosy": {"api_key": "k-global"}},
+})
+check("显式 Key 优先于全局兜底", _fb3["dashscope_cosy"]["api_key"] == "k-own")
 
 # ---------- 2) fetch_provider_voices ----------
 print("[2] fetch_provider_voices（不联网）")
@@ -129,48 +186,143 @@ finally:
 
 # ---------- 3) FishAudioBackend ----------
 print("[3] FishAudioBackend.synthesize（假 httpx）")
+# 【2026-11-10 修·静默跳过】原版整块包在 `try/except Exception: print("! 跳过")` 里：
+# synthesize 一旦整体抛错，这段 5 条判据**一条都不跑**，结果打成「27 通过 / 0 失败」，
+# exit 0 全绿 —— 合成功能彻底坏了，门却是绿的。现在异常本身记 FAIL（并打出原因），
+# 末尾再用 EXPECTED_CHECKS 兜一层「少跑就是红」。
+_import_err = ""
 try:
+    import tempfile
     import voice.tts_backends as tb
+except Exception as e:  # noqa: BLE001
+    tb = None
+    _import_err = f"{type(e).__name__}: {e}"
+    check(f"导入 voice.tts_backends（{_import_err}）", False)
+
+if tb is not None:
     fake_httpx = types.ModuleType("httpx")
 
     class _Resp:
-        def __init__(self, content=b"FAKEMP3", status=200, headers=None):
+        def __init__(self, content=b"FAKEMP3", status=200, headers=None, j=None, text=""):
             self.content = content
             self.status_code = status
             self.headers = headers or {}
+            self.text = text
+            self._j = j or {}
         def json(self):
             return self._j
-        _j = {}
+
     class _AsyncClient:
+        """按 plan 返回：{status, headers, content, json, text}；并记录每次请求。"""
+        plan: dict = {}
+        calls: list = []
         def __init__(self, *a, **k): pass
         async def __aenter__(self): return self
         async def __aexit__(self, *a): return False
         async def post(self, url, json=None, headers=None):
-            r = _Resp(b"FAKEMP3", 200, {"content-type": "audio/mpeg"}); return r
-        async def get(self, url): return _Resp(b"FAKEMP3")
+            _AsyncClient.calls.append(("POST", url, json, headers))
+            p = _AsyncClient.plan
+            return _Resp(p.get("content", b"FAKEMP3"), p.get("status", 200),
+                         p.get("headers", {"content-type": "audio/mpeg"}),
+                         p.get("json"), p.get("text", ""))
+        async def get(self, url):
+            _AsyncClient.calls.append(("GET", url, None, None))
+            return _Resp(b"DOWNLOADED")
+
     fake_httpx.AsyncClient = _AsyncClient
     fake_httpx.Client = _AsyncClient
     sys.modules["httpx"] = fake_httpx
 
+    _tmpdir = tempfile.mkdtemp(prefix="fa_tts_")
+    out = os.path.join(_tmpdir, "out.mp3")
+
+    def _try(coro_fn):
+        """跑一次 synthesize，返回异常对象（None=没抛）。"""
+        try:
+            asyncio.run(coro_fn())
+            return None
+        except Exception as e:  # noqa: BLE001
+            return e
+
     cfg = types.SimpleNamespace(api_key="k", voice_id="fish-123", model="s2-pro", timeout_s=5)
     be = tb.FishAudioBackend(cfg)
     check("FishAudioBackend.name == fish_audio", be.name == "fish_audio")
-    out = os.path.join(ROOT, "tools", "_fa_test_out.mp3")
-    asyncio.run(be.synthesize("你好", out))
-    check("FishAudioBackend 落盘成功", os.path.isfile(out) and os.path.getsize(out) > 0)
+
+    _AsyncClient.plan = {}
+    _AsyncClient.calls = []
+    err = _try(lambda: be.synthesize("你好", out))
+    check("FishAudioBackend 落盘成功",
+          err is None and os.path.isfile(out) and os.path.getsize(out) > 0,
+          )
+    if err is not None:
+        print(f"      ↳ 抛了：{type(err).__name__}: {err}")
+    _post = next((c for c in _AsyncClient.calls if c[0] == "POST"), None)
+    _payload = (_post[2] or {}) if _post else {}
+    _headers = (_post[3] or {}) if _post else {}
+    check("请求体带 reference_id / format=mp3（音色与格式不能漏）",
+          _payload.get("reference_id") == "fish-123" and _payload.get("format") == "mp3",
+          f"payload={_payload}")
+    check("请求头带 Bearer Key 与 model（换模型/鉴权靠它）",
+          _headers.get("Authorization") == "Bearer k" and _headers.get("model") == "s2-pro",
+          f"headers={_headers}")
+
+    # ① HTTP 4xx：必须报错并带状态码（否则用户只看到「没声音」）
+    _AsyncClient.plan = {"status": 401, "text": "invalid api key",
+                         "headers": {"content-type": "text/plain"}}
+    err = _try(lambda: be.synthesize("hi", out))
+    check("HTTP 401 → 抛 RuntimeError 且带状态码",
+          isinstance(err, RuntimeError) and "401" in str(err),
+          f"{type(err).__name__ if err else None}: {err}")
+
+    # ② JSON + audio_url：二次下载落盘（异步任务的返回形态）
+    _AsyncClient.plan = {"headers": {"content-type": "application/json"},
+                         "json": {"audio_url": "https://api.fish.audio/a/1.mp3"}}
+    _AsyncClient.calls = []
+    err = _try(lambda: be.synthesize("hi", out))
+    _body = b""
     if os.path.isfile(out):
+        with open(out, "rb") as f:
+            _body = f.read()
         os.remove(out)
-    # 无 key / 无 reference_id 应抛错
+    check("JSON 返回 audio_url → 二次下载并落盘",
+          err is None and _body == b"DOWNLOADED"
+          and any(c[0] == "GET" and c[1].endswith("1.mp3") for c in _AsyncClient.calls),
+          f"err={err} body={_body[:20]!r}")
+
+    # ③ JSON 但没有 audio_url：不能静默写空文件
+    _AsyncClient.plan = {"headers": {"content-type": "application/json"}, "json": {}}
+    err = _try(lambda: be.synthesize("hi", out))
+    check("JSON 缺 audio_url → 抛错（不静默）", isinstance(err, RuntimeError), f"{err}")
+
+    # ④ 空音频：不能写出 0 字节文件（下游播放器会静默失败）
+    _AsyncClient.plan = {"content": b"", "headers": {"content-type": "audio/mpeg"}}
+    err = _try(lambda: be.synthesize("hi", out))
+    check("空音频 → 抛错（不写 0 字节文件）",
+          isinstance(err, RuntimeError) and "空音频" in str(err), f"{err}")
+
+    # ⑤ 无 key / 无 reference_id：两条不同的报错，各自指名
+    _AsyncClient.plan = {}
     be2 = tb.FishAudioBackend(types.SimpleNamespace(api_key="", voice_id="", model="s2-pro"))
-    try:
-        asyncio.run(be2.synthesize("hi", out)); check("无 key 应抛错", False)
-    except RuntimeError:
-        check("无 key 应抛错", True)
+    err = _try(lambda: be2.synthesize("hi", out))
+    check("无 key 应抛错且指明 Key", isinstance(err, RuntimeError) and "API Key" in str(err),
+          f"{err}")
+    be4 = tb.FishAudioBackend(types.SimpleNamespace(api_key="k", voice_id="", model="s2-pro"))
+    err = _try(lambda: be4.synthesize("hi", out))
+    check("有 key 但缺 reference_id → 抛错且指明 reference_id",
+          isinstance(err, RuntimeError) and "reference_id" in str(err), f"{err}")
+
     # 工厂能造出
     be3 = tb.create_backend("fish_audio", cfg)
-    check("create_backend('fish_audio') 返回 FishAudioBackend", isinstance(be3, tb.FishAudioBackend))
-except Exception as e:
-    print(f"  ! 跳过 FishAudioBackend 测试（导入失败: {e}）")
+    check("create_backend('fish_audio') 返回 FishAudioBackend",
+          isinstance(be3, tb.FishAudioBackend))
+
+    # 收尾：临时目录别留垃圾（原版把产物写在 tools/ 下，中途崩了会留脏文件）
+    try:
+        for _f in os.listdir(_tmpdir):
+            os.remove(os.path.join(_tmpdir, _f))
+        os.rmdir(_tmpdir)
+    except OSError:
+        pass
 
 # ---------- 4) 兼容性：旧单 provider 走新逻辑得到等价预设 ----------
 print("[4] 旧配置经新逻辑等价")
@@ -194,13 +346,42 @@ check("dashscope 的 key 未被 minimax 覆盖", raw5["voice"]["clone"]["cloud"]
 # 旧单层结构提升为分桶（不丢旧 Key）
 raw6 = {"voice": {"clone": {"cloud": {"provider": "dashscope_cosy", "api_key": "k-old", "model_name": "cosyvoice-v2"}}}}
 merge_cloud_tts_provider(raw6, "fish_audio", api_key="k-fa")
-check("旧单层升级后仍含原阿里云 Key", raw6["voice"]["clone"]["cloud"]["dashscope_cosy"]["api_key"] == "k-old")
-check("fish_audio 新增分桶", "fish_audio" in raw6["voice"]["clone"]["cloud"])
+# 【2026-11-10 改·崩了不算判据】原版直接链式下标：一旦升级逻辑坏掉，
+# 这里抛 KeyError，整份文件**崩在半路**，后面第 6 段的判据一条都不跑，
+# 报告里只有一段 Traceback、没有「哪条判据红了」。改成 .get() 链 + 明确判据。
+_c6 = (raw6.get("voice", {}).get("clone", {}).get("cloud", {}) or {})
+check("旧单层升级后仍含原阿里云 Key",
+      (_c6.get("dashscope_cosy") or {}).get("api_key") == "k-old",
+      f"cloud={_c6}")
+check("fish_audio 新增分桶", "fish_audio" in _c6)
 
 # 空 cloud → 直接成单桶
 raw7 = {"voice": {"clone": {}}}
 merge_cloud_tts_provider(raw7, "openai_tts", api_key="k-oa")
-check("空 cloud → 单桶 openai_tts", "openai_tts" in raw7["voice"]["clone"]["cloud"])
+check("空 cloud → 单桶 openai_tts", "openai_tts" in (raw7.get("voice", {}).get("clone", {}).get("cloud", {}) or {}))
+
+# 【2026-11-10 补】「空字符串=不改」（修 F3）
+# 引导页/角色保存只回传部分字段（provider/model/voice_id），不带 api_key。
+# 原实现无条件写 `api_key or ""` → 把已配好的 Key 静默擦成空 → 用户"昨天还能用，
+# 今天要重填 Key"。这条契约在 docstring 里写得很清楚，但**一条判据都没有**。
+raw8 = {"voice": {"clone": {"cloud": {"fish_audio": {"api_key": "k-keep", "model_name": "m1"}}}}}
+merge_cloud_tts_provider(raw8, "fish_audio", model_name="m2")   # 只带 model_name
+_b8 = (raw8["voice"]["clone"]["cloud"].get("fish_audio") or {})
+check("只回传部分字段时已存 Key 不被擦空", _b8.get("api_key") == "k-keep", f"bucket={_b8}")
+check("同一次调用里显式给的字段要生效", _b8.get("model_name") == "m2", f"bucket={_b8}")
+
+# 显式传新 Key 时应当覆盖旧值（「空=不改」不能变成「永远不改」）
+merge_cloud_tts_provider(raw8, "fish_audio", api_key="k-new")
+_b8b = (raw8["voice"]["clone"]["cloud"].get("fish_audio") or {})
+check("显式新 Key 覆盖旧 Key", _b8b.get("api_key") == "k-new", f"bucket={_b8b}")
+
+# 别名写入：aliyun 必须落到 dashscope_cosy 桶（否则同一家配出两个桶）
+raw9 = {"voice": {"clone": {"cloud": {}}}}
+merge_cloud_tts_provider(raw9, "aliyun", api_key="k-alias")
+check("别名 aliyun 写入 dashscope_cosy 桶",
+      "dashscope_cosy" in (raw9["voice"]["clone"].get("cloud") or {})
+      and "aliyun" not in (raw9["voice"]["clone"].get("cloud") or {}),
+      f"cloud={raw9['voice']['clone'].get('cloud')}")
 
 # ---------- 6) TTS worker 异常隔离（2026-10-23）----------
 # 背景：原 _worker 由 start_worker 以 asyncio.create_task 启动，既没存任务句柄也没加
@@ -303,5 +484,4 @@ _restarted = asyncio.run(_run_cb())
 check("done_callback 在 worker 异常退出时重启 worker（避免永久失声）",
       _restarted is True)
 
-print(f"\n结果：{PASS} 通过 / {FAIL} 失败")
-sys.exit(1 if FAIL else 0)
+sys.exit(_finish())

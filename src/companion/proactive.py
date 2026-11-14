@@ -8664,9 +8664,15 @@ class ProactiveStrategy:
 
     async def _stop_duplex_client(self, client, *, why: str = "") -> None:
         """兼容同步/异步的 stop()：云端 CloudOmniRealtime.stop() 是同步方法，
-        本地 LocalMiniCPMDuplexClient.stop() 是协程。统一在这里分派，避免
-        "await None → TypeError → 旧客户端从未停止 → WebSocket 残留抢连"。
+        本地 LocalMiniCPMDuplexClient.stop() 是协程。统一在这里分派。
         【2026-10-09 新增】见 run_loop 重连段与 _sync_duplex_runtime 的同类事故。
+        【2026-11-10 更正·原来这里写「await None → TypeError → 旧客户端从未停止」，
+        前半句对、后半句错】`await f()` 必然先求值 `f()`，所以旧写法里 stop() 其实
+        执行了、客户端真的停了；坏掉的是**之后**——异常从分派处逃逸，调用方
+        `self._duplex_client = None` 与收尾全被跳过，引用仍指着已停的客户端，
+        重连时旧 WebSocket 被复用/抢连。真正挡住逃逸的是下面这个 try/except；
+        `isawaitable` 分支的作用是让异步客户端的协程被 await（并消掉同步客户端
+        每次都会刷的那条 exception 日志）。
         """
         if client is None:
             return
